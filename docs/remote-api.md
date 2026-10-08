@@ -298,6 +298,7 @@ JSON="Content-Type: application/json"
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
 | [`GetBudget`](#getbudget) | configured spend-guard caps |
 | [`Notify`](#notify) | route a push notification through the daemon-side notifier |
+| [`RecordUiEvents` / `GetUiAnalytics`](#recorduievents--getuianalytics) | report client usage analytics / read the summary |
 | [`StartWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / graceful stop / observe |
 
 ### ListProjects
@@ -966,6 +967,35 @@ curl -sS -H "$AUTH" -H "$JSON" \
 ```
 
 An unknown `kind` is `invalid_argument`.
+
+### RecordUiEvents / GetUiAnalytics
+
+Private client usage analytics (`docs/design/usage-analytics.md`). Clients batch
+UI events — `visit`, `view` (with dwell `durationMs` and `attrs.from`), `action`
+(with `via` and the `view` it happened on), `error` (with `attrs.code`) — and
+send them best-effort; never surface a failure to the user. Names, views, `via`,
+and attribute keys/values must match `[A-Za-z0-9_.:/-]` (no spaces) and carry no
+user content; failing events are dropped and counted, and only a malformed
+`client` rejects the batch (`invalid_argument`). A non-empty `catalog` replaces
+the client's list of recordable views/actions used for "never used" reporting.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"client":"web","clientVersion":"1a2b3c","visitId":"k3j2",
+  "events":[{"timeMs":"1791437804000","kind":"view","name":"session","durationMs":"4200","attrs":{"from":"home"}},
+            {"timeMs":"1791437805000","kind":"action","name":"session.interrupt","view":"session","via":"shortcut"}],
+  "catalog":[{"kind":"action","name":"session.interrupt","shortcut":"Esc"}]}' \
+  $B/ycc.v1.SessionService/RecordUiEvents
+```
+
+```json
+{"accepted":2,"stored":true}
+```
+
+`stored` is `false` on a one-shot in-process daemon, which discards events.
+`GetUiAnalytics` (`{"days":30,"client":"ios"}`, both optional) returns the
+summary `ycc analytics` renders: per-client visits, rows per
+view/action/error/nav (`breakdown` keyed by previous view, `via`, or error code;
+`contexts` keyed by view), open/submit/cancel flows, and catalog gaps.
 
 #### ntfy click-through (deep links)
 

@@ -157,6 +157,23 @@ Columns: the group-by dimension(s), then `Input`, `Output`, `Cache`, `Total`
 (tokens) and `Cost`. A `*` marks partial pricing (some models unpriced); `—`
 marks fully unpriced rows.
 
+### `ycc analytics` — client usage report
+
+Summarises the usage events the web/iOS/TUI clients report to the daemon
+(`docs/design/usage-analytics.md`): screens with visit counts and dwell time,
+actions with how they were invoked (shortcut/palette/click/…) and on which
+screen, navigation paths, user-visible errors by code, abandoned flows, catalog
+entries never used, and actions with a shortcut that is mostly bypassed. Uses
+`--addr` or a reachable persistent local daemon, otherwise reads the local
+store directly; the header names the raw JSONL directory for deeper digging.
+
+| Flag | Description |
+|------|-------------|
+| `--days N` | trailing window (default 30) |
+| `--client NAME` | only `web`, `ios`, or `tui` |
+| `--top N` | max rows per section (default 25, 0 = all) |
+| `--json` | print the raw `GetUiAnalytics` response |
+
 ### `ycc task <add|list|show|compact>` — capture & browse the backlog from the shell
 
 Jot, list, and read backlog tasks without opening the TUI — from a terminal, a

@@ -2739,6 +2739,250 @@ public nonisolated struct Ycc_V1_NotifyResponse: Sendable {
   public init() {}
 }
 
+/// Client usage analytics (docs/design/usage-analytics.md). Events carry only
+/// identifiers from a fixed vocabulary — never user content. The daemon drops
+/// events that fail its charset/length bounds rather than rejecting the batch.
+public nonisolated struct Ycc_V1_UiEvent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// client wall clock, unix ms
+  public var timeMs: Int64 = 0
+
+  /// visit | view | action | error
+  public var kind: String = String()
+
+  /// screen name, action id, or failing operation
+  public var name: String = String()
+
+  /// screen the action/error happened on
+  public var view: String = String()
+
+  /// action input method: shortcut, palette, click, ...
+  public var via: String = String()
+
+  /// view dwell, or optional action latency
+  public var durationMs: Int64 = 0
+
+  /// <= 8 enum-valued attributes
+  public var attrs: Dictionary<String,String> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// UiCatalogEntry names something a client could record (a registered action or
+/// screen), so the report can list what was never used.
+public nonisolated struct Ycc_V1_UiCatalogEntry: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// view | action
+  public var kind: String = String()
+
+  public var name: String = String()
+
+  /// human shortcut label, if any
+  public var shortcut: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_RecordUiEventsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// web | ios | tui
+  public var client: String = String()
+
+  public var clientVersion: String = String()
+
+  /// random per page load / app foreground
+  public var visitID: String = String()
+
+  public var events: [Ycc_V1_UiEvent] = []
+
+  /// When non-empty, replaces the stored catalog for this client.
+  public var catalog: [Ycc_V1_UiCatalogEntry] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_RecordUiEventsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// events stored (or that would have been, when !stored)
+  public var accepted: Int32 = 0
+
+  /// events that failed validation
+  public var dropped: Int32 = 0
+
+  /// false on a non-persistent daemon: events are discarded
+  public var stored: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetUiAnalyticsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// window ending now; 0 => 30
+  public var days: Int32 = 0
+
+  /// optional client filter
+  public var client: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_UiClientSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var client: String = String()
+
+  public var visits: Int64 = 0
+
+  public var activeDays: Int32 = 0
+
+  public var events: Int64 = 0
+
+  public var firstMs: Int64 = 0
+
+  public var lastMs: Int64 = 0
+
+  public var versions: [String] = []
+
+  /// "layout=narrow" -> count
+  public var visitAttrs: Dictionary<String,Int64> = [:]
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// UiAnalyticsRow aggregates one (client, kind, name). For views, breakdown is
+/// keyed by the previous view; for actions by `via`; for errors by `code`.
+/// contexts counts the views an action/error happened on.
+public nonisolated struct Ycc_V1_UiAnalyticsRow: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var client: String = String()
+
+  /// view | action | error | nav ("from>to")
+  public var kind: String = String()
+
+  public var name: String = String()
+
+  public var count: Int64 = 0
+
+  public var breakdown: Dictionary<String,Int64> = [:]
+
+  public var contexts: Dictionary<String,Int64> = [:]
+
+  public var totalDurationMs: Int64 = 0
+
+  public var medianDurationMs: Int64 = 0
+
+  public var lastMs: Int64 = 0
+
+  public var activeDays: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// UiFlow pairs `<flow>.open` with `<flow>.submit` / `<flow>.cancel` actions.
+public nonisolated struct Ycc_V1_UiFlow: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var client: String = String()
+
+  public var name: String = String()
+
+  public var opened: Int64 = 0
+
+  public var submitted: Int64 = 0
+
+  public var cancelled: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// UiCatalogGap is a catalog entry needing attention: never used in the
+/// window, or (shortcut_not_learned) used mostly without its shortcut.
+public nonisolated struct Ycc_V1_UiCatalogGap: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var client: String = String()
+
+  public var kind: String = String()
+
+  public var name: String = String()
+
+  public var shortcut: String = String()
+
+  public var shortcutNotLearned: Bool = false
+
+  public var count: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetUiAnalyticsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// false on a non-persistent daemon
+  public var enabled: Bool = false
+
+  /// raw JSONL directory, for deeper digging
+  public var storageDir: String = String()
+
+  public var days: Int32 = 0
+
+  public var clients: [Ycc_V1_UiClientSummary] = []
+
+  public var rows: [Ycc_V1_UiAnalyticsRow] = []
+
+  public var flows: [Ycc_V1_UiFlow] = []
+
+  public var gaps: [Ycc_V1_UiCatalogGap] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// WorkLoopDigestTask is one task row in a work loop's incremental/final digest,
 /// including the bounded evidence needed to continue unfinished accepted work.
 public nonisolated struct Ycc_V1_WorkLoopDigestTask: Sendable {
@@ -8601,6 +8845,536 @@ nonisolated extension Ycc_V1_NotifyResponse: SwiftProtobuf.Message, SwiftProtobu
 
   public static func ==(lhs: Ycc_V1_NotifyResponse, rhs: Ycc_V1_NotifyResponse) -> Bool {
     if lhs.delivered != rhs.delivered {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UiEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UiEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}time_ms\0\u{1}kind\0\u{1}name\0\u{1}view\0\u{1}via\0\u{3}duration_ms\0\u{1}attrs\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.timeMs) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.view) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.via) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.durationMs) }()
+      case 7: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: &self.attrs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.timeMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.timeMs, fieldNumber: 1)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 2)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 3)
+    }
+    if !self.view.isEmpty {
+      try visitor.visitSingularStringField(value: self.view, fieldNumber: 4)
+    }
+    if !self.via.isEmpty {
+      try visitor.visitSingularStringField(value: self.via, fieldNumber: 5)
+    }
+    if self.durationMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.durationMs, fieldNumber: 6)
+    }
+    if !self.attrs.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufString>.self, value: self.attrs, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UiEvent, rhs: Ycc_V1_UiEvent) -> Bool {
+    if lhs.timeMs != rhs.timeMs {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.view != rhs.view {return false}
+    if lhs.via != rhs.via {return false}
+    if lhs.durationMs != rhs.durationMs {return false}
+    if lhs.attrs != rhs.attrs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UiCatalogEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UiCatalogEntry"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}name\0\u{1}shortcut\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.shortcut) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if !self.shortcut.isEmpty {
+      try visitor.visitSingularStringField(value: self.shortcut, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UiCatalogEntry, rhs: Ycc_V1_UiCatalogEntry) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.shortcut != rhs.shortcut {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RecordUiEventsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RecordUiEventsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}client\0\u{3}client_version\0\u{3}visit_id\0\u{1}events\0\u{1}catalog\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.client) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.clientVersion) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.visitID) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.events) }()
+      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.catalog) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.client.isEmpty {
+      try visitor.visitSingularStringField(value: self.client, fieldNumber: 1)
+    }
+    if !self.clientVersion.isEmpty {
+      try visitor.visitSingularStringField(value: self.clientVersion, fieldNumber: 2)
+    }
+    if !self.visitID.isEmpty {
+      try visitor.visitSingularStringField(value: self.visitID, fieldNumber: 3)
+    }
+    if !self.events.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.events, fieldNumber: 4)
+    }
+    if !self.catalog.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.catalog, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RecordUiEventsRequest, rhs: Ycc_V1_RecordUiEventsRequest) -> Bool {
+    if lhs.client != rhs.client {return false}
+    if lhs.clientVersion != rhs.clientVersion {return false}
+    if lhs.visitID != rhs.visitID {return false}
+    if lhs.events != rhs.events {return false}
+    if lhs.catalog != rhs.catalog {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RecordUiEventsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RecordUiEventsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}accepted\0\u{1}dropped\0\u{1}stored\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt32Field(value: &self.accepted) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.dropped) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.stored) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.accepted != 0 {
+      try visitor.visitSingularInt32Field(value: self.accepted, fieldNumber: 1)
+    }
+    if self.dropped != 0 {
+      try visitor.visitSingularInt32Field(value: self.dropped, fieldNumber: 2)
+    }
+    if self.stored != false {
+      try visitor.visitSingularBoolField(value: self.stored, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RecordUiEventsResponse, rhs: Ycc_V1_RecordUiEventsResponse) -> Bool {
+    if lhs.accepted != rhs.accepted {return false}
+    if lhs.dropped != rhs.dropped {return false}
+    if lhs.stored != rhs.stored {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetUiAnalyticsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetUiAnalyticsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}days\0\u{1}client\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt32Field(value: &self.days) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.client) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.days != 0 {
+      try visitor.visitSingularInt32Field(value: self.days, fieldNumber: 1)
+    }
+    if !self.client.isEmpty {
+      try visitor.visitSingularStringField(value: self.client, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetUiAnalyticsRequest, rhs: Ycc_V1_GetUiAnalyticsRequest) -> Bool {
+    if lhs.days != rhs.days {return false}
+    if lhs.client != rhs.client {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UiClientSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UiClientSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}client\0\u{1}visits\0\u{3}active_days\0\u{1}events\0\u{3}first_ms\0\u{3}last_ms\0\u{1}versions\0\u{3}visit_attrs\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.client) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.visits) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.activeDays) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.events) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.firstMs) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.lastMs) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.versions) }()
+      case 8: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufInt64>.self, value: &self.visitAttrs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.client.isEmpty {
+      try visitor.visitSingularStringField(value: self.client, fieldNumber: 1)
+    }
+    if self.visits != 0 {
+      try visitor.visitSingularInt64Field(value: self.visits, fieldNumber: 2)
+    }
+    if self.activeDays != 0 {
+      try visitor.visitSingularInt32Field(value: self.activeDays, fieldNumber: 3)
+    }
+    if self.events != 0 {
+      try visitor.visitSingularInt64Field(value: self.events, fieldNumber: 4)
+    }
+    if self.firstMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.firstMs, fieldNumber: 5)
+    }
+    if self.lastMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastMs, fieldNumber: 6)
+    }
+    if !self.versions.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.versions, fieldNumber: 7)
+    }
+    if !self.visitAttrs.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufInt64>.self, value: self.visitAttrs, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UiClientSummary, rhs: Ycc_V1_UiClientSummary) -> Bool {
+    if lhs.client != rhs.client {return false}
+    if lhs.visits != rhs.visits {return false}
+    if lhs.activeDays != rhs.activeDays {return false}
+    if lhs.events != rhs.events {return false}
+    if lhs.firstMs != rhs.firstMs {return false}
+    if lhs.lastMs != rhs.lastMs {return false}
+    if lhs.versions != rhs.versions {return false}
+    if lhs.visitAttrs != rhs.visitAttrs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UiAnalyticsRow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UiAnalyticsRow"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}client\0\u{1}kind\0\u{1}name\0\u{1}count\0\u{1}breakdown\0\u{1}contexts\0\u{3}total_duration_ms\0\u{3}median_duration_ms\0\u{3}last_ms\0\u{3}active_days\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.client) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.count) }()
+      case 5: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufInt64>.self, value: &self.breakdown) }()
+      case 6: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufInt64>.self, value: &self.contexts) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.totalDurationMs) }()
+      case 8: try { try decoder.decodeSingularInt64Field(value: &self.medianDurationMs) }()
+      case 9: try { try decoder.decodeSingularInt64Field(value: &self.lastMs) }()
+      case 10: try { try decoder.decodeSingularInt32Field(value: &self.activeDays) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.client.isEmpty {
+      try visitor.visitSingularStringField(value: self.client, fieldNumber: 1)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 2)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 3)
+    }
+    if self.count != 0 {
+      try visitor.visitSingularInt64Field(value: self.count, fieldNumber: 4)
+    }
+    if !self.breakdown.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufInt64>.self, value: self.breakdown, fieldNumber: 5)
+    }
+    if !self.contexts.isEmpty {
+      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufString,SwiftProtobuf.ProtobufInt64>.self, value: self.contexts, fieldNumber: 6)
+    }
+    if self.totalDurationMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.totalDurationMs, fieldNumber: 7)
+    }
+    if self.medianDurationMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.medianDurationMs, fieldNumber: 8)
+    }
+    if self.lastMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastMs, fieldNumber: 9)
+    }
+    if self.activeDays != 0 {
+      try visitor.visitSingularInt32Field(value: self.activeDays, fieldNumber: 10)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UiAnalyticsRow, rhs: Ycc_V1_UiAnalyticsRow) -> Bool {
+    if lhs.client != rhs.client {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.count != rhs.count {return false}
+    if lhs.breakdown != rhs.breakdown {return false}
+    if lhs.contexts != rhs.contexts {return false}
+    if lhs.totalDurationMs != rhs.totalDurationMs {return false}
+    if lhs.medianDurationMs != rhs.medianDurationMs {return false}
+    if lhs.lastMs != rhs.lastMs {return false}
+    if lhs.activeDays != rhs.activeDays {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UiFlow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UiFlow"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}client\0\u{1}name\0\u{1}opened\0\u{1}submitted\0\u{1}cancelled\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.client) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.opened) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.submitted) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.cancelled) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.client.isEmpty {
+      try visitor.visitSingularStringField(value: self.client, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if self.opened != 0 {
+      try visitor.visitSingularInt64Field(value: self.opened, fieldNumber: 3)
+    }
+    if self.submitted != 0 {
+      try visitor.visitSingularInt64Field(value: self.submitted, fieldNumber: 4)
+    }
+    if self.cancelled != 0 {
+      try visitor.visitSingularInt64Field(value: self.cancelled, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UiFlow, rhs: Ycc_V1_UiFlow) -> Bool {
+    if lhs.client != rhs.client {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.opened != rhs.opened {return false}
+    if lhs.submitted != rhs.submitted {return false}
+    if lhs.cancelled != rhs.cancelled {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UiCatalogGap: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UiCatalogGap"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}client\0\u{1}kind\0\u{1}name\0\u{1}shortcut\0\u{3}shortcut_not_learned\0\u{1}count\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.client) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.shortcut) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.shortcutNotLearned) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.count) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.client.isEmpty {
+      try visitor.visitSingularStringField(value: self.client, fieldNumber: 1)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 2)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 3)
+    }
+    if !self.shortcut.isEmpty {
+      try visitor.visitSingularStringField(value: self.shortcut, fieldNumber: 4)
+    }
+    if self.shortcutNotLearned != false {
+      try visitor.visitSingularBoolField(value: self.shortcutNotLearned, fieldNumber: 5)
+    }
+    if self.count != 0 {
+      try visitor.visitSingularInt64Field(value: self.count, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UiCatalogGap, rhs: Ycc_V1_UiCatalogGap) -> Bool {
+    if lhs.client != rhs.client {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.shortcut != rhs.shortcut {return false}
+    if lhs.shortcutNotLearned != rhs.shortcutNotLearned {return false}
+    if lhs.count != rhs.count {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetUiAnalyticsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetUiAnalyticsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}enabled\0\u{3}storage_dir\0\u{1}days\0\u{1}clients\0\u{1}rows\0\u{1}flows\0\u{1}gaps\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.enabled) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.storageDir) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.days) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.clients) }()
+      case 5: try { try decoder.decodeRepeatedMessageField(value: &self.rows) }()
+      case 6: try { try decoder.decodeRepeatedMessageField(value: &self.flows) }()
+      case 7: try { try decoder.decodeRepeatedMessageField(value: &self.gaps) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.enabled != false {
+      try visitor.visitSingularBoolField(value: self.enabled, fieldNumber: 1)
+    }
+    if !self.storageDir.isEmpty {
+      try visitor.visitSingularStringField(value: self.storageDir, fieldNumber: 2)
+    }
+    if self.days != 0 {
+      try visitor.visitSingularInt32Field(value: self.days, fieldNumber: 3)
+    }
+    if !self.clients.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.clients, fieldNumber: 4)
+    }
+    if !self.rows.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.rows, fieldNumber: 5)
+    }
+    if !self.flows.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.flows, fieldNumber: 6)
+    }
+    if !self.gaps.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.gaps, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetUiAnalyticsResponse, rhs: Ycc_V1_GetUiAnalyticsResponse) -> Bool {
+    if lhs.enabled != rhs.enabled {return false}
+    if lhs.storageDir != rhs.storageDir {return false}
+    if lhs.days != rhs.days {return false}
+    if lhs.clients != rhs.clients {return false}
+    if lhs.rows != rhs.rows {return false}
+    if lhs.flows != rhs.flows {return false}
+    if lhs.gaps != rhs.gaps {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -644,6 +644,7 @@ rebase/verify/fast-forward path. Unattended status never bypasses a required gat
   (`ListFiles`/`ReadFile`, resolved against a session's live worktree when given one);
 - model, role, reasoning, work-strategy, and review-tier settings;
 - backlog, plans, memory, usage, allowance, budgets, notifications, and work loops;
+- client usage analytics (`RecordUiEvents`/`GetUiAnalytics`, §18.8);
 - workstream spawn/list/preview/integrate/discard/retry.
 
 `Subscribe` accepts `from_seq`; only durable sequences advance this cursor. The same service is
@@ -757,7 +758,7 @@ Committed config references notification credentials through an environment vari
 credentials are only appropriate in a private user-global active config.
 
 Sensitive ycc-owned state uses restrictive Unix permissions: session logs, generated user config,
-secrets, and daemon logs are owner-only. Committed documents, registries that contain only
+secrets, daemon logs, and client usage analytics are owner-only. Committed documents, registries that contain only
 path/id/preference metadata, and normal tool output retain ordinary project modes. `ycc doctor`
 reports broad modes and inline workspace notification credentials without printing secrets or
 inspecting arbitrary key files.
@@ -860,6 +861,20 @@ Interrupt durably acknowledges a `pause_requested` action immediately; it reques
 While paused, input queues as steering and Resume drains it before the next model turn. Hard Stop
 terminates instead and requires destructive confirmation in interactive clients. Resume also
 retries a parked retryable model failure.
+
+### 18.8 Usage analytics
+
+Clients report what the user actually does so improvement work can follow real usage. The web
+client, iOS app, and TUI batch best-effort `visit`/`view`/`action`/`error` events to the daemon
+(`RecordUiEvents`); recording never blocks UI or surfaces errors. Events carry identifiers from a
+fixed vocabulary only — screen names, action ids, input method, error codes — never prompts,
+titles, paths, or ids; the daemon enforces a no-spaces charset and bounds and drops failing
+events. Only a persistent daemon stores them (owner-only monthly JSONL in its state directory, 12
+months), together with each client's catalog of recordable views/actions. `ycc analytics` and
+`GetUiAnalytics` summarise dwell, invocation method, navigation paths, errors, abandoned flows,
+never-used features, and bypassed shortcuts. There is no third-party service and no automatic
+improvement loop; an agent is pointed at the report on request. Event vocabulary and rationale:
+`docs/design/usage-analytics.md`.
 
 ## 19. Onboarding
 

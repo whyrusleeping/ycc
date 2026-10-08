@@ -33,6 +33,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/session"
 	"github.com/whyrusleeping/ycc/internal/sessionview"
 	"github.com/whyrusleeping/ycc/internal/subusage"
+	"github.com/whyrusleeping/ycc/internal/uianalytics"
 	"github.com/whyrusleeping/ycc/internal/usage"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -49,6 +50,7 @@ type Server struct {
 	// before an empty SessionViewUpdate is sent (see sessionViewKeepalive).
 	viewKeepalive  time.Duration
 	anthropicLogin anthropicLoginState
+	analytics      *uianalytics.Store // nil: usage events are validated and discarded
 }
 
 // sessionViewKeepalive bounds silence on SubscribeSessionView. Quiet sessions

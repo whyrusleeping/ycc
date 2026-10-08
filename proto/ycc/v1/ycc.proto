@@ -857,6 +857,103 @@ message NotifyRequest {
 }
 message NotifyResponse { bool delivered = 1; }
 
+// Client usage analytics (docs/design/usage-analytics.md). Events carry only
+// identifiers from a fixed vocabulary — never user content. The daemon drops
+// events that fail its charset/length bounds rather than rejecting the batch.
+message UiEvent {
+  int64 time_ms = 1;            // client wall clock, unix ms
+  string kind = 2;              // visit | view | action | error
+  string name = 3;              // screen name, action id, or failing operation
+  string view = 4;              // screen the action/error happened on
+  string via = 5;               // action input method: shortcut, palette, click, ...
+  int64 duration_ms = 6;        // view dwell, or optional action latency
+  map<string, string> attrs = 7; // <= 8 enum-valued attributes
+}
+
+// UiCatalogEntry names something a client could record (a registered action or
+// screen), so the report can list what was never used.
+message UiCatalogEntry {
+  string kind = 1;     // view | action
+  string name = 2;
+  string shortcut = 3; // human shortcut label, if any
+}
+
+message RecordUiEventsRequest {
+  string client = 1;         // web | ios | tui
+  string client_version = 2;
+  string visit_id = 3;       // random per page load / app foreground
+  repeated UiEvent events = 4;
+  // When non-empty, replaces the stored catalog for this client.
+  repeated UiCatalogEntry catalog = 5;
+}
+message RecordUiEventsResponse {
+  int32 accepted = 1; // events stored (or that would have been, when !stored)
+  int32 dropped = 2;  // events that failed validation
+  bool stored = 3;    // false on a non-persistent daemon: events are discarded
+}
+
+message GetUiAnalyticsRequest {
+  int32 days = 1;     // window ending now; 0 => 30
+  string client = 2;  // optional client filter
+}
+
+message UiClientSummary {
+  string client = 1;
+  int64 visits = 2;
+  int32 active_days = 3;
+  int64 events = 4;
+  int64 first_ms = 5;
+  int64 last_ms = 6;
+  repeated string versions = 7;
+  map<string, int64> visit_attrs = 8; // "layout=narrow" -> count
+}
+
+// UiAnalyticsRow aggregates one (client, kind, name). For views, breakdown is
+// keyed by the previous view; for actions by `via`; for errors by `code`.
+// contexts counts the views an action/error happened on.
+message UiAnalyticsRow {
+  string client = 1;
+  string kind = 2; // view | action | error | nav ("from>to")
+  string name = 3;
+  int64 count = 4;
+  map<string, int64> breakdown = 5;
+  map<string, int64> contexts = 6;
+  int64 total_duration_ms = 7;
+  int64 median_duration_ms = 8;
+  int64 last_ms = 9;
+  int32 active_days = 10;
+}
+
+// UiFlow pairs `<flow>.open` with `<flow>.submit` / `<flow>.cancel` actions.
+message UiFlow {
+  string client = 1;
+  string name = 2;
+  int64 opened = 3;
+  int64 submitted = 4;
+  int64 cancelled = 5;
+}
+
+// UiCatalogGap is a catalog entry needing attention: never used in the
+// window, or (shortcut_not_learned) used mostly without its shortcut.
+message UiCatalogGap {
+  string client = 1;
+  string kind = 2;
+  string name = 3;
+  string shortcut = 4;
+  bool shortcut_not_learned = 5;
+  int64 count = 6;
+}
+
+message GetUiAnalyticsResponse {
+  bool enabled = 1;          // false on a non-persistent daemon
+  string storage_dir = 2;    // raw JSONL directory, for deeper digging
+  int32 days = 3;
+  repeated UiClientSummary clients = 4;
+  repeated UiAnalyticsRow rows = 5;
+  repeated UiFlow flows = 6;
+  repeated UiCatalogGap gaps = 7;
+}
+
 // The daemon-owned unattended backlog drain starts fresh `work` sessions one
 // after another, enforces configured resource caps at safe boundaries, and
 // accumulates an incremental/final digest. It survives client disconnects and
@@ -1193,6 +1290,11 @@ service SessionService {
   // Push notifications: route a client-originated notification (the
   // work-loop completion digest) through the daemon-side webhook notifier.
   rpc Notify(NotifyRequest) returns (NotifyResponse);
+
+  // Client usage analytics: clients report UI events (best-effort, batched);
+  // GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
+  rpc RecordUiEvents(RecordUiEventsRequest) returns (RecordUiEventsResponse);
+  rpc GetUiAnalytics(GetUiAnalyticsRequest) returns (GetUiAnalyticsResponse);
 
   // Daemon-side work loop: start/stop/observe the
   // unattended backlog-drain loop. The loop lives in the daemon, so it survives

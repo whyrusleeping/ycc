@@ -246,6 +246,7 @@ func TestRepositoryDocsConfig(t *testing.T) {
 		"docs/design/ios-client.md",
 		"docs/design/parallel-workstreams.md",
 		"docs/design/project-memory.md",
+		"docs/design/usage-analytics.md",
 		"docs/design/web-client.md",
 		"docs/design/workstream-integration.md",
 	}

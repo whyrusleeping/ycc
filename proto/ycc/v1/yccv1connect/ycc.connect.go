@@ -191,6 +191,12 @@ const (
 	SessionServiceGetBudgetProcedure = "/ycc.v1.SessionService/GetBudget"
 	// SessionServiceNotifyProcedure is the fully-qualified name of the SessionService's Notify RPC.
 	SessionServiceNotifyProcedure = "/ycc.v1.SessionService/Notify"
+	// SessionServiceRecordUiEventsProcedure is the fully-qualified name of the SessionService's
+	// RecordUiEvents RPC.
+	SessionServiceRecordUiEventsProcedure = "/ycc.v1.SessionService/RecordUiEvents"
+	// SessionServiceGetUiAnalyticsProcedure is the fully-qualified name of the SessionService's
+	// GetUiAnalytics RPC.
+	SessionServiceGetUiAnalyticsProcedure = "/ycc.v1.SessionService/GetUiAnalytics"
 	// SessionServiceStartWorkLoopProcedure is the fully-qualified name of the SessionService's
 	// StartWorkLoop RPC.
 	SessionServiceStartWorkLoopProcedure = "/ycc.v1.SessionService/StartWorkLoop"
@@ -335,6 +341,10 @@ type SessionServiceClient interface {
 	// Push notifications: route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
+	// Client usage analytics: clients report UI events (best-effort, batched);
+	// GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
+	RecordUiEvents(context.Context, *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error)
+	GetUiAnalytics(context.Context, *connect.Request[v1.GetUiAnalyticsRequest]) (*connect.Response[v1.GetUiAnalyticsResponse], error)
 	// Daemon-side work loop: start/stop/observe the
 	// unattended backlog-drain loop. The loop lives in the daemon, so it survives
 	// client disconnects; any client can start it, poll GetWorkLoop for state +
@@ -696,6 +706,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("Notify")),
 			connect.WithClientOptions(opts...),
 		),
+		recordUiEvents: connect.NewClient[v1.RecordUiEventsRequest, v1.RecordUiEventsResponse](
+			httpClient,
+			baseURL+SessionServiceRecordUiEventsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RecordUiEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		getUiAnalytics: connect.NewClient[v1.GetUiAnalyticsRequest, v1.GetUiAnalyticsResponse](
+			httpClient,
+			baseURL+SessionServiceGetUiAnalyticsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetUiAnalytics")),
+			connect.WithClientOptions(opts...),
+		),
 		startWorkLoop: connect.NewClient[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse](
 			httpClient,
 			baseURL+SessionServiceStartWorkLoopProcedure,
@@ -810,6 +832,8 @@ type sessionServiceClient struct {
 	getSubscriptionUsage   *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
 	getBudget              *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	notify                 *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
+	recordUiEvents         *connect.Client[v1.RecordUiEventsRequest, v1.RecordUiEventsResponse]
+	getUiAnalytics         *connect.Client[v1.GetUiAnalyticsRequest, v1.GetUiAnalyticsResponse]
 	startWorkLoop          *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
 	stopWorkLoop           *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
 	getWorkLoop            *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
@@ -1096,6 +1120,16 @@ func (c *sessionServiceClient) Notify(ctx context.Context, req *connect.Request[
 	return c.notify.CallUnary(ctx, req)
 }
 
+// RecordUiEvents calls ycc.v1.SessionService.RecordUiEvents.
+func (c *sessionServiceClient) RecordUiEvents(ctx context.Context, req *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error) {
+	return c.recordUiEvents.CallUnary(ctx, req)
+}
+
+// GetUiAnalytics calls ycc.v1.SessionService.GetUiAnalytics.
+func (c *sessionServiceClient) GetUiAnalytics(ctx context.Context, req *connect.Request[v1.GetUiAnalyticsRequest]) (*connect.Response[v1.GetUiAnalyticsResponse], error) {
+	return c.getUiAnalytics.CallUnary(ctx, req)
+}
+
 // StartWorkLoop calls ycc.v1.SessionService.StartWorkLoop.
 func (c *sessionServiceClient) StartWorkLoop(ctx context.Context, req *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
 	return c.startWorkLoop.CallUnary(ctx, req)
@@ -1256,6 +1290,10 @@ type SessionServiceHandler interface {
 	// Push notifications: route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
+	// Client usage analytics: clients report UI events (best-effort, batched);
+	// GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
+	RecordUiEvents(context.Context, *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error)
+	GetUiAnalytics(context.Context, *connect.Request[v1.GetUiAnalyticsRequest]) (*connect.Response[v1.GetUiAnalyticsResponse], error)
 	// Daemon-side work loop: start/stop/observe the
 	// unattended backlog-drain loop. The loop lives in the daemon, so it survives
 	// client disconnects; any client can start it, poll GetWorkLoop for state +
@@ -1613,6 +1651,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("Notify")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceRecordUiEventsHandler := connect.NewUnaryHandler(
+		SessionServiceRecordUiEventsProcedure,
+		svc.RecordUiEvents,
+		connect.WithSchema(sessionServiceMethods.ByName("RecordUiEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetUiAnalyticsHandler := connect.NewUnaryHandler(
+		SessionServiceGetUiAnalyticsProcedure,
+		svc.GetUiAnalytics,
+		connect.WithSchema(sessionServiceMethods.ByName("GetUiAnalytics")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceStartWorkLoopHandler := connect.NewUnaryHandler(
 		SessionServiceStartWorkLoopProcedure,
 		svc.StartWorkLoop,
@@ -1779,6 +1829,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetBudgetHandler.ServeHTTP(w, r)
 		case SessionServiceNotifyProcedure:
 			sessionServiceNotifyHandler.ServeHTTP(w, r)
+		case SessionServiceRecordUiEventsProcedure:
+			sessionServiceRecordUiEventsHandler.ServeHTTP(w, r)
+		case SessionServiceGetUiAnalyticsProcedure:
+			sessionServiceGetUiAnalyticsHandler.ServeHTTP(w, r)
 		case SessionServiceStartWorkLoopProcedure:
 			sessionServiceStartWorkLoopHandler.ServeHTTP(w, r)
 		case SessionServiceStopWorkLoopProcedure:
@@ -2024,6 +2078,14 @@ func (UnimplementedSessionServiceHandler) GetBudget(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Notify is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) RecordUiEvents(context.Context, *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RecordUiEvents is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetUiAnalytics(context.Context, *connect.Request[v1.GetUiAnalyticsRequest]) (*connect.Response[v1.GetUiAnalyticsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUiAnalytics is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {

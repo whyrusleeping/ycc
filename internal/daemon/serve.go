@@ -23,6 +23,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
 	"github.com/whyrusleeping/ycc/internal/session"
+	"github.com/whyrusleeping/ycc/internal/uianalytics"
 	"github.com/whyrusleeping/ycc/internal/web"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
@@ -119,6 +120,16 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 		}
 	}
 	srv := server.New(mgr)
+	// Client usage analytics are durable only on a persistent daemon; the
+	// one-shot path writes nothing to the state dir. A store failure is
+	// non-fatal: analytics are best-effort.
+	if o.Persist {
+		if store, err := uianalytics.Open(uianalytics.DefaultDir()); err != nil {
+			log.Printf("usage analytics disabled: %v", err)
+		} else {
+			srv.SetAnalytics(store)
+		}
+	}
 
 	mux := http.NewServeMux()
 	latency := server.NewLatencyRecorder()

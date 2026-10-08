@@ -234,6 +234,14 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `notify`(request: Ycc_V1_NotifyRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_NotifyResponse>
 
+    /// Client usage analytics: clients report UI events (best-effort, batched);
+    /// GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
+    @available(iOS 13, *)
+    func `recordUiEvents`(request: Ycc_V1_RecordUiEventsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RecordUiEventsResponse>
+
+    @available(iOS 13, *)
+    func `getUiAnalytics`(request: Ycc_V1_GetUiAnalyticsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetUiAnalyticsResponse>
+
     /// Daemon-side work loop: start/stop/observe the
     /// unattended backlog-drain loop. The loop lives in the daemon, so it survives
     /// client disconnects; any client can start it, poll GetWorkLoop for state +
@@ -555,6 +563,16 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `recordUiEvents`(request: Ycc_V1_RecordUiEventsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_RecordUiEventsResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/RecordUiEvents", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getUiAnalytics`(request: Ycc_V1_GetUiAnalyticsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetUiAnalyticsResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetUiAnalytics", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `startWorkLoop`(request: Ycc_V1_StartWorkLoopRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_StartWorkLoopResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/StartWorkLoop", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -656,6 +674,8 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)
+            public static let recordUiEvents = Connect.MethodSpec(name: "RecordUiEvents", service: "ycc.v1.SessionService", type: .unary)
+            public static let getUiAnalytics = Connect.MethodSpec(name: "GetUiAnalytics", service: "ycc.v1.SessionService", type: .unary)
             public static let startWorkLoop = Connect.MethodSpec(name: "StartWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let stopWorkLoop = Connect.MethodSpec(name: "StopWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkLoop = Connect.MethodSpec(name: "GetWorkLoop", service: "ycc.v1.SessionService", type: .unary)
