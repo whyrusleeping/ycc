@@ -1,15 +1,16 @@
 ---
 id: "0442"
 title: 'Web quick capture: auto-focus the description textbox when opened via ⌥N'
-status: todo
+status: done
 priority: 3
 created: "2026-10-09"
-updated: "2026-10-09"
+updated: "2026-10-10"
 depends_on: []
 spec_refs: []
 ---
 
 ## Description
+
 Pressing Option+N (Alt+N) opens the quick-capture dialog, but the "Describe the task" textarea doesn't get focus, so you can't start typing right away.
 
 **Likely cause (not confirmed):** `CaptureDialog.tsx` puts `autoFocus` on the textarea. But `ui/Modal.tsx` only calls `dialog.showModal()` in a `useEffect`, which runs after React has already applied `autoFocus` while the children mount. `showModal()` then runs the dialog's own focusing steps and moves focus to the first focusable element. That's the × close button in `.modal-head`, or the Project `<select>` when there are several projects.
@@ -23,6 +24,8 @@ Pressing Option+N (Alt+N) opens the quick-capture dialog, but the "Describe the 
 - "Capture another" puts focus back in the textarea, and the clarifying-question input still gets focus as it does today.
 - There's a test covering initial focus (unit/RTL, or Playwright if available).
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Modal now calls showModal() in a layout effect and mounts its body only after the dialog is open, so React autoFocus works for quick capture and every other Modal (no caller changes). jsdom-based regression tests cover initial focus with one/several projects, reopen, remount (Capture another), and fallback focus; a shortcut test confirms the ⌥N dead key is preventDefault'ed. Verified in Chromium with mocked RPCs; native macOS dead-key behaviour still worth an on-device check. internal/web/dist rebuilt.
+
+Commit: web: open Modal dialogs before mounting their body so autoFocus works (quick capture ⌥N focuses description)

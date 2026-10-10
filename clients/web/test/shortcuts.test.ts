@@ -1,7 +1,7 @@
 // Keyboard shortcuts: matching (code- and key-based), the typing / dialog
 // guard, platform labels, and dispatch over the action registry.
 import { describe, expect, it, vi } from "vitest";
-import { formatShortcut, isChord, matchShortcut, shortcutAction, shortcutAllowed, type AppAction, type KeyLike, type Shortcut } from "../src/app/actions";
+import { dispatchShortcut, formatShortcut, isChord, matchShortcut, registerAction, shortcutAction, shortcutAllowed, type AppAction, type KeyLike, type Shortcut } from "../src/app/actions";
 import { contextShortcuts } from "../src/app/shortcuts";
 
 const ev = (over: Partial<KeyLike>): KeyLike => ({ code: "", key: "", altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, ...over });
@@ -15,6 +15,18 @@ describe("shortcut matching", () => {
     expect(matchShortcut(ev({ key: "k", metaKey: true }), s)).toBe(true);
     expect(matchShortcut(ev({ key: "k" }), s)).toBe(false);
     expect(matchShortcut(ev({ key: "k", ctrlKey: true, altKey: true }), s)).toBe(false);
+  });
+
+  it("cancels Option+N's dead key before opening the capture form", () => {
+    const preventDefault = vi.fn();
+    const run = vi.fn(() => expect(preventDefault).toHaveBeenCalledOnce());
+    const unregister = registerAction({ id: "backlog.capture", title: "Quick capture", shortcut: { code: "KeyN", alt: true }, run });
+    try {
+      expect(dispatchShortcut({ ...ev({ code: "KeyN", key: "Dead", altKey: true }), defaultPrevented: false, target: null, preventDefault }, false)).toBe(true);
+      expect(run).toHaveBeenCalledOnce();
+    } finally {
+      unregister();
+    }
   });
 
   it("ignores Shift for a non-letter key such as ?", () => {

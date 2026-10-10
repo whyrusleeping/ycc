@@ -1,6 +1,7 @@
 // A modal surface built on <dialog> (focus trap, Esc, and backdrop from the
-// platform). Esc calls onClose; the caller decides whether closing is allowed.
-import { useEffect, useRef, type ReactNode } from "react";
+// platform). Mount the body after showModal so React's autoFocus works in an
+// already-open dialog. Esc calls onClose; the caller decides whether closing is allowed.
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useFlow, useTrackedView } from "../app/analytics";
 
 export function Modal({
@@ -23,13 +24,15 @@ export function Modal({
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const [shown, setShown] = useState(false);
   useTrackedView(view, open);
   useFlow(flow, open);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) d.showModal();
     if (!open && d.open) d.close();
+    setShown(open);
   }, [open]);
   return (
     <dialog
@@ -49,7 +52,7 @@ export function Modal({
               ×
             </button>
           </div>
-          {children}
+          {shown && children}
         </>
       )}
     </dialog>
