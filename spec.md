@@ -215,9 +215,12 @@ commit identity are persisted, HEAD advances, only the selected index paths are 
 acceptance events are emitted last. A failure before the HEAD update restores the active task; a
 rejected attempt with no created commit may renew its scoped snapshot after source or task-evidence
 fixes only against the original persisted baseline. A differently scoped session must not narrow that
-ownership. Once a commit identity is created, retries remain bound to it. After HEAD advances the
+ownership. Once a commit identity is created, retries remain bound to it unless HEAD has since moved
+past its parent without containing it (another session committed first); that identity is then
+abandoned and the scoped changes are re-inspected and committed on the new HEAD. After HEAD advances the
 completed task is truthful and retries finish pending index/event publication without creating another
-commit or broadening scope. Git, event append, and journal checkpointing are not transactionally atomic. A
+commit or broadening scope; if newer commits already sit on top, only selected index paths still at
+the reviewed parent are advanced, to HEAD's versions. Git, event append, and journal checkpointing are not transactionally atomic. A
 crash after an event append but before its checkpoint may append that event again on retry, so
 finalization events carry a stable identity for consumer deduplication and publication failures are
 reported as pending. A terminal event-log error prevents any new finalization mutation until the

@@ -575,3 +575,69 @@ func BenchmarkRepositoryOpen(b *testing.B) {
 		})
 	}
 }
+
+// RecoverCommit under a descendant HEAD advances only selected index paths
+// still at the reviewed parent, to HEAD's versions; later staging — including
+// beneath a selected file that has since become a directory, or as a file
+// replacing a selected path's parent directory — is preserved.
+func TestRecoverCommitUnderDescendantHeadPreservesLaterStaging(t *testing.T) {
+	r, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTracked(t, r, map[string]string{"stale.txt": "v0\n", "staged.txt": "s0\n"})
+	baseline, err := r.CaptureBaseline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(r.Dir, "selected"), "task file\n")
+	writeFile(t, filepath.Join(r.Dir, "stale.txt"), "v1\n")
+	writeFile(t, filepath.Join(r.Dir, "staged.txt"), "s1\n")
+	writeFile(t, filepath.Join(r.Dir, "dir/child.txt"), "task child\n")
+	c, err := r.Changes(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := c.Recovery()
+	if _, err := r.Commit(c, "task commit"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(r.Dir, "selected")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(r.Dir, "selected/child.txt"), "descendant\n")
+	writeFile(t, filepath.Join(r.Dir, "stale.txt"), "v2\n")
+	writeFile(t, filepath.Join(r.Dir, "dir/child.txt"), "descendant child\n")
+	gitAt(t, r.Dir, "add", "-A")
+	gitAt(t, r.Dir, "commit", "-m", "newer work")
+	head := gitAt(t, r.Dir, "rev-parse", "HEAD")
+	// stale.txt's index publication never happened; the others were staged later.
+	gitAt(t, r.Dir, "reset", "-q", recovery.BaseCommit, "--", "stale.txt")
+	writeFile(t, filepath.Join(r.Dir, "staged.txt"), "user\n")
+	writeFile(t, filepath.Join(r.Dir, "selected/child.txt"), "later staged\n")
+	gitAt(t, r.Dir, "add", "staged.txt", "selected/child.txt")
+	if err := os.RemoveAll(filepath.Join(r.Dir, "dir")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(r.Dir, "dir"), "later staged file\n")
+	gitAt(t, r.Dir, "add", "-A", "dir")
+
+	if _, err := r.RecoverCommit(recovery, "task commit"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitAt(t, r.Dir, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("recovery moved HEAD to %s", got)
+	}
+	for path, want := range map[string]string{"stale.txt": "v2", "staged.txt": "user", "selected/child.txt": "later staged", "dir": "later staged file"} {
+		if got := gitAt(t, r.Dir, "show", ":"+path); got != want {
+			t.Fatalf("index %s = %q, want %q", path, got, want)
+		}
+	}
+	if got := gitAt(t, r.Dir, "ls-files", "--", "dir"); got != "dir" {
+		t.Fatalf("recovery resurrected entries under staged file dir: %q", got)
+	}
+	if state, _, err := r.CommitStatus(recovery, "task commit"); err != nil || state != CommitInstalled {
+		t.Fatalf("CommitStatus under descendant = %v, %v", state, err)
+	}
+}

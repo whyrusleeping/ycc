@@ -285,6 +285,79 @@ rm "$0"
 	}
 }
 
+// An installed commit whose index publication failed, followed by another
+// commit on top of it, still finalizes: the retry recognizes the commit in HEAD
+// history and advances only still-stale index paths to HEAD's versions.
+func TestCommitFinalizationRecoversInstalledCommitUnderDescendantHead(t *testing.T) {
+	ws, repo, baseline, store := setupFinalizationRepo(t)
+	hook := filepath.Join(ws, ".git", "hooks", "pre-commit")
+	script := `#!/bin/sh
+set -eu
+gitdir=$(git rev-parse --absolute-git-dir)
+mv "$gitdir/index" "$gitdir/index.saved"
+mkdir "$gitdir/index"
+rm "$0"
+`
+	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := finalizationDeps(ws, repo, baseline, store, &captureRec{})
+	if got, failed := callCommit(t, d); !failed || !strings.Contains(got, "selected index paths remain pending") {
+		t.Fatalf("index publication failure = error %v, %q", failed, got)
+	}
+	taskCommit := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD"))
+	indexPath := filepath.Join(ws, ".git", "index")
+	if err := os.Remove(indexPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(indexPath+".saved", indexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another session commits a newer owned.txt on top of the task commit
+	// without touching the real index.
+	newer := filepath.Join(t.TempDir(), "newer.txt")
+	if err := os.WriteFile(newer, []byte("newer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	blob := strings.TrimSpace(gitRun(t, ws, "hash-object", "-w", newer))
+	index := filepath.Join(t.TempDir(), "index")
+	cmd := exec.Command("sh", "-c", `GIT_INDEX_FILE="$1" git read-tree HEAD && GIT_INDEX_FILE="$1" git update-index --cacheinfo 100644,"$2",owned.txt && GIT_INDEX_FILE="$1" git write-tree`, "sh", index, blob)
+	cmd.Dir = ws
+	tree, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("build descendant tree: %v", err)
+	}
+	descendant := strings.TrimSpace(gitRun(t, ws, "commit-tree", strings.TrimSpace(string(tree)), "-p", taskCommit, "-m", "newer work"))
+	gitRun(t, ws, "update-ref", "HEAD", descendant, taskCommit)
+
+	reopened, err := git.OpenExisting(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedBaseline, err := reopened.LoadBaseline("finalization-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &captureRec{}
+	restarted := finalizationDeps(ws, reopened, reloadedBaseline, docs.NewStore(ws), recorder)
+	if got, failed := callCommit(t, restarted); failed || !strings.Contains(got, "committed ") {
+		t.Fatalf("descendant-HEAD recovery = error %v, %q", failed, got)
+	}
+	if got := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD")); got != descendant {
+		t.Fatalf("recovery moved HEAD: got %s want %s", got, descendant)
+	}
+	if got := gitRun(t, ws, "show", ":owned.txt"); got != "newer\n" {
+		t.Fatalf("stale owned.txt index entry not advanced to HEAD: %q", got)
+	}
+	if staged := strings.TrimSpace(gitRun(t, ws, "diff", "--cached", "--name-only")); staged != "unrelated.txt" {
+		t.Fatalf("recovery staged reverts or consumed unrelated staging: %q", staged)
+	}
+	if len(recorder.events) != 2 {
+		t.Fatalf("recovery events = %+v", recorder.events)
+	}
+}
+
 func TestCommitFinalizationRestoresTaskWhenCompletedCheckpointFails(t *testing.T) {
 	ws, repo, baseline, store := setupFinalizationRepo(t)
 	d := finalizationDeps(ws, repo, baseline, store, &captureRec{})

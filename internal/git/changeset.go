@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -130,9 +131,9 @@ const commitIdentityVersion = 1
 
 // CommitState describes how far an exact reviewed commit progressed. Created
 // means its identity is durable but HEAD is still at the reviewed parent;
-// installed means HEAD names that commit (index publication may still be
-// pending). Diverged means HEAD definitively contains neither the reviewed
-// commit nor its history, so the compare-and-swap did not install it.
+// installed means HEAD is that commit or a descendant of it (index publication
+// may still be pending). Diverged means HEAD has moved past the reviewed parent
+// without containing the commit, so the compare-and-swap did not install it.
 type CommitState int
 
 const (
@@ -692,9 +693,8 @@ func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 }
 
 // CommitStatus reports whether an exact commit is absent, durably created,
-// installed as HEAD, or definitively uninstalled after HEAD diverged. If the
-// commit is already in a descendant HEAD's history, it returns an error rather
-// than risk overwriting newer work during index recovery.
+// installed (HEAD is it or a descendant, e.g. another session committed on top
+// of it), or definitively uninstalled after HEAD diverged.
 func (r *Repo) CommitStatus(recovery *CommitRecovery, message string) (CommitState, string, error) {
 	identity, found, err := r.loadCommitIdentity(recovery, message)
 	if err != nil {
@@ -725,11 +725,7 @@ func (r *Repo) CommitStatus(recovery *CommitRecovery, message string) (CommitSta
 			return CommitCreated, sha, fmt.Errorf("inspect whether retained commit %s is installed in HEAD history: %w", sha, ancestorErr)
 		}
 		if installedInHistory {
-			// The completed task is committed, but publishing an index snapshot over a
-			// descendant HEAD could overwrite newer work. Keep recovery pending for
-			// explicit inspection rather than pretending either rollback or index
-			// publication is safe.
-			return CommitCreated, sha, fmt.Errorf("changeset %s commit %s is an ancestor of current HEAD %s; inspect descendant work before recovering finalization", recovery.ChangesetID, sha, shortSHA(head))
+			return CommitInstalled, sha, nil
 		}
 		return CommitDiverged, sha, nil
 	}
@@ -737,7 +733,10 @@ func (r *Repo) CommitStatus(recovery *CommitRecovery, message string) (CommitSta
 
 // RecoverCommit recognizes the exact persisted commit created for recovery and
 // finishes advancing the selected index paths. It never creates a commit and
-// refuses an unrelated HEAD move.
+// refuses an unrelated HEAD move. When HEAD already descends from the commit
+// (newer work landed on top), only selected paths whose index entries still
+// match the reviewed parent are advanced, to HEAD's versions, so neither newer
+// commits nor anyone's later staging is overwritten.
 func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, error) {
 	identity, found, err := r.loadCommitIdentity(recovery, message)
 	if err != nil {
@@ -750,11 +749,21 @@ func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if head != recovery.BaseCommit && head != identity.Commit {
-		return "", fmt.Errorf("changeset %s was not installed at current HEAD %s; expected reviewed parent %s or recovered commit %s", recovery.ChangesetID, shortSHA(head), shortSHA(recovery.BaseCommit), shortSHA(identity.Commit))
-	}
 	if err := validateRecovery(recovery); err != nil {
 		return "", err
+	}
+	if head != recovery.BaseCommit && head != identity.Commit {
+		installedInHistory, err := r.IsAncestor(identity.Commit, head)
+		if err != nil {
+			return "", fmt.Errorf("inspect whether commit %s is in HEAD history: %w", shortSHA(identity.Commit), err)
+		}
+		if !installedInHistory {
+			return "", fmt.Errorf("changeset %s was not installed at current HEAD %s; expected reviewed parent %s or recovered commit %s", recovery.ChangesetID, shortSHA(head), shortSHA(recovery.BaseCommit), shortSHA(identity.Commit))
+		}
+		if err := r.publishIndex(recovery, head, recovery.BaseCommit); err != nil {
+			return "", fmt.Errorf("commit %s is in HEAD history but could not advance selected paths in index: %w", shortSHA(identity.Commit), err)
+		}
+		return shortSHA(identity.Commit), nil
 	}
 	if head == recovery.BaseCommit {
 		if _, err := r.run("update-ref", "HEAD", identity.Commit, recovery.BaseCommit); err != nil {
@@ -777,6 +786,13 @@ func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, 
 // either waits for us or makes us wait, and is never silently overwritten by a
 // stale copy.
 func (r *Repo) publishPostCommitIndex(recovery *CommitRecovery) error {
+	return r.publishIndex(recovery, recovery.Tree, "")
+}
+
+// publishIndex resets the recovery's selected index paths to source. When
+// onlyUnchangedSince is set, paths whose index entry no longer matches that
+// tree-ish are left alone (someone staged or published them since).
+func (r *Repo) publishIndex(recovery *CommitRecovery, source, onlyUnchangedSince string) error {
 	if err := validateRecovery(recovery); err != nil {
 		return err
 	}
@@ -820,10 +836,45 @@ func (r *Repo) publishPostCommitIndex(recovery *CommitRecovery) error {
 	if err := copyFile(lockPath, work); err != nil {
 		return fmt.Errorf("prepare scoped index: %w", err)
 	}
-	resetArgs := []string{"reset", "-q", recovery.Tree, "--"}
-	resetArgs = append(resetArgs, topLiteralPathspecs(recovery.Paths)...)
-	if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + work}, resetArgs...); err != nil {
-		return fmt.Errorf("prepare post-commit index: %w", err)
+	paths := recovery.Paths
+	if onlyUnchangedSince != "" {
+		// Compare the whole index, not just the selected paths: a staged
+		// file/directory replacement can sit at an ancestor or beneath a
+		// selected path, outside a scoped query.
+		out, err := r.runEnv([]string{"GIT_INDEX_FILE=" + work}, "diff-index", "--cached", "--name-only", "-z", "--no-renames", onlyUnchangedSince)
+		if err != nil {
+			return fmt.Errorf("inspect staged paths: %w", err)
+		}
+		changed := map[string]bool{}
+		for _, path := range strings.Split(out, "\x00") {
+			if path != "" {
+				changed[path] = true
+			}
+		}
+		// A selected path is unsafe to reset when it, an entry beneath it
+		// (literal pathspecs still recurse), or a parent entry changed.
+		paths = nil
+		for _, path := range recovery.Paths {
+			unchanged := !changed[path]
+			for dir := pathpkg.Dir(path); unchanged && dir != "."; dir = pathpkg.Dir(dir) {
+				unchanged = !changed[dir]
+			}
+			for other := range changed {
+				if !unchanged {
+					break
+				}
+				unchanged = !strings.HasPrefix(other, path+"/")
+			}
+			if unchanged {
+				paths = append(paths, path)
+			}
+		}
+	}
+	if len(paths) > 0 {
+		resetArgs := append([]string{"reset", "-q", source, "--"}, topLiteralPathspecs(paths)...)
+		if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + work}, resetArgs...); err != nil {
+			return fmt.Errorf("prepare post-commit index: %w", err)
+		}
 	}
 	if err := copyFile(work, lockPath); err != nil {
 		return fmt.Errorf("write post-commit index: %w", err)
