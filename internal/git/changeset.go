@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/whyrusleeping/ycc/internal/credenv"
 )
@@ -21,6 +23,15 @@ import (
 // repository. Dirty baseline paths are excluded unless explicitly adopted.
 type Baseline struct {
 	ID string
+
+	// origin is the ID of the session baseline this one was rebased from when
+	// HEAD advanced (empty for an original capture).
+	origin string
+
+	// rebased caches the rebase of this baseline onto rebasedHead.
+	rebaseMu    sync.Mutex
+	rebasedHead string
+	rebased     *Baseline
 
 	head         string
 	indexTree    string
@@ -42,19 +53,47 @@ const (
 	baselineRecordVersion       = 2
 )
 
+// Origin returns the identity of the originally captured session baseline,
+// stable across automatic rebases onto an advanced HEAD.
+func (b *Baseline) Origin() string {
+	if b == nil {
+		return ""
+	}
+	if b.origin != "" {
+		return b.origin
+	}
+	return b.ID
+}
+
 // Changeset is the current task-owned work relative to a Baseline. Paths is an
 // explicit, sorted scope and Diff is the exact patch represented by ID.
 type Changeset struct {
 	ID                 string
 	BaselineID         string
+	BaselineOrigin     string
 	BaseCommit         string
 	Tree               string
 	Paths              []string
 	Diff               string
 	ExcludedDirtyPaths int
+	// With an Attribution: Foreign lists changed paths excluded because only
+	// other scopes wrote them; Shared lists included paths another scope also
+	// wrote; Preexisting lists included paths that were already dirty at the
+	// baseline (their earlier changes ride along because this scope edited
+	// them); Deferred lists baseline-dirty paths another scope has written
+	// since, left out of the changeset.
+	Foreign     []string
+	Shared      []string
+	Preexisting []string
+	Deferred    []string
+	// Unclaimed lists included paths no file tool of this scope wrote (shell
+	// or generator output, structured docs writes, or another writer that left
+	// no claim); their attribution is approximate.
+	Unclaimed []string
 
 	baseline *Baseline
 	adopted  []string // canonical repo-relative files, retained for commit revalidation
+	attr     *Attribution
 }
 
 // CommitRecovery is the durable identity of a reviewed scoped tree. It contains
@@ -298,7 +337,7 @@ func (r *Repo) requireObject(object, wantType string) error {
 // that was dirty at baseline is excluded while unchanged; if either its index
 // or worktree state changed, ownership is ambiguous and Changes refuses it.
 func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
-	return r.changesIncluding(b, nil)
+	return r.inspectIncluding(b, nil, nil, true)
 }
 
 // ChangesIncluding explicitly adopts individual files, including their preexisting
@@ -309,7 +348,17 @@ func (r *Repo) ChangesIncluding(b *Baseline, paths ...string) (*Changeset, error
 	if err != nil {
 		return nil, err
 	}
-	return r.changesIncluding(b, adopted)
+	return r.inspectIncluding(b, adopted, nil, true)
+}
+
+// ChangesFor is ChangesIncluding narrowed by attr to one scope's work in a
+// worktree shared with other sessions or agents (see Attribution).
+func (r *Repo) ChangesFor(b *Baseline, attr *Attribution, paths ...string) (*Changeset, error) {
+	adopted, err := r.canonicalAdoptedPaths(paths)
+	if err != nil {
+		return nil, err
+	}
+	return r.inspectIncluding(b, adopted, attr, true)
 }
 
 // InspectChanges computes the same scoped snapshot without retaining records or refs.
@@ -319,11 +368,20 @@ func (r *Repo) InspectChanges(b *Baseline, paths ...string) (*Changeset, int, er
 	if err != nil {
 		return nil, 0, err
 	}
-	c, err := r.inspectIncluding(b, adopted, false)
+	c, err := r.inspectIncluding(b, adopted, nil, false)
 	if err != nil {
 		return nil, 0, err
 	}
 	return c, c.ExcludedDirtyPaths, nil
+}
+
+// InspectChangesFor is InspectChanges narrowed by attr.
+func (r *Repo) InspectChangesFor(b *Baseline, attr *Attribution, paths ...string) (*Changeset, error) {
+	adopted, err := r.canonicalAdoptedPaths(paths)
+	if err != nil {
+		return nil, err
+	}
+	return r.inspectIncluding(b, adopted, attr, false)
 }
 
 func (r *Repo) canonicalAdoptedPaths(paths []string) ([]string, error) {
@@ -354,11 +412,7 @@ func (r *Repo) canonicalAdoptedPaths(paths []string) ([]string, error) {
 	return adopted, nil
 }
 
-func (r *Repo) changesIncluding(b *Baseline, adopted []string) (*Changeset, error) {
-	return r.inspectIncluding(b, adopted, true)
-}
-
-func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*Changeset, error) {
+func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution, persist bool) (*Changeset, error) {
 	if b == nil {
 		return nil, fmt.Errorf("changeset baseline is required; capture it before task mutation")
 	}
@@ -367,7 +421,19 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 		return nil, fmt.Errorf("inspect changeset HEAD: %w", err)
 	}
 	if head != b.head {
-		return nil, fmt.Errorf("changeset baseline %s is stale: HEAD moved from %s to %s; start a new task/session baseline before committing", b.ID, shortSHA(b.head), shortSHA(head))
+		// Another session (or this one) committed. A fast-forward is absorbed by
+		// treating the newly committed paths as clean baseline state; anything
+		// else (reset, rebase, checkout) leaves ownership unreconstructable.
+		forward, err := r.IsAncestor(b.head, head)
+		if err != nil {
+			return nil, fmt.Errorf("inspect changeset HEAD history: %w", err)
+		}
+		if !forward {
+			return nil, fmt.Errorf("changeset baseline %s is stale: HEAD moved from %s to %s outside its history; start a new task/session baseline before committing", b.ID, shortSHA(b.head), shortSHA(head))
+		}
+		if b, err = r.rebaseBaseline(b, head); err != nil {
+			return nil, fmt.Errorf("rebase changeset baseline onto %s: %w", shortSHA(head), err)
+		}
 	}
 	indexTree, err := r.writeIndexTree()
 	if err != nil {
@@ -385,6 +451,59 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 	worktreeChanged, err := r.changedPaths(b.worktreeTree, worktreeTree)
 	if err != nil {
 		return nil, err
+	}
+	currentPaths, err := r.changedPaths(head, worktreeTree)
+	if err != nil {
+		return nil, err
+	}
+	stagedPaths, err := r.changedPaths(head, indexTree)
+	if err != nil {
+		return nil, err
+	}
+	// A baseline-dirty path that changed since the baseline is ambiguous only
+	// while it still differs from HEAD: once it matches HEAD (another session
+	// committed it, or its earlier changes were discarded) nothing of it can
+	// enter this changeset.
+	ambiguous := func(path string) bool {
+		_, inIndex := indexChanged[path]
+		_, inWorktree := worktreeChanged[path]
+		if !inIndex && !inWorktree {
+			return false
+		}
+		_, differs := currentPaths[path]
+		_, staged := stagedPaths[path]
+		return differs || staged
+	}
+	explicit := adopted
+	var preexisting, deferred []string
+	if attr != nil {
+		// Baseline-dirty paths changed since the baseline: this scope's own
+		// file-tool edits are adopted (with the same staged-variant safety
+		// checks), and paths another scope is writing are deferred to it.
+		// Unclaimed changes (shell output, a user's edits, writes from before
+		// a daemon restart) stay ambiguous and are refused below.
+		isAdopted := make(map[string]bool, len(adopted))
+		for _, path := range adopted {
+			isAdopted[path] = true
+		}
+		for path := range b.dirtyPaths {
+			if isAdopted[path] || !ambiguous(path) {
+				continue
+			}
+			if attr.Mine[path] || (attr.Bookkeeping != nil && attr.Bookkeeping(path)) {
+				preexisting = append(preexisting, path)
+			} else if attr.Foreign[path] {
+				deferred = append(deferred, path)
+			}
+		}
+		sort.Strings(preexisting)
+		sort.Strings(deferred)
+		adopted = append(append([]string(nil), adopted...), preexisting...)
+		sort.Strings(adopted)
+	}
+	deferredSet := make(map[string]bool, len(deferred))
+	for _, path := range deferred {
+		deferredSet[path] = true
 	}
 	owned := make(map[string]bool, len(adopted))
 	for _, path := range adopted {
@@ -413,14 +532,10 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 	}
 	var overlaps []string
 	for path := range b.dirtyPaths {
-		if owned[path] {
+		if owned[path] || deferredSet[path] {
 			continue
 		}
-		if _, ok := indexChanged[path]; ok {
-			overlaps = append(overlaps, path)
-			continue
-		}
-		if _, ok := worktreeChanged[path]; ok {
+		if ambiguous(path) {
 			overlaps = append(overlaps, path)
 		}
 	}
@@ -429,10 +544,6 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 		return nil, fmt.Errorf("task changes overlap paths that were already dirty at baseline %s: %s; restore those paths to their captured staged/worktree state, move the task to a clean worktree, or start a new baseline after resolving ownership", b.ID, strings.Join(overlaps, ", "))
 	}
 
-	currentPaths, err := r.changedPaths(head, worktreeTree)
-	if err != nil {
-		return nil, err
-	}
 	paths := make([]string, 0, len(currentPaths))
 	excluded := 0
 	for path := range b.dirtyPaths {
@@ -440,12 +551,31 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 			excluded++
 		}
 	}
+	var foreign, shared, unclaimed []string
+	explicitSet := make(map[string]bool, len(explicit))
+	for _, path := range explicit {
+		explicitSet[path] = true
+	}
 	for path := range currentPaths {
-		if _, preexisting := b.dirtyPaths[path]; !preexisting || owned[path] {
-			paths = append(paths, path)
+		if _, dirtyAtBaseline := b.dirtyPaths[path]; dirtyAtBaseline && !owned[path] {
+			continue
 		}
+		if attr != nil && !owned[path] && attr.Foreign[path] && !attr.Mine[path] {
+			foreign = append(foreign, path)
+			continue
+		}
+		if attr != nil && attr.Foreign[path] {
+			shared = append(shared, path)
+		}
+		if attr != nil && !attr.Mine[path] && !explicitSet[path] {
+			unclaimed = append(unclaimed, path)
+		}
+		paths = append(paths, path)
 	}
 	sort.Strings(paths)
+	sort.Strings(foreign)
+	sort.Strings(shared)
+	sort.Strings(unclaimed)
 	tree, err := r.writeWorktreeTree(head, paths)
 	if err != nil {
 		return nil, fmt.Errorf("build scoped changeset: %w", err)
@@ -455,8 +585,8 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 		return nil, fmt.Errorf("render scoped changeset: %w", err)
 	}
 	id := snapshotID(b.ID, tree, strings.Join(paths, "\x00"))
-	if len(adopted) > 0 {
-		id = snapshotID(id, strings.Join(adopted, "\x00"))
+	if len(explicit) > 0 {
+		id = snapshotID(id, strings.Join(explicit, "\x00"))
 	}
 	if persist {
 		if err := r.saveChangesetRecord(changesetRecord{
@@ -465,7 +595,12 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, persist bool) (*C
 			return nil, fmt.Errorf("retain changeset snapshot %s: %w", id, err)
 		}
 	}
-	return &Changeset{ID: id, BaselineID: b.ID, BaseCommit: head, Tree: tree, Paths: paths, Diff: diff, ExcludedDirtyPaths: excluded, baseline: b, adopted: append([]string(nil), adopted...)}, nil
+	return &Changeset{
+		ID: id, BaselineID: b.ID, BaselineOrigin: b.Origin(), BaseCommit: head, Tree: tree, Paths: paths, Diff: diff,
+		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: preexisting, Deferred: deferred,
+		Unclaimed: unclaimed,
+		baseline:  b, adopted: append([]string(nil), explicit...), attr: attr,
+	}, nil
 }
 
 // Commit commits exactly the immutable scoped snapshot. It refuses if the
@@ -484,9 +619,12 @@ func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 		return "", err
 	}
 	if head != recovery.BaseCommit {
+		if _, found, err := r.loadCommitIdentity(recovery, message); err == nil && !found {
+			return "", fmt.Errorf("HEAD moved from %s to %s since changeset %s was inspected; re-inspect the scoped changes and retry", shortSHA(recovery.BaseCommit), shortSHA(head), c.ID)
+		}
 		return r.RecoverCommit(recovery, message)
 	}
-	current, err := r.changesIncluding(c.baseline, c.adopted)
+	current, err := r.inspectIncluding(c.baseline, c.adopted, c.attr, true)
 	if err != nil {
 		return "", err
 	}
@@ -501,11 +639,13 @@ func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 		return "", fmt.Errorf("nothing to commit in changeset %s", c.ID)
 	}
 
-	postPath, indexPath, err := r.preparePostCommitIndex(recovery)
+	if err := validateRecovery(recovery); err != nil {
+		return "", err
+	}
+	indexPath, err := r.indexPath()
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(postPath)
 	identity, found, err := r.loadCommitIdentity(recovery, message)
 	if err != nil {
 		return "", err
@@ -545,7 +685,7 @@ func (r *Repo) Commit(c *Changeset, message string) (string, error) {
 			return "", fmt.Errorf("advance HEAD for changeset %s: %w", c.ID, err)
 		}
 	}
-	if err := os.Rename(postPath, indexPath); err != nil {
+	if err := r.publishPostCommitIndex(recovery); err != nil {
 		return "", fmt.Errorf("commit %s succeeded but could not advance selected paths in index: %w", shortSHA(identity.Commit), err)
 	}
 	return shortSHA(identity.Commit), nil
@@ -613,11 +753,9 @@ func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, 
 	if head != recovery.BaseCommit && head != identity.Commit {
 		return "", fmt.Errorf("changeset %s was not installed at current HEAD %s; expected reviewed parent %s or recovered commit %s", recovery.ChangesetID, shortSHA(head), shortSHA(recovery.BaseCommit), shortSHA(identity.Commit))
 	}
-	postPath, indexPath, err := r.preparePostCommitIndex(recovery)
-	if err != nil {
+	if err := validateRecovery(recovery); err != nil {
 		return "", err
 	}
-	defer os.Remove(postPath)
 	if head == recovery.BaseCommit {
 		if _, err := r.run("update-ref", "HEAD", identity.Commit, recovery.BaseCommit); err != nil {
 			now, inspectErr := r.RevParse("HEAD")
@@ -626,40 +764,75 @@ func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, 
 			}
 		}
 	}
-	if err := os.Rename(postPath, indexPath); err != nil {
+	if err := r.publishPostCommitIndex(recovery); err != nil {
 		return "", fmt.Errorf("commit %s exists but could not advance selected paths in index: %w", shortSHA(identity.Commit), err)
 	}
 	return shortSHA(identity.Commit), nil
 }
 
-func (r *Repo) preparePostCommitIndex(recovery *CommitRecovery) (postPath, indexPath string, err error) {
+// publishPostCommitIndex advances only the committed paths in the real index
+// to the committed tree, leaving every other staged entry as it is now. It
+// follows git's own locking protocol — build the new index in index.lock, then
+// rename it into place — so a concurrent `git add` from another session's shell
+// either waits for us or makes us wait, and is never silently overwritten by a
+// stale copy.
+func (r *Repo) publishPostCommitIndex(recovery *CommitRecovery) error {
 	if err := validateRecovery(recovery); err != nil {
-		return "", "", err
+		return err
 	}
-	indexPath, err = r.indexPath()
+	indexPath, err := r.indexPath()
 	if err != nil {
-		return "", "", err
+		return err
 	}
-	postIndex, err := os.CreateTemp(filepath.Dir(indexPath), "ycc-post-index-*")
+	lockPath := indexPath + ".lock"
+	var lock *os.File
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		lock, err = os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) || time.Now().After(deadline) {
+			return fmt.Errorf("lock index: %w", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	published := false
+	defer func() {
+		if !published {
+			os.Remove(lockPath)
+		}
+	}()
+	if err := lock.Close(); err != nil {
+		return fmt.Errorf("lock index: %w", err)
+	}
+	if err := copyFile(indexPath, lockPath); err != nil {
+		return fmt.Errorf("preserve index: %w", err)
+	}
+	// Build the new index in a private file seeded from the locked snapshot; git
+	// would otherwise try to take <file>.lock on the lock file itself.
+	dir, err := os.MkdirTemp(filepath.Dir(indexPath), "ycc-post-index-*")
 	if err != nil {
-		return "", "", fmt.Errorf("prepare scoped index: %w", err)
+		return fmt.Errorf("prepare scoped index: %w", err)
 	}
-	postPath = postIndex.Name()
-	if err := postIndex.Close(); err != nil {
-		os.Remove(postPath)
-		return "", "", fmt.Errorf("prepare scoped index: %w", err)
-	}
-	if err := copyFile(indexPath, postPath); err != nil {
-		os.Remove(postPath)
-		return "", "", fmt.Errorf("preserve index: %w", err)
+	defer os.RemoveAll(dir)
+	work := filepath.Join(dir, "index")
+	if err := copyFile(lockPath, work); err != nil {
+		return fmt.Errorf("prepare scoped index: %w", err)
 	}
 	resetArgs := []string{"reset", "-q", recovery.Tree, "--"}
 	resetArgs = append(resetArgs, topLiteralPathspecs(recovery.Paths)...)
-	if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + postPath}, resetArgs...); err != nil {
-		os.Remove(postPath)
-		return "", "", fmt.Errorf("prepare post-commit index: %w", err)
+	if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + work}, resetArgs...); err != nil {
+		return fmt.Errorf("prepare post-commit index: %w", err)
 	}
-	return postPath, indexPath, nil
+	if err := copyFile(work, lockPath); err != nil {
+		return fmt.Errorf("write post-commit index: %w", err)
+	}
+	if err := os.Rename(lockPath, indexPath); err != nil {
+		return err
+	}
+	published = true
+	return nil
 }
 
 func validateRecovery(recovery *CommitRecovery) error {

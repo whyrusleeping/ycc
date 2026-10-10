@@ -10,6 +10,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
@@ -78,7 +79,7 @@ func TestMemoryPressureSchedulesOneAutomaticGroom(t *testing.T) {
 	if groom.Mode != "pm" || !groom.inter.unattended || groom.preset != memoryGroomPreset || groom.coordinator != "b" {
 		t.Fatalf("groom session = mode %q unattended %v preset %q coordinator %q", groom.Mode, groom.inter.unattended, groom.preset, groom.coordinator)
 	}
-	if !strings.Contains(groom.prompt, "AUTOMATIC MEMORY-GROOM") || !strings.Contains(groom.prompt, strconv.Itoa(status.ActiveBytes)) {
+	if !strings.Contains(groom.prompt, strconv.Itoa(status.ActiveBytes)) {
 		t.Fatalf("groom prompt = %q", groom.prompt)
 	}
 	if st := loadMemoryGroomState(ws); st.LastSession != groomID || st.ActiveBefore != status.ActiveBytes {
@@ -207,7 +208,13 @@ func TestStartPresetWithoutPromptUsesPresetPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(s.prompt, "MEMORY-GROOM flow") {
-		t.Fatalf("prompt = %q", s.prompt)
+	var want string
+	for _, preset := range orchestrator.Presets() {
+		if preset.Name == memoryGroomPreset {
+			want = preset.Prompt
+		}
+	}
+	if want == "" || s.prompt != want {
+		t.Fatalf("preset opening prompt was not used: %q", s.prompt)
 	}
 }

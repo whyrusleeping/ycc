@@ -1428,7 +1428,7 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
   public var reviewersThinking: String = String()
 
   /// Effective work-mode implementation strategy (work.implementation), resolved
-  /// to "delegate" when unset, so settings clients show the real current default.
+  /// to "direct" when unset, so settings clients show the real current default.
   public var workImplementation: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

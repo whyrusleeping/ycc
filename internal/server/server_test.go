@@ -146,11 +146,11 @@ func TestSetWorkImplementationPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial ListModels: %v", err)
 	}
-	if initial.Msg.WorkImplementation != "delegate" {
-		t.Fatalf("initial work implementation = %q, want delegate", initial.Msg.WorkImplementation)
+	if initial.Msg.WorkImplementation != "direct" {
+		t.Fatalf("initial work implementation = %q, want direct", initial.Msg.WorkImplementation)
 	}
 	if _, err := srv.SetWorkImplementation(ctx, connect.NewRequest(&v1.SetWorkImplementationRequest{
-		Implementation: "direct",
+		Implementation: "delegate",
 	})); err != nil {
 		t.Fatalf("SetWorkImplementation: %v", err)
 	}
@@ -158,15 +158,15 @@ func TestSetWorkImplementationPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
-	if list.Msg.WorkImplementation != "direct" {
-		t.Fatalf("work implementation = %q, want direct", list.Msg.WorkImplementation)
+	if list.Msg.WorkImplementation != "delegate" {
+		t.Fatalf("work implementation = %q, want delegate", list.Msg.WorkImplementation)
 	}
 	reloaded, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Work.Implementation != "direct" {
-		t.Fatalf("persisted work implementation = %q, want direct", reloaded.Work.Implementation)
+	if reloaded.Work.Implementation != "delegate" {
+		t.Fatalf("persisted work implementation = %q, want delegate", reloaded.Work.Implementation)
 	}
 
 	if _, err := srv.SetWorkImplementation(ctx, connect.NewRequest(&v1.SetWorkImplementationRequest{

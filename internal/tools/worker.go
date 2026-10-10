@@ -69,7 +69,7 @@ var imageMediaTypes = map[string]string{
 // is set, job discovery/progress/result/wait/cancellation tools are included too
 // and Bash gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
-	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web(ws.Root)...)
+	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
 	if ws.Jobs != nil {
 		ts = append(ts, JobTools(ws)...)
 	}
@@ -87,16 +87,10 @@ func Worker(ws *Workspace) []*gollama.Tool {
 func readFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Read",
-		Description: "Read a file. Text files are returned with line numbers in cat -n format " +
-			"(line number, a tab, then the line). file_path may be any absolute path — including files outside " +
-			"the workspace such as sibling projects or dependency source (e.g. the Go module cache) — or a path " +
-			"relative to the workspace root. Text reads scan at most 8 MiB, retain at most 64 KiB per source line, " +
-			"render at most 2000 Unicode code points per line, and return at most 2000 lines or 128 KiB; use " +
-			"offset (1-based start line) and limit (maximum 2000) to " +
-			"read a specific window. Regular files up to 8 MiB also report a full-content source_revision for safe " +
-			"Write overwrite calls; it is distinct from the bounded projection hash. Images (PNG, JPEG, GIF, WebP) " +
-			"and PDFs are returned natively as visual content. Passing a directory path lists up to 1000 immediate " +
-			"entries (subdirectories have a trailing '/').",
+		Description: "Read numbered text (up to 2000 lines/128 KiB; inspect truncation metadata), native images/PDFs, " +
+			"or up to 1000 directory entries. Paths may be absolute outside the workspace or workspace-relative. " +
+			"Use offset/limit for text windows. Regular files up to 8 MiB report full-content source_revision " +
+			"for Write overwrite; projection_sha256 is not a source revision.",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
 			"offset":    map[string]any{"type": "integer", "minimum": 1, "description": "1-based line number to start reading from (optional; text files only)"},
@@ -804,13 +798,9 @@ func atomicPublish(path string, data []byte, mode os.FileMode, createOnly bool) 
 func writeFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Write",
-		Description: "Write full file content with an explicit creation/overwrite policy. policy defaults to " +
-			"create, which fails if the path already exists. Replacing an existing file requires policy=overwrite " +
-			"and expected_revision set to its 64-character full-content SHA-256 source_revision from Read (not " +
-			"Read's projection_sha256); use sha256sum for files beyond Read's revision limit. Stale or invalid " +
-			"revisions fail without changing the file. Creates parent " +
-			"directories as needed. file_path may be absolute within the workspace or a configured extra writable " +
-			"root, or relative to the workspace root.",
+		Description: "Write a whole file, creating parent directories. Default create refuses existing paths. " +
+			"Overwrite requires the current full-content SHA-256 revision; stale revisions leave the file unchanged. " +
+			"Paths are workspace-relative or absolute within the workspace/configured write roots.",
 		Params: obj(map[string]any{
 			"file_path": strProp("absolute path to the file (or relative to the workspace root)"),
 			"content":   strProp("the full content to write to the file; an empty string creates an empty file"),
@@ -818,7 +808,7 @@ func writeFile(ws *Workspace) *gollama.Tool {
 				"type": "string", "enum": []string{"create", "overwrite"},
 				"description": "create (default) refuses existing paths; overwrite requires expected_revision",
 			},
-			"expected_revision": strProp("required with policy=overwrite: the existing file's 64-character full-content SHA-256 revision from Read source_revision or sha256sum"),
+			"expected_revision": strProp("overwrite precondition: 64-character Read source_revision (not projection_sha256), or sha256sum for larger files"),
 		}, "file_path", "content"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			fp, ok := getString(params, "file_path")
@@ -857,11 +847,11 @@ func writeFile(ws *Workspace) *gollama.Tool {
 			if err != nil {
 				return errResult("Write: %v", err), nil
 			}
-			lease, err := ws.acquirePathMutation(abs)
+			release, claim, err := ws.acquireFileWrite(ctx, abs)
 			if err != nil {
 				return errResult("Write: %v", err), nil
 			}
-			defer lease.Release()
+			defer release()
 			if err := ctx.Err(); err != nil {
 				return errResult("Write: %v", err), nil
 			}
@@ -904,6 +894,8 @@ func writeFile(ws *Workspace) *gollama.Tool {
 					return errResult("Write: %v", err), nil
 				}
 			}
+			claim()
+			release()
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
 			}
@@ -915,9 +907,8 @@ func writeFile(ws *Workspace) *gollama.Tool {
 func editFile(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Edit",
-		Description: "Perform an exact string replacement in a file. old_string must match exactly once in the " +
-			"file (include enough surrounding context to make it unique). Fails if old_string is not found, or if " +
-			"it matches more than once. Success returns a bounded, line-referenced changed-region receipt.",
+		Description: "Replace one exact occurrence of old_string; include enough context to make it unique. " +
+			"Missing or multiple matches fail unchanged. Returns a bounded changed-region receipt.",
 		Params: obj(map[string]any{
 			"file_path":  strProp("absolute path to the file (or relative to the workspace root)"),
 			"old_string": strProp("the exact text to replace"),
@@ -947,11 +938,11 @@ func editFile(ws *Workspace) *gollama.Tool {
 			if err != nil {
 				return errResult("Edit: %v", err), nil
 			}
-			lease, err := ws.acquirePathMutation(abs)
+			release, claim, err := ws.acquireFileWrite(ctx, abs)
 			if err != nil {
 				return errResult("Edit: %v", err), nil
 			}
-			defer lease.Release()
+			defer release()
 			if err := ctx.Err(); err != nil {
 				return errResult("Edit: %v", err), nil
 			}
@@ -983,6 +974,8 @@ func editFile(ws *Workspace) *gollama.Tool {
 			if err := atomicPublish(publishPath, []byte(updated), info.Mode(), false); err != nil {
 				return errResult("Edit: %v", err), nil
 			}
+			claim()
+			release()
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
 			}
@@ -1001,14 +994,10 @@ func editFile(ws *Workspace) *gollama.Tool {
 }
 
 func bash(ws *Workspace) *gollama.Tool {
-	desc := "Run a shell command and return a UTF-8-safe combined stdout+stderr preview, bounded to 64 KiB/2000 lines with useful head and tail when truncated. Captures up to 4 MiB are retained under an authorized artifact id for tool_output range retrieval; larger capture loss is explicit. Each call runs " +
-		"in a fresh shell already rooted at the workspace, and shell state (including the working directory) does " +
-		"NOT persist between calls — so there is never a need to `cd` into the workspace root; just run " +
-		"the command directly (write `go test ./...`, not `cd <workspace> && go test ./...`). Use this to explore " +
-		"and inspect: list files, run builds/tests, and handle searches outside the first-class Search tool's " +
-		"textual contract. Prefer Search over shell quoting for ordinary text/path queries and Read over `cat` for viewing files. Foreground commands time out after 2 minutes " +
-		"by default; set timeout_s to change the runtime limit (maximum 3600 seconds). Background commands have no " +
-		"runtime limit by default; for them, timeout_s sets a total job-runtime limit."
+	desc := "Run a command in a fresh shell at the workspace root; shell state does not persist. " +
+		"Returns a UTF-8-safe stdout/stderr head/tail preview (64 KiB/2000 lines); captures up to 4 MiB " +
+		"are retrievable with tool_output, with capture loss reported. Foreground timeout defaults to " +
+		"120 seconds (maximum 3600); background jobs have no runtime limit unless timeout_s is set."
 	params := map[string]any{
 		"command": strProp("shell command to execute via 'sh -c'"),
 		"timeout_s": map[string]any{
@@ -1017,22 +1006,18 @@ func bash(ws *Workspace) *gollama.Tool {
 		},
 	}
 	if ws.Jobs != nil {
-		desc += " Use run_in_background only to overlap the command with meaningful independent work or to leave a " +
-			"watcher running. If you need the result before doing anything else, keep it foreground and increase timeout_s " +
-			"instead; do not start one background job and immediately wait for it. Do NOT poll a background job. "
+		desc += " Background is for independent overlap or watchers; otherwise stay foreground. Do not poll. "
 		// Only the coordinator/pm/chat loop drains finished-job notifications at its
 		// session Checkpoint, so its background reports are pushed automatically.
 		// The implementer's loop has no checkpoint drain: wait can synchronize during
 		// the run, and its exit lifecycle accounts any remaining completed reports.
 		if bgAutoDelivered(ws) {
-			desc += "Its report is delivered automatically when it finishes, or call wait(job_ids) after your independent " +
-				"work when its result gates the next step. Use job_output to peek at partial output, kill_job to stop it."
-			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately; use only to overlap meaningful independent work or leave a watcher running, never to immediately call wait")
+			desc += "Reports arrive automatically; wait when needed. Use job_output for output, kill_job to stop."
+			params["run_in_background"] = BoolProp("start a background job and return its id (default false)")
 		} else {
-			desc += "After doing independent work, call wait(job_ids) when the result gates the next step. Use job_output " +
-				"to peek at partial output, kill_job to stop it. Finishing your subagent run stops and joins owned jobs unless " +
-				"you explicitly list an intentional watcher and its purpose in finish(handoff_jobs)."
-			params["run_in_background"] = BoolProp("run the command as a background job and return a job_id immediately; use only to overlap meaningful independent work or leave a watcher running, never to immediately call wait")
+			desc += "Use wait for completion. Finishing this subagent stops/joins owned jobs unless an intentional " +
+				"watcher and its purpose are listed in finish(handoff_jobs)."
+			params["run_in_background"] = BoolProp("start a background job and return its id (default false)")
 		}
 	}
 	return &gollama.Tool{
@@ -1047,11 +1032,11 @@ func bash(ws *Workspace) *gollama.Tool {
 // all source bytes and modes read-only; otherwise it fails closed and reviewers
 // retain the non-shell Read and Search tools.
 func sandboxedBash(ws *Workspace) *gollama.Tool {
-	desc := "Run a shell command in the securely read-only live workspace for inspection, or set source_bound=true to run it from an exact private materialization of the assigned Git tree for independent verification. " +
-		"A normal call is NOT evidence that the assigned snapshot was built. A source-bound call writes Git blobs and modes directly without checkout filters or export transformations, and the result returns a trusted receipt_id for that command and snapshot. " +
-		"Every call gets empty private CARGO_TARGET_DIR, CARGO_HOME, TMPDIR, and Go caches; a source-bound call also gets the writable source copy. This avoids workspace writes, cross-device artifact moves, stale targets, and shared-cache collisions. Dependencies, source-local build scripts, and outputs may write only inside that scratch tree. " +
-		"The writable source, caches, temporary files, and outputs share a hard 4 GiB/1,000,000-inode tmpfs capacity; exact-tree staging is separately bounded to 4 GiB of blobs and 100,000 entries and is removed after the call. Commands time out after 2 minutes by default (maximum 3600 seconds). If this host's secure sandbox cannot support compiler renames, source_bound is reported unavailable rather than run with weaker confinement. " +
-		"The original workspace, Git index, and lockfiles remain read-only. Prefer Search for ordinary text/path queries and Read over `cat`."
+	desc := "Inspect the read-only live workspace, or set source_bound=true to build/test an exact private " +
+		"copy of the assigned Git tree with fresh caches. Only source-bound calls return a receipt_id proving " +
+		"execution against that snapshot; ordinary calls do not. Source, caches, and outputs share a bounded " +
+		"private scratch tree (4 GiB). Timeout defaults to 120 seconds (maximum 3600). If secure verification " +
+		"cannot run on this host, it reports unavailable; the original worktree/index stay read-only."
 	if sandbox.Available() != sandbox.None {
 		desc += " NOTE: the workspace is mounted READ-ONLY for you — commands that try to write to, truncate, chmod, or delete from " +
 			"the workspace will fail. That is expected; you are a reviewer, not an editor."
@@ -1411,6 +1396,11 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		// Shell commands deliberately do not take the worktree mutation lease:
 		// most are reads/builds/tests, and serializing every command across
 		// sessions and agents costs far more than the rare clobber it prevents.
+		// Their writes are attributed afterwards instead (see shellclaims.go).
+		if !sandboxed {
+			before := ws.snapshotShell()
+			defer ws.claimShellChanges(before)
+		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		var (
@@ -1589,6 +1579,8 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = 10 * time.Second
 
+	// Bracket the job for shell write attribution; claims land when it exits.
+	before := ws.snapshotShell()
 	if err := cmd.Start(); err != nil {
 		cancelTimeout()
 		result := "exit: failed to start: " + err.Error()
@@ -1604,6 +1596,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		defer job.ExecutionComplete()
 		defer cancelTimeout()
 		err := cmd.Wait()
+		ws.claimShellChanges(before)
 		status := jobs.Done
 		exitInfo := "exit 0"
 		if err != nil && timeout > 0 && cmdCtx.Err() == context.DeadlineExceeded {

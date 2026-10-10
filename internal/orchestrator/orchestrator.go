@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -22,12 +24,6 @@ import (
 )
 
 const maxDiffChars = 16000
-
-// implementerMinTok is the floor on the implementer's per-turn output token cap.
-// The implementer reasons (extended thinking) and writes large multi-file edits
-// in the same turn, both drawing on this budget; a low cap truncates the turn
-// before a tool call lands. It only raises the configured cap, never lowers it.
-const implementerMinTok = 16384
 
 const maxRevisionHandoffBytes = 32 * 1024
 
@@ -84,6 +80,7 @@ type Asker interface {
 // reviewer agents to spawn, or (SelfReview) that the coordinator reviews the
 // change itself (the 'self-review' tier). It is produced by Deps.ReviewTier.
 type ReviewPlan struct {
+	Err        error       // requested independent review cannot run
 	Tier       string      // effective tier name used
 	SelfReview bool        // self-review tier: coordinator self-reviews; no agents spawned
 	Specs      []AgentSpec // reviewer agents to spawn (empty when SelfReview)
@@ -156,8 +153,8 @@ type Deps struct {
 	// workspace plus these roots.
 	WriteRoots []string
 
-	// WorkImplementation is "delegate" (the default) or "direct". Direct mode
-	// removes the implementer tools and lets the coordinator edit.
+	// WorkImplementation defaults to direct; explicit delegate uses an implementer.
+	// Both strategies retain independent review.
 	WorkImplementation string
 
 	// Jobs is the session-scoped background-job registry (docs/design/async-jobs.md).
@@ -226,31 +223,30 @@ func (d *Deps) mutationToken(owner string) *workspacelease.Token {
 	if d.Ownership == nil {
 		return nil
 	}
-	if d.CoordinatorToken != nil {
-		owner = d.CoordinatorToken.Owner() + " / " + owner
-	}
-	return d.Ownership.NewToken(owner)
+	return d.Ownership.Child(d.CoordinatorToken, owner)
 }
 
-func (d *Deps) acquireMutation(token *workspacelease.Token) (*workspacelease.Lease, error) {
-	if d.Ownership == nil {
-		return nil, nil
+// docsWriteLock serializes file-tool edits of docs-layer prose (backlog,
+// memory, plans, spec/docs, Markdown) with the structured docs writers.
+func (d *Deps) docsWriteLock() func(string) (func(), bool) {
+	if d.Docs == nil {
+		return nil
 	}
-	return d.Ownership.Acquire(d.Workspace, token)
+	return d.Docs.DocsWriteLock
 }
 
-func coordinatorMutation(d *Deps, tool *gollama.Tool) *gollama.Tool {
-	call := tool.Call
-	tool.Call = func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-		lease, err := d.acquireMutation(d.CoordinatorToken)
-		if err != nil {
-			return tools.ErrResult("%s: %v", tool.Name, err), nil
-		}
-		defer lease.Release()
-		return call(ctx, params)
+// sharedBookkeeping reports backlog/memory paths whose writes are not
+// attributed to the writing session.
+func (d *Deps) sharedBookkeeping() func(string) bool {
+	if d.Docs == nil {
+		return nil
 	}
-	return tool
+	return d.Docs.IsBookkeeping
 }
+
+// mutationWait bounds how long an operation-scoped worktree section (a commit)
+// waits for another one (a commit, a workstream merge) in the same tree.
+const mutationWait = 2 * time.Minute
 
 type reviewerHandle struct {
 	name               string // display label (tier reviewer name, or the model name)
@@ -314,7 +310,78 @@ func (d *Deps) changeset(taskID string) (*git.Changeset, error) {
 	if err != nil {
 		return nil, err
 	}
+	if attr := d.attribution(); attr != nil {
+		return d.Repo.ChangesFor(d.Baseline, attr, path)
+	}
 	return d.Repo.ChangesIncluding(d.Baseline, path)
+}
+
+// attribution narrows this session's changeset in a worktree shared with other
+// sessions: paths only other scopes wrote through file tools are excluded. It
+// is nil (strict single-owner attribution) without a scoped ownership service.
+func (d *Deps) attribution() *git.Attribution {
+	if d.Ownership == nil || d.CoordinatorToken.Scope() == "" {
+		return nil
+	}
+	d.pruneCleanClaims()
+	mine, foreign := d.Ownership.Split(d.Workspace, d.CoordinatorToken.Scope())
+	return &git.Attribution{Mine: mine, Foreign: foreign, Bookkeeping: BookkeepingPaths(d.Workspace, d.Docs)}
+}
+
+// pruneCleanClaims retires every scope's claims on paths that now match HEAD
+// (committed by anyone, or reverted), so a later edit starts fresh attribution
+// rather than reviving a stale claimant.
+func (d *Deps) pruneCleanClaims() {
+	claims := d.Ownership.Claims(d.Workspace)
+	if len(claims) == 0 || d.Repo == nil {
+		return
+	}
+	paths := make([]string, 0, len(claims))
+	for path := range claims {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	d.releaseCleanClaims(paths)
+}
+
+// releaseCleanClaims retires every scope's claims on those of paths that match
+// HEAD. Claims recorded after the check began (a write landing concurrently)
+// are kept.
+func (d *Deps) releaseCleanClaims(paths []string) {
+	generation := d.Ownership.Generation()
+	clean, err := d.Repo.CleanAgainstHEAD(paths)
+	if err != nil || len(clean) == 0 {
+		return
+	}
+	released := make([]string, 0, len(clean))
+	for path := range clean {
+		released = append(released, path)
+	}
+	d.Ownership.ReleaseAll(d.Workspace, released, generation)
+}
+
+// BookkeepingPaths adapts docs.Store.IsBookkeeping to repository-relative
+// paths (Git's namespace, rooted at the worktree's top level) for change
+// attribution. It returns nil when store is nil or the worktree is unknown.
+func BookkeepingPaths(workspace string, store *docs.Store) func(string) bool {
+	if store == nil {
+		return nil
+	}
+	top, err := workspacelease.Canonical(workspace)
+	if err != nil {
+		return nil
+	}
+	resolved, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return nil
+	}
+	return func(rel string) bool {
+		inWorkspace, err := filepath.Rel(resolved, filepath.Join(top, filepath.FromSlash(rel)))
+		if err != nil || inWorkspace == ".." || strings.HasPrefix(inWorkspace, ".."+string(filepath.Separator)) {
+			return false
+		}
+		return store.IsBookkeeping(filepath.Join(workspace, inWorkspace))
+	}
 }
 
 func (d *Deps) reviewerSpecs() []AgentSpec {
@@ -331,7 +398,8 @@ func (d *Deps) reviewerSpecs() []AgentSpec {
 func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry {
 	reg := tools.New()
 	reg.Add(tools.Editing(ws)...)
-	reg.Add(listBacklog(d), getTask(d), coordinatorMutation(d, proposePlan(d)), spawnReviewers(d), reReview(d))
+	// propose_plan is a docs.Store task write like update_task: unleased.
+	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d))
 	if !direct {
 		reg.Add(spawnImplementer(d), sendToImplementer(d))
 	}
@@ -339,7 +407,7 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	// serialized by the store's directory lock; they deliberately skip the
 	// worktree execution lease so bookkeeping never fails just because a
 	// background implementer/agent (or another session) is mid-run.
-	reg.Add(askUser(d), coordinatorMutation(d, commitTool(d)), updateTask(d),
+	reg.Add(askUser(d), commitTool(d), updateTask(d),
 		createTask(d), remember(d), forget(d), tools.Finish())
 	return reg
 }
@@ -510,7 +578,7 @@ func backlogEligibilityKind(e docs.TaskEligibility) string {
 func getTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "get_task",
-		Description: "Read a single backlog task in full (frontmatter + description, acceptance criteria, work log).",
+		Description: "Read a task in full plus its current status/dependency eligibility.",
 		Params:      tools.Obj(map[string]any{"task_id": tools.StrProp("task id, e.g. 0001")}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -518,21 +586,24 @@ func getTask(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("get_task: %v", err), nil
 			}
-			return tools.OkResult(renderTask(t)), nil
+			tasks, err := d.Docs.ListMetadata()
+			if err != nil {
+				return tools.ErrResult("get_task: cannot determine eligibility: %v", err), nil
+			}
+			mark, _ := backlogEligibilityText(docs.EligibilityFor(t, docs.StatusByID(tasks)))
+			return tools.OkResult(renderTask(t) + "\n\nWork eligibility: [" + mark + "]"), nil
 		},
 	}
 }
 
 func proposePlan(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name: "propose_plan",
-		Description: "Persist an implementation plan when a task is complex, ambiguous, or multi-step; routine changes do not need one. " +
-			"Optionally attach concise, advisory context_hints (relevant file paths, function/symbol refs, or small " +
-			"snippets) recorded alongside the plan as non-prescriptive starting points for the implementer.",
+		Name:        "propose_plan",
+		Description: "Persist a plan for complex/ambiguous work; skip for routine changes. Optional hints are advisory starting points.",
 		Params: tools.Obj(map[string]any{
 			"task_id":       tools.StrProp("task id"),
 			"plan":          tools.StrProp("the implementation plan"),
-			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — recorded alongside the plan as non-prescriptive hints to cut the implementer's redundant exploration; keep them short, no full-file dumps"),
+			"context_hints": tools.StrArrProp("short advisory paths/symbols/snippets; no file dumps"),
 		}, "task_id", "plan"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -560,18 +631,13 @@ func proposePlan(d *Deps) *gollama.Tool {
 func spawnImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_implementer",
-		Description: "Delegate implementation of a task to a coding subagent. It edits the workspace and returns a " +
-			"report plus an identified, explicitly scoped changeset diff. Provide the task id and a concise approach. Optionally attach advisory " +
-			"context_hints (relevant file paths, function/symbol refs, or small snippets) surfaced to the worker as " +
-			"non-prescriptive 'starting points'. For files the worker will certainly need, preload_files accepts " +
-			"structured path/offset/limit tuples and pre-reads them into its initial context. Call once per task; use send_to_implementer for follow-up revisions. " +
-			"Pass background:true to run it as a background job (returns a job_id immediately, report arrives via wait " +
-			"or automatically) — only when you have genuinely independent work to do meanwhile; at most one mutating " +
-			"job per tree.",
+		Description: "Delegate a task/approach to a coding subagent; returns its report and scoped changeset evidence. " +
+			"One implementer slot per session; use send_to_implementer for revisions. Optional hints/preloaded files " +
+			"save exploration. Background returns a job_id; use only for independent overlap. Keep concurrent writers' files disjoint.",
 		Params: tools.Obj(map[string]any{
 			"task_id":       tools.StrProp("task id"),
 			"plan":          tools.StrProp("the concise approach the implementer should follow"),
-			"context_hints": tools.StrArrProp("optional, concise advisory starting points — relevant file paths, function/symbol refs, or small snippets — surfaced to the worker as non-prescriptive hints to cut redundant exploration; keep them short, no full-file dumps"),
+			"context_hints": tools.StrArrProp("short advisory paths/symbols/snippets; no file dumps"),
 			"preload_files": map[string]any{
 				"type": "array",
 				"description": "optional files to pre-read into the implementer's seed context; at most 16 tuples and 64 KiB total. " +
@@ -586,7 +652,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 					"required": []string{"path"},
 				},
 			},
-			"background": tools.BoolProp("run as a background job: return a job_id immediately instead of blocking; its report arrives automatically or via wait. Use only for genuinely independent work — refused while another mutating job is live in this tree (route parallel mutating work through a workstream)"),
+			"background": tools.BoolProp("return a job_id immediately instead of blocking (default false)"),
 		}, "task_id", "plan"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -598,28 +664,20 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_implementer: %v", err), nil
 			}
-			// Background workers require an entirely idle tree. A foreground worker
-			// may overlap shell work, but never another mutating agent.
-			if background {
-				if d.Jobs == nil {
-					return tools.ErrResult("spawn_implementer: background subagents are not available in this session"), nil
-				}
-				if live := d.Jobs.LiveMutating(); live != nil {
-					return tools.ErrResult("spawn_implementer: another mutating job (%s: %s) is live in this tree; wait for it or kill_job it, or route parallel mutating work through a separate workstream (spec §14.1)", live.ID(), live.Label()), nil
-				}
-			} else if live := d.liveImplJob(); live != nil {
-				return tools.ErrResult("spawn_implementer: a background implementer (%s: %s) is still running in this tree; wait for it or kill_job it before spawning another implementer, or route parallel mutating work through a separate workstream (spec §14.1)", live.ID(), live.Label()), nil
+			// A session has one implementer slot. Other mutating work (agents, other
+			// sessions) may run alongside it: writes are attributed per session, not
+			// serialized by a lifetime lock.
+			if background && d.Jobs == nil {
+				return tools.ErrResult("spawn_implementer: background subagents are not available in this session"), nil
+			}
+			if live := d.liveImplJob(); live != nil {
+				return tools.ErrResult("spawn_implementer: this session's implementer (%s: %s) is still running; wait for it or kill_job it before spawning another implementer, or use send_to_implementer / spawn_agent for parallel work", live.ID(), live.Label()), nil
 			}
 			token := d.mutationToken(fmt.Sprintf("implementer for task %s", id))
-			lease, err := d.acquireMutation(token)
-			if err != nil {
-				return tools.ErrResult("spawn_implementer: %v", err), nil
-			}
 			releaseOnReturn := true
 			var activeLoop *engine.Loop
 			defer func() {
 				if releaseOnReturn {
-					lease.Release()
 					d.finishImplementerExecution(token, activeLoop)
 				}
 			}()
@@ -634,18 +692,11 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				Emitter:       d.Emitter.With("implementer"),
 				Ownership:     d.Ownership,
 				MutationToken: token,
+				DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
 			})...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 			activeLoop = loop
-			// The implementer needs more output headroom than the shared cap: a
-			// single turn may interleave an extended-thinking block with a large
-			// multi-file edit, and the thinking counts against the same budget. Too
-			// low a cap truncates the turn before any tool call lands (see fix in
-			// engine.Run). Floor it so a thorough turn isn't cut off mid-thought.
-			if loop.MaxTok < implementerMinTok {
-				loop.MaxTok = implementerMinTok
-			}
 			preloaded := buildPreloadHistory(ctx, reg, preloads)
 			if len(preloaded.History) > 0 {
 				loop.SetHistory(preloaded.History)
@@ -693,7 +744,6 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 					if job.Finish(status, out.Content) {
 						emitAgentJobFinished(d.Emitter, job)
 					}
-					lease.Release()
 					d.finishImplementerExecution(token, loop)
 					job.ExecutionComplete()
 				}()
@@ -761,13 +811,6 @@ func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, token *work
 		return tools.OkResult("IMPLEMENTER REPORT (changeset deferred while handed-off mutation remains active)\n\n" + fullReport +
 			"\n\nWait for or stop the handed-off job before reviewing, revising, or starting subsequent mutating work.")
 	}
-	finalizeLease, err := d.acquireMutation(token)
-	if err != nil {
-		fin["error"] = err.Error()
-		d.Emitter.Emit(event.SubagentFinished, fin)
-		return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v%s", err, lifecycle.note)
-	}
-	defer finalizeLease.Release()
 	if res.Blocked {
 		fin["blocked"] = true
 	}
@@ -855,11 +898,9 @@ func emitAgentJobFinished(em *event.Emitter, job *jobs.Job) {
 func sendToImplementer(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "send_to_implementer",
-		Description: "Send consolidated revision instructions to the implementer. context_mode defaults to 'retain', " +
-			"which reuses its history for a small, local correction. Near the configured model context budget it " +
-			"automatically switches to a fresh replacement. Explicit 'fresh' remains useful for a broad rewrite, material " +
-			"approach change, or obsolete history. Fresh replacements preserve the resolved slot and receive the full task, " +
-			"current bounded diff, latest verification report, and your compact self-contained handoff.",
+		Description: "Revise the completed implementer run. Retain useful history or choose fresh for a changed " +
+			"approach/obsolete context. Near-limit history refreshes automatically. Fresh keeps the resolved model " +
+			"and receives the task, current diff, verification report, and your handoff.",
 		Params: tools.Obj(map[string]any{
 			"task_id":      tools.StrProp("task id"),
 			"instructions": tools.StrProp("clear, consolidated, self-contained instructions: unresolved findings, current intended approach, and required verification; bounded to 32 KiB"),
@@ -891,19 +932,11 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 			token := d.implToken
 			priorRound := d.implRound
 			priorReport := d.implReport
-			lease, err := d.acquireMutation(token)
-			if err != nil {
-				d.mu.Unlock()
-				return tools.ErrResult("send_to_implementer: %v", err), nil
-			}
 			// Mark the new top-level turn active while holding d.mu so two concurrent
-			// sends cannot both reenter the implementer's lifetime token.
+			// sends cannot both drive the same implementer loop.
 			d.implRunning = true
 			d.mu.Unlock()
-			defer func() {
-				lease.Release()
-				d.finishImplementerExecution(token, loop)
-			}()
+			defer d.finishImplementerExecution(token, loop)
 
 			priorTokens := loop.ContextTokensEstimate()
 			rolloverOldTokens := priorTokens
@@ -989,15 +1022,6 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 				return tools.OkResult("IMPLEMENTER REPORT (changeset deferred while handed-off mutation remains active)\n\n" + fullReport +
 					"\n\nWait for or stop the handed-off job before reviewing, revising, or starting subsequent mutating work."), nil
 			}
-			finalizeLease, finalizeErr := d.acquireMutation(token)
-			if finalizeErr != nil {
-				finishData := map[string]any{"role": "implementer", "error": finalizeErr.Error(),
-					"context_mode": mode, "round": round, "context_tokens_est": contextTokens}
-				addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
-				d.Emitter.Emit(event.SubagentFinished, finishData)
-				return tools.ErrResult("implementer cannot finalize while asynchronous mutation is still active: %v%s", finalizeErr, lifecycle.note), nil
-			}
-			defer finalizeLease.Release()
 			finishData := map[string]any{"role": "implementer", "context_mode": mode, "round": round,
 				"context_tokens_est": contextTokens}
 			addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
@@ -1088,13 +1112,10 @@ func newImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token) *e
 		Root: d.Workspace, Env: append([]string(nil), d.Env...),
 		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs,
 		Emitter: d.Emitter.With("implementer"), Ownership: d.Ownership,
-		MutationToken: token,
+		MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
 	})...)
 	loop := d.newLoop(spec, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 	loop.ContextLengthHandled = true
-	if loop.MaxTok < implementerMinTok {
-		loop.MaxTok = implementerMinTok
-	}
 	return loop
 }
 
@@ -1153,7 +1174,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 	}
 	return &gollama.Tool{
 		Name: "spawn_reviewers",
-		Description: "Get independent reviews of the implementer's changes, running concurrently. " +
+		Description: "Get independent reviews of the changes, running concurrently. " +
 			reviewTierBlurb(d) + " " +
 			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in session events. " +
 			"Pass background:true to run the review set as a background job (returns a job_id immediately; verdicts " +
@@ -1179,6 +1200,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				plan = d.ReviewTier(tier)
 			} else {
 				plan = ReviewPlan{Tier: "default", Requested: tier, Specs: d.reviewerSpecs()}
+			}
+			if plan.Err != nil {
+				return tools.ErrResult("spawn_reviewers: %v", plan.Err), nil
 			}
 
 			// Surface the tier selection in events. A reviewer's label may differ
@@ -1279,11 +1303,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 func reReview(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "re_review",
-		Description: "Re-review after a revision. context_mode defaults to 'retain', reusing the same reviewers' " +
-			"history for a small changeset; near a reviewer's configured context budget it automatically creates a fresh " +
-			"replacement. Explicit 'fresh' remains useful when the revision is broad, the approach changed, or history is " +
-			"obsolete. Fresh recreates the exact same resolved reviewer slots, models, focuses, reasoning settings and access " +
-			"policy, preloads the current bounded diff, and seeds prior blocker/major findings plus the compact handoff.",
+		Description: "Review the revised scoped snapshot with the same reviewer slots/models/focuses. Retain useful " +
+			"history or choose fresh for broad revisions; near-limit contexts refresh automatically. Fresh gets " +
+			"the current diff, prior substantive findings, and your handoff.",
 		Params: tools.Obj(map[string]any{
 			"task_id":      tools.StrProp("task id"),
 			"context_mode": map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional review context strategy: 'retain' (default) or 'fresh'"},
@@ -1434,16 +1456,10 @@ func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, pr
 func askUser(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "ask_user",
-		Description: "Ask the user one or more questions and get their answers when human input is genuinely useful. " +
-			"Internal unattended runs will tell you to proceed without an answer. " +
-			"Make each question SELF-CONTAINED: the user has not been following your work, so briefly give the " +
-			"context needed to answer well — what you were doing, what you found or tried, and why you're asking " +
-			"(one to three sentences before the question itself). Don't assume they can see your transcript. " +
-			"For a single question, pass `question` (and optional `options`, a short list of suggested answers). " +
-			"To ask several questions in one round-trip, pass `questions`: a list where each item has its own " +
-			"`question` text and its own optional `options` list. The client renders options as a picker so the " +
-			"user can choose crisply, and may still type free text. Answers are returned mapped to each question. " +
-			"Never ask the user to paste a password, API key, token, or other credential here; ask only for its KEY_ENV/name and direct them to the local `ycc token set <KEY_ENV>` workflow.",
+		Description: "Ask when human input is useful; unattended runs return guidance instead. Make each question " +
+			"self-contained with brief context, not a reference to unseen transcript. Use question/options for one, " +
+			"or questions[] for a batch; options render as choices with free text, and answers map to each question. " +
+			"Never request credential values: ask for the KEY_ENV name and direct the user to ycc token set <KEY_ENV>.",
 		Params: tools.Obj(map[string]any{
 			"question": tools.StrProp("the question for the user (single-question form)"),
 			"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices (single-question form)"),
@@ -1738,9 +1754,33 @@ func changesetHandoff(changes *git.Changeset) string {
 	// Changeset.Tree is already task-scoped relative to BaseCommit; omitting a
 	// path list keeps the exact retrieval command compact even for many files.
 	command := "git diff --binary --no-color --no-ext-diff " + changes.BaseCommit + " " + changes.Tree + " --"
-	return fmt.Sprintf("=== CHANGE MANIFEST %s (baseline %s) ===\nPaths (%d): %s\nStat: %d files, +%d/-%d; diff %d bytes; sha256 %s\nExact retrieval: %s\n\nBOUNDED DIFF EXCERPT (4096 bytes max):\n%s",
+	return fmt.Sprintf("=== CHANGE MANIFEST %s (baseline %s) ===\nPaths (%d): %s\nStat: %d files, +%d/-%d; diff %d bytes; sha256 %s\nExact retrieval: %s\n%s\nBOUNDED DIFF EXCERPT (4096 bytes max):\n%s",
 		changes.ID, changes.BaselineID, len(changes.Paths), boundedPathList(changes.Paths, 4096), len(changes.Paths), additions, deletions,
-		len(changes.Diff), sha256Text(changes.Diff), command, boundedDiffExcerpt(changes.Diff, 4096))
+		len(changes.Diff), sha256Text(changes.Diff), command, attributionNote(changes), boundedDiffExcerpt(changes.Diff, 4096))
+}
+
+// attributionNote explains how a shared worktree shaped this changeset: which
+// paths other sessions/agents wrote (excluded, or included because this session
+// wrote them too) and which earlier dirty state rides along or was left out.
+// It is empty when the session is the tree's only writer.
+func attributionNote(changes *git.Changeset) string {
+	var b strings.Builder
+	line := func(label string, paths []string) {
+		if len(paths) > 0 {
+			fmt.Fprintf(&b, "%s (%d): %s\n", label, len(paths), boundedPathList(paths, 1024))
+		}
+	}
+	line("SHARED WORKTREE — also written by another session (included; their edits to these files ride along)", changes.Shared)
+	line("Excluded — written only by another session", changes.Foreign)
+	line("Included — already dirty before this session; earlier changes ride along", changes.Preexisting)
+	line("Excluded — dirty before this session and since written by another session", changes.Deferred)
+	if b.Len() > 0 {
+		// Only worth flagging when the tree is visibly shared: unclaimed paths
+		// (shell/generator output, other writers' shell edits) are attributed to
+		// whoever commits first.
+		line("Unclaimed — not written by this session's file tools (shell/generated output or another writer); verify they belong", changes.Unclaimed)
+	}
+	return b.String()
 }
 
 func unifiedDiffStats(diff string) (additions, deletions int) {

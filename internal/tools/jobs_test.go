@@ -212,6 +212,7 @@ func TestShellCommandsDoNotParticipateInWorktreeLease(t *testing.T) {
 	secondWS := &Workspace{
 		Root: root, Jobs: secondJobs, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
 		Ownership: ownership, MutationToken: ownership.NewToken("session two coordinator"),
+		WriteWait: 50 * time.Millisecond,
 	}
 	second := New()
 	second.Add(Editing(secondWS)...)
@@ -230,8 +231,9 @@ func TestShellCommandsDoNotParticipateInWorktreeLease(t *testing.T) {
 		t.Fatalf("Bash refused beside another session's background Bash: %s", got.Content)
 	}
 
-	// A lease-holding scope (e.g. a mutating subagent) still refuses foreign
-	// file tools, but not foreign shell commands.
+	// An operation-scoped section held by another scope (a commit or merge)
+	// holds off foreign file writes until it ends — they wait, then name the
+	// owner — but never foreign shell commands.
 	holder, err := ownership.Acquire(root, ownership.NewToken("session one mutating agent"))
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +250,7 @@ func TestShellCommandsDoNotParticipateInWorktreeLease(t *testing.T) {
 	}
 }
 
-func TestJobResultRepeatableAfterCheckpointNotification(t *testing.T) {
+func TestJobOutputFinalReportRepeatableAfterCheckpointNotification(t *testing.T) {
 	reg, jr, _ := jobsReg(t)
 	j := jr.Start("agent", "completed agent", "coordinator")
 	j.Finish(jobs.Done, "stable report")
@@ -256,13 +258,36 @@ func TestJobResultRepeatableAfterCheckpointNotification(t *testing.T) {
 		t.Fatalf("checkpoint notification = %+v", notified)
 	}
 	for i := 0; i < 2; i++ {
-		got := dispatch(t, reg, "job_result", `{"job_id":"job_1"}`)
+		got := dispatch(t, reg, "job_output", `{"job_id":"job_1"}`)
 		if got.IsError || !strings.Contains(got.Content, "stable report") {
-			t.Fatalf("job_result #%d = %+v", i+1, got)
+			t.Fatalf("job_output final report #%d = %+v", i+1, got)
 		}
 	}
 	if duplicate := jr.DrainFinished("coordinator"); len(duplicate) != 0 {
 		t.Fatalf("retrieval created duplicate notification: %+v", duplicate)
+	}
+}
+
+func TestJobOutputFinalReportDoesNotClaimNotification(t *testing.T) {
+	reg, jr, rec := jobsReg(t)
+	j := jr.Start("bash", "completed command", "coordinator")
+	j.Append([]byte("captured output\n"))
+	j.Finish(jobs.Failed, "final report: exit 1")
+	for i := 0; i < 2; i++ {
+		got := dispatch(t, reg, "job_output", `{"job_id":"job_1"}`)
+		if got.IsError || !strings.Contains(got.Content, "final report: exit 1") || strings.Contains(got.Content, "captured output") {
+			t.Fatalf("default read lost final report: %+v", got)
+		}
+	}
+	raw := dispatch(t, reg, "job_output", `{"job_id":"job_1","cursor":0}`)
+	if raw.IsError || !strings.Contains(raw.Content, "captured output") || !strings.Contains(raw.Content, "next_cursor=16") {
+		t.Fatalf("explicit captured-output read lost data/range: %+v", raw)
+	}
+	if rec.find(event.JobClaimed) != nil {
+		t.Fatal("peeking claimed completion")
+	}
+	if notified := jr.DrainFinished("coordinator"); len(notified) != 1 || notified[0].Result != "final report: exit 1" {
+		t.Fatalf("peeking consumed notification: %+v", notified)
 	}
 }
 
@@ -347,7 +372,6 @@ func TestJobToolsRejectUnknownIDs(t *testing.T) {
 	reg, _, _ := jobsReg(t)
 	for _, tc := range []struct{ name, args string }{
 		{"job_output", `{"job_id":"job_404"}`},
-		{"job_result", `{"job_id":"job_404"}`},
 		{"wait", `{"job_ids":["job_404"]}`},
 		{"kill_job", `{"job_id":"job_404"}`},
 	} {
@@ -430,6 +454,8 @@ func TestBackgroundBashTimeoutIsJobRuntimeLimit(t *testing.T) {
 	if job.Status() == jobs.Running {
 		t.Fatalf("timed-out job remains live: %s", job.ID())
 	}
+	// wait can return the terminal report before the runner emits its final event.
+	job.WaitExecution()
 	if fin := rec.find(event.JobFinished); fin == nil || fin.Data["status"] != "failed" ||
 		!strings.Contains(fin.Data["tail"].(string), "command timed out after 1s") {
 		t.Fatalf("job_finished does not report timeout failure: %+v", fin)

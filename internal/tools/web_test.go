@@ -50,7 +50,7 @@ func TestWebSearch(t *testing.T) {
 	defer func() { exaBaseURL = oldBase }()
 
 	// num_results above the cap should clamp to exaMaxResults.
-	res := callTool(t, webSearch(""), map[string]any{"query": "golang docs", "num_results": float64(50)})
+	res := callTool(t, webSearch(), map[string]any{"query": "golang docs", "num_results": float64(50)})
 	if res.IsError {
 		t.Fatalf("web_search errored: %s", res.Content)
 	}
@@ -86,7 +86,7 @@ func TestFetchPage(t *testing.T) {
 	exaBaseURL = srv.URL
 	defer func() { exaBaseURL = oldBase }()
 
-	res := callTool(t, fetchPage(""), map[string]any{"url": "https://example.com"})
+	res := callTool(t, fetchPage(), map[string]any{"url": "https://example.com"})
 	if res.IsError {
 		t.Fatalf("fetch_page errored: %s", res.Content)
 	}
@@ -103,9 +103,9 @@ func TestFetchPage(t *testing.T) {
 
 func TestWebMissingKey(t *testing.T) {
 	t.Setenv("EXA_API_KEY", "")
-	// exaAPIKey can consume an authorization for the machine-local secrets store.
-	// Point the config dir at an empty temp dir so the test doesn't depend on
-	// whether the developer's machine has a stored authorization. UserConfigDir
+	// exaAPIKey falls back to the machine-local secrets store. Point the config
+	// dir at an empty temp dir so the test doesn't depend on whether the
+	// developer's machine has a stored key. UserConfigDir
 	// derives from XDG_CONFIG_HOME (Linux), HOME
 	// (darwin), and AppData (Windows) — override all three.
 	tmp := t.TempDir()
@@ -123,10 +123,10 @@ func TestWebMissingKey(t *testing.T) {
 	exaBaseURL = srv.URL
 	defer func() { exaBaseURL = oldBase }()
 
-	if res := callTool(t, webSearch(""), map[string]any{"query": "x"}); !res.IsError {
+	if res := callTool(t, webSearch(), map[string]any{"query": "x"}); !res.IsError {
 		t.Errorf("web_search should error without key, got: %s", res.Content)
 	}
-	if res := callTool(t, fetchPage(""), map[string]any{"url": "https://x.com"}); !res.IsError {
+	if res := callTool(t, fetchPage(), map[string]any{"url": "https://x.com"}); !res.IsError {
 		t.Errorf("fetch_page should error without key, got: %s", res.Content)
 	}
 	if hit {
@@ -145,7 +145,7 @@ func TestWebNon200(t *testing.T) {
 	exaBaseURL = srv.URL
 	defer func() { exaBaseURL = oldBase }()
 
-	if res := callTool(t, webSearch(""), map[string]any{"query": "x"}); !res.IsError {
+	if res := callTool(t, webSearch(), map[string]any{"query": "x"}); !res.IsError {
 		t.Errorf("web_search should surface non-200 as error, got: %s", res.Content)
 	}
 }
@@ -162,7 +162,7 @@ func TestWebMalformedJSON(t *testing.T) {
 	exaBaseURL = srv.URL
 	defer func() { exaBaseURL = oldBase }()
 
-	if res := callTool(t, fetchPage(""), map[string]any{"url": "https://x.com"}); !res.IsError {
+	if res := callTool(t, fetchPage(), map[string]any{"url": "https://x.com"}); !res.IsError {
 		t.Errorf("fetch_page should surface malformed JSON as error, got: %s", res.Content)
 	}
 }
@@ -212,13 +212,13 @@ func TestWebSecretReflectionSanitizedBeforeTruncation(t *testing.T) {
 		call func(*testing.T) *gollama.ToolResult
 	}{
 		{name: "error body", call: func(t *testing.T) *gollama.ToolResult {
-			return callTool(t, webSearch(""), map[string]any{"query": "error"})
+			return callTool(t, webSearch(), map[string]any{"query": "error"})
 		}},
 		{name: "search snippet", call: func(t *testing.T) *gollama.ToolResult {
-			return callTool(t, webSearch(""), map[string]any{"query": "success"})
+			return callTool(t, webSearch(), map[string]any{"query": "success"})
 		}},
 		{name: "fetched content", call: func(t *testing.T) *gollama.ToolResult {
-			return callTool(t, fetchPage(""), map[string]any{"url": "https://example.com"})
+			return callTool(t, fetchPage(), map[string]any{"url": "https://example.com"})
 		}},
 	}
 	for _, tt := range tests {
@@ -234,24 +234,24 @@ func TestWebSecretReflectionSanitizedBeforeTruncation(t *testing.T) {
 	}
 }
 
-func TestAuthorizedStoredWebSecretIsSingleUseAndNeverReturned(t *testing.T) {
+// A key from the secrets store (`ycc token set EXA_API_KEY`) is used directly,
+// on every call, and is never reflected into model-visible output.
+func TestStoredWebSecretIsUsedAndNeverReturned(t *testing.T) {
 	const sentinel = "sk-test-WEB-SENTINEL-CREDENTIAL-0389"
 	t.Setenv("EXA_API_KEY", "")
 	configDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configDir)
 	t.Setenv("HOME", configDir)
 	t.Setenv("AppData", configDir)
-	workspace := t.TempDir()
 	if err := secrets.Set("EXA_API_KEY", sentinel); err != nil {
 		t.Fatal(err)
 	}
-	if err := secrets.Authorize("EXA_API_KEY", workspace, "web_search"); err != nil {
-		t.Fatal(err)
-	}
 
+	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
 		if got := r.Header.Get("x-api-key"); got != sentinel {
-			t.Errorf("authorized request key = %q", got)
+			t.Errorf("request key = %q, want stored secret", got)
 		}
 		http.Error(w, "upstream reflected "+sentinel, http.StatusUnauthorized)
 	}))
@@ -260,21 +260,22 @@ func TestAuthorizedStoredWebSecretIsSingleUseAndNeverReturned(t *testing.T) {
 	exaBaseURL = srv.URL
 	defer func() { exaBaseURL = oldBase }()
 
-	res := callTool(t, webSearch(workspace), map[string]any{"query": "x"})
-	if !res.IsError {
-		t.Fatalf("expected upstream error, got %s", res.Content)
+	for i, res := range []*gollama.ToolResult{
+		callTool(t, webSearch(), map[string]any{"query": "x"}),
+		callTool(t, webSearch(), map[string]any{"query": "y"}),
+		callTool(t, fetchPage(), map[string]any{"url": "https://example.com"}),
+	} {
+		if !res.IsError {
+			t.Fatalf("call %d: expected upstream error, got %s", i, res.Content)
+		}
+		if strings.Contains(res.Content, sentinel) {
+			t.Fatalf("call %d: model-visible tool error returned the credential", i)
+		}
+		if !strings.Contains(res.Content, "Exa API returned") {
+			t.Fatalf("call %d: expected the request to reach Exa, got %s", i, res.Content)
+		}
 	}
-	if strings.Contains(res.Content, sentinel) {
-		t.Fatal("model-visible tool error returned the credential")
-	}
-	if !strings.Contains(res.Content, "used authorized secret EXA_API_KEY for web_search") || !strings.Contains(res.Content, workspace) {
-		t.Fatalf("model-visible result lacks reference-only authorization audit: %s", res.Content)
-	}
-	second := callTool(t, webSearch(workspace), map[string]any{"query": "x"})
-	if !second.IsError || !strings.Contains(second.Content, "not authorized") {
-		t.Fatalf("second call should require a new authorization: %s", second.Content)
-	}
-	if strings.Contains(second.Content, sentinel) {
-		t.Fatal("authorization diagnostic returned the credential")
+	if calls != 3 {
+		t.Fatalf("upstream calls = %d, want 3 (stored key must not be single-use)", calls)
 	}
 }

@@ -10,7 +10,7 @@ import (
 )
 
 // A work session that explicitly names one task enters its first provider turn
-// with the routine backlog reads already answered. The synthetic events follow
+// with get_task already answered, without loading the unrelated backlog. The synthetic events follow
 // the real opening user input, so replay reconstructs byte-for-byte equivalent
 // coordinator history.
 func TestStartWorkPreloadsExplicitTaskIntoHistoryAndEvents(t *testing.T) {
@@ -33,10 +33,10 @@ func TestStartWorkPreloadsExplicitTaskIntoHistoryAndEvents(t *testing.T) {
 	}
 
 	live := s.currentLoop().History()
-	if len(live) != 4 || live[0].Role != "user" || live[1].Role != "assistant" || len(live[1].ToolCalls) != 2 || live[2].Role != "tool" || live[3].Role != "tool" {
+	if len(live) != 3 || live[0].Role != "user" || live[1].Role != "assistant" || len(live[1].ToolCalls) != 1 || live[2].Role != "tool" {
 		t.Fatalf("live startup history = %+v", live)
 	}
-	if live[1].ToolCalls[0].Function.Name != "list_backlog" || live[1].ToolCalls[1].Function.Name != "get_task" {
+	if live[1].ToolCalls[0].Function.Name != "get_task" {
 		t.Fatalf("synthetic calls = %+v", live[1].ToolCalls)
 	}
 
@@ -50,7 +50,7 @@ func TestStartWorkPreloadsExplicitTaskIntoHistoryAndEvents(t *testing.T) {
 				results++
 			}
 		}
-		if results == 2 {
+		if results == 1 {
 			break
 		}
 		time.Sleep(time.Millisecond)
@@ -73,20 +73,20 @@ func TestStartWorkPreloadsExplicitTaskIntoHistoryAndEvents(t *testing.T) {
 			syntheticResults++
 		}
 	}
-	if userSeq == 0 || syntheticTurnSeq <= userSeq || syntheticCalls != 2 || syntheticResults != 2 {
+	if userSeq == 0 || syntheticTurnSeq <= userSeq || syntheticCalls != 1 || syntheticResults != 1 {
 		t.Fatalf("event ordering/counts: user=%d turn=%d calls=%d results=%d events=%+v", userSeq, syntheticTurnSeq, syntheticCalls, syntheticResults, events)
 	}
 
 	replayed := engine.ReplayHistory(events)
-	if len(replayed) < 4 {
+	if len(replayed) < 3 {
 		t.Fatalf("replayed history = %+v", replayed)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		if replayed[i].Role != live[i].Role || replayed[i].Content != live[i].Content || replayed[i].ToolCallID != live[i].ToolCallID {
 			t.Fatalf("replay[%d] = %+v, live = %+v", i, replayed[i], live[i])
 		}
 	}
-	if len(replayed[1].ToolCalls) != 2 || replayed[1].ToolCalls[0].Function.Name != "list_backlog" || replayed[1].ToolCalls[1].Function.Name != "get_task" {
+	if len(replayed[1].ToolCalls) != 1 || replayed[1].ToolCalls[0].Function.Name != "get_task" {
 		t.Fatalf("replayed synthetic calls = %+v", replayed[1].ToolCalls)
 	}
 }

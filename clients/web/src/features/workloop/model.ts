@@ -239,6 +239,6 @@ export function loopIndicator(loops: readonly (WorkLoopInfo | null | undefined)[
 }
 
 export const WORK_IMPLEMENTATIONS = [
+  { value: "direct", label: "Direct", detail: "The coordinator edits the code itself (default); independent review stays delegated." },
   { value: "delegate", label: "Delegate", detail: "The coordinator hands code changes to an implementer subagent." },
-  { value: "direct", label: "Direct", detail: "The coordinator edits the code itself." },
 ] as const;

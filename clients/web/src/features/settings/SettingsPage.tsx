@@ -122,7 +122,7 @@ export function SettingsPage() {
         <>
           <RolesSection data={models.data} />
           <ThinkingSection data={models.data} />
-          <WorkSection current={models.data.workImplementation || "delegate"} />
+          <WorkSection current={models.data.workImplementation || "direct"} />
           <ReviewTiersSection models={models.data.models} />
           <ModelsSection data={models.data} onEdit={setEditor} />
         </>

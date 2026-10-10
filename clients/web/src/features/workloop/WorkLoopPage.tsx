@@ -277,7 +277,7 @@ function StartLoopDialog({
 }) {
   const models = useModels("", open);
   const budget = useBudget(open);
-  const current = models.data?.workImplementation || "delegate";
+  const current = models.data?.workImplementation || "direct";
   const [choice, setChoice] = useState<string | null>(null);
   const implementation = choice ?? current;
   const close = () => {

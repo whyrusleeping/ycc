@@ -15,9 +15,10 @@ A workstream is a linked git worktree, ycc-owned branch, base commit, and work s
 to a registered project but is not itself a project. Worktrees live outside the primary checkout
 under daemon state, while their session logs remain local to each worktree.
 
-This makes the single-writer invariant local to a tree: one coordinator/implementer owns each
-worktree, while different worktrees may mutate concurrently. The daemon serializes only its small
-workstream registry and integration into a project's base branch.
+This gives each stream full filesystem, index, and build isolation. Sessions may also share one
+tree concurrently, relying on per-session change attribution (spec §7.3); workstreams are the
+choice when concurrent builds/tests or broad refactors would interfere. The daemon serializes only
+its small workstream registry and integration into a project's base branch.
 
 Creation starts from a recorded commit rather than an uncommitted primary-tree snapshot. Project
 configuration and other required bootstrap files may be copied explicitly, and configured
@@ -47,7 +48,8 @@ git as the history/integration authority.
 - Merge/integration conflicts never leave the primary checkout conflicted.
 - The daemon validates registered paths and owns cleanup; arbitrary worktrees are not adopted by
   name alone.
-- Parallelism is across trees. Background jobs inside one tree still obey one mutating writer.
+- Full isolation is across trees. Writers sharing one tree are attributed per session, not
+  serialized (spec §7.3).
 - Workstream branches are implementation detail, but commits remain ordinary git objects that can
   be inspected and recovered before cleanup.
 

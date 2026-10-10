@@ -9,14 +9,9 @@ package engine
 // retain metadata and replay as text with an explicit attachment-loss marker.
 // This is an accepted limitation.
 //
-// The internal truncation-retry nudge IS reproduced on replay: when the live
-// loop hits a mid-Run output-token truncation it appends a sanitized assistant
-// stub plus an internal user "nudge" message, but the nudge is posted via
-// Loop.Post and never recorded in the event log. ReplayHistory synthesizes that
-// nudge when it detects a truncated coordinator turn immediately followed by
-// another coordinator assistant turn, so the reconstructed conversation keeps
-// strict user/assistant alternation (some backends reject two consecutive
-// assistant turns).
+// No-tool output-truncated turns are transcript/usage evidence, not continuation
+// history. Older logs' implicit retry stubs/nudges are likewise unnecessary: the
+// following successful turn answers the same pending user/tool input.
 
 import (
 	"fmt"
@@ -62,11 +57,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	// answered records tool_call ids that have a matching tool_result, so we can
 	// repair any dangling calls at the end.
 	answered := map[string]bool{}
-	// lastTurnTruncated tracks whether the previous coordinator model_turn was
-	// cut off at the output token cap, so we can synthesize the internal nudge
-	// (see file doc comment) before the retry turn.
-	lastTurnTruncated := false
-
 	// canon maps a raw recorded tool-call id to a canonical, Anthropic-valid id.
 	// Ids that are empty or contain characters outside ^[a-zA-Z0-9_-]+$ are
 	// rewritten to a unique "call_N"; ids already valid are kept as-is. The map
@@ -161,7 +151,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 		}
 		deferredUser = nil
 		assistantIdx = -1
-		lastTurnTruncated = false
 	}
 
 	// expectedCalls/seenCalls track the current coordinator turn's tool-call
@@ -199,7 +188,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 				pending = nil
 				deferredUser = nil
 				expectedCalls, seenCalls = 0, 0
-				lastTurnTruncated = false
 			}
 		case event.UserInput:
 			// All user inputs belong to the coordinator conversation regardless of
@@ -218,7 +206,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			flushDeferred()
 			history = append(history, gollama.Message{Role: "user", Content: replayUserText(ev.Data)})
 			assistantIdx = -1
-			lastTurnTruncated = false // a real user input breaks the truncation chain
 		case event.UserInputDelivered:
 			// A queued mid-run input entering the conversation at its safe checkpoint:
 			// append it exactly where the live loop Posted it so the
@@ -234,19 +221,13 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: replayUserText(ev.Data)})
 			assistantIdx = -1
-			lastTurnTruncated = false
 		case event.ModelTurn:
 			if ev.Actor != "coordinator" {
 				continue // subagent turn — not part of the coordinator history
 			}
-			// A provider-side safety refusal (stop_reason "refusal") with no tool
-			// calls was kept OUT of the live history (see Loop.Run): the loop
-			// returned Result.Refused without appending the turn, so the pending
-			// user/tool turn still owes a response and reopen re-runs it. Skip it
-			// here so the reconstructed history matches — replaying the refusal
-			// placeholder would poison the reopened conversation the same way the
-			// live one was.
-			if isRefusalStop(str(ev.Data, "stop_reason")) && intv(ev.Data, "tool_calls") == 0 {
+			// Refusals and no-tool truncations never answer the pending input in
+			// live history. Keep them as transcript evidence only on reopen too.
+			if intv(ev.Data, "tool_calls") == 0 && (isRefusalStop(str(ev.Data, "stop_reason")) || boolv(ev.Data, "truncated")) {
 				continue
 			}
 			// Repair any dangling tool calls on the previous assistant turn before
@@ -257,26 +238,13 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			flushDeferred()
 			truncated := boolv(ev.Data, "truncated")
 			text := str(ev.Data, "text")
-			// If the previous turn was truncated and we're about to append another
-			// assistant turn (the retry), synthesize the internal user nudge the
-			// live loop posts between the truncated stub and the retry. This keeps
-			// strict user/assistant alternation, which some backends require.
-			if lastTurnTruncated && len(history) > 0 && history[len(history)-1].Role == "assistant" {
-				history = append(history, gollama.Message{Role: "user", Content: truncationNudge})
-			}
-			// A turn cut off at the output token cap (truncated) may carry an
-			// unsigned/incomplete thinking block; drop the blocks here to match the
-			// live loop's sanitized stub (which omits the cut-off block so Anthropic
-			// doesn't reject it on the next request).
+			// A truncated tool-call turn may carry unsigned/incomplete reasoning;
+			// drop it while retaining tool calls/results, matching live history.
 			var blocks []gollama.ThinkingBlock
 			if !truncated {
 				// Drop empty, unreplayable "thinking" blocks recorded by older
 				// logs (matches the live loop's sanitize) so reopen doesn't 400.
 				blocks = sanitizeThinkingBlocks(parseThinkingBlocks(ev.Data["thinking_blocks"]))
-			} else if strings.TrimSpace(text) == "" {
-				// Guarantee non-empty content for a truncated turn (empty assistant
-				// messages are rejected by backends), matching the live sanitized stub.
-				text = truncatedStubContent
 			}
 			history = append(history, gollama.Message{
 				Role:           "assistant",
@@ -284,7 +252,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 				ThinkingBlocks: blocks,
 			})
 			assistantIdx = len(history) - 1
-			lastTurnTruncated = truncated
 			expectedCalls = intv(ev.Data, "tool_calls")
 			seenCalls = 0
 		case event.ToolCall:
@@ -381,7 +348,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
-			lastTurnTruncated = false
 		case event.BudgetExceeded:
 			// A graceful spend-guard halt injects a wrap-up
 			// instruction as a USER-actor budget_exceeded event carrying "text".
@@ -406,7 +372,6 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: text})
 			assistantIdx = -1
-			lastTurnTruncated = false
 		}
 	}
 

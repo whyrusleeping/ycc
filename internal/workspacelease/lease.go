@@ -1,7 +1,13 @@
-// Package workspacelease serializes potentially mutating execution by canonical worktree.
+// Package workspacelease coordinates mutation of a canonical worktree across
+// sessions and agents. Leases are short, operation-scoped exclusive sections (a
+// file write, a commit, a workstream merge); they are never held across an
+// agent's lifetime. Long-lived attribution of who wrote what is tracked
+// separately as per-scope path claims (see claims.go), so several sessions and
+// agents can work in one worktree concurrently.
 package workspacelease
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,11 +17,19 @@ import (
 	"sync/atomic"
 )
 
-// Service owns daemon-wide worktree mutation leases.
+// Service owns daemon-wide worktree mutation leases and path claims.
 type Service struct {
 	mu     sync.Mutex
 	next   atomic.Uint64
 	owners map[string]*entry
+	// released is closed (and replaced) whenever a lease is fully released so
+	// waiting acquirers re-check without polling.
+	released chan struct{}
+	// claims: canonical worktree -> repository-relative path -> scope -> the
+	// generation of its latest claim (see claims.go).
+	claims  map[string]map[string]claimSet
+	gen     uint64
+	persist bool
 }
 
 type entry struct {
@@ -24,11 +38,14 @@ type entry struct {
 }
 
 // Token identifies one execution scope. Reuse the same token only for commands
-// executed by that scope; delegated workers receive a distinct token.
+// executed by that scope; delegated workers receive a distinct token. scope
+// names the attribution owner (a session id) shared by a coordinator and the
+// agents it delegates to; it is empty for unattributed operations.
 type Token struct {
 	service *Service
 	id      uint64
 	owner   string
+	scope   string
 }
 
 // Lease is one retained claim on a worktree. Release is idempotent.
@@ -45,18 +62,42 @@ type Conflict struct {
 }
 
 func (e *Conflict) Error() string {
-	return fmt.Sprintf("worktree mutation is owned by %s; wait for it to finish or stop it, or use a separate workstream", e.Owner)
+	return fmt.Sprintf("worktree is busy with %s; retry shortly", e.Owner)
 }
 
 // NewService returns an empty ownership service.
-func NewService() *Service { return &Service{owners: make(map[string]*entry)} }
+func NewService() *Service {
+	return &Service{
+		owners:   make(map[string]*entry),
+		released: make(chan struct{}),
+		claims:   make(map[string]map[string]claimSet),
+	}
+}
 
-// NewToken creates an isolated execution scope with a human-readable owner.
+// NewToken creates an isolated, unattributed execution scope with a
+// human-readable owner.
 func (s *Service) NewToken(owner string) *Token {
+	return s.NewScopedToken("", owner)
+}
+
+// NewScopedToken creates an execution token whose writes are attributed to
+// scope (normally a session id).
+func (s *Service) NewScopedToken(scope, owner string) *Token {
 	if s == nil {
 		return nil
 	}
-	return &Token{service: s, id: s.next.Add(1), owner: owner}
+	return &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope}
+}
+
+// Child creates a distinct token for a delegated worker that shares parent's
+// attribution scope.
+func (s *Service) Child(parent *Token, owner string) *Token {
+	scope := ""
+	if parent != nil {
+		scope = parent.scope
+		owner = parent.owner + " / " + owner
+	}
+	return s.NewScopedToken(scope, owner)
 }
 
 // Owner returns the token's human-readable owner.
@@ -67,8 +108,16 @@ func (t *Token) Owner() string {
 	return t.owner
 }
 
-// Acquire atomically claims root for token. Calls using the same token are
-// reentrant, allowing a delegated worker to run its own file tools.
+// Scope returns the token's attribution scope ("" when unattributed).
+func (t *Token) Scope() string {
+	if t == nil {
+		return ""
+	}
+	return t.scope
+}
+
+// Acquire atomically claims root for token without waiting. Calls using the
+// same token are reentrant.
 func (s *Service) Acquire(root string, token *Token) (*Lease, error) {
 	if s == nil || token == nil || token.service != s {
 		return nil, fmt.Errorf("workspace mutation ownership is not configured")
@@ -77,13 +126,28 @@ func (s *Service) Acquire(root string, token *Token) (*Lease, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.acquireKey(key, token)
+	lease, _, err := s.acquireKey(key, token)
+	return lease, err
 }
 
-// AcquirePath claims the worktree containing path. The longest existing parent
-// is symlink-resolved before Git discovery, so a not-yet-created destination in
-// an extra write root is keyed to that destination's actual checkout. fallback
-// supplies the ownership root when the destination is not in a Git worktree.
+// AcquireWait is Acquire that waits for a conflicting operation to release the
+// worktree, until ctx is done. Leases are operation-scoped, so waits are short.
+func (s *Service) AcquireWait(ctx context.Context, root string, token *Token) (*Lease, error) {
+	if s == nil || token == nil || token.service != s {
+		return nil, fmt.Errorf("workspace mutation ownership is not configured")
+	}
+	key, err := Canonical(root)
+	if err != nil {
+		return nil, err
+	}
+	return s.acquireKeyWait(ctx, key, token)
+}
+
+// AcquirePath claims the worktree containing path without waiting. The longest
+// existing parent is symlink-resolved before Git discovery, so a
+// not-yet-created destination in an extra write root is keyed to that
+// destination's actual checkout. fallback supplies the ownership root when the
+// destination is not in a Git worktree.
 func (s *Service) AcquirePath(path, fallback string, token *Token) (*Lease, error) {
 	if s == nil || token == nil || token.service != s {
 		return nil, fmt.Errorf("workspace mutation ownership is not configured")
@@ -92,21 +156,50 @@ func (s *Service) AcquirePath(path, fallback string, token *Token) (*Lease, erro
 	if err != nil {
 		return nil, err
 	}
-	return s.acquireKey(key, token)
+	lease, _, err := s.acquireKey(key, token)
+	return lease, err
 }
 
-func (s *Service) acquireKey(key string, token *Token) (*Lease, error) {
+// AcquirePathWait is AcquirePath that waits for a conflicting operation.
+func (s *Service) AcquirePathWait(ctx context.Context, path, fallback string, token *Token) (*Lease, error) {
+	if s == nil || token == nil || token.service != s {
+		return nil, fmt.Errorf("workspace mutation ownership is not configured")
+	}
+	key, err := CanonicalContaining(path, fallback)
+	if err != nil {
+		return nil, err
+	}
+	return s.acquireKeyWait(ctx, key, token)
+}
+
+func (s *Service) acquireKeyWait(ctx context.Context, key string, token *Token) (*Lease, error) {
+	for {
+		lease, wake, err := s.acquireKey(key, token)
+		if err == nil {
+			return lease, nil
+		}
+		select {
+		case <-wake:
+		case <-ctx.Done():
+			return nil, err
+		}
+	}
+}
+
+// acquireKey returns the lease, or the conflict plus a channel closed at the
+// next release so a waiter cannot miss the wake-up.
+func (s *Service) acquireKey(key string, token *Token) (*Lease, <-chan struct{}, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if current := s.owners[key]; current != nil {
 		if current.token != token {
-			return nil, &Conflict{Owner: current.token.Owner()}
+			return nil, s.released, &Conflict{Owner: current.token.Owner()}
 		}
 		current.refs++
 	} else {
 		s.owners[key] = &entry{token: token, refs: 1}
 	}
-	return &Lease{service: s, key: key, token: token}, nil
+	return &Lease{service: s, key: key, token: token}, nil, nil
 }
 
 // Release drops this retained claim.
@@ -124,6 +217,8 @@ func (l *Lease) Release() {
 		current.refs--
 		if current.refs == 0 {
 			delete(l.service.owners, l.key)
+			close(l.service.released)
+			l.service.released = make(chan struct{})
 		}
 	})
 }

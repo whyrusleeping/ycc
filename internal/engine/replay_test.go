@@ -440,11 +440,9 @@ func TestReplayHistoryLegacyMissingResultID(t *testing.T) {
 	}
 }
 
-// TestReplayHistoryTruncatedDropsThinking: a coordinator model_turn marked
-// truncated may carry an unsigned/cut-off thinking block, so ReplayHistory drops
-// the blocks to match the live loop's sanitized stub. Covers both the typed and
-// JSON-decoded (bool) shapes.
-func TestReplayHistoryTruncatedDropsThinking(t *testing.T) {
+// No-tool truncation leaves the input pending, including legacy logs and
+// JSON-decoded events carrying unsigned reasoning.
+func TestReplayHistoryTruncatedNoToolLeavesPendingInput(t *testing.T) {
 	mk := func() []event.Event {
 		return []event.Event{
 			{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}},
@@ -460,14 +458,8 @@ func TestReplayHistoryTruncatedDropsThinking(t *testing.T) {
 
 	check := func(t *testing.T, events []event.Event) {
 		got := ReplayHistory(events)
-		if len(got) != 2 {
-			t.Fatalf("want 2 messages, got %d: %+v", len(got), got)
-		}
-		if got[1].Role != "assistant" || got[1].Content != "cut off mid-thought" {
-			t.Fatalf("unexpected assistant message: %+v", got[1])
-		}
-		if got[1].ThinkingBlocks != nil {
-			t.Fatalf("truncated turn should drop thinking blocks, got %+v", got[1].ThinkingBlocks)
+		if len(got) != 1 || got[0].Role != "user" || got[0].Content != "go" {
+			t.Fatalf("truncation should leave only pending input: %+v", got)
 		}
 	}
 
@@ -488,11 +480,8 @@ func TestReplayHistoryTruncatedDropsThinking(t *testing.T) {
 	})
 }
 
-// TestReplayHistoryTruncationBoundary covers reconstruction across a mid-Run
-// truncation-retry boundary: a truncated coordinator turn (empty text + unsigned
-// thinking block) immediately followed by the retry turn. The live loop posts an
-// internal user "nudge" between them that is NOT recorded in the event log, so
-// ReplayHistory must synthesize it to preserve strict user/assistant alternation.
+// Legacy implicit retry chains remain readable without recreating their hidden
+// stubs/nudges: the successful turn answers the original pending input.
 func TestReplayHistoryTruncationBoundary(t *testing.T) {
 	mk := func() []event.Event {
 		return []event.Event{
@@ -516,8 +505,6 @@ func TestReplayHistoryTruncationBoundary(t *testing.T) {
 
 	want := []gollama.Message{
 		{Role: "user", Content: "go"},
-		{Role: "assistant", Content: truncatedStubContent},
-		{Role: "user", Content: truncationNudge},
 		{
 			Role:    "assistant",
 			Content: "Now acting.",

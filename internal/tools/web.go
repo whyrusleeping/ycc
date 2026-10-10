@@ -43,18 +43,20 @@ var exaBaseURL = "https://api.exa.ai"
 // exaHTTPClient is the HTTP client used for Exa calls (overridable in tests).
 var exaHTTPClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: llmhttp.CheckRedirect}
 
-// exaAPIKey resolves the Exa API key. An environment value is explicitly
-// process-scoped by the daemon operator. A machine-local named secret requires
-// a single-use authorization for this exact canonical workspace and tool.
-func exaAPIKey(workspace, tool string) (key string, named bool, err error) {
+// exaAPIKey resolves the Exa API key: the daemon's environment first, then the
+// machine-local secrets store (`ycc token set EXA_API_KEY`). The value is only
+// ever sent to Exa in the request header; tool output is still scrubbed of it
+// by safeSecretOutput.
+func exaAPIKey() (string, bool) {
 	if v := strings.TrimSpace(os.Getenv("EXA_API_KEY")); v != "" {
-		return v, false, nil
+		return v, true
 	}
-	v, err := secrets.ConsumeAuthorized("EXA_API_KEY", workspace, tool)
-	if err != nil {
-		return "", false, err
+	if v, ok := secrets.Lookup("EXA_API_KEY"); ok {
+		if v = strings.TrimSpace(v); v != "" {
+			return v, true
+		}
 	}
-	return strings.TrimSpace(v), true, nil
+	return "", false
 }
 
 // safeSecretOutput prevents the credential supplied to this request from being
@@ -67,16 +69,9 @@ func safeSecretOutput(text, key string) string {
 	return strings.ReplaceAll(text, key, "[REDACTED AUTHORIZED SECRET]")
 }
 
-func secretAuditPrefix(named bool, workspace, tool string) string {
-	if !named {
-		return ""
-	}
-	return fmt.Sprintf("[used authorized secret EXA_API_KEY for %s in workspace %s]\n\n", tool, workspace)
-}
-
-// Web returns the web tools scoped to a workspace for named-secret authorization.
-func Web(workspace string) []*gollama.Tool {
-	return []*gollama.Tool{webSearch(workspace), fetchPage(workspace)}
+// Web returns the web tools (web_search, fetch_page).
+func Web() []*gollama.Tool {
+	return []*gollama.Tool{webSearch(), fetchPage()}
 }
 
 // exaPost marshals body, POSTs it to {exaBaseURL}{path} with the Exa auth
@@ -128,7 +123,7 @@ func truncate(s string, n int) string {
 
 // webSearch is the web_search tool: it queries the web via Exa and returns a
 // numbered list of ranked results (title, URL, snippet).
-func webSearch(workspace string) *gollama.Tool {
+func webSearch() *gollama.Tool {
 	return &gollama.Tool{
 		Name: "web_search",
 		Description: "Search the web via Exa and return ranked results (title, URL, and a short snippet) for a " +
@@ -148,11 +143,10 @@ func webSearch(workspace string) *gollama.Tool {
 			if !ok {
 				return errResult("web_search: missing 'query'"), nil
 			}
-			key, named, err := exaAPIKey(workspace, "web_search")
-			if err != nil {
-				return errResult("web_search: EXA_API_KEY is unavailable or not authorized; run `ycc token set EXA_API_KEY`, then `ycc token authorize EXA_API_KEY --tool web_search --workspace %s`", workspace), nil
+			key, ok := exaAPIKey()
+			if !ok {
+				return errResult("web_search: EXA_API_KEY is not configured; set it in the daemon's environment or run `ycc token set EXA_API_KEY`"), nil
 			}
-			prefix := secretAuditPrefix(named, workspace, "web_search")
 			n := getInt(params, "num_results", exaDefaultResults)
 			if n < 1 {
 				n = 1
@@ -180,10 +174,10 @@ func webSearch(workspace string) *gollama.Tool {
 				} `json:"results"`
 			}
 			if err := exaPost(ctx, key, "/search", reqBody, &out); err != nil {
-				return errResult("%s", safeSecretOutput(prefix+"web_search: "+err.Error(), key)), nil
+				return errResult("%s", safeSecretOutput("web_search: "+err.Error(), key)), nil
 			}
 			if len(out.Results) == 0 {
-				return okResult(safeSecretOutput(prefix+fmt.Sprintf("No results found for %q.", query), key)), nil
+				return okResult(safeSecretOutput(fmt.Sprintf("No results found for %q.", query), key)), nil
 			}
 
 			var b strings.Builder
@@ -204,14 +198,14 @@ func webSearch(workspace string) *gollama.Tool {
 				}
 				b.WriteString("\n")
 			}
-			return okResult(safeSecretOutput(prefix+strings.TrimRight(b.String(), "\n"), key)), nil
+			return okResult(safeSecretOutput(strings.TrimRight(b.String(), "\n"), key)), nil
 		},
 	}
 }
 
 // fetchPage is the fetch_page tool: it retrieves the readable text/markdown
 // content of a URL via Exa for the agent to read.
-func fetchPage(workspace string) *gollama.Tool {
+func fetchPage() *gollama.Tool {
 	return &gollama.Tool{
 		Name: "fetch_page",
 		Description: "Fetch the readable text content of a URL via Exa for you to read. Use this to read a web page " +
@@ -225,11 +219,10 @@ func fetchPage(workspace string) *gollama.Tool {
 			if !ok {
 				return errResult("fetch_page: missing 'url'"), nil
 			}
-			key, named, err := exaAPIKey(workspace, "fetch_page")
-			if err != nil {
-				return errResult("fetch_page: EXA_API_KEY is unavailable or not authorized; run `ycc token set EXA_API_KEY`, then `ycc token authorize EXA_API_KEY --tool fetch_page --workspace %s`", workspace), nil
+			key, ok := exaAPIKey()
+			if !ok {
+				return errResult("fetch_page: EXA_API_KEY is not configured; set it in the daemon's environment or run `ycc token set EXA_API_KEY`"), nil
 			}
-			prefix := secretAuditPrefix(named, workspace, "fetch_page")
 
 			reqBody := map[string]any{
 				"urls": []string{url},
@@ -243,10 +236,10 @@ func fetchPage(workspace string) *gollama.Tool {
 				} `json:"results"`
 			}
 			if err := exaPost(ctx, key, "/contents", reqBody, &out); err != nil {
-				return errResult("%s", safeSecretOutput(prefix+"fetch_page: "+err.Error(), key)), nil
+				return errResult("%s", safeSecretOutput("fetch_page: "+err.Error(), key)), nil
 			}
 			if len(out.Results) == 0 {
-				return errResult("%s", safeSecretOutput(prefix+fmt.Sprintf("fetch_page: no content returned for %q", url), key)), nil
+				return errResult("%s", safeSecretOutput(fmt.Sprintf("fetch_page: no content returned for %q", url), key)), nil
 			}
 
 			r := out.Results[0]
@@ -265,7 +258,7 @@ func fetchPage(workspace string) *gollama.Tool {
 				text = text[:exaFetchCap] + "\n…[content truncated]"
 			}
 			b.WriteString(text)
-			return okResult(safeSecretOutput(prefix+b.String(), key)), nil
+			return okResult(safeSecretOutput(b.String(), key)), nil
 		},
 	}
 }

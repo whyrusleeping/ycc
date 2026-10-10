@@ -470,7 +470,7 @@ message ListModelsResponse {
   string implementer_thinking = 6;
   string reviewers_thinking = 7;
   // Effective work-mode implementation strategy (work.implementation), resolved
-  // to "delegate" when unset, so settings clients show the real current default.
+  // to "direct" when unset, so settings clients show the real current default.
   string work_implementation = 8;
 }
 

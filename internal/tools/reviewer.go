@@ -79,10 +79,9 @@ func submitReview(workspaces ...*Workspace) *gollama.Tool {
 	}
 	return &gollama.Tool{
 		Name: "submit_review",
-		Description: "Submit your review verdict for the change. Call exactly once when done. " +
-			"verdict is 'accept' if the change satisfies the task and is correct, or 'revise' if it needs work. " +
-			"Classify verification truthfully: independently_rebuilt_and_executed requires the receipt_id returned by that exact source-bound Bash command (nonzero test results still count as executed); " +
-			"inspected_prior_evidence is for logs/reports you only read; unavailable is for a desired check that could not execute.",
+		Description: "Submit one verdict per review: accept when correct/complete, revise for substantive defects. " +
+			"Independent execution requires the receipt_id from that exact source-bound Bash call, including failed checks. " +
+			"Classify prior logs as inspected_prior_evidence and checks that could not run as unavailable.",
 		Params: obj(map[string]any{
 			"verdict": map[string]any{"type": "string", "enum": []string{"accept", "revise"}, "description": "accept or revise"},
 			"summary": strProp("one-paragraph overall assessment"),

@@ -38,18 +38,15 @@ func TestBuildExplicitTaskPreload(t *testing.T) {
 	if got.TaskID != first.ID {
 		t.Fatalf("task id = %q, want %q", got.TaskID, first.ID)
 	}
-	if len(got.History) != 3 || got.History[0].Role != "assistant" || len(got.History[0].ToolCalls) != 2 {
-		t.Fatalf("history = %+v, want assistant batch + two tool results", got.History)
+	if len(got.History) != 2 || got.History[0].Role != "assistant" || len(got.History[0].ToolCalls) != 1 {
+		t.Fatalf("history = %+v, want get_task + one tool result", got.History)
 	}
-	calls := got.History[0].ToolCalls
-	if calls[0].Function.Name != "list_backlog" || calls[0].Function.Arguments != "{}" {
-		t.Fatalf("list call = %+v", calls[0])
+	call := got.History[0].ToolCalls[0]
+	if call.Function.Name != "get_task" || call.Function.Arguments != `{"task_id":"`+first.ID+`"}` {
+		t.Fatalf("get call = %+v", call)
 	}
-	if calls[1].Function.Name != "get_task" || calls[1].Function.Arguments != `{"task_id":"`+first.ID+`"}` {
-		t.Fatalf("get call = %+v", calls[1])
-	}
-	if !strings.Contains(got.History[1].Content, first.ID+" [todo]") || !strings.Contains(got.History[2].Content, "first body") {
-		t.Fatalf("real backlog results absent: %+v", got.History)
+	if !strings.Contains(got.History[1].Content, "first body") || strings.Contains(got.History[1].Content, "second task") {
+		t.Fatalf("preload did not contain only the selected task: %+v", got.History)
 	}
 
 	rec := &captureRec{}
@@ -71,7 +68,7 @@ func TestBuildExplicitTaskPreload(t *testing.T) {
 			results++
 		}
 	}
-	if turns != 1 || toolCalls != 2 || results != 2 {
+	if turns != 1 || toolCalls != 1 || results != 1 {
 		t.Fatalf("synthetic events = turn %d calls %d results %d", turns, toolCalls, results)
 	}
 
@@ -86,6 +83,42 @@ func TestBuildExplicitTaskPreload(t *testing.T) {
 				t.Fatalf("unexpected preload: %+v", fallback)
 			}
 		})
+	}
+}
+
+func TestExplicitTaskPreloadIncludesCurrentReadiness(t *testing.T) {
+	d := depsFor(t)
+	dep, err := d.Docs.Create("dependency", "", 2, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := d.Docs.Create("selected task", "body", 2, []string{dep.ID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, _ := BuildMode("work", d, false)
+	preload := func() string {
+		t.Helper()
+		p := BuildExplicitTaskPreload(context.Background(), "Work on "+task.ID, d, reg)
+		if len(p.Results) != 1 || p.Calls[0].Function.Name != "get_task" {
+			t.Fatalf("task-only preload missing: %+v", p)
+		}
+		return p.Results[0].Content
+	}
+	if got := preload(); !strings.Contains(got, "dependencies not done: "+dep.ID) {
+		t.Fatalf("unmet dependency was hidden: %s", got)
+	}
+	if _, err := d.Docs.Update(dep.ID, func(tk *docs.Task) { tk.Status = docs.StatusDone }); err != nil {
+		t.Fatal(err)
+	}
+	if got := preload(); !strings.Contains(got, "Work eligibility: [READY TO START]") {
+		t.Fatalf("completed dependency did not update readiness: %s", got)
+	}
+	if _, err := d.Docs.Update(task.ID, func(tk *docs.Task) { tk.DependsOn = []string{"9999"} }); err != nil {
+		t.Fatal(err)
+	}
+	if got := preload(); !strings.Contains(got, "missing dependency 9999") {
+		t.Fatalf("missing dependency was hidden: %s", got)
 	}
 }
 

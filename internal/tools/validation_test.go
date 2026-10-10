@@ -164,7 +164,7 @@ func TestDispatchValidatesBoundsAndBooleanWithoutExecuting(t *testing.T) {
 	}
 }
 
-func TestDispatchKeepsRepairNoteOnValidationError(t *testing.T) {
+func TestDispatchRejectsLeakedInvalidSibling(t *testing.T) {
 	reg := New()
 	reg.Add(&gollama.Tool{
 		Name: "repaired",
@@ -178,7 +178,7 @@ func TestDispatchKeepsRepairNoteOnValidationError(t *testing.T) {
 		},
 	})
 	res := dispatch(t, reg, "repaired", `{"message":"hello</message><parameter name=\"count\">not-a-number"}`)
-	if !res.IsError || !strings.Contains(res.Content, "count") || !strings.Contains(res.Content, "was recovered") {
+	if !res.IsError || !strings.Contains(res.Content, "count") || !strings.Contains(res.Content, "resend") {
 		t.Fatalf("result = %q (error=%v)", res.Content, res.IsError)
 	}
 }

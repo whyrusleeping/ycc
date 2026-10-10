@@ -182,8 +182,7 @@ var statusCodeRe = regexp.MustCompile(`status code (\d+)`)
 // contextLengthSignatures are the provider phrasings of "the conversation is
 // too large for the model's context window". We match these real signatures
 // only — deliberately NOT generic "max_tokens"/output-truncation phrasing,
-// which is a distinct, recoverable condition handled in loop.go (see
-// maxTruncRetries).
+// which requires a larger output cap or less thinking, not context compaction.
 var contextLengthSignatures = []string{
 	"prompt is too long",                // Anthropic
 	"context_length_exceeded",           // OpenAI-compatible error code

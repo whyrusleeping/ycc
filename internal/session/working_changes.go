@@ -6,6 +6,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
 
 // WorkingChanges inspects the session's persisted scope without retaining a new
@@ -63,6 +64,13 @@ func (m *Manager) WorkingChanges(project, sessionID, taskID string) (*git.Change
 		}
 		adopted = append(adopted, path)
 		scope += fmt.Sprintf(", task %s doc adopted", taskID)
+	}
+	// Narrow to this session's own writes when other sessions share the tree,
+	// exactly as its review and commit would.
+	if mine, foreign := m.ownership.Split(ws, sessionID); mine != nil {
+		attr := &git.Attribution{Mine: mine, Foreign: foreign, Bookkeeping: orchestrator.BookkeepingPaths(ws, docs.NewStore(ws))}
+		changes, err := repo.InspectChangesFor(baseline, attr, adopted...)
+		return changes, scope, err
 	}
 	changes, _, err := repo.InspectChanges(baseline, adopted...)
 	return changes, scope, err

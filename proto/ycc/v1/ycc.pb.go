@@ -4196,7 +4196,7 @@ type ListModelsResponse struct {
 	ImplementerThinking string `protobuf:"bytes,6,opt,name=implementer_thinking,json=implementerThinking,proto3" json:"implementer_thinking,omitempty"`
 	ReviewersThinking   string `protobuf:"bytes,7,opt,name=reviewers_thinking,json=reviewersThinking,proto3" json:"reviewers_thinking,omitempty"`
 	// Effective work-mode implementation strategy (work.implementation), resolved
-	// to "delegate" when unset, so settings clients show the real current default.
+	// to "direct" when unset, so settings clients show the real current default.
 	WorkImplementation string `protobuf:"bytes,8,opt,name=work_implementation,json=workImplementation,proto3" json:"work_implementation,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache

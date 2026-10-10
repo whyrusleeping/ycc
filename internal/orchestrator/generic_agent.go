@@ -126,16 +126,13 @@ func genericModelProp(d *Deps) map[string]any {
 func spawnAgent(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "spawn_agent",
-		Description: "Start a general-purpose subagent with an isolated history, an explicit prompt, and a selected " +
-			"configured model. It always runs as a session background job and returns both a stable agent_id and a job_id. " +
-			"Use job_output, wait, and kill_job exactly as for background Bash. Agents default to read-only inspection and " +
-			"may fan out concurrently; set mutating:true only when the task must edit the workspace, subject to the existing " +
-			"single-writer guard. After a turn completes, send_to_agent can retain its context or replace it with a fresh handoff " +
-			"while preserving this handle's resolved model and access level.",
+		Description: "Start an isolated subagent on a configured model; returns agent_id and background job_id. " +
+			"Default read-only; allow mutation only for coding, with disjoint files for concurrent writers. " +
+			"Use the job tools for completion/output/cancellation, then send_to_agent for follow-ups.",
 		Params: tools.Obj(map[string]any{
 			"model":    genericModelProp(d),
 			"prompt":   tools.StrProp("self-contained task or question for the subagent"),
-			"mutating": tools.BoolProp("allow this agent to edit the workspace; default false. Mutating agents are serialized with mutating Bash/implementer jobs in this worktree"),
+			"mutating": tools.BoolProp("allow this agent to edit the workspace; default false. Mutating agents run concurrently with other mutating work in this worktree; keep their files disjoint"),
 		}, "model", "prompt"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			if d.Jobs == nil {
@@ -157,10 +154,9 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			requestedMutating := tools.GetBool(params, "mutating", false)
 			readOnly := !requestedMutating && genericReadOnlyEnforced()
 			mutates := !readOnly
+			concurrent := ""
 			if mutates {
-				if live := d.Jobs.LiveMutating(); live != nil {
-					return tools.ErrResult("spawn_agent: another mutating job (%s: %s) is live in this tree; wait for it or kill_job it, or route parallel mutating work through a separate workstream", live.ID(), live.Label()), nil
-				}
+				concurrent = concurrentMutationNote(d)
 				if !requestedMutating {
 					d.Emitter.Emit(event.Narration, map[string]any{
 						"msg": "secure read-only shell confinement is unavailable; generic subagent Bash will fail closed while Read and Search remain available, and the job is conservatively scheduled as mutating",
@@ -174,13 +170,8 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			d.mu.Unlock()
 			actor := "agent:" + agentID
 			var token *workspacelease.Token
-			var lease *workspacelease.Lease
 			if mutates {
 				token = d.mutationToken("generic agent " + agentID)
-				lease, err = d.acquireMutation(token)
-				if err != nil {
-					return tools.ErrResult("spawn_agent: %v", err), nil
-				}
 			}
 			loop := newGenericAgentLoop(d, spec, actor, requestedMutating, token)
 			loop.Seed(prompt)
@@ -193,7 +184,6 @@ func spawnAgent(d *Deps) *gollama.Tool {
 				job, started = d.Jobs.TryStartMutatingTracked("agent", agentID+" turn 1 ("+model+")", d.Emitter.Actor())
 			}
 			if !started {
-				lease.Release()
 				return tools.ErrResult("spawn_agent: session is shutting down; agent was not started"), nil
 			}
 			trackAgentJob(loop, job)
@@ -206,7 +196,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			d.genericAgent[agentID] = h
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job, lease, "fresh", 1, 0, contextTokens, "")
+			startGenericAgentJob(d, h, job, "fresh", 1, 0, contextTokens, "")
 			kind := "read-only"
 			if requestedMutating {
 				kind = "mutating"
@@ -216,7 +206,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			return tools.OkResult(fmt.Sprintf("started %s subagent %s as background job %s using model %s. "+
 				"Do not poll it; its report arrives automatically, or call wait([%q]) when it gates your next step. "+
 				"After this turn completes, continue it with send_to_agent(agent_id=%q, prompt=..., context_mode='retain'|'fresh').%s",
-				kind, agentID, job.ID(), model, job.ID(), agentID, subagentContextNote("fresh", 1, contextTokens, 0))), nil
+				kind, agentID, job.ID(), model, job.ID(), agentID, subagentContextNote("fresh", 1, contextTokens, 0)) + concurrent), nil
 		},
 	}
 }
@@ -224,12 +214,9 @@ func spawnAgent(d *Deps) *gollama.Tool {
 func sendToAgent(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "send_to_agent",
-		Description: "Send a follow-up to a general-purpose subagent after its previous turn has fully completed. " +
-			"context_mode defaults to 'retain', which keeps conversation continuity. Use 'fresh' after context failure or when " +
-			"history is obsolete: it replaces the loop without replaying prior conversation, while preserving the stable agent id, " +
-			"originally resolved model, access level, and tools. A fresh prompt must be a bounded, self-contained handoff containing " +
-			"the request, relevant evidence/artifact references, unresolved questions, and verification requirements. Each follow-up " +
-			"is another background job; use wait/job_output/kill_job normally.",
+		Description: "Continue a finished subagent run as a new background job; refused while execution is still unwinding, " +
+			"even if its job is marked killed. Retain useful context; prefer fresh after cancellation, context failure, " +
+			"or obsolete history. The agent id, resolved model, tools, and access level stay fixed.",
 		Params: tools.Obj(map[string]any{
 			"agent_id": tools.StrProp("stable agent id returned by spawn_agent, e.g. agent_1"),
 			"prompt": tools.StrProp("follow-up prompt; with fresh context, a self-contained request including relevant evidence/artifact " +
@@ -266,19 +253,6 @@ func sendToAgent(d *Deps) *gollama.Tool {
 				}
 				return tools.ErrResult("send_to_agent: agent %s is still running as %s; wait for it to finish before sending a follow-up", agentID, jobID), nil
 			}
-			var lease *workspacelease.Lease
-			if h.mutates {
-				if live := d.Jobs.LiveMutating(); live != nil {
-					d.mu.Unlock()
-					return tools.ErrResult("send_to_agent: another mutating job (%s: %s) is live in this tree; wait for it or kill_job it first", live.ID(), live.Label()), nil
-				}
-				var acquireErr error
-				lease, acquireErr = d.acquireMutation(h.token)
-				if acquireErr != nil {
-					d.mu.Unlock()
-					return tools.ErrResult("send_to_agent: %v", acquireErr), nil
-				}
-			}
 			priorTokens := h.loop.ContextTokensEstimate()
 			nextLoop := h.loop
 			rolloverReason := ""
@@ -296,7 +270,6 @@ func sendToAgent(d *Deps) *gollama.Tool {
 				job, started = d.Jobs.TryStartTracked("agent", label, d.Emitter.Actor())
 			}
 			if !started {
-				lease.Release()
 				d.mu.Unlock()
 				return tools.ErrResult("send_to_agent: session is shutting down; follow-up was not started"), nil
 			}
@@ -313,7 +286,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 			h.running = true
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job, lease, mode, round, priorTokens, contextTokens, rolloverReason)
+			startGenericAgentJob(d, h, job, mode, round, priorTokens, contextTokens, rolloverReason)
 			return tools.OkResult(fmt.Sprintf("started follow-up turn %d for subagent %s as background job %s with context_mode=%s. "+
 				"The stable handle keeps logical model %s and its original access/tools. Do not poll it; its report arrives automatically, "+
 				"or call wait([%q]) when needed.%s", round, agentID, job.ID(), mode, h.spec.Name, job.ID(),
@@ -325,7 +298,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 func newGenericAgentLoop(d *Deps, spec AgentSpec, actor string, writeAccess bool, token *workspacelease.Token) *engine.Loop {
 	reg := tools.New()
 	agentWS := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
-		Ownership: d.Ownership, MutationToken: token}
+		Ownership: d.Ownership, MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping()}
 	var system string
 	if writeAccess {
 		agentWS.WriteRoots = tools.NormalizeRoots(d.WriteRoots)
@@ -349,7 +322,7 @@ Caller handoff:
 ` + strings.TrimSpace(prompt))
 }
 
-func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *workspacelease.Lease, mode string, round, priorTokens, newTokens int, rolloverReason string) {
+func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, mode string, round, priorTokens, newTokens int, rolloverReason string) {
 	loop := h.loop
 	d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
 	spawn := subagentSpawnData("generic", h.spec, mode, round, priorTokens, newTokens, rolloverReason)
@@ -357,7 +330,6 @@ func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *
 	d.Emitter.Emit(event.SubagentSpawned, spawn)
 	go func() {
 		defer job.ExecutionComplete()
-		defer lease.Release()
 		res, err := loop.Run(job.Context())
 		contextTokens := loop.ContextTokensEstimate()
 		finish := map[string]any{
@@ -398,4 +370,19 @@ func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, lease *
 		}
 		d.mu.Unlock()
 	}()
+}
+
+// concurrentMutationNote tells the coordinator which other mutating jobs in
+// this session are live, so it can keep their files disjoint. Concurrency is
+// allowed; this is awareness, not a guard.
+func concurrentMutationNote(d *Deps) string {
+	if d.Jobs == nil {
+		return ""
+	}
+	live := d.Jobs.LiveMutating()
+	if live == nil {
+		return ""
+	}
+	return fmt.Sprintf("\n\nNOTE: mutating job %s (%s) is also live in this worktree. Both may write concurrently; "+
+		"give them disjoint files or coordinate through your instructions.", live.ID(), live.Label())
 }

@@ -360,25 +360,6 @@ func (l *Loop) backend() (Turner, string, modelIdentity, Thinking) {
 // turn count.
 const defaultMaxTurns = 1000
 
-// maxTruncRetries bounds how many consecutive times the loop will nudge the
-// model to continue after a turn was cut off at the output token cap before it
-// emitted any tool call (commonly: the whole budget went to an extended-thinking
-// block). Past this, the loop gives up and returns a truncation error rather
-// than spinning forever.
-const maxTruncRetries = 2
-
-// truncatedStubContent and truncationNudge are the two messages the live loop
-// appends at a mid-Run output-token truncation boundary: a sanitized assistant
-// stub (with non-empty content so backends don't reject it) followed by an
-// internal user "nudge" telling the model to continue. The nudge is posted via
-// Loop.Post and is NOT recorded in the event log, so replay.go (ReplayHistory)
-// reuses these constants to synthesize the nudge when it reconstructs a
-// truncation-retry boundary, preserving strict user/assistant alternation.
-const (
-	truncatedStubContent = "(my previous response was cut off at the output token limit)"
-	truncationNudge      = "Your previous response was cut off at the output token limit before you took any action. Keep your reasoning brief and call a tool now to make concrete progress."
-)
-
 // noContentYieldReport produces a concise, ALWAYS non-empty description of why a
 // turn ended when the model emitted neither a tool call nor any visible content
 // (and the turn was NOT truncated at the token cap). It branches on the provider
@@ -970,10 +951,6 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		maxTurns = defaultMaxTurns
 	}
 
-	// truncRetries counts consecutive turns cut off at the token cap with no
-	// tool call; it resets whenever a turn completes normally.
-	truncRetries := 0
-
 	// turn resets to 1 on every Run, so MaxTurns is a per-Run budget rather
 	// than a cumulative one across revise rounds (see defaultMaxTurns).
 	for turn := 1; turn <= maxTurns; turn++ {
@@ -1090,17 +1067,6 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// sanitizeThinkingBlocks). Anthropic 400s on a thinking block with no text.
 		msg.ThinkingBlocks = sanitizeThinkingBlocks(msg.ThinkingBlocks)
 
-		// Some models leak XML-ish invoke syntax into a JSON string argument,
-		// swallowing sibling arguments. Repair every call before this assistant
-		// message enters history so the engine-owned arguments are canonical for
-		// both live continuation (including Codex stateless item replay) and durable
-		// event-log reopen. Keep the recovery details parallel to the calls so each
-		// later tool_call event retains its existing forensic `repaired` payload.
-		repairedToolCalls := make([][]string, len(msg.ToolCalls))
-		for ci, call := range msg.ToolCalls {
-			msg.ToolCalls[ci], repairedToolCalls[ci] = l.Tools.Repair(call)
-		}
-
 		// Read optional backend-specific reasoning usage before emitting either
 		// display or durable usage events. This count is a subset of output tokens,
 		// not a separate cost class.
@@ -1152,8 +1118,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		// non-empty description of WHY the turn ended BEFORE the model_turn event
 		// is emitted, so the synthesized text is recorded on the event and reopen/
 		// replay reconstructs the identical non-empty turn (no replay.go change).
-		// Truncated turns are intentionally left alone here: they have their own
-		// sanitized-stub + nudge handling below that replay depends on.
+		// Truncated turns remain in the log but cannot count as a completed yield.
 		noContentYield := false
 		if len(msg.ToolCalls) == 0 && !truncated && strings.TrimSpace(msg.Content) == "" {
 			msg.Content = noContentYieldReport(resp.StopReason)
@@ -1204,33 +1169,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		if len(msg.ToolCalls) == 0 {
-			// Branch on the actual stop reason (resp.Truncated() is true only for
-			// max_tokens/length stops). A turn cut off at the output token cap
-			// before it emitted any tool call is NOT a voluntary yield — the model
-			// ran out of budget mid-thought (commonly the whole allowance went to
-			// an extended-thinking block). Treating it as a finish surfaces an
-			// empty report and leaves the caller (e.g. the coordinator) puzzled
-			// that nothing happened. Instead, nudge the model to continue, bounded
-			// by maxTruncRetries.
+			// Leave the pending input unanswered. Retrying the same cap automatically
+			// just spends another turn; partial/unsigned output must not enter history.
 			if truncated {
-				if truncRetries >= maxTruncRetries {
-					return &Result{Report: msg.Content, Turns: turn, Truncated: true},
-						fmt.Errorf("turn %d truncated at the output token cap with no tool call (after %d retries); raise max_tokens or reduce thinking", turn, truncRetries)
-				}
-				truncRetries++
-				// Keep a SANITIZED copy of the truncated turn in history: drop its
-				// thinking blocks (a cut-off block is unsigned and Anthropic rejects
-				// it on the next request) and guarantee non-empty content (empty
-				// assistant messages are also rejected). Keeping an assistant turn
-				// preserves user/assistant alternation, so the follow-up user nudge
-				// doesn't collide with the preceding user message.
-				stub := gollama.Message{Role: msg.Role, Content: msg.Content}
-				if strings.TrimSpace(stub.Content) == "" {
-					stub.Content = truncatedStubContent
-				}
-				l.history = append(l.history, stub)
-				l.Post(truncationNudge)
-				continue
+				return &Result{Report: msg.Content, Turns: turn, Truncated: true},
+					fmt.Errorf("turn %d truncated at the output token cap with no tool call; raise max_tokens or reduce thinking, then retry", turn)
 			}
 			// A non-truncated no-tool-call turn is a genuine end-of-turn yield (or
 			// an odd stop like refusal): treat its text as the result. msg.Content
@@ -1252,10 +1195,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			l.history = append(l.history, msg)
 			return &Result{Report: msg.Content, Turns: turn, NoContent: noContentYield}, nil
 		}
-		truncRetries = 0
-		// Record the assistant turn (text + tool_use) so context carries forward.
-		// Its tool arguments were canonicalized before this append, so no fragile
-		// mid-batch history mutation is needed while tool results are being posted.
+		// Keep tool arguments exactly as emitted; invalid calls get error results.
+		// Truncated reasoning blocks cannot be replayed safely.
+		if truncated {
+			msg.ThinkingBlocks = nil
+		}
 		l.history = append(l.history, msg)
 
 		// deferred collects checkpoint messages (steered corrections, finished-job
@@ -1277,14 +1221,10 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		}
 
 		for ci, call := range msg.ToolCalls {
-			recovered := repairedToolCalls[ci]
 			callData := map[string]any{
 				"name": call.Function.Name,
 				"args": call.Function.Arguments,
 				"id":   call.ID,
-			}
-			if len(recovered) > 0 {
-				callData["repaired"] = recovered
 			}
 			l.Emitter.Emit(event.ToolCall, callData)
 			if err := l.durableEmitError(ctx); err != nil {
@@ -1294,7 +1234,7 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				l.Activity(ActivityUpdate{CurrentTool: call.Function.Name})
 			}
 			toolStart := time.Now()
-			res := l.Tools.DispatchRepaired(ctx, call, recovered)
+			res := l.Tools.Dispatch(ctx, call)
 			toolMS := time.Since(toolStart).Milliseconds()
 			resultData := map[string]any{
 				"name":        call.Function.Name,

@@ -615,7 +615,7 @@ type Config struct {
 	// Transport bounds provider HTTP turns independently of session cancellation.
 	Transport Transport `toml:"transport,omitempty"`
 	// Work configures the work-mode implementation pipeline. An absent
-	// [work] block keeps the default "delegate" behaviour.
+	// [work] block keeps the default "direct" behaviour.
 	Work Work `toml:"work,omitempty"`
 	// Integration configures how completed workstreams are integrated: base branch,
 	// auto/gate/manual mode, verify command, history strategy, and parallelism cap.
@@ -656,20 +656,8 @@ type Worktree struct {
 	SetupTimeoutSeconds int               `toml:"setup_timeout_seconds,omitempty"`
 }
 
-// Work configures the work-mode coordinator's implementation strategy.
-// Implementation selects whether the coordinator delegates code changes to a
-// dedicated implementer subagent or makes them itself:
-//
-//   - "delegate" (default): the coordinator plans and delegates real code changes
-//     to the implementer subagent (spawn_implementer / send_to_implementer), then
-//     reviews the returned diff. Costs an extra agent hop but keeps the
-//     coordinator's context lean.
-//   - "direct": the coordinator implements the change itself with Read/Write/Edit/
-//     Bash; the implementer spawn tools are removed. Fewer moving parts and often
-//     better on quality/latency — the delegation hop mainly pays off when trying to
-//     save tokens on the coordinator's context.
-//
-// An empty value means "delegate".
+// Work selects direct implementation (default) or an explicit delegated
+// implementer. Both strategies retain the independent reviewer pipeline.
 type Work struct {
 	Implementation string `toml:"implementation,omitempty"` // "" | "delegate" | "direct"
 }
@@ -680,11 +668,10 @@ const (
 	ImplementationDirect   = "direct"
 )
 
-// Implementation normalizes the configured value, defaulting an empty setting to
-// "delegate".
+// ResolvedImplementation defaults an unset strategy to direct implementation.
 func (w Work) ResolvedImplementation() string {
 	if w.Implementation == "" {
-		return ImplementationDelegate
+		return ImplementationDirect
 	}
 	return w.Implementation
 }
@@ -1201,7 +1188,7 @@ func (r *Registry) WriteRoots() []string {
 }
 
 // WorkImplementation returns the configured work-mode implementation strategy
-// ("delegate" or "direct"), defaulting to "delegate" when unset.
+// ("delegate" or "direct"), defaulting to "direct" when unset.
 // Guarded by the registry lock so a runtime config edit is picked up on the next
 // session build.
 func (r *Registry) WorkImplementation() string {

@@ -25,16 +25,15 @@ Completion notification and evidence access are separate:
 - an automatic final notification is claimed exactly once at an engine checkpoint;
 - an explicit `wait` synchronizes with completion, returns the retained report, and suppresses a later
   automatic notification;
-- `job_result` retrieves that retained final report repeatably, whether notification happened via a
-  checkpoint or `wait`;
-- `job_output` is a non-consuming, repeatable progress/evidence view and changes neither notification
-  nor result state.
+- `job_output` peeks without affecting notification state: with only a job id it returns live
+  output/activity or the retained final report when terminal; explicit cursor/limit or tail requests
+  read captured output instead. Both reports and output reads are repeatable before or after delivery.
 
 A completion found between results from one model tool-call batch is deferred until the complete batch
 has entered history, preserving provider requirements that tool results immediately follow their calls.
 
 Automatic delivery is also gated on execution, not just on the report. A tracked process or subagent
-publishes its terminal report while it still holds its mutation/lifetime leases, so its completion
+publishes its terminal report while it is still unwinding (e.g. finishing a write), so its completion
 signal and its claimable notification both become available at the separate boundary where execution
 actually stops. A wake therefore never starts a coordinator turn against work that is still releasing
 ownership, in either order of the two boundaries; an explicit `wait` keeps its existing contract and
@@ -62,17 +61,17 @@ the unattended work loop and the idle reaper cannot mistake a coordinator that i
 delegated work — or resuming on it — for a finished session and kill its jobs. Eligibility is false
 for anything nothing will wake, so a blocked or errored session is still reclaimed promptly.
 Execution that is terminal and already notified does not extend eligibility while its process is still
-exiting: the single-writer guard and the shutdown execution join already cover that case.
+exiting: the shutdown execution join already covers that case.
 
 A subagent turn is also an explicit child-job lifecycle boundary. By default, every running job owned by
 that subagent is cancelled and its process/agent execution is joined before the subagent releases mutation
 ownership; completed, previously unnotified reports are included in the subagent result. A watcher may
 continue only when the subagent's finish control explicitly hands over its job id and purpose. That transfer
 records the parent owner and delivery contract: completion is offered exactly once at a parent checkpoint
-unless an explicit wait claims it first, while `job_result` and output evidence remain repeatable. Handoffs
-are durable and discoverable through `list_jobs`. A mutating handoff keeps its lifetime lease, prevents a
-safe final changeset from being attributed, and blocks subsequent mutating work until the process actually
-stops. Error, blocked, cancellation, hard-stop, and session-shutdown paths apply the same cleanup-and-join
+unless an explicit wait claims it first, while `job_output` reports and output evidence remain repeatable. Handoffs
+are durable and discoverable through `list_jobs`. A mutating handoff defers the delegated agent's final
+changeset report, because the changeset is not settled while the handed-off process can still write. It does
+not lock the worktree. Error, blocked, cancellation, hard-stop, and session-shutdown paths apply the same cleanup-and-join
 rule; terminal report state alone is not proof that execution has stopped. Session shutdown closes job
 registration before snapshotting runners: a concurrent tracked start is either registered in time to be
 cancelled and joined, or is declined before launch and releases any mutation lease/agent-running guard.
@@ -92,22 +91,51 @@ newly started jobs continue after the greatest restored id.
 
 ## Mutation safety
 
-Background execution does not weaken the per-worktree single-writer invariant. Read-only agents may
-fan out. A mutating background agent is refused while another mutating job is live in the same tree.
-Parallel mutation uses workstreams, where each agent owns a separate linked worktree.
+Agents and sessions may mutate one worktree concurrently. Read-only agents fan out; mutating agents,
+implementers, and other sessions run alongside each other. A coordinator spawning a mutating agent
+beside a live writer is told about it so it can keep their files disjoint. Workstreams, where each
+agent owns a separate linked worktree, remain the option for full build/test isolation.
 
-The invariant is between execution scopes, not within one, and it is best-effort. Shell commands —
-foreground or background, including handed-off watchers — take no worktree lease and are not counted
-as mutating jobs. Most shell work is reads, builds, and tests that the guard cannot distinguish from
-mutation; leasing it serialized every session and agent behind whoever was running `go test` (even
-blocking new sessions from starting), which cost far more than the rare clobber it prevented. The
-lease therefore covers file tools, mutating agent lifetimes, plan writes, and commits only; a
-shell that does write races like any other unleased writer, and changeset attribution for work
-overlapping a live shell is correspondingly approximate. Structured backlog/memory writes are also
-unleased for the same reason: leasing them made it impossible to promote a proposed task while any
-session was running. They are atomic and serialized by the docs store lock; the residual risk is a
-concurrent raw Edit of the same task file losing one side (last writer wins), and a user's backlog
-edit made mid-session may land in that session's next commit.
+The worktree lease is operation-scoped. It is held for one code file write, for the git half of one
+commit, or for one workstream spawn/merge/discard. A caller that meets another section waits briefly
+rather than failing. The lease used to be held for a mutating agent's entire lifetime, which meant a
+session watching a multi-hour hardware run locked every other session out of the tree. That lifetime
+claim existed only because changeset attribution was "everything that changed since my baseline",
+which is true only if nobody else writes. It was never true in practice: shells are unleased because
+leasing them serialized every session behind whoever was running `go test`.
+
+Attribution therefore comes from claims rather than exclusion. Successful file-tool writes record the
+writing session as a claimant of the path. Shell commands cannot be intercepted, so each one is
+bracketed by two cheap snapshots of the dirty set. Paths that changed while it ran are claimed unless
+another session already owns them. As a result, codegen, formatters, and `go mod tidy` output belong
+to the session that ran them. Backlog and memory files are the exception: they are shared
+bookkeeping, written through structured tools too, and travel with whichever session commits next,
+even when already dirty. A session's changeset:
+
+- excludes paths only other sessions claimed;
+- includes and flags paths several sessions wrote;
+- adopts baseline-dirty paths the session edited itself, and changed bookkeeping;
+- defers baseline-dirty paths another session is writing.
+
+A baseline-dirty path changed by a writer nobody claimed is refused as ambiguous rather than silently
+left out. Typically that writer is the user editing files by hand.
+
+When another session commits, HEAD fast-forwards. Each session's baseline is rebased by overlaying
+the newly committed paths, so the next changeset neither goes stale nor re-attributes work already in
+HEAD. A path committed only in part, such as a user committing staged hunks, keeps its leftover
+changes as pre-existing state. A prepared commit overtaken by another commit is abandoned and redone
+on the new HEAD. Commits publish their paths into the index under git's own `index.lock`, so a
+concurrent `git add` is not overwritten.
+
+Claims are advisory and best-effort. They never refuse a write. They persist per worktree in the git
+directory so a daemon restart does not orphan them. They outlive their session, so a stopped
+session's uncommitted work stays attributed to it rather than being swept into someone else's
+commit. They are retired once the path matches HEAD again. When the tree is shared, unclaimed changes are listed in the change
+manifest so a reviewer can spot work swept in from elsewhere. Docs-layer prose takes the docs store
+lock instead of the lease, so a chat session can tighten acceptance criteria while a commit's hooks
+run, and no update is lost. The accepted cost is that a docs edit can race a workstream merge. Two
+sessions editing the same code file is not prevented. The overlap is surfaced in both sessions'
+change manifests and review evidence.
 
 ## Rejected alternatives
 

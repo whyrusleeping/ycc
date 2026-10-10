@@ -231,58 +231,70 @@ func TestLoopEmptyYieldUnknownStopReason(t *testing.T) {
 	}
 }
 
-// A turn truncated at the token cap with no tool call is NOT a clean yield: the
-// loop nudges the model to continue, and once it acts the run proceeds normally.
-func TestLoopContinuesAfterTruncation(t *testing.T) {
-	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
-		truncatedTurn(""), // ran out of budget mid-thinking, emitted nothing actionable
-		assistantToolCall("finish", `{"report":"recovered"}`),
-	}}
-	loop := newLoop(t, turner)
-	res, err := loop.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.Report != "recovered" {
-		t.Fatalf("report = %q, want recovered", res.Report)
-	}
-	// Invariants of the retry context (turner.lastMsgs is what the recovery turn saw):
-	var sawNudge bool
-	var prevRole string
-	for _, m := range turner.lastMsgs {
-		// No partial/unsigned thinking block may be echoed back.
-		if len(m.ThinkingBlocks) != 0 || strings.TrimSpace(m.Thinking) != "" {
-			t.Fatalf("truncated thinking was kept in history: %+v", m)
-		}
-		// Roles must alternate — two consecutive user turns would be rejected by
-		// the Anthropic API.
-		if m.Role == "user" && prevRole == "user" {
-			t.Fatalf("consecutive user messages in history: %+v", turner.lastMsgs)
-		}
-		prevRole = m.Role
-		if m.Role == "user" && strings.Contains(m.Content, "cut off") {
-			sawNudge = true
-		}
-	}
-	if !sawNudge {
-		t.Fatalf("expected a continue-nudge user message in history: %+v", turner.lastMsgs)
+// Truncation records cost/evidence but leaves the input pending without retries
+// or synthetic messages, so an explicit retry/reopen can answer it cleanly.
+func TestLoopTruncationLeavesPendingHistory(t *testing.T) {
+	for _, text := range []string{"", "partial answer"} {
+		t.Run(text, func(t *testing.T) {
+			partial := truncatedTurn(text)
+			partial.Usage = gollama.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}
+			partial.Choices[0].Message.ThinkingBlocks = []gollama.ThinkingBlock{{Thinking: "unsigned partial thought"}}
+			turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{partial, assistantText("recovered")}}
+			rec := &captureRecorder{}
+			loop := newLoop(t, turner)
+			loop.Emitter = event.NewEmitter(rec, "coordinator")
+			loop.Seed("go")
+			rec.evs = append(rec.evs, event.Event{Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "go"}})
+			res, err := loop.Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "raise max_tokens") || res == nil || !res.Truncated || turner.calls != 1 {
+				t.Fatalf("truncation did not stop clearly: res=%+v err=%v calls=%d", res, err, turner.calls)
+			}
+			if len(loop.history) != 1 || loop.history[0].Content != "go" {
+				t.Fatalf("partial turn poisoned history: %+v", loop.history)
+			}
+			if got := ReplayHistory(rec.evs); len(got) != 1 || got[0].Content != "go" {
+				t.Fatalf("replay differs from live: %+v", got)
+			}
+			var recorded bool
+			for _, ev := range rec.evs {
+				if ev.Type == event.ModelTurn {
+					u, _ := ev.Data["usage"].(event.Usage)
+					recorded = boolv(ev.Data, "truncated") && u.Total == 30 && ev.Data["text"] == text
+				}
+			}
+			if !recorded {
+				t.Fatal("truncated usage/text missing from log")
+			}
+			res, err = loop.Run(context.Background())
+			if err != nil || res.Report != "recovered" || len(turner.lastMsgs) != 1 || turner.lastMsgs[0].Content != "go" {
+				t.Fatalf("retry received partial history: res=%+v err=%v messages=%+v", res, err, turner.lastMsgs)
+			}
+		})
 	}
 }
 
-// Persistent truncation (the model never recovers) eventually fails loudly with
-// a truncation error rather than silently returning an empty report.
-func TestLoopFailsOnRepeatedTruncation(t *testing.T) {
-	resps := make([]*gollama.ResponseMessageGenerate, 0, maxTruncRetries+1)
-	for i := 0; i < maxTruncRetries+1; i++ {
-		resps = append(resps, truncatedTurn(""))
+func TestLoopTruncatedToolCallPreservesExecution(t *testing.T) {
+	partial := assistantToolCall("probe", `{}`)
+	partial.StopReason = "max_tokens"
+	partial.Choices[0].Message.ThinkingBlocks = []gollama.ThinkingBlock{{Thinking: "incomplete"}}
+	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{partial, assistantText("done")}}
+	rec := &captureRecorder{}
+	reg := tools.New()
+	calls := 0
+	reg.Add(&gollama.Tool{Name: "probe", Params: tools.Obj(nil), Call: func(context.Context, any) (*gollama.ToolResult, error) {
+		calls++
+		return &gollama.ToolResult{Content: "ok"}, nil
+	}})
+	loop := &Loop{Client: turner, Model: "test", Tools: reg, Emitter: event.NewEmitter(rec, "coordinator")}
+	if _, err := loop.Run(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	turner := &scriptedTurner{responses: resps}
-	res, err := newLoop(t, turner).Run(context.Background())
-	if err == nil {
-		t.Fatalf("expected a truncation error, got nil (res=%+v)", res)
+	replayed := ReplayHistory(rec.evs)
+	if calls != 1 || len(replayed) != len(loop.history) || len(replayed[0].ToolCalls) != 1 || replayed[1].Content != "ok" {
+		t.Fatalf("truncated tool call lost or repeated: calls=%d live=%+v replay=%+v", calls, loop.history, replayed)
 	}
-	if res == nil || !res.Truncated {
-		t.Fatalf("expected res.Truncated=true, got %+v", res)
+	if len(loop.history[0].ThinkingBlocks) != 0 || len(replayed[0].ThinkingBlocks) != 0 || len(turner.lastMsgs[0].ThinkingBlocks) != 0 {
+		t.Fatal("incomplete reasoning entered continuation history")
 	}
 }
 
@@ -541,7 +553,7 @@ func TestLoopStripsEmptyThinkingBlocks(t *testing.T) {
 	}
 }
 
-func TestLoopCanonicalizesRepairedToolCallsBeforeHistory(t *testing.T) {
+func TestLoopRecordsRejectedToolArgumentsUnchanged(t *testing.T) {
 	const leaked = `{"question":"Pick one?</question>\n<parameter name=\"options\">[\"a\",\"b\"]"}`
 	call := assistantToolCall("repair_test", leaked)
 	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{call, assistantText("done")}}
@@ -554,10 +566,11 @@ func TestLoopCanonicalizesRepairedToolCallsBeforeHistory(t *testing.T) {
 			"options":  tools.StrArrProp("options"),
 		}, "question"),
 		Call: func(context.Context, any) (*gollama.ToolResult, error) {
-			return &gollama.ToolResult{Content: "ok"}, nil
+			t.Fatal("malformed call executed")
+			return nil, nil
 		},
 	})
-	loop := &Loop{Client: turner, Model: "test", Tools: reg, Emitter: event.NewEmitter(rec, "agent")}
+	loop := &Loop{Client: turner, Model: "test", Tools: reg, Emitter: event.NewEmitter(rec, "coordinator")}
 	if _, err := loop.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -573,8 +586,8 @@ func TestLoopCanonicalizesRepairedToolCallsBeforeHistory(t *testing.T) {
 		t.Fatalf("no tool-call assistant in history: %+v", loop.history)
 	}
 	canonicalArgs := assistant.ToolCalls[0].Function.Arguments
-	if canonicalArgs == leaked || strings.Contains(canonicalArgs, "<parameter") || !strings.Contains(canonicalArgs, `"options":["a","b"]`) {
-		t.Fatalf("history arguments were not canonicalized: %q", canonicalArgs)
+	if canonicalArgs != leaked {
+		t.Fatalf("history arguments were rewritten: %q", canonicalArgs)
 	}
 
 	var toolCall, toolResult *event.Event
@@ -589,16 +602,18 @@ func TestLoopCanonicalizesRepairedToolCallsBeforeHistory(t *testing.T) {
 	if toolCall == nil || toolCall.Data["args"] != canonicalArgs {
 		t.Fatalf("tool_call event does not match canonical history: %+v", toolCall)
 	}
-	repaired, ok := toolCall.Data["repaired"].([]string)
-	if !ok || len(repaired) != 1 || repaired[0] != "options" {
-		t.Fatalf("tool_call repaired payload = %#v", toolCall.Data["repaired"])
+	if _, repaired := toolCall.Data["repaired"]; repaired {
+		t.Fatal("rejection was recorded as repair")
 	}
 	if toolResult == nil {
 		t.Fatal("no tool_result event")
 	}
 	result, _ := toolResult.Data["result"].(string)
-	if !strings.HasPrefix(result, "ok") || !strings.Contains(result, "options was recovered") {
-		t.Fatalf("tool_result does not explain the repair: %+v", toolResult)
+	if toolResult.Data["error"] != true || !strings.Contains(result, "resend") {
+		t.Fatalf("tool_result does not explain the rejection: %+v", toolResult)
+	}
+	if replayed := ReplayHistory(rec.evs); len(replayed) != len(loop.history) || replayed[0].ToolCalls[0].Function.Arguments != leaked {
+		t.Fatalf("replay rewrote rejected call: %+v", replayed)
 	}
 }
 

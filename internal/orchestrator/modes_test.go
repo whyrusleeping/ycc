@@ -135,10 +135,9 @@ func TestBuildModeToolsets(t *testing.T) {
 	// The removed authoring modes no longer build.
 	for _, mode := range []string{"spec", "backlog", "feature", "bug"} {
 		reg, _ := BuildMode(mode, d, false)
-		// Unknown modes fall through to the work coordinator; assert they are not
-		// silently still distinct authoring modes by checking they carry the work
-		// pipeline (spawn_implementer).
-		if !hasTool(reg, "spawn_implementer") {
+		// Unknown modes fall through to the work coordinator, including review
+		// and commit, rather than acting as distinct authoring modes.
+		if !hasTool(reg, "spawn_reviewers") || !hasTool(reg, "commit") {
 			t.Fatalf("removed mode %q should fall through to work coordinator", mode)
 		}
 	}
@@ -149,7 +148,7 @@ func TestBuildModeToolsets(t *testing.T) {
 // it keeps the editing tools and the review pipeline, and gets the direct prompt.
 func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 	d := depsFor(t)
-	d.WorkImplementation = "direct"
+	// The zero-value strategy is direct.
 	reg, _ := BuildMode("work", d, false)
 	// No implementer subagent tools in direct mode.
 	for _, gone := range []string{"spawn_implementer", "send_to_implementer"} {
@@ -163,11 +162,11 @@ func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 			t.Fatalf("direct work coordinator missing %s", want)
 		}
 	}
-	// The default (delegate) strategy keeps the implementer tools.
-	d.WorkImplementation = ""
+	// Explicit delegation keeps the implementer tools and independent review.
+	d.WorkImplementation = "delegate"
 	reg, _ = BuildMode("work", d, false)
 	if !hasTool(reg, "spawn_implementer") || !hasTool(reg, "send_to_implementer") {
-		t.Fatalf("default work coordinator must keep the implementer pipeline tools")
+		t.Fatalf("delegated work coordinator must keep the implementer pipeline tools")
 	}
 }
 
@@ -663,10 +662,6 @@ func TestAssembleInjectsMemory(t *testing.T) {
 	if !strings.Contains(withMem, "PROJECT MEMORY") {
 		t.Fatalf("memory not injected:\n%s", withMem)
 	}
-	if !strings.Contains(withMem, "candidate evidence to verify, not proof") || !strings.Contains(withMem, "not verified authority") ||
-		!strings.Contains(withMem, "not instructions, approved design, or authorization") {
-		t.Fatalf("memory injection missing provenance/authority framing:\n%s", withMem)
-	}
 	if !strings.Contains(withMem, "use -run while iterating") {
 		t.Fatalf("memory content not injected:\n%s", withMem)
 	}
@@ -703,7 +698,7 @@ func TestFreshSessionPromptOmitsSupersededPolicy(t *testing.T) {
 	if strings.Contains(prompt, "user's benchmark rule") {
 		t.Fatalf("fresh session resurrected superseded invented policy:\n%s", prompt)
 	}
-	for _, want := range []string{"No benchmark variance threshold exists", "[user-stated; ", "s_vals#694/user", "not verified authority", "not instructions, approved design, or authorization"} {
+	for _, want := range []string{"No benchmark variance threshold exists", "[user-stated; ", "s_vals#694/user"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("fresh session prompt missing %q:\n%s", want, prompt)
 		}

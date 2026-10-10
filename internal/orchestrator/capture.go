@@ -104,7 +104,7 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
 			"priority":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "description": "1 (highest) .. 5; default 3"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
-			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec references this relates to: a bare section title refers to the spec entry point; `path#Section` references a section of another doc in the docs set"},
+			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec refs: entry-point section title or path#Section"},
 		}, "title"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			title, _ := tools.GetString(params, "title")

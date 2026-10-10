@@ -240,6 +240,7 @@ func TestRepositoryDocsConfig(t *testing.T) {
 	}
 	want := []string{
 		"spec.md",
+		"docs/cli.md",
 		"docs/design/async-jobs.md",
 		"docs/design/doc-style.md",
 		"docs/design/forge-integration.md",
@@ -249,6 +250,10 @@ func TestRepositoryDocsConfig(t *testing.T) {
 		"docs/design/usage-analytics.md",
 		"docs/design/web-client.md",
 		"docs/design/workstream-integration.md",
+		"docs/e2e-tui.md",
+		"docs/model-ux-evaluations.md",
+		"docs/remote-api.md",
+		"docs/tui-components.md",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("configured docs set = %v, want %v", got, want)

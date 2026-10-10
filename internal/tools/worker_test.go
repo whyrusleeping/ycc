@@ -58,9 +58,9 @@ func TestFileToolsHonorDelegatedMutationScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker := New()
-	worker.Add(Worker(&Workspace{Root: root, Ownership: ownership, MutationToken: workerToken})...)
+	worker.Add(Worker(&Workspace{Root: root, Ownership: ownership, MutationToken: workerToken, WriteWait: 50 * time.Millisecond})...)
 	coordinator := New()
-	coordinator.Add(Worker(&Workspace{Root: root, Ownership: ownership, MutationToken: ownership.NewToken("session two coordinator")})...)
+	coordinator.Add(Worker(&Workspace{Root: root, Ownership: ownership, MutationToken: ownership.NewToken("session two coordinator"), WriteWait: 50 * time.Millisecond})...)
 
 	if got := dispatch(t, worker, "Write", `{"file_path":"owned","content":"worker"}`); got.IsError {
 		t.Fatalf("worker could not reenter its own lease: %s", got.Content)
@@ -94,7 +94,7 @@ func TestFileToolsLeaseDestinationInExtraWriteRoot(t *testing.T) {
 	}
 	first := New()
 	first.Add(Worker(&Workspace{
-		Root: primary, WriteRoots: []string{extra}, Ownership: ownership,
+		Root: primary, WriteRoots: []string{extra}, Ownership: ownership, WriteWait: 50 * time.Millisecond,
 		MutationToken: ownership.NewToken("session one coordinator"),
 	})...)
 	destination := filepath.Join(alias, "new", "file.txt")
@@ -903,5 +903,78 @@ func TestReadDirectoryTruncates(t *testing.T) {
 	}
 	if !strings.Contains(res.Content, "[listing truncated after at most 1000 entries]") {
 		t.Fatalf("expected bounded truncation indicator, got %q", res.Content)
+	}
+}
+
+// File writes hold the worktree only for the write itself: a write that meets
+// another scope's short section (a commit, a merge) waits for it instead of
+// failing, and each write is claimed for the writer's attribution scope.
+func TestFileWritesWaitForSectionAndClaimForScope(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	ownership := workspacelease.NewService()
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: root, Ownership: ownership,
+		MutationToken: ownership.NewScopedToken("s_writer", "session writer coordinator")})...)
+
+	section, err := ownership.Acquire(root, ownership.NewToken("other session commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		section.Release()
+	}()
+	if got := dispatch(t, reg, "Write", `{"file_path":"pkg/a.go","content":"package pkg\n"}`); got.IsError {
+		t.Fatalf("Write did not wait out a short section: %s", got.Content)
+	}
+	if got := dispatch(t, reg, "Edit", `{"file_path":"pkg/a.go","old_string":"pkg","new_string":"pkga"}`); got.IsError {
+		t.Fatalf("Edit: %s", got.Content)
+	}
+	if err := os.WriteFile(filepath.Join(root, "theirs.go"), []byte("package theirs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatch(t, reg, "Edit", `{"file_path":"theirs.go","old_string":"absent","new_string":"x"}`); !got.IsError {
+		t.Fatal("Edit of a missing string succeeded")
+	}
+	claims := ownership.Claims(root)
+	if got := claims["pkg/a.go"]; len(got) != 1 || got[0] != "s_writer" {
+		t.Fatalf("claims = %v", claims)
+	}
+	if _, claimed := claims["theirs.go"]; claimed {
+		t.Fatalf("a failed Edit claimed another writer's file: %v", claims)
+	}
+	if lease, err := ownership.Acquire(root, ownership.NewToken("probe")); err != nil {
+		t.Fatalf("write retained the worktree after returning: %v", err)
+	} else {
+		lease.Release()
+	}
+}
+
+// Shell commands cannot be intercepted, so their writes are attributed by
+// bracketing snapshots: a file a command creates or changes is claimed for the
+// command's scope, while a path another scope already claims is left to it.
+func TestShellWritesAreClaimedForTheirScope(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	ownership := workspacelease.NewService()
+	other := ownership.NewScopedToken("s_other", "other session")
+	ownership.RecordWrite(filepath.Join(root, "theirs.txt"), root, other)
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: root, Ownership: ownership,
+		MutationToken: ownership.NewScopedToken("s_shell", "shell session")})...)
+	if got := dispatch(t, reg, "Bash", `{"command":"echo gen > generated.txt && echo x > theirs.txt"}`); got.IsError {
+		t.Fatalf("Bash: %s", got.Content)
+	}
+	claims := ownership.Claims(root)
+	if got := claims["generated.txt"]; len(got) != 1 || got[0] != "s_shell" {
+		t.Fatalf("generated.txt claims = %v", claims)
+	}
+	if got := claims["theirs.txt"]; len(got) != 1 || got[0] != "s_other" {
+		t.Fatalf("theirs.txt claims = %v", claims)
 	}
 }

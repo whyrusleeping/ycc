@@ -111,7 +111,7 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 		if err != nil {
 			return "", err
 		}
-		record = newFinalizationRecord(taskID, message, outcome, preflight.BaselineID, preflight.ID, completion)
+		record = newFinalizationRecord(taskID, message, outcome, preflight.BaselineOrigin, preflight.ID, completion)
 		if err := journal.Save(record); err != nil {
 			return "", fmt.Errorf("persist finalization intent: %w", err)
 		}
@@ -152,7 +152,15 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 		if err := finalizationCanProceed(ctx, d); err != nil {
 			return "", restoreAfterUncommittedFailure(d.Docs, journal, record, err)
 		}
+		release, sectionErr := d.gitSection(ctx)
+		if sectionErr != nil {
+			return "", restoreAfterUncommittedFailure(d.Docs, journal, record, sectionErr)
+		}
 		sha, state, classified, commitErr := finishGitCommit(d, record, journal)
+		if commitErr == nil {
+			d.releaseCommittedClaims(record.Commit)
+		}
+		release()
 		if commitErr != nil {
 			if classified && state == git.CommitInstalled {
 				record.SHA = sha
@@ -175,7 +183,15 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 	}
 
 	if record.Phase == finalizationCommitInstalled {
+		release, err := d.gitSection(ctx)
+		if err != nil {
+			return "", fmt.Errorf("commit %s is installed; selected index paths remain pending: %w", record.SHA, err)
+		}
 		sha, err := d.Repo.RecoverCommit(record.Commit, record.Message)
+		if err == nil {
+			d.releaseCommittedClaims(record.Commit)
+		}
+		release()
 		if err != nil {
 			return "", fmt.Errorf("commit %s is installed; selected index paths remain pending: %w", record.SHA, err)
 		}
@@ -190,6 +206,14 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 		return "", fmt.Errorf("commit %s succeeded; durable finalization event publication is pending: %w", record.SHA, err)
 	}
 	return record.SHA, nil
+}
+
+// sameSessionBaseline reports whether a finalization recorded against
+// baselineID belongs to changes' session baseline. Records name the original
+// capture; a baseline automatically rebased onto an advanced HEAD (another
+// session committed) keeps that origin. Older records may name the exact ID.
+func sameSessionBaseline(baselineID string, changes *git.Changeset) bool {
+	return baselineID == changes.BaselineOrigin || baselineID == changes.BaselineID
 }
 
 func newFinalizationRecord(taskID, message, outcome, baselineID, finalizationID string, completion *docs.Completion) *finalizationRecord {
@@ -213,7 +237,14 @@ func renewUncommittedFinalization(d *Deps, journal finalizationJournal, record *
 		if err != nil {
 			return fmt.Errorf("inspect pending commit before renewing finalization: %w", err)
 		}
-		if state != git.CommitUncreated {
+		switch state {
+		case git.CommitUncreated:
+		case git.CommitDiverged:
+			// Never installed, and HEAD has since moved on (another session
+			// committed): the stale identity is abandoned and the task is
+			// re-inspected against the advanced HEAD.
+			record.Commit = nil
+		default:
 			return nil
 		}
 	}
@@ -221,7 +252,7 @@ func renewUncommittedFinalization(d *Deps, journal finalizationJournal, record *
 	if err != nil {
 		return fmt.Errorf("unsafe changeset while renewing finalization: %w", err)
 	}
-	if preflight.BaselineID != record.BaselineID {
+	if !sameSessionBaseline(record.BaselineID, preflight) {
 		return fmt.Errorf("task %s finalization belongs to original baseline %s, not current baseline %s; reopen the original session baseline rather than narrowing accepted work", record.TaskID, record.BaselineID, preflight.BaselineID)
 	}
 	if sameFinalizationTask(current, record.Completion.After) {
@@ -257,13 +288,15 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 			return sha, state, false, err
 		}
 		if state == git.CommitDiverged {
-			identity := "for changeset " + shortCommit(record.Commit.ChangesetID)
-			if sha != "" {
-				identity = sha
+			// The prepared commit was never installed and HEAD has moved past its
+			// parent (typically another session's commit). Abandon that identity
+			// and commit the current scoped changes on top of the new HEAD; the
+			// unrelated history is preserved, never overwritten.
+			record.Commit = nil
+			if err := journal.Save(record); err != nil {
+				return "", git.CommitUncreated, true, fmt.Errorf("abandon commit identity after HEAD moved: %w", err)
 			}
-			return sha, state, true, fmt.Errorf("reviewed commit %s was not installed because HEAD moved from %s; task was not accepted and unrelated HEAD will not be overwritten", identity, shortCommit(record.Commit.BaseCommit))
-		}
-		if state == git.CommitCreated || state == git.CommitInstalled {
+		} else if state == git.CommitCreated || state == git.CommitInstalled {
 			recovered, recoverErr := d.Repo.RecoverCommit(record.Commit, record.Message)
 			if recoverErr == nil {
 				return recoveredOr(sha, recovered), git.CommitInstalled, true, nil
@@ -279,7 +312,7 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 	if err != nil {
 		return "", git.CommitUncreated, true, fmt.Errorf("unsafe changeset after task finalization: %w", err)
 	}
-	if changes.BaselineID != record.BaselineID {
+	if !sameSessionBaseline(record.BaselineID, changes) {
 		return "", git.CommitUncreated, true, fmt.Errorf("task %s finalization belongs to original baseline %s, not current baseline %s; reopen the original session baseline rather than narrowing accepted work", record.TaskID, record.BaselineID, changes.BaselineID)
 	}
 	if record.Commit == nil {
@@ -466,4 +499,34 @@ func shortCommit(sha string) string {
 		return sha[:7]
 	}
 	return sha
+}
+
+// releaseCommittedClaims retires claims on paths this session just committed.
+// A committed path that is now clean drops every scope's claim (including a
+// co-writer's), so a later edit by anyone starts fresh attribution. A path that
+// was edited again after the committed snapshot keeps its claims: someone has
+// uncommitted work in it.
+func (d *Deps) releaseCommittedClaims(recovery *git.CommitRecovery) {
+	if d.Ownership == nil || recovery == nil {
+		return
+	}
+	d.releaseCleanClaims(recovery.Paths)
+}
+
+// gitSection holds the worktree's operation-scoped section for the git half of
+// a commit (inspect, hooks, HEAD compare-and-swap, index publication), so two
+// sessions' commits — and workstream merges — serialize. The surrounding task
+// bookkeeping and event publication run outside it. It waits for a concurrent
+// section rather than refusing.
+func (d *Deps) gitSection(ctx context.Context) (release func(), err error) {
+	if d.Ownership == nil {
+		return func() {}, nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, mutationWait)
+	defer cancel()
+	lease, err := d.Ownership.AcquireWait(waitCtx, d.Workspace, d.CoordinatorToken)
+	if err != nil {
+		return nil, err
+	}
+	return lease.Release, nil
 }

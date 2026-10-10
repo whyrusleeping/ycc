@@ -185,9 +185,8 @@ func (s *ArtifactStore) get(id string) (outputArtifact, bool) {
 func toolOutput(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "tool_output",
-		Description: "Retrieve a byte range from a retained foreground/background Bash output artifact without rerunning the command. " +
-			"offset is zero-based and limit is at most 128 KiB. Artifact access is scoped to this agent session; captures are at most 4 MiB " +
-			"and the store retains at most 16 MiB, so storage-limit loss or eviction is reported explicitly.",
+		Description: "Read a retained Bash output artifact by byte range without rerunning. Access is agent-scoped; " +
+			"captures/lifetime storage are bounded and loss or eviction is reported. For running jobs use job_output.",
 		Params: obj(map[string]any{
 			"artifact_id": strProp("the output artifact id advertised by Bash, e.g. output_ab12..."),
 			"offset":      map[string]any{"type": "integer", "minimum": 0, "description": "zero-based source byte offset (default 0)"},

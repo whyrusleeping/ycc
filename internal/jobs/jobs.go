@@ -40,7 +40,7 @@ const (
 )
 
 // Report is the retained final (or current) summary of a job, returned by wait,
-// job_result, and DrainFinished without being destroyed by retrieval.
+// job_output, and DrainFinished without being destroyed by retrieval.
 type Report struct {
 	ID                  string
 	Kind                string
@@ -113,7 +113,7 @@ type Job struct {
 	owner    string // actor responsible for completion delivery
 	purpose  string // explicit parent handoff purpose
 	delivery string // explicit parent handoff delivery contract
-	mutates  bool   // writes to the worktree (single-writer guard)
+	mutates  bool   // writes to the worktree (concurrent-writer awareness)
 
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -154,9 +154,9 @@ func (j *Job) Owner() string {
 	return j.owner
 }
 
-// Mutates reports whether the job may write to the worktree. The single-writer
-// guard refuses a background implementer while any mutating job is
-// live in the same tree; read-only jobs (reviewers) never set this.
+// Mutates reports whether the job may write to the worktree. Coordinators are
+// told about live mutating jobs when they start another writer; read-only jobs
+// (reviewers) never set this.
 func (j *Job) Mutates() bool { return j.mutates }
 
 // Context returns the job's context: cancelled when the job is killed or the
@@ -387,8 +387,8 @@ func (j *Job) finalize(status Status, result string) bool {
 		j.result = result
 		j.finished = time.Now()
 		j.activity.CurrentTool = ""
-		// A tracked runner can still hold mutation/lifetime leases here (a kill
-		// finalizes the report long before the process exits), so its completion
+		// A tracked runner can still be executing here (a kill finalizes the
+		// report long before the process exits), so its completion
 		// signal is deferred to ExecutionComplete. Otherwise a woken owner could
 		// start a turn against execution that has not released ownership.
 		if !j.tracked || j.execStopped {
@@ -495,7 +495,7 @@ func (r *Registry) signalCompletion() {
 }
 
 // NewRestored rebuilds durable job metadata, notification state, and terminal
-// results. Evidence remains available through list_jobs/job_result. Any later
+// results. Evidence remains available through list_jobs/job_output. Any later
 // Start continues after the greatest restored job_<n> id.
 func NewRestored(entries []Restored) *Registry {
 	r := NewRegistry()
@@ -545,17 +545,15 @@ func (r *Registry) Start(kind, label, owner string) *Job {
 }
 
 // TryStartTracked registers joined execution unless shutdown has begun. Its
-// runner must call ExecutionComplete after all lifetime leases have been
-// released. A successful concurrent registration is guaranteed to be included
+// runner must call ExecutionComplete once its execution has fully stopped. A successful concurrent registration is guaranteed to be included
 // in the shutdown snapshot, cancelled, and joined.
 func (r *Registry) TryStartTracked(kind, label, owner string) (*Job, bool) {
 	job := r.start(kind, label, owner, false, true)
 	return job, job != nil
 }
 
-// StartMutating is like Start but marks the job as writing to the worktree, so
-// the single-writer guard can refuse a second mutating job in the
-// same tree. Used by synthetic/restored work without a separately joined runner.
+// StartMutating is like Start but marks the job as writing to the worktree.
+// Used by synthetic/restored work without a separately joined runner.
 func (r *Registry) StartMutating(kind, label, owner string) *Job {
 	return r.start(kind, label, owner, true, false)
 }
@@ -590,9 +588,9 @@ func (r *Registry) start(kind, label, owner string, mutates, tracked bool) *Job 
 	return j
 }
 
-// LiveMutating returns a currently-running mutating job, or nil if none. Used by
-// the single-writer guard to refuse a second mutating job in the same tree.
-// When several are somehow live it returns the earliest-started.
+// LiveMutating returns a currently-running mutating job, or nil if none. Used to
+// tell a coordinator about a concurrent writer when it starts another one.
+// When several are live it returns the earliest-started.
 func (r *Registry) LiveMutating() *Job {
 	r.mu.Lock()
 	defer r.mu.Unlock()

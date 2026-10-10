@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -94,48 +95,20 @@ func (r *Registry) APIDefs() []gollama.ToolParam {
 // Dispatch executes a tool call by name. A missing tool returns an error result
 // (not a Go error) so the model can see and recover from it.
 func (r *Registry) Dispatch(ctx context.Context, call gollama.ToolCall) *gollama.ToolResult {
-	// Defensive: recover arguments the model leaked as raw `<parameter …>` markup
-	// inside another string argument (see argrepair.go). The engine loop repairs
-	// before emitting the tool_call event; doing it here too keeps every other
-	// dispatch path (and any future caller) safe, and is a no-op on clean calls.
-	call, recovered := r.Repair(call)
-	return r.dispatchRepaired(ctx, call, recovered)
-}
-
-// DispatchRepaired executes a call already canonicalized by Repair. recovered
-// keeps the repair diagnostic attached when the engine repairs before recording
-// the call in history and the event log.
-func (r *Registry) DispatchRepaired(ctx context.Context, call gollama.ToolCall, recovered []string) *gollama.ToolResult {
-	return r.dispatchRepaired(ctx, call, recovered)
-}
-
-func (r *Registry) dispatchRepaired(ctx context.Context, call gollama.ToolCall, recovered []string) *gollama.ToolResult {
 	t, ok := r.byName[call.Function.Name]
 	if !ok {
 		return errResult("no such tool %q", call.Function.Name)
 	}
+	if err := rejectLeakedArgs(call.Function.Arguments, t.Params); err != nil {
+		return errResult("tool %q has invalid arguments: %v", call.Function.Name, err)
+	}
 	if err := validateToolArguments(call.Function.Arguments, t.Params); err != nil {
-		return appendRepairNote(errResult("tool %q has invalid arguments: %v", call.Function.Name, err), recovered)
+		return errResult("tool %q has invalid arguments: %v", call.Function.Name, err)
 	}
 	res, err := gollama.HandleToolCall(ctx, []*gollama.Tool{t}, call)
 	if err != nil {
-		return appendRepairNote(errResult("tool %q failed: %v", call.Function.Name, err), recovered)
+		return errResult("tool %q failed: %v", call.Function.Name, err)
 	}
-	return appendRepairNote(res, recovered)
-}
-
-func appendRepairNote(res *gollama.ToolResult, recovered []string) *gollama.ToolResult {
-	if len(recovered) == 0 || res == nil {
-		return res
-	}
-	// Tell the model it malformed the call, or it repeats the same mistake
-	// for the rest of the session. Keep the note even when repaired arguments
-	// subsequently fail validation so the model can correct both problems.
-	res.Content = strings.TrimRight(res.Content, "\n") + fmt.Sprintf(
-		"\n\n(ycc note: this call's arguments contained raw <parameter name=\"…\"> markup inside a "+
-			"string argument; %s was recovered from it. Emit tool arguments as JSON only — never "+
-			"write invoke/parameter tags inside an argument value.)",
-		strings.Join(recovered, ", "))
 	return res
 }
 
@@ -327,10 +300,23 @@ type Workspace struct {
 	// events tagged with that actor (which also owns the job for checkpoint drain).
 	// Required alongside Jobs for background bash.
 	Emitter *event.Emitter
-	// Ownership and MutationToken enforce daemon-wide single-writer ownership.
+	// Ownership and MutationToken scope file writes: each write holds the
+	// worktree's operation section only while it runs and is claimed for the
+	// token's attribution scope (see workspacelease).
 	// A delegated worker receives its own token and reuses it for its commands.
 	Ownership     *workspacelease.Service
 	MutationToken *workspacelease.Token
+	// DocsWriteLock, when set, additionally serializes writes to docs-layer
+	// paths (backlog, memory, plans, spec/docs set, Markdown prose) with the
+	// structured docs writers: ok=true means the returned unlock must also be
+	// held across the write (see docs.Store.DocsWriteLock).
+	DocsWriteLock func(path string) (unlock func(), ok bool)
+	// SharedBookkeeping, when set, reports paths (backlog task files, memory)
+	// whose writes are not attributed to this scope (see docs.Store.IsBookkeeping).
+	SharedBookkeeping func(path string) bool
+	// WriteWait bounds how long a Write/Edit waits for an operation-scoped
+	// worktree section held by another scope (zero means fileWriteWait).
+	WriteWait time.Duration
 	// Artifacts retains bounded Bash captures for range retrieval. A nil store is
 	// initialized lazily and remains scoped to this Workspace/agent.
 	Artifacts  *ArtifactStore
@@ -393,10 +379,50 @@ func (w *Workspace) artifactStore() *ArtifactStore {
 	return w.Artifacts
 }
 
-func (w *Workspace) acquirePathMutation(path string) (*workspacelease.Lease, error) {
-	if w.Ownership == nil {
-		return nil, nil
+// fileWriteWait is the default bound on how long one Write/Edit waits for an
+// operation-scoped worktree section (another write, a commit, a workstream
+// merge) to finish.
+const fileWriteWait = 2 * time.Minute
+
+// acquireFileWrite guards one Write/Edit of path for the duration of that
+// write only. Docs-layer prose is serialized by the docs store lock alone, so a
+// long commit hook or merge never holds up backlog grooming; other paths take
+// the operation-scoped worktree lease, waiting briefly for a concurrent write,
+// commit, or merge. After the write has landed, and before release, the caller
+// invokes claim so the session's changeset attributes the path correctly when
+// other sessions share the tree; a failed write must not claim (it would make
+// another session's file look like this one's work). Shared bookkeeping
+// (backlog, memory) is never claimed. release is idempotent.
+func (w *Workspace) acquireFileWrite(ctx context.Context, path string) (release, claim func(), err error) {
+	noop := func() {}
+	fallback := w.ownershipFallback(path)
+	claim = noop
+	if w.Ownership != nil && (w.SharedBookkeeping == nil || !w.SharedBookkeeping(path)) {
+		claim = func() { w.Ownership.RecordWrite(path, fallback, w.MutationToken) }
 	}
+	if w.DocsWriteLock != nil {
+		if unlock, ok := w.DocsWriteLock(path); ok {
+			var once sync.Once
+			return func() { once.Do(unlock) }, claim, nil
+		}
+	}
+	if w.Ownership == nil {
+		return noop, claim, nil
+	}
+	wait := w.WriteWait
+	if wait <= 0 {
+		wait = fileWriteWait
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	lease, err := w.Ownership.AcquirePathWait(waitCtx, path, fallback, w.MutationToken)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lease.Release, claim, nil
+}
+
+func (w *Workspace) ownershipFallback(path string) string {
 	fallback := w.Root
 	if !withinRoot(path, fallback) {
 		for _, root := range w.WriteRoots {
@@ -406,7 +432,7 @@ func (w *Workspace) acquirePathMutation(path string) (*workspacelease.Lease, err
 			}
 		}
 	}
-	return w.Ownership.AcquirePath(path, fallback, w.MutationToken)
+	return fallback
 }
 
 // resolve cleans a user-supplied path and confines it to the writable roots, for

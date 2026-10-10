@@ -56,6 +56,15 @@ func TestInspectChangesReadOnlyScopedAndStale(t *testing.T) {
 		t.Fatalf("edit did not change snapshot: %v", err)
 	}
 	commitAllForTest(t, r, "moved")
+	// A fast-forward HEAD move (another session committed) is absorbed: the
+	// committed paths become clean baseline state rather than a stale error.
+	moved, _, err := r.InspectChanges(b)
+	if err != nil || len(moved.Paths) != 0 || moved.BaselineOrigin != b.ID || moved.BaselineID == b.ID {
+		t.Fatalf("fast-forward rebase: %+v, %v", moved, err)
+	}
+	tree := gitAt(t, r.Dir, "rev-parse", "HEAD^{tree}")
+	unrelated := gitAt(t, r.Dir, "commit-tree", tree, "-m", "unrelated history")
+	gitAt(t, r.Dir, "update-ref", "HEAD", unrelated)
 	if _, _, err := r.InspectChanges(b); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("expected stale baseline: %v", err)
 	}

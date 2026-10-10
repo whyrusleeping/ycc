@@ -1119,36 +1119,36 @@ func TestRetryValidation(t *testing.T) {
 }
 
 func TestWorkImplementationDefaultAndSet(t *testing.T) {
-	// Unset defaults to "delegate".
-	if got := (Work{}).ResolvedImplementation(); got != ImplementationDelegate {
-		t.Fatalf("empty Work.ResolvedImplementation = %q, want %q", got, ImplementationDelegate)
+	// Unset defaults to direct; an explicit delegate setting is still supported.
+	if got := (Work{}).ResolvedImplementation(); got != ImplementationDirect {
+		t.Fatalf("empty Work.ResolvedImplementation = %q, want %q", got, ImplementationDirect)
 	}
 	reg := baseRegistry()
-	if got := reg.WorkImplementation(); got != ImplementationDelegate {
-		t.Fatalf("default WorkImplementation = %q, want %q", got, ImplementationDelegate)
+	if got := reg.WorkImplementation(); got != ImplementationDirect {
+		t.Fatalf("default WorkImplementation = %q, want %q", got, ImplementationDirect)
 	}
 
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 	reg.SetPath(path)
-	if err := reg.SetWorkImplementation(ImplementationDirect); err != nil {
-		t.Fatalf("SetWorkImplementation(direct): %v", err)
+	if err := reg.SetWorkImplementation(ImplementationDelegate); err != nil {
+		t.Fatalf("SetWorkImplementation(delegate): %v", err)
 	}
-	if got := reg.WorkImplementation(); got != ImplementationDirect {
-		t.Fatalf("live WorkImplementation = %q, want %q", got, ImplementationDirect)
+	if got := reg.WorkImplementation(); got != ImplementationDelegate {
+		t.Fatalf("live WorkImplementation = %q, want %q", got, ImplementationDelegate)
 	}
 	// Survives a reload from disk.
 	loaded, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load after SetWorkImplementation: %v", err)
 	}
-	if loaded.Work.ResolvedImplementation() != ImplementationDirect {
+	if loaded.Work.ResolvedImplementation() != ImplementationDelegate {
 		t.Fatalf("persisted work implementation = %q", loaded.Work.Implementation)
 	}
 	// A bogus value is rejected and leaves the live config unchanged.
 	if err := reg.SetWorkImplementation("bogus"); err == nil {
 		t.Fatal("SetWorkImplementation(bogus) succeeded, want error")
 	}
-	if got := reg.WorkImplementation(); got != ImplementationDirect {
+	if got := reg.WorkImplementation(); got != ImplementationDelegate {
 		t.Fatalf("rejected set changed live value to %q", got)
 	}
 }

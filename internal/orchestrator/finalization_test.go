@@ -505,7 +505,10 @@ func TestCommitFinalizationRefusesRenewalFromDifferentBaseline(t *testing.T) {
 	}
 }
 
-func TestCommitFinalizationRestoresTaskAfterKnownHeadDivergence(t *testing.T) {
+// A prepared commit that never landed because another commit moved HEAD past
+// its parent is abandoned, and the retry commits the task on top of the new
+// HEAD: the concurrent history is preserved and the task is not stuck.
+func TestCommitFinalizationRecommitsAfterKnownHeadDivergence(t *testing.T) {
 	ws, repo, baseline, store := setupFinalizationRepo(t)
 	branchRef := strings.TrimSpace(gitRun(t, ws, "symbolic-ref", "HEAD"))
 	lockPath := filepath.Join(ws, ".git", filepath.FromSlash(branchRef)+".lock")
@@ -550,14 +553,20 @@ func TestCommitFinalizationRestoresTaskAfterKnownHeadDivergence(t *testing.T) {
 	concurrent := strings.TrimSpace(string(out))
 	gitRun(t, ws, "update-ref", "HEAD", concurrent, parent)
 
-	if got, failed := callCommit(t, d); !failed || !strings.Contains(got, "was not installed because HEAD moved") {
+	if got, failed := callCommit(t, d); failed || !strings.Contains(got, "committed ") {
 		t.Fatalf("divergent retry = error %v, %q", failed, got)
 	}
-	if got := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD")); got != concurrent {
-		t.Fatalf("recovery overwrote unrelated HEAD: got=%s want=%s", got, concurrent)
+	if got := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD^")); got != concurrent {
+		t.Fatalf("recommit did not build on the concurrent HEAD: parent=%s want=%s", got, concurrent)
 	}
-	if task, _ := store.Get("0001"); task.Status == docs.StatusDone {
-		t.Fatalf("known-uninstalled commit left task done: %+v", task)
+	if got := gitRun(t, ws, "show", "HEAD:owned.txt"); got != "after\n" {
+		t.Fatalf("implementation not committed: %q", got)
+	}
+	if staged := gitRun(t, ws, "diff", "--cached", "--name-only"); strings.TrimSpace(staged) != "unrelated.txt" {
+		t.Fatalf("pre-existing staged work disturbed: %q", staged)
+	}
+	if task, _ := store.Get("0001"); task.Status != docs.StatusDone {
+		t.Fatalf("recommitted task not done: %+v", task)
 	}
 }
 
@@ -637,4 +646,55 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
 	}
 	return string(out)
+}
+
+// A commit rejected by a hook, followed by another session committing (HEAD
+// fast-forwards), must not wedge the task: the retry re-inspects against the
+// new HEAD and commits.
+func TestCommitRetryAfterHookFailureAndConcurrentCommit(t *testing.T) {
+	ws, repo, baseline, store := setupFinalizationRepo(t)
+	hook := filepath.Join(ws, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho not yet >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := finalizationDeps(ws, repo, baseline, store, &captureRec{})
+	if got, failed := callCommit(t, d); !failed || !strings.Contains(got, "not yet") {
+		t.Fatalf("hook failure = error %v, %q", failed, got)
+	}
+	if err := os.Remove(hook); err != nil {
+		t.Fatal(err)
+	}
+	// Another session commits an unrelated file.
+	if err := os.WriteFile(filepath.Join(ws, "other.txt"), []byte("other session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD"))
+	blob := strings.TrimSpace(gitRun(t, ws, "hash-object", "-w", "other.txt"))
+	index := filepath.Join(t.TempDir(), "index")
+	cmd := exec.Command("sh", "-c", `GIT_INDEX_FILE="$1" git read-tree HEAD && GIT_INDEX_FILE="$1" git update-index --add --cacheinfo 100644,"$2",other.txt && GIT_INDEX_FILE="$1" git write-tree`, "sh", index, blob)
+	cmd.Dir = ws
+	tree, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("build other tree: %v", err)
+	}
+	commit := strings.TrimSpace(gitRun(t, ws, "commit-tree", strings.TrimSpace(string(tree)), "-p", other, "-m", "other session"))
+	gitRun(t, ws, "update-ref", "HEAD", commit, other)
+	if err := os.Remove(filepath.Join(ws, "other.txt")); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, ws, "checkout", "HEAD", "--", "other.txt")
+
+	for i := 0; i < 2; i++ {
+		if got, failed := callCommit(t, d); failed {
+			t.Fatalf("retry %d after concurrent commit = %q", i+1, got)
+		} else if i == 0 && !strings.Contains(got, "committed ") {
+			t.Fatalf("retry = %q", got)
+		}
+	}
+	if got := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD^")); got != commit {
+		t.Fatalf("task commit parent = %s, want the other session's %s", got, commit)
+	}
+	if got := gitRun(t, ws, "show", "--name-only", "--format=", "HEAD"); strings.Contains(got, "other.txt") || !strings.Contains(got, "owned.txt") {
+		t.Fatalf("task commit files:\n%s", got)
+	}
 }

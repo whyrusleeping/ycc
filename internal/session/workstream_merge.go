@@ -239,7 +239,7 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 		return MergeOutcome{}, fmt.Errorf("workstream %q is not in flight (status %s)", id, ws.Status)
 	}
 	token := m.ownership.NewToken("workstream " + id + " merge")
-	worktreeLease, err := m.ownership.Acquire(ws.WorktreePath, token)
+	worktreeLease, err := m.acquireSection(ws.WorktreePath, token)
 	if err != nil {
 		return MergeOutcome{}, fmt.Errorf("merge workstream: %w", err)
 	}
@@ -248,7 +248,7 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if !ok {
 		return MergeOutcome{}, fmt.Errorf("unknown project %q", ws.Project)
 	}
-	primaryLease, err := m.ownership.Acquire(primary, token)
+	primaryLease, err := m.acquireSection(primary, token)
 	if err != nil {
 		return MergeOutcome{}, fmt.Errorf("merge workstream: %w", err)
 	}
@@ -467,14 +467,14 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	}
 	token := m.ownership.NewToken("workstream " + id + " discard")
 	if primary, projectOK := m.projects.Resolve(ws.Project); projectOK {
-		primaryLease, err := m.ownership.Acquire(primary, token)
+		primaryLease, err := m.acquireSection(primary, token)
 		if err != nil {
 			return fmt.Errorf("discard workstream: %w", err)
 		}
 		defer primaryLease.Release()
 	}
 	if _, statErr := os.Stat(ws.WorktreePath); statErr == nil {
-		worktreeLease, acquireErr := m.ownership.Acquire(ws.WorktreePath, token)
+		worktreeLease, acquireErr := m.acquireSection(ws.WorktreePath, token)
 		if acquireErr != nil {
 			return fmt.Errorf("discard workstream: %w", acquireErr)
 		}

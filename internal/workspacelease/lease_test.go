@@ -34,7 +34,7 @@ func TestCanonicalAliasAndScopedReentrancy(t *testing.T) {
 		if !errors.As(err, &conflict) || conflict.Owner != worker.Owner() {
 			t.Fatalf("conflict = %v", err)
 		}
-		for _, hint := range []string{"session one implementer", "wait", "stop", "workstream"} {
+		for _, hint := range []string{"session one implementer", "retry"} {
 			if !strings.Contains(err.Error(), hint) {
 				t.Fatalf("conflict %q missing %q", err, hint)
 			}

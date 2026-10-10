@@ -14,7 +14,7 @@ import (
 // JobTools returns discovery, progress, repeatable evidence, synchronization,
 // and cancellation tools for the session job registry.
 func JobTools(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{listJobsTool(ws), jobOutputTool(ws), jobResultTool(ws), waitTool(ws), killJobTool(ws)}
+	return []*gollama.Tool{listJobsTool(ws), jobOutputTool(ws), waitTool(ws), killJobTool(ws)}
 }
 
 func jobToolOwner(ws *Workspace) string {
@@ -27,9 +27,8 @@ func jobToolOwner(ws *Workspace) string {
 func listJobsTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "list_jobs",
-		Description: "List background jobs in stable start order with id, owner, state, elapsed time, and safe activity metadata. " +
-			"By default lists this actor's live and completed jobs; include_all_owners explicitly selects the session-wide view. " +
-			"Listing is non-consuming and never changes automatic notification delivery.",
+		Description: "List this actor's live/completed jobs in start order: id, owner, state, elapsed, and activity. " +
+			"include_all_owners selects the whole session. Listing does not affect notifications.",
 		Params: obj(map[string]any{
 			"include_all_owners": BoolProp("include jobs owned by other actors in this session (default false)"),
 		}),
@@ -82,14 +81,13 @@ func listJobsTool(ws *Workspace) *gollama.Tool {
 func jobOutputTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "job_output",
-		Description: "Read retained background-job output without advancing hidden state. cursor is an absolute source-byte offset and " +
-			"limit defines a repeatable forward range; tail_lines instead selects the retained tail. Every response identifies the retained " +
-			"absolute range, next cursor, and any eviction gap. Reads are non-consuming: they neither retrieve/claim the final result nor " +
-			"change automatic notification delivery. Agent jobs report bounded turn/current-tool/usage activity without reasoning text.",
+		Description: "Peek without affecting notifications. By default returns live output/activity or a completed job's " +
+			"final report. Explicit cursor/limit or tail_lines read captured output, reporting ranges and eviction gaps. " +
+			"Reads are repeatable; agent activity excludes model prose/reasoning.",
 		Params: obj(map[string]any{
 			"job_id":     strProp("the job id, e.g. job_1"),
-			"cursor":     map[string]any{"type": "integer", "minimum": 0, "description": "absolute source-byte offset (default 0); repeat the same cursor to revisit retained data"},
-			"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashContentBytes, "description": "maximum source bytes to return (default and maximum about 63 KiB; responses also cap at 2000 lines)"},
+			"cursor":     map[string]any{"type": "integer", "minimum": 0, "description": "absolute byte offset (default 0; explicit value selects captured output)"},
+			"limit":      map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashContentBytes, "description": "output byte budget (default about 63 KiB; also capped at 2000 lines)"},
 			"tail_lines": map[string]any{"type": "integer", "minimum": 1, "maximum": maxBashLines, "description": "return the last N retained lines instead of a cursor range"},
 		}, "job_id"),
 		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
@@ -103,6 +101,9 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 			}
 			if hasParam(params, "tail_lines") && hasParam(params, "cursor") {
 				return errResult("job_output: use either cursor/limit or tail_lines, not both"), nil
+			}
+			if job.Status() != jobs.Running && !hasParam(params, "cursor") && !hasParam(params, "limit") && !hasParam(params, "tail_lines") {
+				return okResult(FormatJobReport(job.Report())), nil
 			}
 			cursor := getInt(params, "cursor", 0)
 			if cursor < 0 {
@@ -156,29 +157,6 @@ func jobOutputTool(ws *Workspace) *gollama.Tool {
 	}
 }
 
-func jobResultTool(ws *Workspace) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "job_result",
-		Description: "Retrieve a completed job's retained final result repeatably by stable id. This is evidence access, not a completion " +
-			"notification: it does not consume or create automatic notifications. Use wait when you need to block for completion.",
-		Params: obj(map[string]any{"job_id": strProp("the completed job id, e.g. job_1")}, "job_id"),
-		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
-			id, ok := getString(params, "job_id")
-			if !ok {
-				return errResult("job_result: missing 'job_id'"), nil
-			}
-			job, ok := ws.Jobs.Get(id)
-			if !ok {
-				return errResult("job_result: no such job %q", id), nil
-			}
-			if job.Status() == jobs.Running {
-				return errResult("job_result: job %s is still running; use wait to block or job_output for progress", id), nil
-			}
-			return okResult(FormatJobReport(job.Report())), nil
-		},
-	}
-}
-
 func jobOutputLineEnd(data []byte, maxLines int) int {
 	lines := 0
 	for i, b := range data {
@@ -201,11 +179,10 @@ const defaultWaitTimeout = 10 * time.Minute
 func waitTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "wait",
-		Description: "Block until background job(s) finish, then return their retained final report(s). Results are repeatable: waiting again " +
-			"can return the same finished evidence, while the first explicit wait suppresses a later automatic notification. Pass job_ids to " +
-			"select jobs (including another actor's known id), or omit them to wait on this actor's currently live jobs. 'for' selects any " +
-			"or all (default). timeout_s defaults to 600; timeout returns finished reports plus still-running ids without error. When nothing " +
-			"independent is left to do, report progress and wait here instead of ending your turn to pass the time.",
+		Description: "Wait for jobs and return repeatable final reports, acknowledging completion so it is not notified " +
+			"again. Specify ids, or omit for this actor's live jobs. Timeout returns completed reports plus running ids, " +
+			"not an error. A killed report may precede actual execution cleanup. When no independent work remains, " +
+			"wait rather than poll or end the turn.",
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
 			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},
@@ -270,9 +247,11 @@ func waitTool(ws *Workspace) *gollama.Tool {
 
 func killJobTool(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
-		Name:        "kill_job",
-		Description: "Terminate a background job's process tree. Its status becomes 'killed'.",
-		Params:      obj(map[string]any{"job_id": strProp("the job id to kill, e.g. job_1")}, "job_id"),
+		Name: "kill_job",
+		Description: "Cancel a running job: terminate a shell process tree or cancel a subagent's current run. " +
+			"Marks it killed immediately, but cleanup may still be unwinding. Does not undo completed work " +
+			"or delete the agent handle. Follow-ups are refused until that run stops.",
+		Params: obj(map[string]any{"job_id": strProp("the job id to kill, e.g. job_1")}, "job_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, ok := getString(params, "job_id")
 			if !ok {

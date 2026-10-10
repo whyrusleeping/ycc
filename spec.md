@@ -298,15 +298,24 @@ For each turn the loop calls the selected model, records the final message, disp
 records each result, and continues until the model yields or a control tool ends/suspends the run.
 A per-run turn cap is a runaway backstop, not a normal stopping condition.
 
-When a new work-session prompt contains exactly one existing backlog task id, the daemon executes
-and seeds the routine `list_backlog` and `get_task` exchange before the first model turn. The calls
-and their real results are recorded as synthetic coordinator events after the opening user input so
-replay reconstructs the same history. Missing, stale, or ambiguous ids use the ordinary model-driven
-selection flow.
+When a new work-session prompt contains exactly one existing backlog task id, the daemon preloads
+its real `get_task` result, including current status/dependency eligibility, before the first model
+turn, not the full backlog. The exchange is recorded
+as synthetic coordinator events after the opening user input so replay reconstructs the same history.
+The model may call `list_backlog` when it needs selection or information beyond the named task.
+Missing, stale, or ambiguous ids use ordinary model-driven selection.
 
-Some providers leak XML-like parameter markup inside otherwise valid JSON tool arguments. The
-engine repairs only a declared parameter that was left unset and only when the closing/parameter
-pattern is unambiguous. Repair is recorded with the tool call and reported to the model.
+Tool arguments are validated, never reconstructed. A closing-tag/parameter signature naming a
+missing declared sibling is rejected with an actionable JSON resend error before execution;
+arguments remain unchanged in history and events. Ordinary literal markup is not rejected solely
+for containing parameter tags.
+
+An output-token-limit stop with no tool call records the partial turn and usage but returns an
+error, not completion. It adds no partial assistant turn or synthetic continuation to model history
+and does not automatically retry. Increase the output cap or reduce thinking before retrying;
+reopen likewise leaves the original input pending. Legacy no-tool truncation retries replay without
+their implicit stubs/nudges; truncated tool-call turns retain calls/results but drop incomplete
+reasoning state.
 
 LLM failures share one taxonomy: rate limit, overload, server, timeout, network, auth, invalid
 request, context length, refusal, and unknown. Transient classes retry with bounded exponential
@@ -378,10 +387,12 @@ from its prior scoped snapshot plus exact current/delta retrieval commands, not 
 full patch. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
 advisory context estimates. Reviewer fan-out runs concurrently.
 
-Background shell commands and subagents share stable session-owned job ids and the `list_jobs`,
-`job_output`, `job_result`, `wait`, and `kill_job` controls. Automatic final notifications are claimed
-exactly once at a checkpoint; an explicit wait suppresses a later notification but, like
-`job_result`, can retrieve the retained final report repeatedly. A tracked process or subagent
+Background shell commands and subagents share stable session-owned job ids and four controls:
+`list_jobs` discovers, `job_output` peeks, `wait` synchronizes/acknowledges completion, and `kill_job`
+cancels. `job_output` with only an id returns live output/activity or the terminal final report;
+explicit cursor/limit or tail requests read retained captured output. Peeks never affect notifications.
+Automatic final notifications are claimed exactly once at a checkpoint; an explicit wait suppresses
+a later notification. Final reports remain repeatable through either read path. A tracked process or subagent
 publishes its terminal report before its execution ends, so its automatic notification only becomes
 claimable once that execution has actually stopped and released its leases. A coordinator that has
 already returned a final response while its jobs run is woken by the completion itself: every report
@@ -425,26 +436,70 @@ context-length failure reports an actionable explicit fresh retry rather than au
 turn that may have had side effects. Read-only generic agents expose file reads and a read-only shell:
 supported hosts enforce workspace non-mutation with the reviewer sandbox, and unsupported hosts
 visibly degrade to prompt-only enforcement and conservatively count the agent as a mutating job.
-Explicitly mutating generic agents use worker tools and always participate in single-writer scheduling.
+Explicitly mutating generic agents use worker tools and may run alongside other mutating work.
 Generic agent handles are live session state and are not reconstructed after daemon restart.
 
-A daemon-wide lease keyed by the canonical, symlink-resolved worktree permits only one mutating
-execution scope across sessions. Direct coordinator operations, mutating delegated agents (for their
-lifetime), file tools, plan writes, and Git commits participate. A delegated worker reuses
-only its own scoped token for synchronous operations. The lease is deliberately best-effort
-coordination rather than strict exclusion: shell commands (foreground or background) take no lease
-and are not counted as mutating jobs, so a long build, test, or watcher never blocks another session
-or agent, and shells run even while another scope holds the lease. Session startup likewise takes no
-lease. The periodic remote-ref fetch does not lease the worktree; it writes only objects and
-remote-tracking refs. Refusals identify the owner and direct callers to
-wait, stop it, or use a separate workstream. Read-only work can fan out, and distinct worktrees can
-mutate independently. Backlog reads remain available while another scope owns the tree: the exceptional
-duplicate-ID self-repair acquires a lease only after detecting duplicates and defers repair when owned.
-Structured backlog and memory writes (task create/update from any client or the coordinator, quick-add
-capture, `remember`) take no lease either: they are atomic writes serialized by the docs store's own
-lock, and the user must always be able to groom the backlog — e.g. promote proposed → todo — while a
-session or agent is working. Safeguards must not block cheap, safe user bookkeeping.
-`docs/design/async-jobs.md` explains the single-delivery and single-writer
+Several sessions and agents may mutate one worktree concurrently. Nothing holds the worktree for an
+agent's lifetime. A session has one implementer slot, but its mutating generic agents, and other
+sessions' implementers, run alongside it. Spawning a mutating agent beside a live one returns a
+note naming the other writer so the coordinator can keep their files disjoint.
+
+Exclusion is operation-scoped. A daemon-wide lease keyed by the canonical, symlink-resolved worktree
+is held only for the duration of:
+
+- one code file-tool write;
+- the git half of one commit (re-inspection, hooks, HEAD compare-and-swap, and publishing the
+  committed paths into the index under git's `index.lock`);
+- one workstream spawn/merge/discard.
+
+A caller that meets another section waits for it (bounded) rather than being refused. File-tool writes
+to the docs layer take the docs store's lock instead of the lease. The docs layer is backlog task
+files, `memory.md`, `plans/`, the spec entry point and docs set, and any other Markdown in the
+worktree. These writes never wait on a commit or merge, and cannot lose a concurrent structured
+update. Structured backlog and memory writes (task create/update from any client or the coordinator,
+quick-add capture, `remember`, `propose_plan`) use the same store lock and no lease. Shell commands
+(foreground or background) take no lease and are not counted as mutating jobs. Session startup and
+the periodic remote-ref fetch take none either. Backlog reads remain available throughout; the
+exceptional duplicate-ID self-repair takes a section only after detecting duplicates and defers repair
+when the tree is busy. Safeguards must not block cheap, safe user work.
+
+Change attribution replaces exclusive ownership. Each session (its coordinator and every agent it
+delegates to) is an attribution scope. Writes record a claim on the path for that scope:
+
+- A successful file-tool write is claimed directly.
+- A shell command is bracketed by two snapshots of the worktree's dirty set (git status plus each
+  dirty path's size, mtime, and mode). Paths that changed during the command are claimed unless
+  another scope already claims them, because a concurrent session's writes can land in the same
+  window. Background shells claim when they exit.
+
+Backlog task files and `memory.md` are the exception: they are shared bookkeeping and are never
+claimed. A session's changeset — reviewed, inspected by clients, and committed — then:
+
+- excludes paths that only other scopes claimed;
+- includes paths both claimed, reporting them as shared;
+- adopts baseline-dirty paths this session edited, and changed shared bookkeeping, reporting the
+  earlier changes that ride along;
+- leaves out baseline-dirty paths another scope has written since.
+
+A baseline-dirty path changed by a writer nobody claimed (typically the user) is still refused as
+ambiguous, so a commit never silently drops it. Other unclaimed changes are attributed to whichever
+session commits them. When the tree is shared, the change manifest and review evidence list them as
+unclaimed, alongside the other classifications.
+
+Claims persist per worktree in its git directory (`ycc/claims.json`), so they survive daemon restarts.
+They also outlive the writing session, which keeps a stopped session's uncommitted work attributed to
+it. A claim is retired once its path matches HEAD again (committed by anyone, or reverted). The check
+runs after each commit and whenever a changeset is computed.
+
+A commit by any session moves HEAD. Other sessions' baselines are rebased onto the new HEAD when it
+fast-forwards their baseline commit. A newly committed path becomes clean baseline state when it was
+clean at the baseline, or when the commit took exactly its baseline content. A path that was only
+partly committed keeps its leftover changes as pre-existing state. Concurrent sessions therefore keep
+reviewing and committing on one linear history. A prepared commit whose parent was overtaken is
+abandoned and redone on the new HEAD at the next attempt. A HEAD move outside the baseline's history
+(reset, rebase, checkout) still makes the baseline stale. Distinct worktrees (workstreams, §14.1)
+remain the way to isolate builds and tests completely.
+`docs/design/async-jobs.md` explains the single-delivery and concurrent-mutation
 rationale.
 
 ### 7.4 Reasoning settings
@@ -604,9 +659,14 @@ is retained as bounded continuation evidence. These records survive daemon resta
 ## 10. Work orchestration
 
 A work session starts with fresh coordinator context, reads the task and relevant design, chooses
-an approach, and persists a plan only when complexity warrants one. Depending on
-`work.implementation`, either a retained implementer subagent performs mutations (`delegate`) or
-the coordinator uses worker tools itself (`direct`). The setting is fixed for a session.
+an approach, and persists a plan only when complexity warrants one. `work.implementation` defaults
+to `direct`: the coordinator uses worker tools itself. Explicit `delegate` uses a retained
+implementer subagent. Both retain the independent reviewer pipeline and its separately configured
+models/tiers. Subagent roles resolve metadata without building clients or resolving credentials at
+startup; an unavailable role reports failure when invoked, not a successful review or nil backend.
+The strategy is recorded at session start and restored on reopen, not changed by later
+config edits. Legacy logs with implementer calls retain delegation; otherwise the current setting
+is selected and recorded on their first reopen.
 
 Review intensity is proportional to risk. The coordinator may self-review a tiny low-risk change,
 use one focused reviewer for ordinary work, or fan out independent reviewers for high-risk work.
@@ -767,8 +827,9 @@ inspecting arbitrary key files.
 
 Parallel mutation uses linked git worktrees rather than branch switching in a shared tree or full
 clones. Each workstream has a ycc branch, out-of-tree worktree, work session, base commit, and
-daemon registry record. It is a child of its project, not a project-picker entry. The per-tree
-single-writer invariant remains unchanged.
+daemon registry record. It is a child of its project, not a project-picker entry. Workstreams give
+full filesystem, index, and build isolation; sessions sharing one tree rely on per-session change
+attribution instead (§7.3).
 
 Integration is serialized per project. Gate/manual integration uses a non-mutating preview to
 detect conflicts and show the integrated diff before per-workstream acceptance. Configured auto

@@ -45,26 +45,25 @@ var defaultSearchExcludes = []string{
 func search(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Search",
-		Description: "Search text with ripgrep using explicit argv (not a shell). pattern is literal by default; set mode=regex for regular expressions. " +
-			"Scope with path (default '.') and optional ripgrep globs. output may be matches, files, or count. Match results use stable path:line references and optional nearby context. " +
-			"Results are bounded by limit and max_bytes; pass the returned next_offset unchanged to continue. Repository ignore rules and generated/session directory exclusions are enabled by default; overrides are explicit.",
+		Description: "Bounded ripgrep search with argv, not shell expansion. Returns path:line matches, files, or counts. " +
+			"Ignores hidden, ignored, generated/session paths by default. Continue the same query with returned next_offset.",
 		Params: obj(map[string]any{
-			"pattern": strProp("text or regular expression to find"),
-			"path":    strProp("file or directory scope, absolute or relative to the workspace root (default '.')"),
+			"pattern": strProp("text or regex"),
+			"path":    strProp("absolute or workspace-relative scope (default '.')"),
 			"glob": map[string]any{
 				"type":        "array",
-				"description": "optional ripgrep include/exclude globs, passed verbatim without shell expansion",
+				"description": "ripgrep include/exclude globs, passed verbatim",
 				"items":       map[string]any{"type": "string"},
 			},
-			"mode":              map[string]any{"type": "string", "enum": []string{"literal", "regex"}, "description": "pattern interpretation (default literal)"},
-			"output":            map[string]any{"type": "string", "enum": []string{"matches", "files", "count"}, "description": "result form (default matches)"},
-			"context":           map[string]any{"type": "integer", "minimum": 0, "maximum": maxSearchContext, "description": "nearby lines before and after each match; matches output only (default 0)"},
-			"limit":             map[string]any{"type": "integer", "minimum": 1, "maximum": maxSearchLimit, "description": "maximum result records in this page (default 100, maximum 500)"},
-			"max_bytes":         map[string]any{"type": "integer", "minimum": 1024, "maximum": maxSearchBytes, "description": "maximum bytes of result records, excluding metadata (default 32768, maximum 65536)"},
-			"offset":            map[string]any{"type": "integer", "minimum": 0, "description": "result-record offset returned as next_offset by a truncated page (default 0)"},
-			"include_ignored":   BoolProp("search files excluded by repository ignore rules (default false)"),
-			"include_hidden":    BoolProp("search hidden files and directories (default false)"),
-			"include_generated": BoolProp("disable default exclusions for .ycc, node_modules, vendor, dist, and build directories (default false; hidden paths still require include_hidden)"),
+			"mode":              map[string]any{"type": "string", "enum": []string{"literal", "regex"}, "description": "default literal"},
+			"output":            map[string]any{"type": "string", "enum": []string{"matches", "files", "count"}, "description": "default matches"},
+			"context":           map[string]any{"type": "integer", "minimum": 0, "maximum": maxSearchContext, "description": "lines around matches (default 0; matches only)"},
+			"limit":             map[string]any{"type": "integer", "minimum": 1, "maximum": maxSearchLimit, "description": "records per page (default 100)"},
+			"max_bytes":         map[string]any{"type": "integer", "minimum": 1024, "maximum": maxSearchBytes, "description": "record byte budget (default 32768)"},
+			"offset":            map[string]any{"type": "integer", "minimum": 0, "description": "next_offset from the prior page (default 0)"},
+			"include_ignored":   BoolProp("include ignored files (default false)"),
+			"include_hidden":    BoolProp("include hidden paths (default false)"),
+			"include_generated": BoolProp("include .ycc/node_modules/vendor/dist/build (default false; hidden still needs include_hidden)"),
 		}, "pattern"),
 		Call: searchCall(ws),
 	}

@@ -68,8 +68,8 @@ func (d *Deps) reviewDiff(taskID string) reviewDiffBuild {
 
 func buildReviewDiffFromChanges(changes *git.Changeset, duration int64) reviewDiffBuild {
 	scope := boundedPathList(changes.Paths, 4096)
-	header := fmt.Sprintf("CHANGESET SNAPSHOT %s (baseline %s)\nSCOPE: %s (%d paths)\nDIFF: %d bytes, sha256 %s\n\n",
-		changes.ID, changes.BaselineID, scope, len(changes.Paths), len(changes.Diff), sha256Text(changes.Diff))
+	header := fmt.Sprintf("CHANGESET SNAPSHOT %s (baseline %s)\nSCOPE: %s (%d paths)\nDIFF: %d bytes, sha256 %s\n%s\n",
+		changes.ID, changes.BaselineID, scope, len(changes.Paths), len(changes.Diff), sha256Text(changes.Diff), attributionNote(changes))
 	// Tree is already the immutable task-scoped snapshot built on BaseCommit, so
 	// diffing the two trees needs no potentially unbounded path argument list.
 	command := "git diff --binary --no-color --no-ext-diff " + changes.BaseCommit + " " + changes.Tree + " --"

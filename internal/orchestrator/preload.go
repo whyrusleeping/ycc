@@ -39,7 +39,7 @@ type preloadBuild struct {
 	Duration []int64
 }
 
-// ExplicitTaskPreload is a synthetic list_backlog/get_task exchange prepared for
+// ExplicitTaskPreload is a synthetic get_task exchange prepared for
 // the first turn of a work session whose opening prompt unambiguously references
 // one existing backlog task. History starts with the assistant tool-call turn;
 // the caller appends it after the real opening user message.
@@ -69,32 +69,22 @@ func BuildExplicitTaskPreload(ctx context.Context, prompt string, d *Deps, reg *
 		return out
 	}
 
-	args := []string{"{}", fmt.Sprintf(`{"task_id":%q}`, id)}
-	names := []string{"list_backlog", "get_task"}
-	for i, name := range names {
-		call := gollama.ToolCall{
-			ID:   fmt.Sprintf("startup_backlog_%d", i+1),
-			Type: "function",
-			Function: gollama.ToolCallFunction{
-				Name:      name,
-				Arguments: args[i],
-			},
-		}
-		start := time.Now()
-		res := reg.Dispatch(ctx, call)
-		out.Calls = append(out.Calls, call)
-		out.Results = append(out.Results, res)
-		out.Duration = append(out.Duration, time.Since(start).Milliseconds())
-		if res == nil || res.IsError {
-			return ExplicitTaskPreload{}
-		}
+	call := gollama.ToolCall{
+		ID: "startup_task_1", Type: "function",
+		Function: gollama.ToolCallFunction{Name: "get_task", Arguments: fmt.Sprintf(`{"task_id":%q}`, id)},
+	}
+	start := time.Now()
+	res := reg.Dispatch(ctx, call)
+	if res == nil || res.IsError {
+		return ExplicitTaskPreload{}
 	}
 	out.TaskID = id
-	out.History = append(out.History, gollama.Message{Role: "assistant", ToolCalls: out.Calls})
-	for i, call := range out.Calls {
-		out.History = append(out.History, gollama.Message{
-			Role: "tool", ToolCallID: call.ID, Content: out.Results[i].Content,
-		})
+	out.Calls = []gollama.ToolCall{call}
+	out.Results = []*gollama.ToolResult{res}
+	out.Duration = []int64{time.Since(start).Milliseconds()}
+	out.History = []gollama.Message{
+		{Role: "assistant", ToolCalls: out.Calls},
+		{Role: "tool", ToolCallID: call.ID, Content: res.Content},
 	}
 	return out
 }

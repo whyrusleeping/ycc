@@ -2187,7 +2187,7 @@ export type ListModelsResponse = Message<"ycc.v1.ListModelsResponse"> & {
 
   /**
    * Effective work-mode implementation strategy (work.implementation), resolved
-   * to "delegate" when unset, so settings clients show the real current default.
+   * to "direct" when unset, so settings clients show the real current default.
    *
    * @generated from field: string work_implementation = 8;
    */

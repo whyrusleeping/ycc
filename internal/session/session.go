@@ -1293,10 +1293,9 @@ func (s *Session) thinkingFor(name string) engine.Thinking {
 	return engine.Thinking{Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay}
 }
 
-// failedTurner lets a model that became unavailable after an AgentSpec was
-// assembled fail its next turn cleanly instead of returning a nil backend from
-// the factory. AgentSpec's factory predates error returns, so the error is
-// surfaced through the TurnCtx capability it already requires.
+// Agent specs defer backend/credential construction until use. Their factory
+// has no error return, so failedTurner reports a construction failure on the
+// first turn rather than returning a nil backend.
 type failedTurner struct{ err error }
 
 func (t failedTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
@@ -1324,18 +1323,22 @@ func (s *Session) agentModels() []orchestrator.ModelCatalogEntry {
 	return entries
 }
 
-// agentSpec builds an orchestrator.AgentSpec for a logical model name.
+// agentSpec resolves metadata without constructing a backend or resolving credentials.
+// Availability is checked now and again by the factory when the role is used.
 func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
-	_, model, err := s.reg.Build(name)
-	if err != nil {
-		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
+	model, ok := s.reg.GetModel(name)
+	if !ok {
+		return orchestrator.AgentSpec{}, fmt.Errorf("unknown model %q", name)
+	}
+	if model.Disabled {
+		return orchestrator.AgentSpec{}, fmt.Errorf("%w %q", config.ErrModelDisabled, name)
 	}
 	th := s.thinkingFor(name)
 	contextWindow, contextSafeFraction := s.reg.ContextBudget(name)
 	return orchestrator.AgentSpec{
 		Name:                name,
-		Model:               model,
-		Backend:             s.reg.BackendFor(name),
+		Model:               model.Model,
+		Backend:             model.Backend,
 		ContextWindow:       contextWindow,
 		ContextSafeFraction: contextSafeFraction,
 		NewClient: func() engine.Turner {
@@ -1355,9 +1358,9 @@ func (s *Session) agentSpec(name string) (orchestrator.AgentSpec, error) {
 // resolving the configured tier to reviewer agent specs. Each
 // reviewer carries its tier label and its extra focus prompt, so one tier can
 // task several models (or the same model twice) with different review lenses.
-// Unknown models are skipped (graceful degradation); a tier that resolves to no
-// agents falls back to the session's current reviewer assignment, and finally to
-// coordinator self-review if even that is empty.
+// Unknown/disabled models are skipped; an empty tier falls back to the session's
+// reviewer assignment. If no independent reviewer is available, fail explicitly
+// rather than silently converting the request into author self-review.
 func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 	td := s.reg.ReviewTier(requested)
 	plan := orchestrator.ReviewPlan{Tier: td.Name, Requested: requested, Fallback: td.Fallback}
@@ -1383,7 +1386,7 @@ func (s *Session) resolveReviewTier(requested string) orchestrator.ReviewPlan {
 			}
 		}
 		if len(plan.Specs) == 0 {
-			plan.SelfReview = true
+			plan.Err = fmt.Errorf("no enabled independent reviewer is available for tier %q; enable/configure a reviewer or report that the required review is blocked", plan.Tier)
 		}
 	}
 	return plan
@@ -1451,12 +1454,16 @@ func (s *Session) run() {
 	// request that cancellation prevented this owner from reaching.
 	defer s.killJobs()
 	defer s.rejectPendingRollover(fmt.Errorf("session %s ended before context rollover", s.ID))
+	workImplementation := (config.Work{}).ResolvedImplementation()
+	if s.deps != nil {
+		workImplementation = (config.Work{Implementation: s.deps.WorkImplementation}).ResolvedImplementation()
+	}
 	if s.resumed {
 		// Reopened session ("resume = replay"): the loop already
 		// carries a history reconstructed from the existing log, so do NOT emit a
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
 		// continuous log.
-		reopened := map[string]any{}
+		reopened := map[string]any{"work_implementation": workImplementation}
 		if s.resumeQuestion != nil {
 			// Tell clients the question replayed just before this marker is still
 			// live (restored), not a stale gate to drop.
@@ -1525,6 +1532,7 @@ func (s *Session) run() {
 			"mode":                 s.Mode,
 			"preset":               s.preset,
 			"coordinator_explicit": s.coordinatorExplicit,
+			"work_implementation":  workImplementation,
 			// The coordinator model is recorded so a resume replays the session on
 			// the model it was started with, including a per-session override
 			// picked at StartSession.
@@ -1937,7 +1945,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		projects:          projects,
 		workstreams:       workstream.NewMemory(),
 		worktreesRoot:     workstream.DefaultWorktreesRoot(),
-		ownership:         workspacelease.NewService(),
+		ownership:         persistentOwnership(),
 		idAlloc:           docs.AllocatorFor(""),
 		workstreamWatches: map[string]chan struct{}{},
 		integrators:       map[string]*workstreamIntegrator{},
@@ -2277,10 +2285,8 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		s.loopContinuation = cfg.loopContinuation
 		loop.Seed(cfg.loopContinuation)
 	}
-	// A specific task id in a work-session prompt makes the coordinator's first
-	// list_backlog/get_task calls deterministic. Execute and seed them now, after
-	// the real opening user message, to save model round trips without guessing
-	// when the prompt is absent, ambiguous, or stale.
+	// Seed a named task's get_task result after the opening user message, without
+	// loading the full backlog or guessing when the id is ambiguous or stale.
 	if mode == "work" {
 		s.startupPreload = orchestrator.BuildExplicitTaskPreload(s.ctx, prompt, s.deps, loop.Tools)
 		if s.startupPreload.TaskID != "" {
@@ -2338,7 +2344,7 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		return workstream.Workstream{}, nil, fmt.Errorf("unknown project %q", cfg.Project)
 	}
 	spawnToken := m.ownership.NewToken(fmt.Sprintf("workstream spawn for project %s", cfg.Project))
-	spawnLease, err := m.ownership.Acquire(primary, spawnToken)
+	spawnLease, err := m.acquireSection(primary, spawnToken)
 	if err != nil {
 		return workstream.Workstream{}, nil, fmt.Errorf("spawn workstream: %w", err)
 	}
@@ -2694,6 +2700,10 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	if primary := m.primaryTreeFor(absWS); filepath.Clean(primary) != filepath.Clean(absWS) {
 		worktreeEnv = sortedWorktreeEnv(m.worktreeConfigFor(primary).Env)
 	}
+	workImplementation := m.reg.WorkImplementation()
+	if resumed {
+		workImplementation = replayWorkImplementation(log.Snapshot(), workImplementation)
+	}
 	deps := &orchestrator.Deps{
 		Workspace:          absWS,
 		Env:                worktreeEnv,
@@ -2709,12 +2719,14 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		MaxTurns:           m.reg.MaxTurns(),
 		Retry:              m.reg.RetryPolicy(),
 		WriteRoots:         m.reg.WriteRoots(),
-		WorkImplementation: m.reg.WorkImplementation(),
+		WorkImplementation: workImplementation,
 		Jobs:               jobs.NewRegistry(),
 		Ownership:          m.ownership,
 		PromptCacheScope:   id,
 	}
-	deps.CoordinatorToken = m.ownership.NewToken(fmt.Sprintf("session %s coordinator", id))
+	// The session id is the attribution scope shared by the coordinator and every
+	// agent it delegates to (see workspacelease claims).
+	deps.CoordinatorToken = m.ownership.NewScopedToken(id, fmt.Sprintf("session %s coordinator", id))
 	deps.MemorySource = func(kind docs.MemoryKind) docs.MemoryProvenance {
 		return memorySourceFromEvents(id, log.Snapshot(), kind)
 	}
@@ -3224,25 +3236,27 @@ func (m *Manager) CommitDiff(project, sha string) (string, error) {
 	return repo.Show(sha)
 }
 
-// agentSpec builds an orchestrator.AgentSpec for a logical model name,
-// validating that it resolves now so the per-spawn closures can assume success.
-// Thinking comes from the model config and package defaults; live session
-// overrides are layered on later via Session.SetThinking.
+// agentSpec snapshots role metadata at session startup. Unused roles do not
+// construct clients or resolve credentials; their factories report errors on use.
+// Live reasoning overrides are layered on later via Session.SetThinking.
 func (m *Manager) agentSpec(name string) (orchestrator.AgentSpec, error) {
-	_, model, err := m.reg.Build(name)
-	if err != nil {
-		return orchestrator.AgentSpec{}, fmt.Errorf("build backend %q: %w", name, err)
+	model, ok := m.reg.GetModel(name)
+	if !ok {
+		return orchestrator.AgentSpec{}, fmt.Errorf("unknown model %q", name)
 	}
 	th := m.reg.ThinkingFor(name)
 	contextWindow, contextSafeFraction := m.reg.ContextBudget(name)
 	return orchestrator.AgentSpec{
 		Name:                name,
-		Model:               model,
-		Backend:             m.reg.BackendFor(name),
+		Model:               model.Model,
+		Backend:             model.Backend,
 		ContextWindow:       contextWindow,
 		ContextSafeFraction: contextSafeFraction,
 		NewClient: func() engine.Turner {
-			c, _, _ := m.reg.Build(name)
+			c, _, err := m.reg.Build(name)
+			if err != nil {
+				return failedTurner{err: fmt.Errorf("build backend %q: %w", name, err)}
+			}
 			return c
 		},
 		Thinking:        th.Thinking,
@@ -3273,6 +3287,9 @@ func (m *Manager) Stop(id string) error {
 		return fmt.Errorf("%w %q", ErrUnknownSession, id)
 	}
 	s.Stop()
+	// Write claims deliberately outlive the session: its uncommitted edits stay
+	// attributed to it (other sessions' changesets exclude and list them) until
+	// they are committed or reverted, and reopening the session resumes them.
 	m.waitWorkstreamWatcher(id)
 	return nil
 }
@@ -3572,6 +3589,27 @@ func (m *Manager) Backlog(project string) (*docs.Store, error) {
 // serialized by the docs.Store directory lock, and must stay available to the
 // user while a session or agent is working.
 func (m *Manager) Ownership() *workspacelease.Service { return m.ownership }
+
+// persistentOwnership returns the daemon's ownership service with write claims
+// persisted per worktree, so change attribution survives a daemon restart.
+func persistentOwnership() *workspacelease.Service {
+	s := workspacelease.NewService()
+	s.PersistClaims()
+	return s
+}
+
+// sectionWait bounds how long a user-initiated whole-tree operation (workstream
+// spawn, merge, discard) waits for an in-flight write or commit in the same
+// tree. Worktree sections are operation-scoped, so this is normally instant.
+const sectionWait = 30 * time.Second
+
+// acquireSection takes the short exclusive worktree section for a whole-tree
+// operation, waiting out a concurrent write or commit rather than refusing.
+func (m *Manager) acquireSection(root string, token *workspacelease.Token) (*workspacelease.Lease, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), sectionWait)
+	defer cancel()
+	return m.ownership.AcquireWait(ctx, root, token)
+}
 
 // CaptureBacklogItem runs the lightweight, off-stream "quick-add backlog item"
 // capture agent for a project: it turns a natural-language

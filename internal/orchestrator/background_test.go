@@ -377,7 +377,9 @@ func TestGenericAgentFreshRecoveryAfterContextFailure(t *testing.T) {
 	}
 }
 
-func TestGenericMutatingAgentUsesSingleWriterGuard(t *testing.T) {
+// Mutating agents may run beside other mutating work in the same tree; the
+// coordinator is told about the concurrent writer instead of being refused.
+func TestGenericMutatingAgentRunsBesideOtherWriters(t *testing.T) {
 	d, _ := bgDeps(t, &syncRec{}, nil, nil)
 	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{text("coded")}}
 	d.ResolveAgent = func(name string) (AgentSpec, error) {
@@ -385,15 +387,10 @@ func TestGenericMutatingAgentUsesSingleWriterGuard(t *testing.T) {
 	}
 
 	blocker := d.Jobs.StartMutating("bash", "existing writer", d.Emitter.Actor())
+	defer blocker.Finish(jobs.Done, "done")
 	res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "coder", "prompt": "edit it", "mutating": true})
-	if !res.IsError || !strings.Contains(res.Content, "another mutating job") {
+	if res.IsError || !strings.Contains(res.Content, "mutating subagent") || !strings.Contains(res.Content, "existing writer") {
 		t.Fatalf("mutating spawn beside writer = %+v", res)
-	}
-	blocker.Finish(jobs.Done, "done")
-
-	res, _ = spawnAgent(d).Call(context.Background(), map[string]any{"model": "coder", "prompt": "edit it", "mutating": true})
-	if res.IsError || !strings.Contains(res.Content, "mutating subagent") {
-		t.Fatalf("mutating spawn = %+v", res)
 	}
 	job, _ := d.Jobs.Get("job_2")
 	if !job.Mutates() {
@@ -548,14 +545,14 @@ func TestSpawnImplementerSingleWriterGuard(t *testing.T) {
 		t.Fatalf("expected job_1 running, ok=%v", ok)
 	}
 
-	// Second background spawn — refused, names the live job, points at workstreams.
+	// Second background spawn — refused: a session has one implementer slot.
 	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "again", "background": true})
-	if !res.IsError || !strings.Contains(res.Content, "job_1") || !strings.Contains(res.Content, "workstream") {
-		t.Fatalf("second background spawn should be refused with workstream hint, got: %q", res.Content)
+	if !res.IsError || !strings.Contains(res.Content, "job_1") || !strings.Contains(res.Content, "spawn_agent") {
+		t.Fatalf("second background spawn should be refused with a parallel-work hint, got: %q", res.Content)
 	}
-	// Foreground spawn — also refused (two implementers can't share a tree).
+	// Foreground spawn — also refused while this session's implementer runs.
 	res, _ = spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "fg"})
-	if !res.IsError || !strings.Contains(res.Content, "workstream") {
+	if !res.IsError || !strings.Contains(res.Content, "still running") {
 		t.Fatalf("foreground spawn should be refused while a background implementer is live, got: %q", res.Content)
 	}
 	// send_to_implementer — still running.
@@ -573,20 +570,26 @@ func TestSpawnImplementerSingleWriterGuard(t *testing.T) {
 	}
 }
 
-func TestSpawnImplementerLeaseRejectsCrossSessionStart(t *testing.T) {
+// Another session's long-running implementer no longer owns the worktree: a
+// second session can start its own implementer, and edits a file, while the
+// first is still mid-run. KillAll still joins the first agent before returning.
+func TestSpawnImplementerRunsBesideAnotherSessionsImplementer(t *testing.T) {
 	blocker := newBlockingTurner(call("finish", `{"report":"eventually"}`))
 	first, _ := bgDeps(t, &syncRec{}, nil, nil)
 	first.Implementer = AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner { return blocker }}
 	ownership := workspacelease.NewService()
 	first.Ownership = ownership
-	first.CoordinatorToken = ownership.NewToken("session one coordinator")
+	first.CoordinatorToken = ownership.NewScopedToken("s_one", "session one coordinator")
 
 	second := &Deps{
 		Workspace: first.Workspace, Docs: first.Docs, Repo: first.Repo,
 		Emitter: event.NewEmitter(&syncRec{}, "coordinator"), Jobs: jobs.NewRegistry(),
-		Ownership: ownership, CoordinatorToken: ownership.NewToken("session two coordinator"),
+		Ownership: ownership, CoordinatorToken: ownership.NewScopedToken("s_two", "session two coordinator"),
 		Implementer: AgentSpec{Name: "impl", Model: "m", NewClient: func() engine.Turner {
-			return &scripted{resp: []*gollama.ResponseMessageGenerate{call("finish", `{"report":"wrong"}`)}}
+			return &scripted{resp: []*gollama.ResponseMessageGenerate{
+				call("Write", `{"file_path":"second.go","content":"package second\n"}`),
+				call("finish", `{"report":"second done"}`),
+			}}
 		}},
 	}
 	defer second.Jobs.KillAll()
@@ -594,12 +597,21 @@ func TestSpawnImplementerLeaseRejectsCrossSessionStart(t *testing.T) {
 		t.Fatalf("first session start: %s", res.Content)
 	}
 	<-blocker.started
-	res, _ := spawnImplementer(second).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "race", "background": true})
-	if !res.IsError || !strings.Contains(res.Content, "session one coordinator") || !strings.Contains(res.Content, "workstream") {
-		t.Fatalf("cross-session start refusal = %+v", res)
+	res, _ := spawnImplementer(second).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "parallel", "background": true})
+	if res.IsError {
+		t.Fatalf("second session refused while first implementer runs: %s", res.Content)
 	}
-	// A kill request makes the session job terminal immediately, but KillAll now
-	// joins the agent and therefore must not return while Run is still unwinding.
+	job, _ := second.Jobs.Get("job_1")
+	waitJobDone(t, job)
+	if rep := job.Report(); rep.Status != jobs.Done || !strings.Contains(rep.Result, "second done") || !strings.Contains(rep.Result, "second.go") {
+		t.Fatalf("second implementer = %+v", rep)
+	}
+	if got := ownership.Claims(first.Workspace)["second.go"]; len(got) != 1 || got[0] != "s_two" {
+		t.Fatalf("second.go claims = %v, want [s_two]", got)
+	}
+
+	// KillAll joins the agent and therefore must not return while Run is still
+	// unwinding.
 	killed := make(chan struct{})
 	go func() {
 		first.Jobs.KillAll()
@@ -610,28 +622,12 @@ func TestSpawnImplementerLeaseRejectsCrossSessionStart(t *testing.T) {
 		t.Fatal("KillAll returned before the agent stopped")
 	case <-time.After(20 * time.Millisecond):
 	}
-	if res, _ = spawnImplementer(second).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "too soon", "background": true}); !res.IsError {
-		t.Fatalf("killed-but-running agent released lease early: %+v", res)
-	}
 	close(blocker.release)
 	select {
 	case <-killed:
 	case <-time.After(3 * time.Second):
 		t.Fatal("KillAll did not return after the agent stopped")
 	}
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		res, _ = spawnImplementer(second).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "after exit", "background": true})
-		if !res.IsError {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("agent lease was not released after termination: %s", res.Content)
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	job, _ := second.Jobs.Get("job_1")
-	waitJobDone(t, job)
 }
 
 func TestImplementerFinishCleansAndJoinsAsyncChild(t *testing.T) {
@@ -807,19 +803,19 @@ func TestImplementerExplicitWatcherHandoffToParent(t *testing.T) {
 	}
 }
 
-// A live mutating job refuses a background implementer. (Background Bash is not
-// registered as mutating; synthetic/restored work can be.)
-func TestSpawnImplementerBackgroundRefusedByMutatingJob(t *testing.T) {
+// A live mutating job (e.g. a mutating generic agent) no longer refuses a
+// background implementer; concurrent writers share the tree.
+func TestSpawnImplementerBackgroundAllowedBesideMutatingJob(t *testing.T) {
 	rec := &syncRec{}
 	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{call("finish", `{"report":"ok"}`)}}
 	d, _ := bgDeps(t, rec, impl, nil)
 	defer d.Jobs.KillAll()
 
-	// A live mutating job blocks a background implementer.
-	d.Jobs.StartMutating("agent", "restored implementer", "coordinator")
+	other := d.Jobs.StartMutating("agent", "mutating agent", "coordinator")
+	defer other.Finish(jobs.Done, "done")
 	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "go", "background": true})
-	if !res.IsError || !strings.Contains(res.Content, "workstream") {
-		t.Fatalf("background implementer should be refused while a mutating job is live, got: %q", res.Content)
+	if res.IsError {
+		t.Fatalf("background implementer refused beside a mutating job: %q", res.Content)
 	}
 }
 

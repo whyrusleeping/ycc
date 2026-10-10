@@ -374,7 +374,7 @@ func TestFreshImplementerRevisionReplacesHistory(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("NewClient calls = %d, want replacement client", calls)
 	}
-	if len(fresh.messages) == 0 || !strings.Contains(fresh.messages[0].Content, "fresh conversation context") || !strings.Contains(fresh.messages[0].Content, "replace old with fixed") {
+	if len(fresh.messages) == 0 || !strings.Contains(fresh.messages[0].Content, "## Acceptance") || !strings.Contains(fresh.messages[0].Content, "replace old with fixed") {
 		t.Fatalf("fresh seed is not self-contained: %+v", fresh.messages)
 	}
 	for _, m := range fresh.messages {
@@ -845,6 +845,13 @@ func TestFreshReReviewRefusesWhenCurrentChangesetCannotBeDerived(t *testing.T) {
 	cmd = exec.Command("git", "-C", ws, "commit", "-m", "external head move")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	// A fast-forward is absorbed by rebasing the baseline; rewriting history
+	// (here: replacing HEAD with an unrelated root commit) is not.
+	cmd = exec.Command("sh", "-c", `git update-ref HEAD "$(git commit-tree "$(git rev-parse 'HEAD^{tree}')" -m unrelated)"`)
+	cmd.Dir = ws
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rewrite history: %v: %s", err, out)
 	}
 	res, _ := reReview(d).Call(context.Background(), map[string]any{"task_id": "0001", "context_mode": "fresh"})
 	if !res.IsError || !strings.Contains(res.Content, "HEAD moved") {

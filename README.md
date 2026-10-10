@@ -301,7 +301,7 @@ reviewers   = ["gpt", "opus"]      # used by review tiers
 default = "standard"               # built-in tiers: self-review | standard | comprehensive
 
 [work]
-implementation = "delegate"        # or "direct": the coordinator edits the code itself
+implementation = "direct"          # default; "delegate" uses a separate implementer
 
 [integration]                      # how finished workstreams land
 mode   = "auto"                    # auto | gate | manual
@@ -346,10 +346,9 @@ file they match.
 - **Agent shells** start with known credential variables removed from their environment
   (`YCC_TOKEN`, provider keys, every configured `key_env`). This is a safety net, not a
   sandbox. A shell running as your user can still read your files.
-- **Web tools**: `web_search`/`fetch_page` use [Exa](https://exa.ai). An `EXA_API_KEY` in the
-  daemon's environment enables them. A key from the secrets store must be authorized each time
-  it's used, and each grant covers one tool call in one workspace:
-  `ycc token authorize EXA_API_KEY --tool web_search --workspace /path`.
+- **Web tools**: `web_search`/`fetch_page` use [Exa](https://exa.ai). They read `EXA_API_KEY`
+  from the daemon's environment first, then from the secrets store (`ycc token set EXA_API_KEY`).
+  The key is only sent to Exa, and tool output is scrubbed of it.
 
 **Never paste a credential into a prompt or an answer to an agent's question.** Session logs
 are durable model history. ycc refuses input that is obviously credential-shaped and redacts
