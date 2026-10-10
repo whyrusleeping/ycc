@@ -109,6 +109,18 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         self.liveAppendBaseUTF8 = liveAppendBaseUTF8
         self.detailAvailable = detailAvailable
     }
+
+    /// Whether this row opens a run of consecutive rows from one subagent and
+    /// so carries its "🌻 name" heading. Like a chat app grouping a sender's
+    /// messages, later rows in the run share that single heading instead of
+    /// repeating it above every tool call. Coordinator, user, and system rows
+    /// never take a heading and end any run; a nil `previous` (the first
+    /// mounted row) always starts one.
+    public func startsActorRun(after previous: TranscriptRow?) -> Bool {
+        guard !actorEmoji.isEmpty else { return false }
+        guard let previous else { return true }
+        return previous.actor != actor || previous.actorEmoji != actorEmoji
+    }
 }
 
 /// A pure reducer that folds a session's ``Ycc_V1_Event`` stream into an ordered

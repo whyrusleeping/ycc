@@ -122,6 +122,9 @@ struct SessionView: View {
     @State private var presentation: SessionPresentation?
 
     private let client: YccClient
+    private let sessionList: SessionListModel?
+    @State private var fallbackFollowUp = false
+    @State private var isUpdatingFollowUp = false
     /// The app's session-model cache (nil: never cached).
     private let models: SessionModelCache?
     /// Whether the navigation source listed the session as live (a hint).
@@ -137,9 +140,10 @@ struct SessionView: View {
     private static let dragActivityStalePeriod: TimeInterval = 1.0
     init(
         client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "",
-        models: SessionModelCache? = nil
+        models: SessionModelCache? = nil, sessionList: SessionListModel? = nil
     ) {
         self.client = client
+        self.sessionList = sessionList
         self.project = project
         self.sessionID = sessionID
         let make = {
@@ -1066,6 +1070,40 @@ struct SessionView: View {
         }
     }
 
+    private var isFlaggedForFollowUp: Bool {
+        sessionList?.session(sessionID: sessionID)?.followUp ?? fallbackFollowUp
+    }
+
+    private func toggleFollowUp() {
+        let flagged = !isFlaggedForFollowUp
+        Analytics.action(flagged ? "session.follow_up" : "session.unflag", via: .menu)
+        isUpdatingFollowUp = true
+        Task {
+            defer { isUpdatingFollowUp = false }
+            if let sessionList {
+                let updated = await sessionList.setFollowUp(
+                    sessionID: sessionID, project: project, followUp: flagged)
+                if updated {
+                    fallbackFollowUp = flagged
+                } else if sessionList.unauthorized {
+                    app.handleUnauthorized()
+                } else if let message = sessionList.followUpErrorMessage {
+                    model.actionError = message
+                }
+            } else {
+                do {
+                    let response = try await client.setSessionFollowUp(
+                        project: project, sessionID: sessionID, followUp: flagged)
+                    fallbackFollowUp = response.followUp
+                } catch YccError.unauthorized {
+                    app.handleUnauthorized()
+                } catch {
+                    model.actionError = (error as? YccError)?.displayMessage ?? error.localizedDescription
+                }
+            }
+        }
+    }
+
     /// One overflow menu rather than a row of glyphs: settings, the other
     /// project destinations, and the interrupt / resume / stop controls.
     /// Shown for persisted transcripts too — the
@@ -1076,6 +1114,11 @@ struct SessionView: View {
     private var actionMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
+                Button { toggleFollowUp() } label: {
+                    Label(isFlaggedForFollowUp ? "Remove follow-up flag" : "Flag for follow-up",
+                        systemImage: isFlaggedForFollowUp ? "flag.fill" : "flag")
+                }
+                .disabled(isUpdatingFollowUp || (sessionList?.followUpUpdatingIDs.contains(sessionID) ?? false))
                 if model.mode == .live {
                     Button {
                         Analytics.action("session.settings", via: .menu)
@@ -1201,9 +1244,12 @@ private struct DurableTranscriptRows: View {
             }
             .buttonStyle(.bordered)
         }
-        ForEach(model.visibleDurableRows) { row in
+        let rows = model.visibleDurableRows
+        ForEach(Array(zip(rows.indices, rows)), id: \.1.id) { index, row in
             TranscriptRowView(
                 row: row,
+                showsActorHeading: row.startsActorRun(
+                    after: index > rows.startIndex ? rows[index - 1] : nil),
                 onOpenCommit: onOpenCommit,
                 onOpenReview: onOpenReview,
                 loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
@@ -1236,11 +1282,16 @@ private struct LiveTranscriptTail: View {
     let model: SessionViewModel
 
     var body: some View {
-        ForEach(model.liveTails) { liveTail in
+        let tails = model.liveTails
+        ForEach(Array(tails.enumerated()), id: \.element.id) { offset, liveTail in
             // Each actor owns a stable subtree. Equatable rendering lets
             // one subagent append without re-running the unchanged tails;
             // the changed row still receives every snapshot for TextKit.
-            TranscriptRowView(row: liveTail, model: model.coordinatorModel)
+            TranscriptRowView(
+                row: liveTail,
+                model: model.coordinatorModel,
+                showsActorHeading: liveTail.startsActorRun(after: previousRow(offset, tails))
+            )
                 .equatable()
                 .id(liveTail.id)
         }
@@ -1248,6 +1299,14 @@ private struct LiveTranscriptTail: View {
             TranscriptWorkingRow(modelName: model.coordinatorModel)
                 .id("agent-working")
         }
+    }
+
+    /// The row rendered directly above tail `offset`: the previous tail, else
+    /// the last durable row — unless an unechoed user message sits between
+    /// them, which breaks the subagent run.
+    private func previousRow(_ offset: Int, _ tails: [TranscriptRow]) -> TranscriptRow? {
+        if offset > 0 { return tails[offset - 1] }
+        return model.pendingUserMessages.isEmpty ? model.durableRows.last : nil
     }
 }
 
@@ -1323,6 +1382,10 @@ private struct TranscriptRowView: View, Equatable {
     /// streaming indicator. Only supplied for live tails; durable rows leave it
     /// empty. It participates in ``==`` so a role change refreshes the label.
     var model: String = ""
+    /// Whether a subagent row shows its "🌻 name" heading. Only the first row
+    /// of a consecutive same-actor run does (``TranscriptRow/startsActorRun``),
+    /// so a burst of tool calls is not interleaved with repeated name lines.
+    var showsActorHeading = true
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
     var onOpenReview: (String, String) -> Void = { _, _ in }
@@ -1338,10 +1401,11 @@ private struct TranscriptRowView: View, Equatable {
     /// a live tail changes.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.row == rhs.row && lhs.model == rhs.model
+            && lhs.showsActorHeading == rhs.showsActorHeading
     }
 
     var body: some View {
-        if row.actorEmoji.isEmpty {
+        if row.actorEmoji.isEmpty || !showsActorHeading {
             rowContent
         } else {
             VStack(alignment: .leading, spacing: 4) {

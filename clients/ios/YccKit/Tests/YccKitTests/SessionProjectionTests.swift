@@ -317,6 +317,27 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(proj.liveTails.first?.actorEmoji, emoji)
     }
 
+    func testSubagentHeadingOnlyStartsEachConsecutiveRun() {
+        func row(_ id: String, _ actor: String, _ emoji: String) -> TranscriptRow {
+            TranscriptRow(
+                id: id, kind: .system(text: id), seq: 0, actor: actor, ts: "",
+                actorEmoji: emoji)
+        }
+        let rows = [
+            row("a", "implementer", "🌻"),
+            row("b", "implementer", "🌻"),
+            row("c", "explorer", "🌵"),
+            row("d", "implementer", "🌻"),
+            row("e", "coordinator", ""),
+            row("f", "implementer", "🌻"),
+            row("g", "implementer", "🌻"),
+        ]
+        let starts = rows.indices.map { index in
+            rows[index].startsActorRun(after: index > 0 ? rows[index - 1] : nil)
+        }
+        XCTAssertEqual(starts, [true, false, true, true, false, true, false])
+    }
+
     func testReviewerLifecycleRowsReusePlantWithoutRepeatingActor() throws {
         var proj = SessionProjection()
         let actor = "reviewer:opus"

@@ -27,6 +27,8 @@ public protocol SessionListSource: Sendable {
     func removeProject(name: String) async throws
     /// Rename a project in the daemon registry, returning the renamed project.
     func renameProject(name: String, to newName: String) async throws -> Ycc_V1_ProjectInfo
+    /// Set or manually clear a session's durable follow-up flag.
+    func setSessionFollowUp(project: String, sessionID: String, followUp: Bool) async throws -> Ycc_V1_SetSessionFollowUpResponse
     /// Fetch a project's daemon-side work-loop snapshot for row ownership badges.
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
 }
@@ -35,6 +37,9 @@ public protocol SessionListSource: Sendable {
 /// failure must never degrade the session list.
 public extension SessionListSource {
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? { nil }
+    func setSessionFollowUp(project: String, sessionID: String, followUp: Bool) async throws -> Ycc_V1_SetSessionFollowUpResponse {
+        throw YccError.rpc(message: "This source does not support follow-up flags.")
+    }
 }
 
 extension YccClient: SessionListSource {
@@ -72,6 +77,8 @@ private enum HistoryUpdate: Sendable {
 private struct ScopedRows {
     let revision: Int
     let project: String?
+    let followUpOnly: Bool
+    let followUpCount: Int
     let sessions: [Ycc_V1_SessionSummary]
     let sections: [SessionSection]
 }
@@ -169,6 +176,13 @@ public final class SessionListModel {
     /// a value is a registered project name. Scope changes use loaded pages
     /// locally, without a network round-trip.
     public var selectedProject: String?
+    /// Filter the loaded rows in the current scope, without fetching all history.
+    public var showsFollowUpOnly = false
+    public private(set) var followUpUpdatingIDs: Set<String> = []
+    /// Why the latest ``setFollowUp`` failed (nil after success or an
+    /// unauthorized failure). Kept apart from ``errorMessage``, which is the
+    /// fatal load error the list renders in place of its rows.
+    public private(set) var followUpErrorMessage: String?
 
     public private(set) var isLoading = false
     /// A fatal load error. Partial aggregate failures use ``partialWarning`` and
@@ -238,14 +252,16 @@ public final class SessionListModel {
     public var sessions: [Ycc_V1_SessionSummary] { scopedRows.sessions }
 
     private var scopedRows: ScopedRows {
-        // Reading both keys registers the observation dependencies even when
+        // Reading the keys registers the observation dependencies even when
         // the cached value is returned.
         let revision = dataRevision
         let project = selectedProject
-        if let cached = scopedCache, cached.revision == revision, cached.project == project {
+        let followUpOnly = showsFollowUpOnly
+        if let cached = scopedCache, cached.revision == revision, cached.project == project,
+           cached.followUpOnly == followUpOnly {
             return cached
         }
-        let rows: [Ycc_V1_SessionSummary]
+        var rows: [Ycc_V1_SessionSummary]
         let sections: [SessionSection]
         if let project {
             if let load = historyLoads[project] {
@@ -256,17 +272,24 @@ public final class SessionListModel {
             } else {
                 rows = []
             }
-            // A scoped project view keeps the needs-answer pinning.
-            sections = Self.sectionsFromSorted(rows)
         } else {
             // The aggregate is already sorted on ingestion.
             rows = allSessions
-            sections = rows.isEmpty ? [] : [SessionSection(kind: .all, title: nil, sessions: rows)]
         }
-        let value = ScopedRows(revision: revision, project: project, sessions: rows, sections: sections)
+        let followUpCount = rows.filter(\.followUp).count
+        if followUpOnly { rows = rows.filter(\.followUp) }
+        // A scoped project view keeps the needs-answer pinning.
+        sections = project == nil
+            ? (rows.isEmpty ? [] : [SessionSection(kind: .all, title: nil, sessions: rows)])
+            : Self.sectionsFromSorted(rows)
+        let value = ScopedRows(revision: revision, project: project,
+            followUpOnly: followUpOnly, followUpCount: followUpCount, sessions: rows, sections: sections)
         scopedCache = value
         return value
     }
+
+    /// Flagged loaded rows in the current project scope, independent of the filter.
+    public var followUpCount: Int { scopedRows.followUpCount }
 
     /// The filter is meaningful when projects exist (alongside All projects).
     public var showsProjectFilter: Bool { !projects.isEmpty }
@@ -467,6 +490,59 @@ public final class SessionListModel {
         }
     }
 
+    /// Find a loaded row even when the current filter or aggregate frontier hides it.
+    public func session(sessionID: String) -> Ycc_V1_SessionSummary? {
+        allSessions.first { $0.sessionID == sessionID }
+            ?? historyLoads.values.lazy.flatMap { $0.sessions + $0.pinned }
+                .first { $0.sessionID == sessionID }
+    }
+
+    /// Only an explicit user action changes follow-up; reading or replying never clears it.
+    @discardableResult
+    public func setFollowUp(sessionID: String, project: String = "", followUp: Bool) async -> Bool {
+        guard !followUpUpdatingIDs.contains(sessionID) else { return false }
+        followUpUpdatingIDs.insert(sessionID)
+        defer { followUpUpdatingIDs.remove(sessionID) }
+        followUpErrorMessage = nil
+        let previous = session(sessionID: sessionID)
+        let routedProject = previous.map { self.project(for: $0) } ?? project
+        updateFollowUp(sessionID: sessionID, flagged: followUp,
+            timestamp: followUp ? (previous?.followUpAt ?? "") : "")
+        do {
+            let response = try await source.setSessionFollowUp(
+                project: routedProject, sessionID: sessionID, followUp: followUp)
+            updateFollowUp(sessionID: sessionID, flagged: response.followUp, timestamp: response.followUpAt)
+            return true
+        } catch {
+            updateFollowUp(sessionID: sessionID, flagged: previous?.followUp ?? false,
+                timestamp: previous?.followUpAt ?? "")
+            if (error as? YccError) == .unauthorized {
+                unauthorized = true
+            } else {
+                followUpErrorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            }
+            return false
+        }
+    }
+
+    private func updateFollowUp(sessionID: String, flagged: Bool, timestamp: String) {
+        if let index = allSessions.firstIndex(where: { $0.sessionID == sessionID }) {
+            allSessions[index].followUp = flagged
+            allSessions[index].followUpAt = timestamp
+        }
+        for project in historyLoads.keys {
+            if let index = historyLoads[project]?.sessions.firstIndex(where: { $0.sessionID == sessionID }) {
+                historyLoads[project]?.sessions[index].followUp = flagged
+                historyLoads[project]?.sessions[index].followUpAt = timestamp
+            }
+            if let index = historyLoads[project]?.pinned.firstIndex(where: { $0.sessionID == sessionID }) {
+                historyLoads[project]?.pinned[index].followUp = flagged
+                historyLoads[project]?.pinned[index].followUpAt = timestamp
+            }
+        }
+        dataRevision &+= 1
+    }
+
     /// (Re)load the project list and every project's history. The aggregate feed
     /// queries each distinct registered workspace once, merges and deduplicates
     /// the results, and keeps successful projects when another project fails —
@@ -542,7 +618,11 @@ public final class SessionListModel {
 
     /// The project argument needed to open or resume a loaded row.
     public func project(for session: Ycc_V1_SessionSummary) -> String {
-        sessionProjects[session.sessionID] ?? selectedProject ?? ""
+        sessionProjects[session.sessionID]
+            ?? historyLoads.first(where: { _, load in
+                (load.sessions + load.pinned).contains { $0.sessionID == session.sessionID }
+            })?.key
+            ?? selectedProject ?? ""
     }
 
     /// The project name to SHOW on a row in the unscoped feed. Falls back to the

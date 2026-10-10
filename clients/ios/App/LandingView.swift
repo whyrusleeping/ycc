@@ -55,6 +55,7 @@ struct LandingView: View {
     @State private var renameDraft = ""
     /// A rename failure (collision, unknown name) surfaced as its own alert.
     @State private var projectRenameError: String?
+    @State private var followUpError: String?
 
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
@@ -208,6 +209,17 @@ struct LandingView: View {
             presenting: projectRenameError
         ) { _ in
             Button("OK", role: .cancel) { projectRenameError = nil }
+        } message: { message in
+            Text(message)
+        }
+        .alert(
+            "Couldn’t update follow-up flag",
+            isPresented: Binding(
+                get: { followUpError != nil },
+                set: { if !$0 { followUpError = nil } }),
+            presenting: followUpError
+        ) { _ in
+            Button("OK", role: .cancel) { followUpError = nil }
         } message: { message in
             Text(message)
         }
@@ -457,7 +469,7 @@ struct LandingView: View {
                 SessionView(
                     client: client, project: project, sessionID: id,
                     live: live, title: title,
-                    models: app.dataCache.sessionModels)
+                    models: app.dataCache.sessionModels, sessionList: model)
             case let .taskDetail(project, taskID, title):
                 TaskDetailView(
                     client: client, project: project,
@@ -533,8 +545,46 @@ struct LandingView: View {
 
     // MARK: - Session list
 
-    @ViewBuilder
     private func content(_ model: SessionListModel) -> some View {
+        VStack(spacing: 0) {
+            // Shown once something is flagged (and while filtering) so the
+            // phone list carries no permanent extra chrome.
+            if model.followUpCount > 0 || model.showsFollowUpOnly {
+                followUpFilterBar(model)
+            }
+            sessionContent(model)
+        }
+    }
+
+    private func followUpFilterBar(_ model: SessionListModel) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    Analytics.action("sessions.follow_up_filter")
+                    model.showsFollowUpOnly.toggle()
+                } label: {
+                    Label("Follow up (\(model.followUpCount))",
+                        systemImage: model.showsFollowUpOnly ? "flag.fill" : "flag")
+                }
+                .buttonStyle(.bordered)
+                .tint(model.showsFollowUpOnly ? .orange : .accentColor)
+                .accessibilityAddTraits(model.showsFollowUpOnly ? .isSelected : [])
+                Spacer()
+            }
+            .padding(.horizontal)
+            if model.showsFollowUpOnly {
+                Text("Filters loaded sessions only.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionContent(_ model: SessionListModel) -> some View {
         if model.isLoading && model.sessions.isEmpty {
             ProgressView()
         } else if let errorMessage = model.errorMessage, model.sessions.isEmpty {
@@ -543,6 +593,20 @@ struct LandingView: View {
                     "Couldn’t load sessions",
                     systemImage: "exclamationmark.triangle",
                     description: Text(errorMessage))
+            }
+        } else if model.sessions.isEmpty && model.showsFollowUpOnly {
+            refreshableUnavailable(model) {
+                ContentUnavailableView {
+                    Label("No sessions flagged for follow-up", systemImage: "flag")
+                } description: {
+                    Text("Flag a session from its swipe actions or actions menu.")
+                } actions: {
+                    Button("Show all sessions") { model.showsFollowUpOnly = false }
+                    if model.hasMoreHistory {
+                        Button("Load older sessions") { Task { await model.loadMoreHistory() } }
+                            .disabled(model.isLoadingMoreHistory)
+                    }
+                }
             }
         } else if model.sessions.isEmpty {
             refreshableUnavailable(model) {
@@ -614,7 +678,15 @@ struct LandingView: View {
                             ? Color.orange.opacity(0.12) : nil)
                         // Persisted (non-live) rows can be re-opened on their
                         // existing log via ResumeSession.
-                        .swipeActions(edge: .leading) {
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                            Button {
+                                setFollowUp(session, model: model, via: .swipe)
+                            } label: {
+                                Label(session.followUp ? "Unflag" : "Follow up",
+                                    systemImage: session.followUp ? "flag.slash" : "flag")
+                            }
+                            .tint(.orange)
+                            .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
                             if !session.live {
                                 Button {
                                     Analytics.action("sessions.resume", via: .swipe)
@@ -640,6 +712,13 @@ struct LandingView: View {
                             }
                         }
                         .contextMenu {
+                            Button {
+                                setFollowUp(session, model: model, via: .contextMenu)
+                            } label: {
+                                Label(session.followUp ? "Remove follow-up flag" : "Flag for follow-up",
+                                    systemImage: session.followUp ? "flag.slash" : "flag")
+                            }
+                            .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
                             if !session.live {
                                 Button {
                                     Analytics.action("sessions.resume", via: .contextMenu)
@@ -685,6 +764,16 @@ struct LandingView: View {
         }
         .listStyle(.insetGrouped)
         .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
+    }
+
+    private func setFollowUp(_ session: Ycc_V1_SessionSummary, model: SessionListModel, via: UsageAnalytics.Via) {
+        Analytics.action(session.followUp ? "sessions.unflag" : "sessions.follow_up", via: via)
+        Task {
+            let updated = await model.setFollowUp(sessionID: session.sessionID, followUp: !session.followUp)
+            if !updated, let message = model.followUpErrorMessage {
+                followUpError = message
+            }
+        }
     }
 
     private func removeProject(_ project: Ycc_V1_ProjectInfo) {
@@ -826,6 +915,12 @@ private struct SessionRow: View {
                         .fill(Color.accentColor)
                         .frame(width: 9, height: 9)
                         .accessibilityLabel("unread")
+                }
+                if session.followUp {
+                    Image(systemName: "flag.fill")
+                        .foregroundStyle(.orange)
+                        .font(.subheadline)
+                        .accessibilityLabel("flagged for follow-up")
                 }
                 Text(SessionListModel.displayTitle(for: session))
                     .font(isUnread ? .headline.weight(.bold) : .headline)

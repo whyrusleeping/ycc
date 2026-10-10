@@ -196,6 +196,23 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Set or manually clear a session's durable follow-up flag.
+    public func setSessionFollowUp(
+        project: String, sessionID: String, followUp: Bool
+    ) async throws -> Ycc_V1_SetSessionFollowUpResponse {
+        var request = Ycc_V1_SetSessionFollowUpRequest()
+        request.project = project
+        request.sessionID = sessionID
+        request.followUp = followUp
+        let response = await generated.setSessionFollowUp(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Lists the daemon's session history — live and persisted, most-recent
     /// first per the daemon (docs/remote-api.md "ListSessionHistory"). `project`
     /// names the registered workspace; empty is accepted only when exactly one

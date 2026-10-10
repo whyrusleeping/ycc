@@ -45,6 +45,15 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
     var projectsGate: ListLoadGate?
     var removeError: Error?
     var renameError: Error?
+    var followUpError: Error?
+    var followUpGate: ListLoadGate?
+    var followUpTimestamp = "2026-01-01T12:00:00Z"
+    private var followUpRequests: [(project: String, sessionID: String, flagged: Bool)] = []
+    func recordedFollowUpRequests() -> [(project: String, sessionID: String, flagged: Bool)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return followUpRequests
+    }
     var loopsByProject: [String: Ycc_V1_WorkLoopInfo] = [:]
     var loopErrorsByProject: [String: Error] = [:]
     private(set) var requestedProjects: [String] = []
@@ -127,6 +136,21 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         return projects[index]
     }
 
+    func setSessionFollowUp(project: String, sessionID: String, followUp: Bool) async throws -> Ycc_V1_SetSessionFollowUpResponse {
+        lock.lock()
+        followUpRequests.append((project, sessionID, followUp))
+        let gate = followUpGate
+        let error = followUpError
+        let timestamp = followUpTimestamp
+        lock.unlock()
+        await gate?.wait()
+        if let error { throw error }
+        var response = Ycc_V1_SetSessionFollowUpResponse()
+        response.followUp = followUp
+        response.followUpAt = followUp ? timestamp : ""
+        return response
+    }
+
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
         lock.lock()
         let error = loopErrorsByProject[project]
@@ -187,6 +211,121 @@ final class SessionListModelTests: XCTestCase {
         p.name = name
         p.path = path ?? "/tmp/\(name)"
         return p
+    }
+
+    func testFollowUpOptimisticFlagAndManualClearUpdateLoadedCopies() async {
+        let source = MockListSource()
+        source.projects = [project("one")]
+        let row = session(id: "flag", live: true, waitingInput: true)
+        source.pagesByProject["one"] = [
+            "": SessionHistoryPage(sessions: [row], pinned: [row], nextCursor: "older"),
+            "older": SessionHistoryPage(sessions: [session(id: "older")], pinned: [], nextCursor: "")]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        model.showsFollowUpOnly = true
+        XCTAssertTrue(model.sessions.isEmpty)
+        let gate = ListLoadGate()
+        source.followUpGate = gate
+        let flag = Task { await model.setFollowUp(sessionID: "flag", followUp: true) }
+        while source.recordedFollowUpRequests().isEmpty { await Task.yield() }
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["flag"])
+        XCTAssertTrue(model.allSessions[0].followUp)
+        XCTAssertEqual(model.followUpCount, 1)
+        model.selectedProject = "one"
+        XCTAssertTrue(model.sessions[0].followUp)
+        await gate.open()
+        let flagged = await flag.value
+        XCTAssertTrue(flagged)
+        XCTAssertEqual(model.sessions[0].followUpAt, source.followUpTimestamp)
+        XCTAssertEqual(source.recordedFollowUpRequests().first?.project, "one")
+        model.markRead(model.sessions[0])
+        model.markAnswered(sessionID: "flag")
+        XCTAssertTrue(model.sessions[0].followUp, "Read and answer must not clear follow-up")
+        await model.loadMoreHistory()
+        XCTAssertEqual(model.sessions[0].followUpAt, source.followUpTimestamp)
+        let cleared = await model.setFollowUp(sessionID: "flag", followUp: false)
+        XCTAssertTrue(cleared)
+        XCTAssertTrue(model.sessions.isEmpty)
+        XCTAssertEqual(model.followUpCount, 0)
+        XCTAssertFalse(model.session(sessionID: "flag")!.followUp)
+        XCTAssertEqual(model.session(sessionID: "flag")!.followUpAt, "")
+        XCTAssertEqual(source.recordedFollowUpRequests().last?.flagged, false)
+    }
+
+    func testFollowUpFailureRollsBackFlagAndTimestamp() async {
+        let source = MockListSource()
+        var row = session(id: "flag")
+        row.followUp = true
+        row.followUpAt = "2025-12-01T00:00:00Z"
+        source.sessions = [row]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        let gate = ListLoadGate()
+        source.followUpGate = gate
+        source.followUpError = YccError.rpc(message: "offline")
+        let clear = Task { await model.setFollowUp(sessionID: "flag", followUp: false) }
+        while source.recordedFollowUpRequests().isEmpty { await Task.yield() }
+        XCTAssertFalse(model.allSessions[0].followUp)
+        XCTAssertEqual(model.allSessions[0].followUpAt, "")
+        await gate.open()
+        let cleared = await clear.value
+        XCTAssertFalse(cleared)
+        XCTAssertEqual(model.allSessions[0].followUp, row.followUp)
+        XCTAssertEqual(model.allSessions[0].followUpAt, row.followUpAt)
+        XCTAssertEqual(model.followUpErrorMessage, "offline")
+        // A flag failure is not a list-load failure.
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.followUpUpdatingIDs.isEmpty)
+    }
+
+    func testFollowUpUnauthorizedRollsBackAndRoutes() async {
+        let source = MockListSource()
+        source.sessions = [session(id: "flag")]
+        source.followUpError = YccError.unauthorized
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        let flagged = await model.setFollowUp(sessionID: "flag", followUp: true)
+        XCTAssertFalse(flagged)
+        XCTAssertFalse(model.allSessions[0].followUp)
+        XCTAssertTrue(model.unauthorized)
+        XCTAssertNil(model.followUpErrorMessage)
+    }
+
+    func testFollowUpFilterAndCountTrackScopeAndCachedSections() async {
+        let source = MockListSource()
+        source.projects = [project("a"), project("b")]
+        var flagged = session(id: "a-flag", live: true, waitingInput: true)
+        flagged.followUp = true
+        var other = session(id: "b-flag")
+        other.followUp = true
+        source.sessionsByProject = ["a": [flagged, session(id: "plain")], "b": [other]]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.sessions.count, 3)
+        XCTAssertEqual(model.followUpCount, 2)
+        model.showsFollowUpOnly = true
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["a-flag", "b-flag"])
+        XCTAssertEqual(model.sections.flatMap(\.sessions).map(\.sessionID), ["a-flag", "b-flag"])
+        model.selectedProject = "a"
+        XCTAssertEqual(model.followUpCount, 1)
+        XCTAssertEqual(model.sections.map(\.kind), [.needsAnswer])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["a-flag"])
+        model.showsFollowUpOnly = false
+        XCTAssertEqual(model.sessions.count, 2)
+        XCTAssertEqual(model.followUpCount, 1)
+        model.selectedProject = "b"
+        XCTAssertEqual(model.followUpCount, 1)
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["b-flag"])
+    }
+
+    func testFollowUpForUnloadedSessionUsesExplicitProject() async {
+        let source = MockListSource()
+        let model = SessionListModel(source: source)
+        let flagged = await model.setFollowUp(sessionID: "unloaded", project: "deep-link", followUp: true)
+        XCTAssertTrue(flagged)
+        XCTAssertEqual(source.recordedFollowUpRequests().first?.project, "deep-link")
+        XCTAssertEqual(source.recordedFollowUpRequests().first?.sessionID, "unloaded")
+        XCTAssertTrue(model.allSessions.isEmpty)
     }
 
     func testPagedAggregateFrontierAndPinnedLiveRows() async {
