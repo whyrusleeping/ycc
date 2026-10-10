@@ -1012,5 +1012,6 @@ allowance is separate best-effort telemetry, cached and sanitized, and never blo
 Optional session and work-loop token/cost caps turn telemetry into a guardrail. Enforcement occurs
 at safe checkpoints, never during a filesystem mutation. A warning is emitted near a cap.
 Attended sessions may explicitly continue; unattended sessions receive a wrap-up instruction and
-halt at the nearest safe task state. Loop caps are checked between sessions. Unpriced models count
+halt at the nearest safe task state, leaving unfinished accepted work todo/in_progress with
+evidence rather than in-review or blocked. Loop caps are checked between sessions. Unpriced models count
 toward token caps but never invent dollars for cost caps.

@@ -128,11 +128,14 @@ func (s *Session) checkBudget(ctx context.Context) []string {
 
 // budgetHaltInstruction is the user-role wrap-up message injected on a graceful
 // budget halt: stop taking on new work and bring the current task to the nearest
-// safe stopping point, then finish.
+// safe stopping point, then finish. Budget exhaustion is neither review readiness
+// nor a task blocker, so unfinished accepted work stays actionable (spec §9.1).
 func budgetHaltInstruction(status string) string {
 	return "Session budget reached (" + status + "). Stop taking on new work. Bring the current task to the " +
-		"nearest safe stopping point: if it is essentially complete, finish and commit it; otherwise mark it " +
-		"in_review or blocked (update_task) with a brief work-log note recording the budget halt. Then call finish."
+		"nearest safe stopping point: if it is complete and its review accepted, commit it. Otherwise leave it " +
+		"actionable (todo or in_progress) and add a brief work-log note recording the budget halt, the latest " +
+		"evidence, the remaining acceptance criteria, and the next step. Do not mark it in_review or blocked " +
+		"because of the budget; use blocked only for a genuine external blocker. Then call finish."
 }
 
 // budgetStatus renders "<tokens> tokens (cap <cap>) / $<cost> (cap $<cap>)",

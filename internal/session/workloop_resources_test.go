@@ -113,6 +113,84 @@ func TestWorkLoopRepeatedNonCommittingProgressRemainsActionable(t *testing.T) {
 	}
 }
 
+// Repeated failed experiments on one task are neither capped by an attempt count
+// nor lost: each failure (with no idle report) becomes the next session's
+// continuation evidence and remains visible per attempt and in the digest.
+func TestWorkLoopRepeatedFailedExperimentsCarryFailureContext(t *testing.T) {
+	var m *Manager
+	var taskID string
+	var continuations []string
+	calls := 0
+	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			continuations = append(continuations, wl.continuationContext())
+			id := fmt.Sprintf("attempt-%d", calls)
+			if calls <= 3 {
+				msg := fmt.Sprintf("experiment %d: endpoint returned 503", calls)
+				// Mirrors realRunSession: a failed session without an idle
+				// report synthesizes its report from the structured error.
+				return loopSessRec{
+					id: id, focus: taskID, tokens: 10, priceStatus: "unpriced",
+					errKind: "server_error", errMessage: msg, errRetryable: true,
+					report: loopFailureReport("server_error", msg, ""),
+				}, false, nil
+			}
+			if _, err := m.StopWorkLoop("demo"); err != nil {
+				return loopSessRec{}, false, err
+			}
+			return loopSessRec{
+				id: id, focus: taskID, tokens: 10, priceStatus: "unpriced",
+				report: "Isolated the 503 to a stale cache entry.\nNext step: add the cache-busting fix.",
+			}, false, nil
+		}
+	}
+	var ws string
+	m, _, ws = loopTestManager(t, factory)
+	waits := 0
+	m.newLoopWait = func(*workLoop) func(time.Duration) bool {
+		return func(time.Duration) bool { waits++; return true }
+	}
+	task, err := docs.NewStore(ws).Create("diagnose 503s", "## Acceptance criteria\n- No 503s\n", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID = task.ID
+
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	got := waitLoopFinished(t, m, "demo")
+	if got.Outcome != "loop stopped: requested" || got.SessionsRun != 4 || waits != 3 {
+		t.Fatalf("repeated failures ended the loop early: %+v (waits %d)", got, waits)
+	}
+	if continuations[0] != "" {
+		t.Fatalf("first session got continuation %q", continuations[0])
+	}
+	for i := 1; i < 4; i++ {
+		want := fmt.Sprintf("experiment %d: endpoint returned 503", i)
+		if !strings.Contains(continuations[i], want) || !strings.Contains(continuations[i], taskID) {
+			t.Fatalf("session %d continuation lacks prior failure %q: %q", i+1, want, continuations[i])
+		}
+	}
+	for i, s := range got.Sessions {
+		if s.Focus != taskID || s.Attempt != i+1 {
+			t.Fatalf("attempt %d = %+v", i+1, s)
+		}
+		if i < 3 && (s.ErrorKind != "server_error" || !s.ErrorRetryable || !strings.Contains(s.Evidence, "returned 503")) {
+			t.Fatalf("failed attempt %d lost evidence: %+v", i+1, s)
+		}
+	}
+	if len(got.Unfinished) != 1 {
+		t.Fatalf("unfinished digest = %+v", got.Unfinished)
+	}
+	u := got.Unfinished[0]
+	if u.Attempts != 4 || !strings.Contains(u.LatestEvidence, "stale cache") ||
+		u.NextStep != "add the cache-busting fix." || !strings.Contains(u.RemainingCriteria, "No 503s") {
+		t.Fatalf("unfinished row is not actionable: %+v", u)
+	}
+}
+
 func TestWorkLoopBudgetWrapUpLeavesUnfinishedEvidence(t *testing.T) {
 	var taskID string
 	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {

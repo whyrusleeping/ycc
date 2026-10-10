@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/whyrusleeping/ycc/internal/config"
@@ -128,8 +129,14 @@ func TestBudgetAutonomousHalt(t *testing.T) {
 	if ev.Data["action"] != "halt" {
 		t.Fatalf("budget_exceeded action = %v, want halt", ev.Data["action"])
 	}
-	if _, ok := ev.Data["text"].(string); !ok {
+	text, ok := ev.Data["text"].(string)
+	if !ok {
 		t.Fatalf("budget_exceeded halt carries no text: %+v", ev.Data)
+	}
+	// Budget wrap-up must leave unfinished accepted work actionable rather than
+	// parking it in non-ready in_review/blocked states.
+	if !strings.Contains(text, "todo or in_progress") || !strings.Contains(text, "Do not mark it in_review or blocked") {
+		t.Fatalf("halt instruction does not keep unfinished work actionable: %q", text)
 	}
 
 	// Fires once: a second check injects nothing more.
