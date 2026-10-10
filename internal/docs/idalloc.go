@@ -34,7 +34,7 @@ func maxTaskID(dir string) (int, error) {
 		if task == nil {
 			continue
 		}
-		id, err := strconv.Atoi(normalizeID(task.ID))
+		id, err := strconv.Atoi(NormalizeID(task.ID))
 		if err == nil && id > max {
 			max = id
 		}

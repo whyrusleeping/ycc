@@ -621,7 +621,12 @@ transitions are recorded; clients start sessions and otherwise project the daemo
 ### 9.1 Unattended work loop
 
 The daemon repeatedly starts fresh work sessions while ready tasks remain. It skips proposed,
-blocked, in-review, dependency-blocked, and done tasks. Unchanged task metadata after a session
+blocked, in-review, dependency-blocked, and done tasks, and ready tasks held by another live session
+in the same workspace. A session holds every task it has focused while it is mid-turn, paused, or
+waiting on its own background work or a question; once it is idle between turns, an in_progress
+task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
+actionable, and a loop whose only ready work is held finishes saying which sessions hold it rather
+than starting sessions that would decline to collide. Unchanged task metadata after a session
 is not a stop condition, and there is no fixed retry count for unfinished ready work. Stop is
 graceful: the current session finishes, then no next session starts. Session budget breaches and
 cumulative loop budgets still stop at the next safe decision point.

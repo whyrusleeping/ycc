@@ -241,7 +241,7 @@ func (s *Store) scanFilesLocked(parse func(string) (*Task, error)) ([]*Task, err
 		if t != nil {
 			// Normalize on read so a hand-written `id: "195"` still matches the
 			// canonical zero-padded form used by lookups and dedupe grouping.
-			t.ID = normalizeID(t.ID)
+			t.ID = NormalizeID(t.ID)
 			tasks = append(tasks, t)
 		}
 	}
@@ -266,7 +266,7 @@ func StatusByID(tasks []*Task) map[string]Status {
 func BlockingDeps(t *Task, byID map[string]Status) []string {
 	var blocking []string
 	for _, dep := range t.DependsOn {
-		if byID[normalizeID(dep)] != StatusDone {
+		if byID[NormalizeID(dep)] != StatusDone {
 			blocking = append(blocking, dep)
 		}
 	}
@@ -304,7 +304,7 @@ type TaskEligibility struct {
 func EligibilityFor(t *Task, byID map[string]Status) TaskEligibility {
 	e := TaskEligibility{DependenciesSatisfied: true}
 	for _, dep := range t.DependsOn {
-		status, exists := byID[normalizeID(dep)]
+		status, exists := byID[NormalizeID(dep)]
 		switch {
 		case !exists:
 			e.DependenciesSatisfied = false
@@ -344,7 +344,7 @@ func (s *Store) Get(id string) (*Task, error) {
 }
 
 func (s *Store) getLocked(id string) (*Task, error) {
-	id = normalizeID(id)
+	id = NormalizeID(id)
 	tasks, err := s.listMetadataLocked()
 	if err != nil {
 		return nil, err
@@ -562,7 +562,7 @@ func (s *Store) CompactCompletedHistory(write bool, exclude ...string) ([]string
 	defer s.mu.Unlock()
 	excluded := make(map[string]bool, len(exclude))
 	for _, id := range exclude {
-		excluded[normalizeID(id)] = true
+		excluded[NormalizeID(id)] = true
 	}
 	tasks, err := s.listLocked()
 	if err != nil {
@@ -938,7 +938,8 @@ func slugify(s string) string {
 	return s
 }
 
-func normalizeID(id string) string {
+// NormalizeID returns a task id in canonical form ("448" -> "0448").
+func NormalizeID(id string) string {
 	id = strings.TrimSpace(id)
 	if n, err := strconv.Atoi(id); err == nil {
 		return fmt.Sprintf("%04d", n)

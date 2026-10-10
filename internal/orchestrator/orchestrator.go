@@ -106,7 +106,10 @@ type Deps struct {
 	// this session (used by per-project worktree bootstrap configuration).
 	Env  []string
 	Docs *docs.Store
-	Repo *git.Repo
+	// HeldTasks maps backlog task ids to another live session actively working
+	// on them. Nil-safe: when unset no task is held.
+	HeldTasks func() map[string]string
+	Repo      *git.Repo
 	// Baseline is captured when the session is assembled, before coordinator or
 	// worker tools can mutate the task tree. All review and commit scope derives
 	// from this immutable snapshot. BaselineErr records why a resumed legacy or
@@ -451,6 +454,7 @@ func listBacklog(d *Deps) *gollama.Tool {
 			}
 			includeDone := tools.GetBool(params, "include_done", false)
 			byID := docs.StatusByID(ts) // built from the full list so deps on hidden done tasks still resolve
+			held := d.heldTasks()
 			var b strings.Builder
 			hidden := 0
 			proposed := 0
@@ -469,7 +473,7 @@ func listBacklog(d *Deps) *gollama.Tool {
 					dep = "-"
 				}
 				eligibility := docs.EligibilityFor(t, byID)
-				mark, requirement := backlogEligibilityText(eligibility)
+				mark, requirement := taskEligibilityText(&eligibility, held[t.ID])
 				if eligibility.Actionable {
 					actionable = append(actionable, fmt.Sprintf("%s (%s)", t.ID, requirement))
 				}
@@ -513,6 +517,24 @@ func listBacklog(d *Deps) *gollama.Tool {
 			return tools.OkResultView(b.String(), view), nil
 		},
 	}
+}
+
+func (d *Deps) heldTasks() map[string]string {
+	if d.HeldTasks == nil {
+		return nil
+	}
+	return d.HeldTasks()
+}
+
+// taskEligibilityText is backlogEligibilityText for a task that another live
+// session (holder) may be working on; a held ready task is not actionable here.
+func taskEligibilityText(e *docs.TaskEligibility, holder string) (mark, requirement string) {
+	if e.Actionable && holder != "" {
+		e.Actionable = false
+		requirement = "another live session (" + holder + ") is working on it; leave it to that session"
+		return "NOT ACTIONABLE: " + requirement, requirement
+	}
+	return backlogEligibilityText(*e)
 }
 
 func backlogEligibilityText(e docs.TaskEligibility) (mark, requirement string) {
@@ -590,7 +612,8 @@ func getTask(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("get_task: cannot determine eligibility: %v", err), nil
 			}
-			mark, _ := backlogEligibilityText(docs.EligibilityFor(t, docs.StatusByID(tasks)))
+			eligibility := docs.EligibilityFor(t, docs.StatusByID(tasks))
+			mark, _ := taskEligibilityText(&eligibility, d.heldTasks()[t.ID])
 			return tools.OkResult(renderTask(t) + "\n\nWork eligibility: [" + mark + "]"), nil
 		},
 	}

@@ -443,11 +443,15 @@ func (wl *workLoop) run() {
 			wl.finish("loop stopped: "+err.Error(), tasks)
 			return
 		}
-		next := topReadyTask(tasks)
+		wl.mu.Lock()
+		current := wl.currentSessionID
+		wl.mu.Unlock()
+		next, heldReady := pickReadyTask(tasks, wl.m.heldTasks(wl.workspace, current))
 
 		wl.mu.Lock()
 		in := loopDecideInput{
 			next:        next,
+			heldReady:   heldReady,
 			loopStarted: wl.loopStarted, prevBreach: wl.prevBreach,
 			cumTokens: wl.cumTokens, cumCost: wl.cumCost,
 			loopTokens: wl.loopTokens, loopCost: wl.loopCost,
@@ -561,6 +565,7 @@ func (wl *workLoop) run() {
 // loopDecideInput is the pure input to a single loop decision.
 type loopDecideInput struct {
 	next        string
+	heldReady   []string // ready tasks skipped because another live session holds them
 	loopStarted bool
 	prevBreach  bool
 	cumTokens   int64
@@ -581,6 +586,10 @@ type loopDecision struct {
 // and session errors are handled by the caller, before/after this.
 func decideLoop(in loopDecideInput) loopDecision {
 	switch {
+	case in.next == "" && len(in.heldReady) > 0:
+		// Starting a session would only find work another session is doing.
+		return loopDecision{stop: true, outcome: "loop complete: remaining ready tasks are held by other live sessions: " +
+			strings.Join(in.heldReady, ", ")}
 	case in.next == "":
 		return loopDecision{stop: true, outcome: "loop complete: no ready tasks remain"}
 	case in.loopStarted && in.prevBreach:
@@ -923,18 +932,61 @@ waitLoop:
 // Eligibility is shared with backlog display; selection additionally orders by
 // lowest priority number, then id. "" means nothing is actionable.
 func topReadyTask(tasks []*docs.Task) string {
+	next, _ := pickReadyTask(tasks, nil)
+	return next
+}
+
+// pickReadyTask is topReadyTask skipping tasks held by another live session
+// (task id -> session id). heldReady lists the eligible tasks it skipped, as
+// "task (session)", so a loop with only held work can say why it stopped.
+func pickReadyTask(tasks []*docs.Task, held map[string]string) (next string, heldReady []string) {
 	byID := docs.StatusByID(tasks)
-	best := ""
 	bestPrio := 0
 	for _, t := range tasks {
 		if !docs.EligibilityFor(t, byID).Actionable {
 			continue
 		}
-		if best == "" || t.Priority < bestPrio || (t.Priority == bestPrio && t.ID < best) {
-			best, bestPrio = t.ID, t.Priority
+		if holder := held[t.ID]; holder != "" {
+			heldReady = append(heldReady, t.ID+" ("+holder+")")
+			continue
+		}
+		if next == "" || t.Priority < bestPrio || (t.Priority == bestPrio && t.ID < next) {
+			next, bestPrio = t.ID, t.Priority
 		}
 	}
-	return best
+	return next, heldReady
+}
+
+// heldTasks maps backlog task ids in workspace absWS to the live session
+// actively working on them, excluding session exclude. An active session holds
+// every task it has focused; once it is idle between turns it holds nothing, so
+// an in_progress task it leaves behind becomes ordinary continuation work.
+func (m *Manager) heldTasks(absWS, exclude string) map[string]string {
+	absWS = canonicalPath(absWS)
+	sessions := m.List()
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
+	held := map[string]string{}
+	for _, s := range sessions {
+		if s.ID == exclude || canonicalPath(s.Workspace) != absWS || !s.activelyWorking() {
+			continue
+		}
+		for _, id := range focusTasks(s.Log().Snapshot()) {
+			id = docs.NormalizeID(id)
+			if _, ok := held[id]; !ok {
+				held[id] = s.ID
+			}
+		}
+	}
+	return held
+}
+
+// canonicalPath resolves symlinks so aliases of one workspace (and its backlog)
+// compare equal; distinct linked worktrees stay distinct.
+func canonicalPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }
 
 // tallyVerdicts summarises a task's review verdicts as "approve×2 reject×1"

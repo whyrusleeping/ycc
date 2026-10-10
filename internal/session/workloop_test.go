@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1026,6 +1028,68 @@ func TestWorkLoopUnchangedSessions(t *testing.T) {
 				t.Fatalf("status = %s, want %s", task.Status, want)
 			}
 		})
+	}
+}
+
+// A ready task that another live session is actively working on is not loop
+// work: starting sessions for it only produces sessions that decline to collide.
+// Once that session is idle between turns, its in_progress task is ordinary
+// continuation work again.
+func TestWorkLoopSkipsTaskHeldByActiveSession(t *testing.T) {
+	calls := 0
+	var store *docs.Store
+	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			tasks, _ := store.List()
+			id := topReadyTask(tasks)
+			_, err := store.Update(id, func(tk *docs.Task) { tk.Status = docs.StatusDone })
+			return loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id}, false, err
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	store = docs.NewStore(ws)
+	task, err := store.Create("chat-owned audit", "", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(task.ID, func(tk *docs.Task) { tk.Status = docs.StatusInProgress }); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _, err := m.resolveWorkspace("demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := newStopSession(t)
+	chat.ID = "s_chat"
+	// Reach the workspace through a symlink alias and focus the unpadded id that
+	// update_task accepts: both still name the loop's task.
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(absWS, alias); err != nil {
+		t.Fatal(err)
+	}
+	chat.Workspace = alias
+	chat.emitter.Emit(event.TaskFocus, map[string]any{"task": strings.TrimLeft(task.ID, "0")})
+	m.mu.Lock()
+	m.sessions[chat.ID] = chat
+	m.mu.Unlock()
+
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	want := "loop complete: remaining ready tasks are held by other live sessions: " + task.ID + " (s_chat)"
+	if final.Outcome != want || final.SessionsRun != 0 || calls != 0 {
+		t.Fatalf("held: outcome %q after %d sessions (%d calls), want %q and none", final.Outcome, final.SessionsRun, calls, want)
+	}
+
+	chat.setStatus(event.StatusIdle)
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final = waitLoopFinished(t, m, "demo")
+	if final.Outcome != "loop complete: no ready tasks remain" || final.SessionsRun != 1 {
+		t.Fatalf("released: outcome %q after %d sessions, want the task continued", final.Outcome, final.SessionsRun)
 	}
 }
 

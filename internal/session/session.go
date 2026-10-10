@@ -639,6 +639,17 @@ func (s *Session) reapable() bool {
 	return !s.inter.pending()
 }
 
+// activelyWorking reports whether the session is mid-turn, paused, waiting on
+// its own background work, or waiting on a question — i.e. still working on its
+// focused tasks. A session idle between turns, errored, or stopped is not.
+func (s *Session) activelyWorking() bool {
+	switch s.Status() {
+	case event.StatusError, event.StatusStopped:
+		return false
+	}
+	return !s.reapable()
+}
+
 // PendingQuestion reports whether the session is currently blocked on an
 // unanswered ask_user question (single or batch) — the same gate the idle
 // reaper uses. Exposed so ListSessionHistory can surface sessions that are
@@ -2832,6 +2843,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		return memorySourceFromEvents(id, log.Snapshot(), kind)
 	}
 	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
+	deps.HeldTasks = func() map[string]string { return m.heldTasks(absWS, id) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{

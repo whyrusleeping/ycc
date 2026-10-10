@@ -212,6 +212,30 @@ func TestListBacklogUsesWorkLoopEligibility(t *testing.T) {
 	}
 }
 
+// A ready task another live session is working on must not look actionable to
+// a work session, or it picks the task, declines to collide, and the loop spins.
+func TestListBacklogHeldTaskNotActionable(t *testing.T) {
+	d := depsFor(t)
+	held, _ := d.Docs.Create("chat-owned audit", "", 1, nil, nil)
+	d.Docs.Update(held.ID, func(tk *docs.Task) { tk.Status = docs.StatusInProgress })
+	free, _ := d.Docs.Create("free work", "", 2, nil, nil)
+	d.HeldTasks = func() map[string]string { return map[string]string{held.ID: "s_other"} }
+
+	res, _ := listBacklog(d).Call(context.Background(), map[string]any{})
+	for _, want := range []string{
+		held.ID + " [in_progress]", "another live session (s_other) is working on it",
+		"Work-loop eligible: " + free.ID + " (ready to start)\n",
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Fatalf("list_backlog missing %q:\n%s", want, res.Content)
+		}
+	}
+	got, _ := getTask(d).Call(context.Background(), map[string]any{"task_id": held.ID})
+	if !strings.Contains(got.Content, "Work eligibility: [NOT ACTIONABLE: another live session (s_other)") {
+		t.Fatalf("get_task eligibility:\n%s", got.Content)
+	}
+}
+
 func TestListBacklogAllBlocked(t *testing.T) {
 	d := depsFor(t)
 	blocked, _ := d.Docs.Create("waiting for authorization", "", 1, nil, nil)
