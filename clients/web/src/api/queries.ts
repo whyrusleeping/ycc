@@ -2,11 +2,11 @@
 // reads are cached per query and refreshed on window focus; mutations replace
 // local state with the daemon's response or invalidate the affected keys.
 import { QueryClient, keepPreviousData, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { BacklogTaskSummary, ProjectInfo, TaskDetail, WorkLoopInfo, WorkstreamInfo } from "../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "./client";
-import { buildFeed, historyTargets, mergePage, type HistoryLoad } from "../features/sessions/feed";
+import { buildFeed, historyTargets, mergePage, withFollowUp, type FeedRow, type HistoryLoad } from "../features/sessions/feed";
 import { upsertSummary } from "../features/backlog/model";
 import { pollInterval as loopPollInterval } from "../features/workloop/model";
 import { pollInterval as workstreamPollInterval } from "../features/workstreams/model";
@@ -181,6 +181,52 @@ export function useSessionFeed(scope: string | null) {
     loadOlder,
     loadingOlder,
   };
+}
+
+/** Optimistically change only the bookmark fields, including on rollback. */
+export async function setSessionFollowUp(qc: QueryClient, row: FeedRow, followUp: boolean) {
+  const { project, session } = row;
+  const sessionId = session.sessionId;
+  await qc.cancelQueries({ queryKey: queryKeys.sessionFeedAll });
+  const previous = qc.getQueriesData<HistoryLoad[]>({ queryKey: queryKeys.sessionFeedAll }).map(([key, loads]) => {
+    const load = loads?.find((l) => l.project === project);
+    const old = [...(load?.sessions ?? []), ...(load?.pinned ?? [])].find((s) => s.sessionId === sessionId);
+    return { key, old };
+  });
+  const patch = (flag: boolean, at: string) => qc.setQueriesData<HistoryLoad[]>(
+    { queryKey: queryKeys.sessionFeedAll },
+    (loads) => loads && withFollowUp(loads, project, sessionId, flag, at),
+  );
+  patch(followUp, followUp ? session.followUpAt || new Date().toISOString() : "");
+  try {
+    const result = await client.setSessionFollowUp({ project, sessionId, followUp });
+    patch(result.followUp, result.followUpAt);
+  } catch (err) {
+    for (const { key, old } of previous) {
+      if (old) qc.setQueryData<HistoryLoad[]>(key, (loads) => loads && withFollowUp(loads, project, sessionId, old.followUp, old.followUpAt));
+    }
+    toast(errorMessage(err, "Couldn’t update follow-up."), "error", { op: "sessions.follow_up", err });
+  }
+}
+
+export function useSetFollowUp() {
+  const qc = useQueryClient();
+  const pending = useRef(new Set<string>());
+  const [pendingIds, setPendingIds] = useState(new Set<string>());
+  const id = (row: FeedRow) => `${row.project}\u0000${row.session.sessionId}`;
+  const toggle = async (row: FeedRow) => {
+    const key = id(row);
+    if (pending.current.has(key)) return;
+    pending.current.add(key);
+    setPendingIds(new Set(pending.current));
+    try {
+      await setSessionFollowUp(qc, row, !row.session.followUp);
+    } finally {
+      pending.current.delete(key);
+      setPendingIds(new Set(pending.current));
+    }
+  };
+  return { toggle, isPending: (row: FeedRow) => pendingIds.has(id(row)) };
 }
 
 /** ListBacklog: the project's task summaries with readiness. */

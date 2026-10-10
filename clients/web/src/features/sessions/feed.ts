@@ -68,6 +68,18 @@ export function mergePage(load: HistoryLoad, sessions: SessionSummary[], nextCur
   return { ...load, sessions: merged, nextCursor, error: undefined };
 }
 
+/** Update a bookmark without changing recency, paging, or other sessions. */
+export function withFollowUp(loads: HistoryLoad[], project: string, sessionId: string, followUp: boolean, followUpAt: string): HistoryLoad[] {
+  const patch = (s: SessionSummary) => s.sessionId === sessionId ? { ...s, followUp, followUpAt } : s;
+  return loads.map((load) => load.project === project
+    ? { ...load, sessions: load.sessions.map(patch), pinned: load.pinned.map(patch) }
+    : load);
+}
+
+export function onlyFollowUp(rows: FeedRow[]): FeedRow[] {
+  return rows.filter((row) => row.session.followUp);
+}
+
 /**
  * Build the visible feed. `scope` null is the daemon-wide Recent feed; a name
  * restricts it to that project's loaded pages. In the aggregate, rows older

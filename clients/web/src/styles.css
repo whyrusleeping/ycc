@@ -2755,6 +2755,73 @@ pre.error-output {
   color: #111;
 }
 
+/* User-owned follow-up bookmarks, visible independently of unread state. */
+.session-list-toolbar {
+  padding: 8px 10px;
+}
+
+.follow-up-filter[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.follow-up-flag {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.follow-up-flag:not(.flagged) {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  background: var(--surface);
+}
+
+.session-row-wrap .follow-up-flag:not(.flagged) {
+  right: 88px;
+}
+
+.session-list.variant-page .follow-up-flag:not(.flagged) {
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+}
+
+.session-list.variant-page .session-row-wrap .follow-up-flag:not(.flagged) {
+  right: 94px;
+}
+
+.follow-up-flag.flagged,
+.session-row:hover .follow-up-flag,
+.session-row:focus-within .follow-up-flag {
+  opacity: 1;
+}
+
+.follow-up-flag.flagged {
+  color: var(--accent);
+}
+
+.follow-up-flag:hover {
+  background: var(--accent-soft);
+}
+
+.follow-up-flag:disabled {
+  cursor: wait;
+}
+
 /* Session rows: one stretched link so focus-task chips can link on their own */
 .session-row {
   position: relative;

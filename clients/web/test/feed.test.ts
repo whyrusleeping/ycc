@@ -9,7 +9,9 @@ import {
   historyTargets,
   lifecycleLabel,
   mergePage,
+  onlyFollowUp,
   sections,
+  withFollowUp,
   type HistoryLoad,
 } from "../src/features/sessions/feed";
 
@@ -63,6 +65,37 @@ describe("feed", () => {
     const feed = buildFeed(loads, "a");
     expect(ids(feed.rows)).toEqual(["a1", "a-live"]);
     expect(feed.hasMore).toBe(true);
+  });
+
+  it("updates follow-up in history and pinned rows without touching other projects or rows", () => {
+    const row = s("same", 10);
+    const other = s("other", 20);
+    const loads: HistoryLoad[] = [
+      { project: "a", sessions: [row, other], pinned: [row], nextCursor: "more" },
+      { project: "b", sessions: [row], pinned: [row], nextCursor: "" },
+    ];
+    const flagged = withFollowUp(loads, "a", "same", true, "2026-01-02T00:00:00Z");
+    expect(flagged[0].sessions[0]).toMatchObject({ followUp: true, followUpAt: "2026-01-02T00:00:00Z" });
+    expect(flagged[0].pinned[0]).toEqual(flagged[0].sessions[0]);
+    expect(flagged[0].sessions[1]).toBe(other);
+    expect(flagged[1]).toBe(loads[1]);
+    expect(row.followUp).toBe(false);
+    const cleared = withFollowUp(flagged, "a", "same", false, "");
+    expect(cleared[0].sessions[0]).toMatchObject({ followUp: false, followUpAt: "" });
+    expect(cleared[0].pinned[0]).toMatchObject({ followUp: false, followUpAt: "" });
+  });
+
+  it("filters only flagged rows while retaining needs-answer sectioning", () => {
+    const rows = buildFeed([{
+      project: "a",
+      sessions: [s("new", 50), s("flagged", 30, { followUp: true })],
+      pinned: [s("asks", 1, { followUp: true, live: true, waitingInput: true })],
+      nextCursor: "",
+    }], null).rows;
+    expect(ids(onlyFollowUp(rows))).toEqual(["flagged", "asks"]);
+    expect(sections(onlyFollowUp(rows)).map((g) => [g.kind, ids(g.rows)])).toEqual([
+      ["needsAnswer", ["asks"]], ["all", ["flagged"]],
+    ]);
   });
 
   it("reports partial and total failures", () => {

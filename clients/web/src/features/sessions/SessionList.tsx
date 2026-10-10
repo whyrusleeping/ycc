@@ -2,7 +2,7 @@
 // needs-answer sessions pinned on top, then most recent first.
 import { Link, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
-import { useSessionFeed } from "../../api/queries";
+import { useSessionFeed, useSetFollowUp } from "../../api/queries";
 import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
 import { requestReopen } from "../session/useSession";
@@ -14,6 +14,7 @@ import {
   lifecycleLabel,
   metadataItems,
   needsAnswer,
+  onlyFollowUp,
   relativeTime,
   sections,
   taskChipLabels,
@@ -40,6 +41,8 @@ export function SessionRowView({
   loopOwned = false,
   unread = false,
   onMarkRead,
+  onToggleFollowUp,
+  followUpPending = false,
 }: {
   row: FeedRow;
   showProject: boolean;
@@ -51,6 +54,8 @@ export function SessionRowView({
   /** Agent activity this browser hasn't shown yet. */
   unread?: boolean;
   onMarkRead?: () => void;
+  onToggleFollowUp: () => void;
+  followUpPending?: boolean;
 }) {
   const s = row.session;
   const lifecycle = lifecycleLabel(s);
@@ -79,6 +84,18 @@ export function SessionRowView({
             onClick={onMarkRead}
           />
         )}
+        <button
+          type="button"
+          className={`follow-up-flag${s.followUp ? " flagged" : ""}`}
+          aria-pressed={s.followUp}
+          aria-label={s.followUp ? `Clear follow-up on ${displayTitle(s)}` : `Flag ${displayTitle(s)} for follow-up`}
+          title={s.followUp ? `Flagged for follow-up${s.followUpAt ? ` since ${new Date(s.followUpAt).toLocaleString()}` : ""} — click to clear` : "Flag for follow-up"}
+          data-track="sessions.follow_up"
+          disabled={followUpPending}
+          onClick={onToggleFollowUp}
+        >
+          ⚑
+        </button>
         <Link
           to={paths.session(row.project, s.sessionId)}
           className="session-row-link title-text"
@@ -152,6 +169,8 @@ export function SessionList({
 }) {
   const { feed, isLoading, error, loadOlder, loadingOlder } = useSessionFeed(scope);
   const now = useNow();
+  const followUp = useSetFollowUp();
+  const [followUpOnly, setFollowUpOnly] = useState(false);
   const loopIds = useLoopSessionIds();
   const marks = useReadMarks();
   // The open session is being read right now.
@@ -160,10 +179,25 @@ export function SessionList({
   if (error) return <p className="error pad">{errorMessage(error, "Couldn’t load sessions.")}</p>;
   if (!feed) return null;
   if (feed.error) return <p className="error pad">{feed.error}</p>;
-  const groups = sections(feed.rows);
-  const unreadRows = feed.rows.filter(isUnread);
+  const flagged = onlyFollowUp(feed.rows);
+  const visibleRows = followUpOnly ? flagged : feed.rows;
+  const groups = sections(visibleRows);
+  const unreadRows = visibleRows.filter(isUnread);
   return (
     <div className={`session-list variant-${variant}`}>
+      {(variant === "page" || flagged.length > 0 || followUpOnly) && (
+        <div className="session-list-toolbar">
+          <button
+            type="button"
+            className="btn ghost small follow-up-filter"
+            aria-pressed={followUpOnly}
+            data-track="sessions.follow_up_filter"
+            onClick={() => setFollowUpOnly((value) => !value)}
+          >
+            Follow-up ({flagged.length})
+          </button>
+        </div>
+      )}
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
       {variant === "page" && unreadRows.length > 0 && (
         <div className="unread-bar">
@@ -183,10 +217,12 @@ export function SessionList({
       )}
       {groups.length === 0 && (
         <div className="pad empty-list">
-          <p className="muted">No sessions yet.</p>
-          <Link to={paths.newSession(scope)} className="btn primary small" data-track="sessions.start_first">
-            Start a session
-          </Link>
+          <p className="muted">{followUpOnly ? "No sessions flagged for follow-up." : "No sessions yet."}</p>
+          {!followUpOnly && (
+            <Link to={paths.newSession(scope)} className="btn primary small" data-track="sessions.start_first">
+              Start a session
+            </Link>
+          )}
         </div>
       )}
       {groups.map((g) => (
@@ -203,6 +239,8 @@ export function SessionList({
               loopOwned={loopIds.has(row.session.sessionId)}
               unread={isUnread(row)}
               onMarkRead={() => marks.markSummaryRead(row.session)}
+              onToggleFollowUp={() => void followUp.toggle(row)}
+              followUpPending={followUp.isPending(row)}
             />
           ))}
         </section>
