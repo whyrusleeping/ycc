@@ -82,6 +82,16 @@ type workLoopMsg struct {
 // loopTickMsg polls GetWorkLoop while a loop is running. seq disarms stale timers.
 type loopTickMsg struct{ seq int }
 
+type sessionFollowUpMsg struct {
+	id         string
+	flagged    bool
+	at         string
+	previous   bool
+	previousAt string
+	projectSeq int
+	err        error
+}
+
 type historyMsg struct {
 	sessions []*v1.SessionSummary
 	err      error

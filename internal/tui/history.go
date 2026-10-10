@@ -13,7 +13,85 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
+	"google.golang.org/protobuf/proto"
 )
+
+// filterHistory keeps the complete snapshot so filters and optimistic clears
+// can be reversed without losing rows.
+func (m *model) filterHistory() {
+	m.history = nil
+	for _, row := range m.historyAll {
+		if m.historyFollowUpOnly && !row.FollowUp {
+			continue
+		}
+		if m.historyWaitingOnly && !sessionNeedsUser(row) {
+			continue
+		}
+		m.history = append(m.history, row)
+	}
+	if m.historyCursor >= len(m.history) {
+		m.historyCursor = 0
+	}
+	m.historyMsgTxt = ""
+	if len(m.history) == 0 {
+		m.historyMsgTxt = "no previous sessions"
+	}
+}
+
+func (m *model) setHistoryFollowUp(id string, flagged bool, at string) {
+	rows := append([]*v1.SessionSummary(nil), m.historyAll...)
+	for i, row := range rows {
+		if row.SessionId == id {
+			copy := proto.Clone(row).(*v1.SessionSummary)
+			copy.FollowUp, copy.FollowUpAt = flagged, at
+			rows[i] = copy
+		}
+	}
+	m.historyAll = rows
+}
+
+func (m model) toggleHistoryFollowUp() (tea.Model, tea.Cmd) {
+	if len(m.history) == 0 || m.historyFollowUpPending != nil {
+		return m, nil
+	}
+	row := m.history[m.historyCursor]
+	result := sessionFollowUpMsg{
+		id: row.SessionId, previous: row.FollowUp, previousAt: row.FollowUpAt,
+		flagged: !row.FollowUp, projectSeq: m.projectSeq,
+	}
+	if result.flagged {
+		result.at = time.Now().UTC().Format(time.RFC3339)
+	}
+	pending := result
+	m.historyFollowUpPending = &pending
+	m.setHistoryFollowUp(result.id, result.flagged, result.at)
+	m.filterHistory()
+	return m, func() tea.Msg {
+		response, err := m.client.SetSessionFollowUp(m.ctx, connect.NewRequest(&v1.SetSessionFollowUpRequest{
+			Project: m.project, SessionId: result.id, FollowUp: result.flagged,
+		}))
+		result.err = err
+		if err == nil {
+			result.flagged, result.at = response.Msg.FollowUp, response.Msg.FollowUpAt
+		}
+		return result
+	}
+}
+
+func (m model) historyHint(hint string) string {
+	if m.flashNote != "" {
+		return m.flashNote
+	}
+	return hint
+}
+
+func (m model) toggleHistoryFollowUpFilter() (tea.Model, tea.Cmd) {
+	m.historyFollowUpOnly = !m.historyFollowUpOnly
+	m.historyWaitingOnly = false
+	m.historyCursor = 0
+	m.filterHistory()
+	return m, nil
+}
 
 // fetchHistory loads the persisted session history for the previous-sessions
 // screen, scoped to the current project.
@@ -180,7 +258,12 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.state = stateMenu
 		m.historyWaitingOnly = false
+		m.historyFollowUpOnly = false
 		return m, m.refreshMenu()
+	case "f":
+		return m.toggleHistoryFollowUp()
+	case "F":
+		return m.toggleHistoryFollowUpFilter()
 	case "r":
 		m.historyMsgTxt = "loading…"
 		return m, m.fetchHistory
@@ -221,12 +304,14 @@ func (m *model) openHistModal() {
 	m.historyCursor = 0
 	m.history = nil
 	m.historyWaitingOnly = false
+	m.historyFollowUpOnly = false
+	m.historyAll = nil
 	m.historyMsgTxt = "loading…"
 }
 
 // updateHistoryModal handles the session browser when it is open as a modal over
 // a live session. It mirrors updateHistory's navigation but is
-// strictly read-only: there is no `o`/enter reopen (reopening over a live session
+// read-only apart from bookmarks: there is no `o`/enter reopen (reopening over a live session
 // is a footgun). Transcripts scroll a separate viewport and support line-based
 // `/` search (n/N, esc) plus {}()<>[] jump-to-event keys, so the live
 // session behind the modal is never disturbed.
@@ -355,6 +440,10 @@ func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.histModal = false
 		m.resetHistModalNav()
 		return m, nil
+	case "f":
+		return m.toggleHistoryFollowUp()
+	case "F":
+		return m.toggleHistoryFollowUpFilter()
 	case "r":
 		m.historyMsgTxt = "loading…"
 		return m, m.fetchHistory
@@ -631,8 +720,14 @@ func (m model) historyView() string {
 	b := browser{
 		title:  " ycc — sessions ",
 		cursor: m.historyCursor,
-		hint:   "↑/↓ choose · enter transcript · o reopen · r refresh · esc/q back",
+		hint:   m.historyHint("↑/↓ choose · enter transcript · o reopen · f flag · F follow-ups · r refresh · esc/q back"),
 		empty:  emptyMsg,
+	}
+	if m.historyFollowUpOnly {
+		b.title = " ycc — sessions flagged for follow-up "
+		if emptyMsg == "no previous sessions" {
+			b.empty = "(no sessions flagged)"
+		}
 	}
 	if m.historyWaitingOnly {
 		b.title = " ycc — sessions waiting for you "
@@ -668,6 +763,9 @@ func (m model) historyRows() []browserRow {
 		if len(s.FocusTasks) > 0 {
 			title = "[" + strings.Join(s.FocusTasks, ",") + "] " + title
 		}
+		if s.FollowUp {
+			title = "⚑ " + title
+		}
 		status := s.Status
 		if s.Live && s.AwaitingJobs {
 			status = "background jobs"
@@ -690,7 +788,7 @@ func (m model) historyRows() []browserRow {
 // histModalView renders the read-only session browser modal shown over a live
 // session. When a transcript is drilled into it shows that instead.
 // Unlike historyView it advertises no `o reopen` — browsing from a live session
-// is strictly read-only.
+// cannot reopen or send input; bookmarks remain editable.
 func (m model) histModalView() string {
 	if m.histModalTranscript {
 		title := short(m.histModalID)
@@ -723,8 +821,14 @@ func (m model) histModalView() string {
 	b := browser{
 		title:  " ycc — sessions ",
 		cursor: m.historyCursor,
-		hint:   "↑/↓ choose · enter transcript · r refresh · esc/q back",
+		hint:   m.historyHint("↑/↓ choose · enter transcript · f flag · F follow-ups · r refresh · esc/q back"),
 		empty:  emptyMsg,
+	}
+	if m.historyFollowUpOnly {
+		b.title = " ycc — sessions flagged for follow-up "
+		if emptyMsg == "no previous sessions" {
+			b.empty = "(no sessions flagged)"
+		}
 	}
 	b.rows = m.historyRows()
 	return m.browserCard(b)

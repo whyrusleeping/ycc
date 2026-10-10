@@ -869,63 +869,125 @@ public nonisolated struct Ycc_V1_ListSessionHistoryRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Ycc_V1_SessionSummary: Sendable {
+public nonisolated struct Ycc_V1_SessionSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var sessionID: String = String()
+  public var sessionID: String {
+    get {_storage._sessionID}
+    set {_uniqueStorage()._sessionID = newValue}
+  }
 
-  public var mode: String = String()
+  public var mode: String {
+    get {_storage._mode}
+    set {_uniqueStorage()._mode = newValue}
+  }
 
   /// running | idle | error | paused | stopped
-  public var status: String = String()
+  public var status: String {
+    get {_storage._status}
+    set {_uniqueStorage()._status = newValue}
+  }
 
-  public var workspace: String = String()
+  public var workspace: String {
+    get {_storage._workspace}
+    set {_uniqueStorage()._workspace = newValue}
+  }
 
   /// derived from the first user prompt
-  public var title: String = String()
+  public var title: String {
+    get {_storage._title}
+    set {_uniqueStorage()._title = newValue}
+  }
 
   /// RFC3339
-  public var startedAt: String = String()
+  public var startedAt: String {
+    get {_storage._startedAt}
+    set {_uniqueStorage()._startedAt = newValue}
+  }
 
   /// RFC3339
-  public var lastActivity: String = String()
+  public var lastActivity: String {
+    get {_storage._lastActivity}
+    set {_uniqueStorage()._lastActivity = newValue}
+  }
 
-  public var focusTasks: [String] = []
+  public var focusTasks: [String] {
+    get {_storage._focusTasks}
+    set {_uniqueStorage()._focusTasks = newValue}
+  }
 
-  public var turns: Int64 = 0
+  public var turns: Int64 {
+    get {_storage._turns}
+    set {_uniqueStorage()._turns = newValue}
+  }
 
-  public var toolCalls: Int64 = 0
+  public var toolCalls: Int64 {
+    get {_storage._toolCalls}
+    set {_uniqueStorage()._toolCalls = newValue}
+  }
 
-  public var live: Bool = false
+  public var live: Bool {
+    get {_storage._live}
+    set {_uniqueStorage()._live = newValue}
+  }
 
   /// waiting_input is true when a live session is blocked on an unanswered
   /// ask_user question (single or batch) and needs the user to reply. Only ever
   /// set on live rows — a persisted-only session holds no in-memory question.
-  public var waitingInput: Bool = false
+  public var waitingInput: Bool {
+    get {_storage._waitingInput}
+    set {_uniqueStorage()._waitingInput = newValue}
+  }
 
   /// Per-logical-model token totals, ordered by tokens descending then model name.
   /// Missing/zero-usage turns are omitted.
-  public var modelUsage: [Ycc_V1_SessionModelUsage] = []
+  public var modelUsage: [Ycc_V1_SessionModelUsage] {
+    get {_storage._modelUsage}
+    set {_uniqueStorage()._modelUsage = newValue}
+  }
 
   /// Total recorded tokens across all actors and models in the session. Zero means
   /// the log has no usable token metadata.
-  public var totalTokens: Int64 = 0
+  public var totalTokens: Int64 {
+    get {_storage._totalTokens}
+    set {_uniqueStorage()._totalTokens = newValue}
+  }
 
   /// Coarse prompt-size estimate (context_tokens_est) from the newest completed
   /// coordinator model turn — how full the session's active context is, as
   /// opposed to cumulative spend. Subagent turns are ignored. Zero means the log
   /// predates the telemetry (or no turn completed yet).
-  public var contextTokens: Int64 = 0
+  public var contextTokens: Int64 {
+    get {_storage._contextTokens}
+    set {_uniqueStorage()._contextTokens = newValue}
+  }
 
   /// awaiting_jobs mirrors SessionInfo.awaiting_jobs: a live idle session whose
   /// delegated work will still resume it. Only ever set on live rows.
-  public var awaitingJobs: Bool = false
+  public var awaitingJobs: Bool {
+    get {_storage._awaitingJobs}
+    set {_uniqueStorage()._awaitingJobs = newValue}
+  }
+
+  /// User-owned bookmark, independent of agent status; cleared manually only.
+  public var followUp: Bool {
+    get {_storage._followUp}
+    set {_uniqueStorage()._followUp = newValue}
+  }
+
+  /// RFC3339, empty when not flagged
+  public var followUpAt: String {
+    get {_storage._followUpAt}
+    set {_uniqueStorage()._followUpAt = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 /// Sessions are ordered by the serialized millisecond-precision last_activity
@@ -945,6 +1007,39 @@ public nonisolated struct Ycc_V1_ListSessionHistoryResponse: Sendable {
   /// First bounded page only: live rows outside sessions, for discovery even
   /// when they are older than the page. Copies inside sessions are not repeated.
   public var pinned: [Ycc_V1_SessionSummary] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// SetSessionFollowUp sets or clears a user-owned bookmark. Repeated sets keep
+/// the original timestamp. Sending input never clears it.
+public nonisolated struct Ycc_V1_SetSessionFollowUpRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  public var followUp: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SetSessionFollowUpResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var followUp: Bool = false
+
+  /// RFC3339, empty when not flagged
+  public var followUpAt: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5410,104 +5505,184 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0")
+
+  fileprivate class _StorageClass {
+    var _sessionID: String = String()
+    var _mode: String = String()
+    var _status: String = String()
+    var _workspace: String = String()
+    var _title: String = String()
+    var _startedAt: String = String()
+    var _lastActivity: String = String()
+    var _focusTasks: [String] = []
+    var _turns: Int64 = 0
+    var _toolCalls: Int64 = 0
+    var _live: Bool = false
+    var _waitingInput: Bool = false
+    var _modelUsage: [Ycc_V1_SessionModelUsage] = []
+    var _totalTokens: Int64 = 0
+    var _contextTokens: Int64 = 0
+    var _awaitingJobs: Bool = false
+    var _followUp: Bool = false
+    var _followUpAt: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _sessionID = source._sessionID
+      _mode = source._mode
+      _status = source._status
+      _workspace = source._workspace
+      _title = source._title
+      _startedAt = source._startedAt
+      _lastActivity = source._lastActivity
+      _focusTasks = source._focusTasks
+      _turns = source._turns
+      _toolCalls = source._toolCalls
+      _live = source._live
+      _waitingInput = source._waitingInput
+      _modelUsage = source._modelUsage
+      _totalTokens = source._totalTokens
+      _contextTokens = source._contextTokens
+      _awaitingJobs = source._awaitingJobs
+      _followUp = source._followUp
+      _followUpAt = source._followUpAt
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.mode) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.status) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.workspace) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.title) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.startedAt) }()
-      case 7: try { try decoder.decodeSingularStringField(value: &self.lastActivity) }()
-      case 8: try { try decoder.decodeRepeatedStringField(value: &self.focusTasks) }()
-      case 9: try { try decoder.decodeSingularInt64Field(value: &self.turns) }()
-      case 10: try { try decoder.decodeSingularInt64Field(value: &self.toolCalls) }()
-      case 11: try { try decoder.decodeSingularBoolField(value: &self.live) }()
-      case 12: try { try decoder.decodeSingularBoolField(value: &self.waitingInput) }()
-      case 13: try { try decoder.decodeRepeatedMessageField(value: &self.modelUsage) }()
-      case 14: try { try decoder.decodeSingularInt64Field(value: &self.totalTokens) }()
-      case 15: try { try decoder.decodeSingularInt64Field(value: &self.contextTokens) }()
-      case 16: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._sessionID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._mode) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._status) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._workspace) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._title) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._startedAt) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._lastActivity) }()
+        case 8: try { try decoder.decodeRepeatedStringField(value: &_storage._focusTasks) }()
+        case 9: try { try decoder.decodeSingularInt64Field(value: &_storage._turns) }()
+        case 10: try { try decoder.decodeSingularInt64Field(value: &_storage._toolCalls) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._live) }()
+        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._waitingInput) }()
+        case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._modelUsage) }()
+        case 14: try { try decoder.decodeSingularInt64Field(value: &_storage._totalTokens) }()
+        case 15: try { try decoder.decodeSingularInt64Field(value: &_storage._contextTokens) }()
+        case 16: try { try decoder.decodeSingularBoolField(value: &_storage._awaitingJobs) }()
+        case 17: try { try decoder.decodeSingularBoolField(value: &_storage._followUp) }()
+        case 18: try { try decoder.decodeSingularStringField(value: &_storage._followUpAt) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.sessionID.isEmpty {
-      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
-    }
-    if !self.mode.isEmpty {
-      try visitor.visitSingularStringField(value: self.mode, fieldNumber: 2)
-    }
-    if !self.status.isEmpty {
-      try visitor.visitSingularStringField(value: self.status, fieldNumber: 3)
-    }
-    if !self.workspace.isEmpty {
-      try visitor.visitSingularStringField(value: self.workspace, fieldNumber: 4)
-    }
-    if !self.title.isEmpty {
-      try visitor.visitSingularStringField(value: self.title, fieldNumber: 5)
-    }
-    if !self.startedAt.isEmpty {
-      try visitor.visitSingularStringField(value: self.startedAt, fieldNumber: 6)
-    }
-    if !self.lastActivity.isEmpty {
-      try visitor.visitSingularStringField(value: self.lastActivity, fieldNumber: 7)
-    }
-    if !self.focusTasks.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.focusTasks, fieldNumber: 8)
-    }
-    if self.turns != 0 {
-      try visitor.visitSingularInt64Field(value: self.turns, fieldNumber: 9)
-    }
-    if self.toolCalls != 0 {
-      try visitor.visitSingularInt64Field(value: self.toolCalls, fieldNumber: 10)
-    }
-    if self.live != false {
-      try visitor.visitSingularBoolField(value: self.live, fieldNumber: 11)
-    }
-    if self.waitingInput != false {
-      try visitor.visitSingularBoolField(value: self.waitingInput, fieldNumber: 12)
-    }
-    if !self.modelUsage.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.modelUsage, fieldNumber: 13)
-    }
-    if self.totalTokens != 0 {
-      try visitor.visitSingularInt64Field(value: self.totalTokens, fieldNumber: 14)
-    }
-    if self.contextTokens != 0 {
-      try visitor.visitSingularInt64Field(value: self.contextTokens, fieldNumber: 15)
-    }
-    if self.awaitingJobs != false {
-      try visitor.visitSingularBoolField(value: self.awaitingJobs, fieldNumber: 16)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._sessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._sessionID, fieldNumber: 1)
+      }
+      if !_storage._mode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._mode, fieldNumber: 2)
+      }
+      if !_storage._status.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._status, fieldNumber: 3)
+      }
+      if !_storage._workspace.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._workspace, fieldNumber: 4)
+      }
+      if !_storage._title.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._title, fieldNumber: 5)
+      }
+      if !_storage._startedAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._startedAt, fieldNumber: 6)
+      }
+      if !_storage._lastActivity.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastActivity, fieldNumber: 7)
+      }
+      if !_storage._focusTasks.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._focusTasks, fieldNumber: 8)
+      }
+      if _storage._turns != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._turns, fieldNumber: 9)
+      }
+      if _storage._toolCalls != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._toolCalls, fieldNumber: 10)
+      }
+      if _storage._live != false {
+        try visitor.visitSingularBoolField(value: _storage._live, fieldNumber: 11)
+      }
+      if _storage._waitingInput != false {
+        try visitor.visitSingularBoolField(value: _storage._waitingInput, fieldNumber: 12)
+      }
+      if !_storage._modelUsage.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._modelUsage, fieldNumber: 13)
+      }
+      if _storage._totalTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._totalTokens, fieldNumber: 14)
+      }
+      if _storage._contextTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._contextTokens, fieldNumber: 15)
+      }
+      if _storage._awaitingJobs != false {
+        try visitor.visitSingularBoolField(value: _storage._awaitingJobs, fieldNumber: 16)
+      }
+      if _storage._followUp != false {
+        try visitor.visitSingularBoolField(value: _storage._followUp, fieldNumber: 17)
+      }
+      if !_storage._followUpAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._followUpAt, fieldNumber: 18)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SessionSummary, rhs: Ycc_V1_SessionSummary) -> Bool {
-    if lhs.sessionID != rhs.sessionID {return false}
-    if lhs.mode != rhs.mode {return false}
-    if lhs.status != rhs.status {return false}
-    if lhs.workspace != rhs.workspace {return false}
-    if lhs.title != rhs.title {return false}
-    if lhs.startedAt != rhs.startedAt {return false}
-    if lhs.lastActivity != rhs.lastActivity {return false}
-    if lhs.focusTasks != rhs.focusTasks {return false}
-    if lhs.turns != rhs.turns {return false}
-    if lhs.toolCalls != rhs.toolCalls {return false}
-    if lhs.live != rhs.live {return false}
-    if lhs.waitingInput != rhs.waitingInput {return false}
-    if lhs.modelUsage != rhs.modelUsage {return false}
-    if lhs.totalTokens != rhs.totalTokens {return false}
-    if lhs.contextTokens != rhs.contextTokens {return false}
-    if lhs.awaitingJobs != rhs.awaitingJobs {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._sessionID != rhs_storage._sessionID {return false}
+        if _storage._mode != rhs_storage._mode {return false}
+        if _storage._status != rhs_storage._status {return false}
+        if _storage._workspace != rhs_storage._workspace {return false}
+        if _storage._title != rhs_storage._title {return false}
+        if _storage._startedAt != rhs_storage._startedAt {return false}
+        if _storage._lastActivity != rhs_storage._lastActivity {return false}
+        if _storage._focusTasks != rhs_storage._focusTasks {return false}
+        if _storage._turns != rhs_storage._turns {return false}
+        if _storage._toolCalls != rhs_storage._toolCalls {return false}
+        if _storage._live != rhs_storage._live {return false}
+        if _storage._waitingInput != rhs_storage._waitingInput {return false}
+        if _storage._modelUsage != rhs_storage._modelUsage {return false}
+        if _storage._totalTokens != rhs_storage._totalTokens {return false}
+        if _storage._contextTokens != rhs_storage._contextTokens {return false}
+        if _storage._awaitingJobs != rhs_storage._awaitingJobs {return false}
+        if _storage._followUp != rhs_storage._followUp {return false}
+        if _storage._followUpAt != rhs_storage._followUpAt {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5548,6 +5723,81 @@ nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, 
     if lhs.sessions != rhs.sessions {return false}
     if lhs.nextCursor != rhs.nextCursor {return false}
     if lhs.pinned != rhs.pinned {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetSessionFollowUpRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSessionFollowUpRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{3}follow_up\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.followUp) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if self.followUp != false {
+      try visitor.visitSingularBoolField(value: self.followUp, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetSessionFollowUpRequest, rhs: Ycc_V1_SetSessionFollowUpRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.followUp != rhs.followUp {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetSessionFollowUpResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetSessionFollowUpResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}follow_up\0\u{3}follow_up_at\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.followUp) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.followUpAt) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.followUp != false {
+      try visitor.visitSingularBoolField(value: self.followUp, fieldNumber: 1)
+    }
+    if !self.followUpAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.followUpAt, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetSessionFollowUpResponse, rhs: Ycc_V1_SetSessionFollowUpResponse) -> Bool {
+    if lhs.followUp != rhs.followUp {return false}
+    if lhs.followUpAt != rhs.followUpAt {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

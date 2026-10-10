@@ -140,6 +140,7 @@ func (m *model) resetProjectProjection() {
 	m.history, m.lastSession, m.waitingSessions = nil, nil, nil
 	m.historyCursor, m.historyMsgTxt = 0, ""
 	m.historyTranscript, m.historyWaitingOnly = false, false
+	m.historyFollowUpOnly, m.historyAll, m.historyFollowUpPending = false, nil, nil
 	m.plansList, m.planDetail = nil, nil
 	m.costRows, m.costTotal, m.subUsageAccounts = nil, nil, nil
 	m.costWorkspace, m.costTask, m.costMsg = "", "", ""

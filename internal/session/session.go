@@ -1850,6 +1850,7 @@ func (s *Session) withAssumptions(report string) string {
 type Manager struct {
 	mu                sync.Mutex
 	sessions          map[string]*Session
+	followUpMu        sync.Mutex
 	historyCacheMu    sync.Mutex
 	historyCache      map[string]sessionSummaryCacheEntry
 	reg               *config.Registry

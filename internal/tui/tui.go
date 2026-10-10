@@ -116,13 +116,16 @@ type model struct {
 	// historyWaitingOnly restricts the session browser to live sessions that need
 	// the user (pending question or paused). Set when the browser is opened from
 	// the home menu's "session waiting for you" indicator.
-	historyWaitingOnly bool
+	historyWaitingOnly     bool
+	historyFollowUpOnly    bool
+	historyAll             []*v1.SessionSummary
+	historyFollowUpPending *sessionFollowUpMsg
 
 	// histModal is the session browser opened as a modal OVER a live session
 	// (ctrl+r / browse selector → sessions from within a session).
 	// Unlike stateHistory (a full state reached from the menu) it never touches
-	// the live session's event pipeline (m.evs/m.vp), so browsing here is strictly
-	// read-only: transcripts render into a separate viewport and reopen is disabled
+	// the live session's event pipeline (m.evs/m.vp): only bookmarks can change.
+	// Transcripts render into a separate viewport and reopen is disabled
 	// (no reopen-over-live-session footgun). It reuses the shared m.history list
 	// and m.historyCursor for navigation.
 	histModal           bool
@@ -975,26 +978,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.rpcOK()
-		m.history = msg.sessions
-		if m.historyWaitingOnly {
-			// Opened from the home-menu "session waiting for you" indicator: show
-			// only the live sessions that need the user.
-			filtered := m.history[:0:0]
-			for _, s := range msg.sessions {
-				if sessionNeedsUser(s) {
-					filtered = append(filtered, s)
-				}
-			}
-			m.history = filtered
+		m.historyAll = msg.sessions
+		if pending := m.historyFollowUpPending; pending != nil {
+			m.setHistoryFollowUp(pending.id, pending.flagged, pending.at)
 		}
-		if m.historyCursor >= len(m.history) {
-			m.historyCursor = 0
+		m.filterHistory()
+		return m, nil
+	case sessionFollowUpMsg:
+		if msg.projectSeq != m.projectSeq || m.historyFollowUpPending == nil {
+			return m, nil
 		}
-		if len(m.history) == 0 {
-			m.historyMsgTxt = "no previous sessions"
-		} else {
-			m.historyMsgTxt = ""
+		m.historyFollowUpPending = nil
+		if msg.err != nil {
+			m.setHistoryFollowUp(msg.id, msg.previous, msg.previousAt)
+			m.filterHistory()
+			return m, m.noteFlash("follow-up: " + msg.err.Error())
 		}
+		m.rpcOK()
+		m.setHistoryFollowUp(msg.id, msg.flagged, msg.at)
+		m.filterHistory()
 		return m, nil
 	case waitingSessionsMsg:
 		if msg.projectSeq != 0 && msg.projectSeq != m.projectSeq {

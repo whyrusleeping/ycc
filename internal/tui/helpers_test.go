@@ -73,6 +73,8 @@ type fakeClient struct {
 	lastReopened string
 	transcript   []*v1.Event // returned by GetSessionTranscript
 	lastTransID  string
+	followUpErr  error
+	lastFollowUp *v1.SetSessionFollowUpRequest
 
 	// commit-diff drill-in (task 0140): canned diff returned by GetCommitDiff and
 	// the last sha requested.
@@ -279,6 +281,23 @@ func (f *fakeClient) RemoveModel(_ context.Context, req *connect.Request[v1.Remo
 // an errMsg instead of panicking on the embedded nil interface.
 func (f *fakeClient) ListSessionHistory(_ context.Context, _ *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: f.history}), nil
+}
+
+func (f *fakeClient) SetSessionFollowUp(_ context.Context, req *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error) {
+	f.lastFollowUp = req.Msg
+	if f.followUpErr != nil {
+		return nil, f.followUpErr
+	}
+	at := ""
+	if req.Msg.FollowUp {
+		at = "2026-01-01T00:00:00.000Z"
+	}
+	for _, row := range f.history {
+		if row.SessionId == req.Msg.SessionId {
+			row.FollowUp, row.FollowUpAt = req.Msg.FollowUp, at
+		}
+	}
+	return connect.NewResponse(&v1.SetSessionFollowUpResponse{FollowUp: req.Msg.FollowUp, FollowUpAt: at}), nil
 }
 
 // GetMemory backs the home menu's memory-groom status; memory is nil (no status)

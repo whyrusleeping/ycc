@@ -282,6 +282,7 @@ JSON="Content-Type: application/json"
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
+| [`SetSessionFollowUp`](#setsessionfollowup) | set or clear a user-owned session bookmark |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
 | [`GetSessionView`](#indexed-session-view) / `GetSessionViewPage` / `GetSessionViewDetail` | bounded indexed presentation pages and detail |
 | [`SubscribeSessionView`](#indexed-session-view) | sequence-safe presentation row/state updates |
@@ -525,6 +526,9 @@ Notes: `title` is derived from the first user prompt; `turns`/`toolCalls` are in
 `contextTokens` is the coarse prompt-size estimate from the newest completed
 coordinator model turn (how full the session's active context is; subagent turns are
 ignored, and it is omitted/zero for logs without the telemetry).
+`followUp` is the user's bookmark, separate from agent status; `followUpAt` is its
+original RFC3339 timestamp, empty when unflagged. Both are populated on `sessions`
+and `pinned` rows. These fields do not change recency ordering.
 Omitted fields (`toolCalls`, `focusTasks`, `waitingInput` here) are zero/empty.
 
 For a bounded feed, send `{"project":"work","limit":50}` and then pass the
@@ -540,6 +544,31 @@ The first bounded page also returns `pinned`: every live row not in `sessions`,
 including waiting questions and active-task sessions beyond the page. Subsequent
 pages do not repeat pinned rows; merge by `sessionId`, preferring the latest
 copy, and retain pinned rows outside the recency frontier.
+
+### SetSessionFollowUp
+
+Set or clear a bookmark on a live or persisted session. Requires `sessionId` and
+its registered `project` (omission is allowed only on a single-project daemon).
+Repeated `followUp: true` preserves the original timestamp. Clearing is manual
+only: sending input or answering a question never clears the bookmark. No note
+or remind-at is supported yet; those and optional auto-clearing are deferred.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" \
+  -d '{"project":"work","sessionId":"s_doc","followUp":true}' \
+  $B/ycc.v1.SessionService/SetSessionFollowUp
+```
+
+```json
+{"followUp":true,"followUpAt":"2026-07-04T17:10:32.643Z"}
+```
+
+Use `followUp: false` to clear; the response's flag and timestamp are false/empty
+(and may be omitted in JSON). Unknown project returns `invalid_argument`; unknown
+session or invalid session id returns `not_found`. Storage errors, including a
+corrupt bookmark file, return `internal` without overwriting the file. See
+[session history in the spec](../spec.md#186-session-history-and-reopen) for storage
+and lifecycle semantics.
 
 ### GetSessionTranscript
 

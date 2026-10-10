@@ -259,6 +259,8 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			TotalTokens:   su.TotalTokens,
 			ContextTokens: su.ContextTokens,
 			AwaitingJobs:  su.AwaitingJobs,
+			FollowUp:      su.FollowUp,
+			FollowUpAt:    rfc3339(su.FollowUpAt),
 		}
 	}
 	out := make([]*v1.SessionSummary, 0, len(sums))
@@ -270,6 +272,21 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 		live = append(live, convert(row))
 	}
 	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out, Pinned: live, NextCursor: next}), nil
+}
+
+func (s *Server) SetSessionFollowUp(_ context.Context, req *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error) {
+	at, err := s.mgr.SetSessionFollowUp(req.Msg.Project, req.Msg.SessionId, req.Msg.FollowUp)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrUnknownSession):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	return connect.NewResponse(&v1.SetSessionFollowUpResponse{FollowUp: req.Msg.FollowUp, FollowUpAt: rfc3339(at)}), nil
 }
 
 // GetSessionTranscript returns a session's full event log (live or persisted on

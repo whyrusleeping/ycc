@@ -48,6 +48,8 @@ type SessionSummary struct {
 	// delegated work (Session.AwaitingJobs). Only ever set on live rows: jobs do
 	// not survive a daemon restart.
 	AwaitingJobs bool
+	FollowUp     bool
+	FollowUpAt   time.Time
 }
 
 // ModelUsage is the total recorded token usage for one logical model name in a
@@ -510,6 +512,23 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		if !summaries[i].Live && summaries[i].Status == event.StatusRunning {
 			summaries[i].Status = event.StatusStopped
 		}
+	}
+
+	// Bookmarks are separate from the event-log cache so toggles are immediately
+	// visible without invalidating or re-reducing logs. A corrupt bookmark file
+	// must not hide the history itself: list without bookmarks (SetSessionFollowUp
+	// still refuses to overwrite the file).
+	m.followUpMu.Lock()
+	followUps, err := loadSessionFollowUps(absWS)
+	m.followUpMu.Unlock()
+	if err != nil {
+		log.Printf("ycc: session history: ignoring follow-up bookmarks: %v", err)
+		followUps = sessionFollowUps{}
+	}
+	for i := range summaries {
+		entry, ok := followUps.Sessions[summaries[i].ID]
+		summaries[i].FollowUp = ok
+		summaries[i].FollowUpAt = entry.FlaggedAt
 	}
 
 	sort.Slice(summaries, func(i, j int) bool {

@@ -317,6 +317,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.history = nil
 				m.historyTranscript = false
 				m.historyWaitingOnly = true
+				m.historyFollowUpOnly = false
 				m.historyMsgTxt = "loading…"
 				return m, m.fetchHistory
 			}
@@ -337,6 +338,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = nil
 			m.historyTranscript = false
 			m.historyWaitingOnly = false
+			m.historyFollowUpOnly = false
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "ctrl+o":

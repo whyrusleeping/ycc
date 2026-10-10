@@ -302,6 +302,9 @@ message SessionSummary {
   // awaiting_jobs mirrors SessionInfo.awaiting_jobs: a live idle session whose
   // delegated work will still resume it. Only ever set on live rows.
   bool awaiting_jobs = 16;
+  // User-owned bookmark, independent of agent status; cleared manually only.
+  bool follow_up = 17;
+  string follow_up_at = 18; // RFC3339, empty when not flagged
 }
 // Sessions are ordered by the serialized millisecond-precision last_activity
 // descending, started_at descending, then id ascending. The keyset cursor
@@ -313,6 +316,18 @@ message ListSessionHistoryResponse {
   // First bounded page only: live rows outside sessions, for discovery even
   // when they are older than the page. Copies inside sessions are not repeated.
   repeated SessionSummary pinned = 3;
+}
+
+// SetSessionFollowUp sets or clears a user-owned bookmark. Repeated sets keep
+// the original timestamp. Sending input never clears it.
+message SetSessionFollowUpRequest {
+  string project = 1;
+  string session_id = 2;
+  bool follow_up = 3;
+}
+message SetSessionFollowUpResponse {
+  bool follow_up = 1;
+  string follow_up_at = 2; // RFC3339, empty when not flagged
 }
 
 // GetSessionTranscript returns the full event log for a session — live or
@@ -1170,6 +1185,7 @@ service SessionService {
   // ListSessionHistory enumerates all sessions for a project (live + persisted
   // on-disk logs), most-recent first. ListSessions stays live-only.
   rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
+  rpc SetSessionFollowUp(SetSessionFollowUpRequest) returns (SetSessionFollowUpResponse);
   // GetSessionTranscript returns a session's full event log (live or persisted)
   // for the read-only transcript drill-in.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);

@@ -25,6 +25,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `listSessionHistory`(request: Ycc_V1_ListSessionHistoryRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListSessionHistoryResponse>
 
+    @available(iOS 13, *)
+    func `setSessionFollowUp`(request: Ycc_V1_SetSessionFollowUpRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetSessionFollowUpResponse>
+
     /// GetSessionTranscript returns a session's full event log (live or persisted)
     /// for the read-only transcript drill-in.
     @available(iOS 13, *)
@@ -305,6 +308,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     @available(iOS 13, *)
     public func `listSessionHistory`(request: Ycc_V1_ListSessionHistoryRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListSessionHistoryResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListSessionHistory", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `setSessionFollowUp`(request: Ycc_V1_SetSessionFollowUpRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetSessionFollowUpResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SetSessionFollowUp", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
@@ -623,6 +631,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let startSession = Connect.MethodSpec(name: "StartSession", service: "ycc.v1.SessionService", type: .unary)
             public static let listSessions = Connect.MethodSpec(name: "ListSessions", service: "ycc.v1.SessionService", type: .unary)
             public static let listSessionHistory = Connect.MethodSpec(name: "ListSessionHistory", service: "ycc.v1.SessionService", type: .unary)
+            public static let setSessionFollowUp = Connect.MethodSpec(name: "SetSessionFollowUp", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionTranscript = Connect.MethodSpec(name: "GetSessionTranscript", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionView = Connect.MethodSpec(name: "GetSessionView", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionViewPage = Connect.MethodSpec(name: "GetSessionViewPage", service: "ycc.v1.SessionService", type: .unary)

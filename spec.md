@@ -916,6 +916,19 @@ the log ends while the coordinator waits on one, reopen restores that exact ques
 result, and the answer is recorded as usual before the model continues. Answering such a persisted
 question reopens the session; answer RPCs never resume a transcript with no restorable question.
 
+Sessions also have a user-owned follow-up bookmark, independent of agent status. The daemon's
+`SetSessionFollowUp` RPC sets or clears a boolean and its original `flagged_at` timestamp;
+repeated sets are idempotent. Bookmarks live in the project's root workspace at
+`.ycc/session-follow-ups.json` (`{"sessions":{"<id>":{"flagged_at":"RFC3339"}}}`), never in a
+workstream worktree, and are atomically replaced under a manager mutex. A missing file means no
+bookmarks; a corrupt file makes `SetSessionFollowUp` fail without overwriting it, while history
+lists without bookmarks. History summaries (including pinned rows) overlay these
+fields after the event-log cache. Clearing is **manual only**: sending input, answering a question,
+and reopening do not clear a bookmark. The TUI session browser and its transcript-browsing modal
+show `⚑` on flagged rows; `f` toggles the selected bookmark and `F` filters to follow-ups. Desktop
+web and iOS controls are separate follow-up work. Optional notes, remind-at/snooze reminders, and
+opt-in auto-clearing are deferred; the current API stores only the flag and timestamp.
+
 ### 18.7 Interrupt and steer
 
 Interrupt durably acknowledges a `pause_requested` action immediately; it requests a graceful pause at a safe checkpoint and does not cancel a tool mid-write. `interrupted` alone confirms the pause. `pause_cancelled` (Resume before the checkpoint), `interrupted`, `resumed`, stop, and reopen clear the pending indication.

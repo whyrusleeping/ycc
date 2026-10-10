@@ -186,6 +186,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyCursor = 0
 			m.history = nil
 			m.historyTranscript = false
+			m.historyWaitingOnly, m.historyFollowUpOnly = false, false
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "cost":
