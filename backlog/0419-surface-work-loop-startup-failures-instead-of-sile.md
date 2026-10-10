@@ -1,10 +1,10 @@
 ---
 id: "0419"
 title: Surface work-loop startup failures instead of silently finishing
-status: in_review
+status: done
 priority: 2
 created: "2026-10-03"
-updated: "2026-10-03"
+updated: "2026-10-10"
 depends_on: []
 spec_refs: []
 ---

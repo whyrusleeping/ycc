@@ -4,6 +4,7 @@
 // dedupe ledger shared by every tab through storage.
 import type { SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 import { parseTimestamp, recencyStamp, type KeyValueStorage } from "../sessions/readStore";
+import { isInboxSession } from "../sessions/attention";
 
 export type NotifyKind = "question" | "done" | "error";
 
@@ -35,7 +36,7 @@ export interface WatchState {
 function observation(s: SessionSummary): Observation {
   return {
     live: s.live,
-    waiting: s.live && s.waitingInput,
+    waiting: s.waitingInput,
     awaitingJobs: s.live && s.awaitingJobs,
     status: s.status.toLowerCase(),
     lastActivity: s.lastActivity || s.startedAt,
@@ -51,6 +52,7 @@ function observation(s: SessionSummary): Observation {
 export function detectEvents(
   prev: WatchState | null,
   rows: readonly { session: SessionSummary; project: string }[],
+  eligible: (s: SessionSummary) => boolean = isInboxSession,
 ): { state: WatchState; events: SessionEvent[] } {
   const sessions = new Map<string, Observation>(prev?.sessions ?? []);
   let watermark = prev?.watermark ?? Number.NEGATIVE_INFINITY;
@@ -69,6 +71,7 @@ export function detectEvents(
       if (!was.waiting) events.push({ ...base, kind: "question", key: `question:${s.sessionId}:${now.lastActivity}` });
       continue;
     }
+    if (!eligible(s)) continue;
     if (now.status === "error") {
       if (was.status !== "error" || advanced) events.push({ ...base, kind: "error", key: `error:${s.sessionId}:${now.lastActivity}` });
       continue;

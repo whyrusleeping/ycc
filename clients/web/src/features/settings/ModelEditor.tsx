@@ -3,12 +3,13 @@
 // provider discovery, reasoning defaults, pricing, availability, and a live
 // connection test of the unsaved draft. Mirrors iOS ModelEditorView.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { DiscoverModelsResponse, TestModelResponse } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
+import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { toast } from "../../ui/toast";
 import { track } from "../../app/analytics";
 import {
@@ -40,23 +41,29 @@ export function ModelEditorDialog({
   existingNames: readonly string[];
   onClose: () => void;
 }) {
+  const closeGuard = useRef<(() => void) | null>(null);
   const title = !target ? "" : target.kind === "new" ? "Add model" : target.kind === "duplicate" ? `Duplicate ${target.name}` : `Edit ${target.name}`;
   const key = !target ? "" : target.kind === "new" ? "new" : `${target.kind}:${target.name}`;
   return (
     <Modal
       open={target !== null}
-      onClose={onClose}
+      onClose={() => (closeGuard.current ?? onClose)()}
       title={title}
       className="model-editor-dialog"
       view="model_editor"
       flow={target ? `model_editor.${target.kind}` : undefined}
     >
-      {target && <ModelEditor key={key} target={target} existingNames={existingNames} onClose={onClose} />}
+      {target && <ModelEditor key={key} target={target} existingNames={existingNames} onClose={onClose} closeGuard={closeGuard} />}
     </Modal>
   );
 }
 
-function ModelEditor({ target, existingNames, onClose }: { target: EditorTarget; existingNames: readonly string[]; onClose: () => void }) {
+function ModelEditor({ target, existingNames, onClose, closeGuard }: {
+  target: EditorTarget;
+  existingNames: readonly string[];
+  onClose: () => void;
+  closeGuard: RefObject<(() => void) | null>;
+}) {
   const source = target.kind === "new" ? "" : target.name;
   const config = useQuery({
     queryKey: queryKeys.modelConfig(source),
@@ -73,10 +80,10 @@ function ModelEditor({ target, existingNames, onClose }: { target: EditorTarget;
   if (draft === null && config.data) setDraft(draftFromConfig(config.data, target.kind === "duplicate"));
 
   if (target.kind !== "new" && !draft) {
-    if (config.isError) return <p className="error">{errorMessage(config.error, "Couldn’t load the model.")}</p>;
+    if (config.isError) return <p className="error" role="alert">{errorMessage(config.error, "Couldn’t load the model.")}</p>;
     return <p className="muted">Loading…</p>;
   }
-  return <EditorForm target={target} initial={draft!} existingNames={existingNames} onClose={onClose} />;
+  return <EditorForm target={target} initial={draft!} existingNames={existingNames} onClose={onClose} closeGuard={closeGuard} />;
 }
 
 function EditorForm({
@@ -84,15 +91,31 @@ function EditorForm({
   initial,
   existingNames,
   onClose,
+  closeGuard,
 }: {
   target: EditorTarget;
   initial: ModelDraft;
   existingNames: readonly string[];
   onClose: () => void;
+  closeGuard: RefObject<(() => void) | null>;
 }) {
   const qc = useQueryClient();
   const [d, setD] = useState<ModelDraft>(initial);
   const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const dirty = JSON.stringify(d) !== JSON.stringify(initial);
+  const requestClose = () => {
+    // React also bubbles Escape from the nested discard dialog to the modal.
+    if (savingNow.current || confirmDiscard) return;
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  };
+  // The modal's Escape and header close take the same path as Cancel.
+  useLayoutEffect(() => {
+    closeGuard.current = requestClose;
+    return () => { closeGuard.current = null; };
+  });
   const [error, setError] = useState<string | null>(null);
   const [discovery, setDiscovery] = useState<DiscoverModelsResponse | null>(null);
   const [discovering, setDiscovering] = useState(false);
@@ -152,7 +175,8 @@ function EditorForm({
   };
 
   const save = async () => {
-    if (!ok || saving) return;
+    if (!ok || savingNow.current) return;
+    savingNow.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -168,6 +192,7 @@ function EditorForm({
         setError(errorMessage(err, "The model was not saved."));
       }
     } finally {
+      savingNow.current = false;
       setSaving(false);
     }
   };
@@ -376,7 +401,7 @@ function EditorForm({
         </button>
         <span className="muted small">Sends one small request with these unsaved settings (your provider may bill it).</span>
         {shownTest && (
-          <div className={`test-result ${shownTest.success ? "ok" : "fail"}`} role="status">
+          <div className={`test-result ${shownTest.success ? "ok" : "fail"}`} role={shownTest.success ? "status" : "alert"}>
             <strong>{shownTest.success ? "✓ " : "✕ "}</strong>
             {shownTest.message}
             {Number(shownTest.durationMs) > 0 && <span className="muted"> · {String(shownTest.durationMs)} ms</span>}
@@ -390,16 +415,32 @@ function EditorForm({
           </div>
         )}
       </div>
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       <div className="editor-actions">
-        <span className="muted small">Saved to the daemon’s ycc.toml. Context window and capabilities stay TOML-only.</span>
-        <button type="button" className="btn" onClick={onClose} disabled={saving}>
+        <span className="muted small" role={firstProblem ? "alert" : undefined}>
+          {firstProblem ?? "Saved to the daemon’s ycc.toml. Context window and capabilities stay TOML-only."}
+        </span>
+        <button type="button" className="btn" onClick={requestClose} disabled={saving}>
           Cancel
         </button>
         <button type="submit" className="btn primary" disabled={!ok || saving} title={firstProblem}>
           {saving ? "Saving…" : target.kind === "edit" ? "Save" : "Add model"}
         </button>
       </div>
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="Discard your changes?"
+        body="Your unsaved model edits will be lost."
+        confirmLabel="Discard"
+        danger
+        action="model_editor.discard"
+        onCancel={() => setConfirmDiscard(false)}
+        onConfirm={() => {
+          if (savingNow.current) return;
+          setConfirmDiscard(false);
+          onClose();
+        }}
+      />
     </form>
   );
 }

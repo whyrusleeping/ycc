@@ -260,13 +260,12 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             Backlog {project && <span className="muted">· {project}</span>}
           </h1>
           <div className="page-actions">
-            <span className="segmented inline backlog-view" role="radiogroup" aria-label="Backlog layout">
+            <span className="segmented inline backlog-view" role="group" aria-label="Backlog layout">
               {(["table", "board"] as const).map((v) => (
                 <button
                   key={v}
                   type="button"
-                  role="radio"
-                  aria-checked={view === v}
+                  aria-pressed={view === v}
                   className={view === v ? "selected" : ""}
                   onClick={() => {
                     track.action("backlog.layout", "click", { to: v });
@@ -381,7 +380,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
         {backlog.isPending ? (
           <p className="muted pad">Loading backlog…</p>
         ) : backlog.isError && !all ? (
-          <p className="error pad">{errorMessage(backlog.error, "Couldn’t load the backlog.")}</p>
+          <p className="error pad" role="alert">{errorMessage(backlog.error, "Couldn’t load the backlog.")}</p>
         ) : !all || all.length === 0 ? (
           <div className="pad empty-list">
             <p className="muted">The backlog is empty.</p>

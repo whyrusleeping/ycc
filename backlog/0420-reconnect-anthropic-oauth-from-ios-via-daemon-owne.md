@@ -1,10 +1,10 @@
 ---
 id: "0420"
 title: Reconnect Anthropic OAuth from iOS via daemon-owned browser-and-paste login
-status: in_review
+status: done
 priority: 2
 created: "2026-10-03"
-updated: "2026-10-03"
+updated: "2026-10-10"
 depends_on: []
 spec_refs: []
 ---

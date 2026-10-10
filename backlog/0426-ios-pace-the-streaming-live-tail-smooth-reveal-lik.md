@@ -1,10 +1,10 @@
 ---
 id: "0426"
 title: 'iOS: pace the streaming live tail (smooth reveal) like the web client'
-status: in_review
+status: done
 priority: 3
 created: "2026-10-06"
-updated: "2026-10-06"
+updated: "2026-10-10"
 depends_on:
     - "0425"
 spec_refs: []

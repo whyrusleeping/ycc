@@ -103,6 +103,7 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 	}
 	sess, err := s.mgr.Start(session.Config{
 		Workspace:        m.Workspace,
+		Origin:           session.OriginUser,
 		Mode:             m.Mode,
 		Prompt:           m.Prompt,
 		Project:          m.Project,
@@ -243,24 +244,26 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			models = append(models, &v1.SessionModelUsage{Model: usage.Model, Tokens: usage.Tokens})
 		}
 		return &v1.SessionSummary{
-			SessionId:     su.ID,
-			Mode:          su.Mode,
-			Status:        string(su.Status),
-			Workspace:     su.Workspace,
-			Title:         su.Title,
-			StartedAt:     rfc3339(su.StartedAt),
-			LastActivity:  rfc3339(su.LastActivity),
-			FocusTasks:    su.FocusTasks,
-			Turns:         int64(su.Turns),
-			ToolCalls:     int64(su.ToolCalls),
-			Live:          su.Live,
-			WaitingInput:  su.Waiting,
-			ModelUsage:    models,
-			TotalTokens:   su.TotalTokens,
-			ContextTokens: su.ContextTokens,
-			AwaitingJobs:  su.AwaitingJobs,
-			FollowUp:      su.FollowUp,
-			FollowUpAt:    rfc3339(su.FollowUpAt),
+			SessionId:         su.ID,
+			Origin:            su.Origin,
+			HumanParticipated: su.HumanParticipated,
+			Mode:              su.Mode,
+			Status:            string(su.Status),
+			Workspace:         su.Workspace,
+			Title:             su.Title,
+			StartedAt:         rfc3339(su.StartedAt),
+			LastActivity:      rfc3339(su.LastActivity),
+			FocusTasks:        su.FocusTasks,
+			Turns:             int64(su.Turns),
+			ToolCalls:         int64(su.ToolCalls),
+			Live:              su.Live,
+			WaitingInput:      su.Waiting,
+			ModelUsage:        models,
+			TotalTokens:       su.TotalTokens,
+			ContextTokens:     su.ContextTokens,
+			AwaitingJobs:      su.AwaitingJobs,
+			FollowUp:          su.FollowUp,
+			FollowUpAt:        rfc3339(su.FollowUpAt),
 		}
 	}
 	out := make([]*v1.SessionSummary, 0, len(sums))

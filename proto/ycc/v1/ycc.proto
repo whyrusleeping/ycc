@@ -284,9 +284,9 @@ message SessionSummary {
   int64 turns = 9;
   int64 tool_calls = 10;
   bool live = 11;
-  // waiting_input is true when a live session is blocked on an unanswered
-  // ask_user question (single or batch) and needs the user to reply. Only ever
-  // set on live rows — a persisted-only session holds no in-memory question.
+  // An unanswered human question needs attention, including in persisted logs.
+  // Live rows reflect the current in-memory gate. A persisted session must be
+  // reopened before answering; ask_user gates restore, other gates revalidate.
   bool waiting_input = 12;
   // Per-logical-model token totals, ordered by tokens descending then model name.
   // Missing/zero-usage turns are omitted.
@@ -305,6 +305,13 @@ message SessionSummary {
   // User-owned bookmark, independent of agent status; cleared manually only.
   bool follow_up = 17;
   string follow_up_at = 18; // RFC3339, empty when not flagged
+  // Explicit launch source: user | work_loop | memory_groom | automation.
+  // Empty (or unknown) means an unproven legacy origin; clients must not hide it
+  // as automation based on titles, mode, or preset.
+  string origin = 19;
+  // A human-origin launch (even an empty opening), later actual user input, or
+  // nonautomatic question answer. Automatic opening prompts/answers do not count.
+  bool human_participated = 20;
 }
 // Sessions are ordered by the serialized millisecond-precision last_activity
 // descending, started_at descending, then id ascending. The keyset cursor

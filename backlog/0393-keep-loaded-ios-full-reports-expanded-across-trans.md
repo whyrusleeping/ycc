@@ -1,10 +1,10 @@
 ---
 id: "0393"
 title: Keep loaded iOS full reports expanded across transcript refreshes
-status: in_review
+status: done
 priority: 3
 created: "2026-09-17"
-updated: "2026-09-17"
+updated: "2026-10-10"
 depends_on: []
 spec_refs: []
 ---

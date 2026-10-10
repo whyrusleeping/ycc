@@ -11,6 +11,7 @@ import { useScope } from "../../app/scope";
 import { lastViewedProject } from "../../app/memory";
 import { historyTargets, relativeTime } from "../sessions/feed";
 import { useReadMarks } from "../sessions/unread";
+import { useLoopSessionIds } from "../workloop/hooks";
 import { paletteResults, PALETTE_PREFIXES, parseQuery, type PaletteItem, type PaletteKind } from "./items";
 import { closePalette, useOverlays } from "./state";
 
@@ -87,6 +88,7 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
   const projects = useProjects();
   const actions = useActions();
   const marks = useReadMarks();
+  const loopSessionIds = useLoopSessionIds();
   const mode = parseQuery(query).mode;
   // Tasks of every project (ListBacklog per workspace), loaded while the palette is open.
   const targets = useMemo(() => (projects.data ? historyTargets(projects.data) : []), [projects.data]);
@@ -116,12 +118,13 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
           actions,
           target: target || null,
           shortcutLabel: (a) => (a.shortcut ? shortcutLabel(a.shortcut) : undefined),
+          loopSessionIds,
         },
         query,
       ),
     // `now` only refreshes relative times; recomputing per render is not needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [feed, sessionId, marks.revision, tasks, projects.data, actions, target, query],
+    [feed, sessionId, marks.revision, tasks, projects.data, actions, target, query, loopSessionIds],
   );
   const sel = Math.min(selected, Math.max(0, results.length - 1));
   useEffect(() => {

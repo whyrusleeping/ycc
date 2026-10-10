@@ -1,10 +1,10 @@
 ---
 id: "0332"
 title: 'TUI: make persistent remote multi-project mode a first-class workspace hub'
-status: in_review
+status: done
 priority: 2
 created: "2026-08-14"
-updated: "2026-08-14"
+updated: "2026-10-10"
 depends_on: []
 spec_refs:
     - Daemon lifecycle and projects

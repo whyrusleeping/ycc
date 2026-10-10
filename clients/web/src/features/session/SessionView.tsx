@@ -1,6 +1,6 @@
 // The session surface: header with status and phase-gated controls, the
-// transcript, the answer panel for pending questions, and the composer (live
-// sessions only; persisted-only sessions are a finite read-only view).
+// transcript, the answer panel for pending questions, and the composer.
+// Sending to a persisted session reopens it transparently.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { needsAnthropicReconnect } from "../settings/anthropic";
 import { openAnthropicLogin } from "../settings/AnthropicLogin";
@@ -23,7 +23,7 @@ import { paths } from "../../app/paths";
 import { useAction, type AppAction } from "../../app/actions";
 import { requestIntent, useIntent } from "../../app/intents";
 import { readMarks } from "../sessions/unread";
-import { useDocumentVisible } from "../../ui/useVisible";
+import { useUserPresent } from "../../ui/useVisible";
 import { Icon } from "../../ui/icons";
 import { CopyButton } from "../../ui/CopyButton";
 import { MenuButton } from "../../ui/Menu";
@@ -40,20 +40,20 @@ export function statusText(snap: SessionSnapshot): { text: string; tone: string 
       return { text: snap.failure ?? "Failed", tone: "error" };
     case "finished":
       if (snap.mode === "persisted") {
-        return snap.reopening ? { text: "Starting…", tone: "warn" } : { text: "Idle", tone: "muted" };
+        return snap.reopening ? { text: "Starting…", tone: "warn" } : { text: "Ready for your message", tone: "muted" };
       }
   }
   if (snap.pauseRequested) return { text: "Pausing at next checkpoint…", tone: "warn" };
   // An ask_user gate keeps the durable phase "running"; the agent is idle
   // until someone answers, so say so instead of "Running".
-  if (snap.awaitsAnswer && snap.phase.kind === "running") return { text: "Waiting for your answer", tone: "warn" };
+  if (snap.awaitsAnswer && snap.phase.kind === "running") return { text: "Needs your answer", tone: "warn" };
   switch (snap.phase.kind) {
     case "running":
-      return { text: "Running", tone: "ok" };
+      return { text: "Working", tone: "ok" };
     case "paused":
       return { text: "Paused", tone: "warn" };
     case "idle":
-      return snap.awaitingJobs ? { text: "Waiting on background jobs", tone: "ok" } : { text: "Idle", tone: "muted" };
+      return snap.awaitingJobs ? { text: "Waiting on background jobs", tone: "ok" } : { text: "Ready for your message", tone: "muted" };
     case "error":
       return { text: `Error${snap.phase.message ? `: ${snap.phase.message}` : ""}`, tone: "error" };
     case "stopped":
@@ -68,31 +68,12 @@ export function stopIntentKey(sessionId: string) {
 
 function Controls({ controller, snap }: { controller: SessionController; snap: SessionSnapshot }) {
   const [confirmStop, setConfirmStop] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   useIntent(
     stopIntentKey(controller.sessionId),
     useCallback((what: string) => {
       if (what === "stop") setConfirmStop(true);
     }, []),
   );
-  const menu = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent) {
-        if (e.key === "Escape") setMenuOpen(false);
-        return;
-      }
-      if (menu.current && !menu.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", close);
-    };
-  }, [menuOpen]);
-
   if (snap.mode !== "live" || snap.conn === "finished" || snap.conn === "failed") return null;
   const busy = snap.control !== null;
   const pending = snap.control?.kind;
@@ -100,8 +81,8 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
   const buttons = [];
   if (phase === "running" && !snap.pauseRequested) {
     buttons.push(
-      <button key="pause" type="button" className="btn" disabled={busy} data-track="session.interrupt" onClick={() => void controller.interrupt()}>
-        {pending === "pause" ? "Interrupting…" : "Interrupt"}
+      <button key="pause" type="button" className="btn" disabled={busy} title="Pause at the next safe checkpoint; an active tool is allowed to finish" data-track="session.interrupt" onClick={() => void controller.interrupt()}>
+        {pending === "pause" ? "Requesting pause…" : "Pause"}
       </button>,
     );
   }
@@ -138,58 +119,31 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
     <div className="controls">
       {buttons}
       {stoppable && (
-        <div className="menu-wrap" ref={menu}>
-          <button
-            type="button"
-            className="btn ghost icon-btn"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            aria-label="More session actions"
-            title="More session actions"
-            data-track="session.more_menu"
-            onClick={() => setMenuOpen((o) => !o)}
-          >
-            <Icon name="more" />
-          </button>
-          {menuOpen && (
-            <div className="menu" role="menu">
-              {snap.rolloverAvailable && phase !== "paused" && (
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={busy}
-                  data-track="session.rollover"
-                  data-track-via="menu"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    void controller.rollover();
-                  }}
-                >
-                  Roll over coordinator context
-                </button>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                className="danger"
-                disabled={busy}
-                data-track="session.stop"
-                data-track-via="menu"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setConfirmStop(true);
-                }}
-              >
-                Stop session…
-              </button>
-            </div>
-          )}
-        </div>
+        <MenuButton
+          className="btn ghost icon-btn"
+          ariaLabel="More session actions"
+          label={<Icon name="more" />}
+          items={[
+            snap.rolloverAvailable && phase !== "paused" && {
+              id: "session.rollover",
+              label: "Roll over coordinator context",
+              disabled: busy,
+              onSelect: () => void controller.rollover(),
+            },
+            {
+              id: "session.stop",
+              label: "Stop session…",
+              danger: true,
+              disabled: busy,
+              onSelect: () => setConfirmStop(true),
+            },
+          ]}
+        />
       )}
       <ConfirmDialog
         open={confirmStop}
         title="Stop this session?"
-        body="Stopping hard-terminates the agent loop and removes the session from the daemon. Unlike Interrupt, it cannot be resumed here."
+        body="Stopping terminates the agent and its background jobs instead of waiting for a safe checkpoint. Unlike Pause, it cannot be resumed here."
         confirmLabel="Stop session"
         danger
         action="session.stop"
@@ -255,10 +209,11 @@ export function SessionView({
     ),
   );
   // What is on screen is read: keep this session's read mark at the newest
-  // event shown (not while the tab is hidden: nobody is looking).
+  // event shown (not while the tab is hidden or the window unfocused: nobody
+  // is looking, and marking it read would suppress its notification).
   // Streaming moves the stamp many times a second: write at most once a
   // second, and at once when the view goes away.
-  const visible = useDocumentVisible();
+  const visible = useUserPresent();
   const seen = useRef<{ ts: string; timer: ReturnType<typeof setTimeout> | null }>({ ts: "", timer: null });
   useEffect(() => {
     if (!visible || !snap.installed || !snap.lastEventTimestamp) return;
@@ -490,7 +445,7 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
   const g = "Session";
   useAction(
     useMemo(
-      () => (can.interrupt ? { id: "session.interrupt", title: "Interrupt this session", group: g, keywords: "pause steer", run: () => void controller.interrupt() } : null),
+      () => (can.interrupt ? { id: "session.interrupt", title: "Pause this session at the next safe checkpoint", group: g, keywords: "interrupt pause steer", run: () => void controller.interrupt() } : null),
       [can.interrupt, controller],
     ),
   );

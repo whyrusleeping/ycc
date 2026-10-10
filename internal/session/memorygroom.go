@@ -195,6 +195,7 @@ func (m *Manager) startMemoryGroomSession(primary string, status docs.MemoryStat
 		Workspace:  primary,
 		Mode:       "pm",
 		Unattended: true,
+		Origin:     OriginMemoryGroom,
 		Preset:     memoryGroomPreset,
 		Prompt:     orchestrator.MemoryAutoGroomPrompt(status.ActiveBytes, status.ActiveNotes),
 	}, false)

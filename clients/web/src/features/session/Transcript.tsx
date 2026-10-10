@@ -330,7 +330,7 @@ function ActivityHead({
         type="button"
         className="activity-toggle"
         aria-expanded={open}
-        title={open ? "Fold the earlier steps of this run" : `Show the ${hidden} earlier steps of this run`}
+        title={open ? "Fold earlier activity" : `Show ${hidden} earlier activity entries`}
         onClick={(e) => onToggle(clickVia(e))}
       >
         <span className="sum-title">{summary.steps} steps</span>

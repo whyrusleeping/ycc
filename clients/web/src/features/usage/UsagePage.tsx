@@ -146,7 +146,7 @@ export function UsagePage({ project }: { project: string }) {
           {budget.isPending ? (
             <p className="muted small">Loading…</p>
           ) : budget.isError ? (
-            <p className="error small">{errorMessage(budget.error)}</p>
+            <p className="error small" role="alert">{errorMessage(budget.error)}</p>
           ) : (
             <dl className="cap-list">
               {budgetRows(budget.data).map((r) => (
@@ -171,11 +171,11 @@ export function UsagePage({ project }: { project: string }) {
       />
 
       {invalidRange ? (
-        <p className="error">{invalidRange}</p>
+        <p className="error" role="alert">{invalidRange}</p>
       ) : report.isPending ? (
         <p className="muted">Loading usage…</p>
       ) : report.isError && !data ? (
-        <p className="error">{errorMessage(report.error, "Couldn’t load usage.")}</p>
+        <p className="error" role="alert">{errorMessage(report.error, "Couldn’t load usage.")}</p>
       ) : !data || data.rows.length === 0 ? (
         <div className="empty-state usage-empty">
           <p>No model usage recorded{query.task ? ` for task ${query.task}` : ""} in this range.</p>
@@ -193,7 +193,7 @@ export function UsagePage({ project }: { project: string }) {
             linkProject={linkProject}
             stale={report.isPlaceholderData}
           />
-          {report.isError && <p className="warn small">Couldn’t refresh: {errorMessage(report.error)}</p>}
+          {report.isError && <p className="warn small" role="alert">Couldn’t refresh: {errorMessage(report.error)}</p>}
           <p className="muted small usage-foot">
             {anyPartial(data.rows, total) && <>* partial pricing (some models unpriced). </>}
             {data.workspace ? (
@@ -395,9 +395,9 @@ function Timeline({ rows, since, until, loading }: { rows: UsageRow[]; since: st
           {loading && <span className="muted small"> · updating…</span>}
         </h2>
         {priced && (
-          <div className="segmented compact" role="radiogroup" aria-label="Timeline metric">
+          <div className="segmented compact" role="group" aria-label="Timeline metric">
             {(["cost", "tokens"] as const).map((v) => (
-              <button key={v} type="button" role="radio" aria-checked={m === v} className={m === v ? "selected" : ""}
+              <button key={v} type="button" aria-pressed={m === v} className={m === v ? "selected" : ""}
                 onClick={() => {
                   track.action("usage.metric", "click", { metric: v });
                   setMetric(v);

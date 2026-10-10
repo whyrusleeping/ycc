@@ -4,7 +4,7 @@
 // review tiers (ListReviewTiers / UpsertReviewTier / RemoveReviewTier /
 // SetReviewDefault), the model registry (ListModels / UpsertModel /
 // RemoveModel / TestModel / DiscoverModels), session modes (read-only), and the
-// spend-guard caps. Every change applies at once and persists to the daemon's
+// spend-guard caps. Model and tier selects require Apply; changes persist to the daemon's
 // ycc.toml; the daemon's error is shown verbatim. Mirrors iOS
 // GlobalSettingsView and ReviewTiersView.
 import { useQueryClient } from "@tanstack/react-query";
@@ -107,7 +107,7 @@ export function SettingsPage() {
         </nav>
       </header>
       <p className="muted small settings-intro">
-        Daemon-wide defaults for new sessions. Changes apply at once and are saved to the daemon’s ycc.toml. A running session keeps its own
+        Daemon-wide defaults for new sessions. Model and tier selections require Apply; changes are saved to the daemon’s ycc.toml. A running session keeps its own
         settings (change those from its Settings panel).
       </p>
       <AccountsSection />
@@ -117,7 +117,7 @@ export function SettingsPage() {
       {models.isPending ? (
         <p className="muted">Loading models…</p>
       ) : models.isError || !models.data ? (
-        <p className="error">{errorMessage(models.error, "Couldn’t load models.")}</p>
+        <p className="error" role="alert">{errorMessage(models.error, "Couldn’t load models.")}</p>
       ) : (
         <>
           <RolesSection data={models.data} />
@@ -190,12 +190,20 @@ function ModelOptions({ models, assigned }: { models: readonly ModelInfo[]; assi
 function RolesSection({ data }: { data: ModelsData }) {
   const qc = useQueryClient();
   const { busy, error, setError, run } = useApply("settings.roles");
+  const [roleModels, setRoleModels] = useState<Partial<Record<"coordinator" | "implementer", string>>>({});
   const enabled = data.models.filter((m) => !m.disabled);
   const refresh = () => qc.invalidateQueries({ queryKey: queryKeys.models("") });
   const setRole = (field: "coordinator" | "implementer", name: string) => {
     if (name === data[field]) return;
     track.action("settings.role", "click", { role: field });
-    void run(field, () => client.setRoleConfig({ sessionId: "", [field]: name }), refresh);
+    void run(field, () => client.setRoleConfig({ sessionId: "", [field]: name }), async () => {
+      await refresh();
+      setRoleModels((draft) => {
+        const next = { ...draft };
+        delete next[field];
+        return next;
+      });
+    });
   };
   const toggle = (name: string) => {
     const { next, error: why } = toggleReviewer(data.reviewers, name);
@@ -209,23 +217,29 @@ function RolesSection({ data }: { data: ModelsData }) {
   };
   return (
     <Section id="roles" title="Default roles">
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       {enabled.length === 0 ? (
         <p className="muted">Enable a model below before assigning roles.</p>
       ) : (
         <div className="settings-grid">
           <label className="settings-row">
             <span>Coordinator</span>
-            <select aria-label="Default coordinator model" value={data.coordinator} disabled={!!busy} onChange={(e) => setRole("coordinator", e.target.value)}>
+            <select aria-label="Default coordinator model" value={roleModels.coordinator ?? data.coordinator} disabled={!!busy} onChange={(e) => setRoleModels((draft) => ({ ...draft, coordinator: e.target.value }))}>
               <ModelOptions models={data.models} assigned={[data.coordinator]} />
             </select>
           </label>
+          <button type="button" className="btn small" disabled={!!busy || !roleModels.coordinator || roleModels.coordinator === data.coordinator} onClick={() => setRole("coordinator", roleModels.coordinator!)}>
+            Apply coordinator model
+          </button>
           <label className="settings-row">
             <span>Implementer</span>
-            <select aria-label="Default implementer model" value={data.implementer} disabled={!!busy} onChange={(e) => setRole("implementer", e.target.value)}>
+            <select aria-label="Default implementer model" value={roleModels.implementer ?? data.implementer} disabled={!!busy} onChange={(e) => setRoleModels((draft) => ({ ...draft, implementer: e.target.value }))}>
               <ModelOptions models={data.models} assigned={[data.implementer]} />
             </select>
           </label>
+          <button type="button" className="btn small" disabled={!!busy || !roleModels.implementer || roleModels.implementer === data.implementer} onClick={() => setRole("implementer", roleModels.implementer!)}>
+            Apply implementer model
+          </button>
           <fieldset className="settings-reviewers" disabled={!!busy}>
             <legend>Reviewers</legend>
             {roleModelChoices(sortedModels(data.models), data.reviewers).map((m) => (
@@ -255,7 +269,7 @@ function ThinkingSection({ data }: { data: ModelsData }) {
   // Optimistic: a picked level shows at once; a failure reverts it.
   const [pending, setPending] = useState<Partial<Record<string, ThinkingLevel>>>({});
   const choose = async (role: string, level: ThinkingLevel, current: ThinkingLevel) => {
-    if (level === current) return;
+    if (busy || level === current) return;
     track.action("settings.thinking", "click", { role, level });
     setPending((p) => ({ ...p, [role]: level }));
     await run(role, () => client.setThinking({ sessionId: "", role, level }), () => qc.invalidateQueries({ queryKey: queryKeys.models("") }));
@@ -267,22 +281,21 @@ function ThinkingSection({ data }: { data: ModelsData }) {
   };
   return (
     <Section id="thinking" title="Default reasoning">
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       {THINKING_ROWS.map((r) => {
         const current = parseThinking(data[r.field]);
         const shown = pending[r.role] ?? current;
         return (
           <div key={r.role} className="thinking-row">
             <span className="thinking-role">{r.title}</span>
-            <div className="segmented" role="radiogroup" aria-label={`${r.title} reasoning`}>
+            <div className="segmented" role="group" aria-label={`${r.title} reasoning`}>
               {THINKING_LEVELS.map((l) => (
                 <button
                   key={l.value}
                   type="button"
-                  role="radio"
-                  aria-checked={shown === l.value}
+                  aria-pressed={shown === l.value}
                   className={shown === l.value ? "selected" : ""}
-                  disabled={busy === r.role}
+                  aria-disabled={!!busy}
                   onClick={() => void choose(r.role, l.value, current)}
                 >
                   {l.title}
@@ -317,7 +330,7 @@ function WorkSection({ current }: { current: string }) {
   };
   return (
     <Section id="work" title="Work implementation">
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       <fieldset className="loop-options plain" disabled={!!busy}>
         <legend className="sr-only">Work implementation</legend>
         {WORK_IMPLEMENTATIONS.map((o) => (
@@ -348,6 +361,7 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
   const modelNames = useMemo(() => sortedModels(models.filter((m) => !m.disabled)).map((m) => m.name), [models]);
   const list = tiers.data?.tiers ?? [];
   const def = tiers.data?.defaultTier ?? "";
+  const [defaultTier, setDefaultTier] = useState<string | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: queryKeys.reviewTiers });
   const removingTier = list.find((t) => t.name === removing);
   return (
@@ -360,23 +374,20 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
         </button>
       }
     >
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       {tiers.isPending ? (
         <p className="muted">Loading…</p>
       ) : tiers.isError ? (
-        <p className="error">{errorMessage(tiers.error, "Couldn’t load review tiers.")}</p>
+        <p className="error" role="alert">{errorMessage(tiers.error, "Couldn’t load review tiers.")}</p>
       ) : (
         <>
           <label className="settings-row narrow">
             <span>Default tier</span>
             <select
               aria-label="Default review tier"
-              value={def}
+              value={defaultTier ?? def}
               disabled={!!busy}
-              onChange={(e) => {
-                track.action("settings.default_tier", "click");
-                void run("default", () => client.setReviewDefault({ name: e.target.value }), refresh);
-              }}
+              onChange={(e) => setDefaultTier(e.target.value)}
             >
               {list.map((t) => (
                 <option key={t.name} value={t.name}>
@@ -385,6 +396,20 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
               ))}
             </select>
           </label>
+          <button
+            type="button"
+            className="btn small"
+            disabled={!!busy || !defaultTier || defaultTier === def}
+            onClick={() => {
+              track.action("settings.default_tier", "click");
+              void run("default", () => client.setReviewDefault({ name: defaultTier! }), async () => {
+                await refresh();
+                setDefaultTier(null);
+              });
+            }}
+          >
+            Apply default tier
+          </button>
           <p className="muted small">Used when the coordinator doesn’t pick a tier for a change.</p>
           <ul className="tier-list">
             {list.map((t) => {
@@ -470,7 +495,7 @@ function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorT
         </button>
       }
     >
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       <table className="models-table">
         <thead>
           <tr>
@@ -568,7 +593,7 @@ function ModesSection() {
       {modes.isPending ? (
         <p className="muted">Loading…</p>
       ) : modes.isError ? (
-        <p className="error">{errorMessage(modes.error, "Couldn’t load modes.")}</p>
+        <p className="error" role="alert">{errorMessage(modes.error, "Couldn’t load modes.")}</p>
       ) : (
         <>
           <dl className="mode-list">
@@ -610,7 +635,7 @@ function BudgetSection() {
       {budget.isPending ? (
         <p className="muted">Loading…</p>
       ) : budget.isError ? (
-        <p className="error">{errorMessage(budget.error)}</p>
+        <p className="error" role="alert">{errorMessage(budget.error)}</p>
       ) : (
         <dl className="cap-list">
           {budgetRows(budget.data).map((r) => (

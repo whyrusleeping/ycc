@@ -2,11 +2,12 @@
 // the tier-wide reviewer prompt, and reviewer slots — each with its own model,
 // label, focus prompt, and thinking override. Mirrors iOS ReviewTierEditorView.
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
+import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { toast } from "../../ui/toast";
 import { track } from "../../app/analytics";
 import { SLOT_THINKING, STRATEGIES, moveSlot, newSlot, tierPayload, tierProblem, type SlotDraft, type TierDraft } from "./tiers";
@@ -23,10 +24,11 @@ export function TierEditorDialog({
   tierNames: readonly string[];
   onClose: () => void;
 }) {
+  const closeGuard = useRef<(() => void) | null>(null);
   const title = !draft ? "" : draft.existing ? `Review tier · ${draft.name}` : "New review tier";
   return (
-    <Modal open={draft !== null} onClose={onClose} title={title} className="tier-editor-dialog" view="tier_editor" flow="tier_editor">
-      {draft && <TierEditor key={draft.existing ? draft.name : "new"} initial={draft} modelNames={modelNames} tierNames={tierNames} onClose={onClose} />}
+    <Modal open={draft !== null} onClose={() => (closeGuard.current ?? onClose)()} title={title} className="tier-editor-dialog" view="tier_editor" flow="tier_editor">
+      {draft && <TierEditor key={draft.existing ? draft.name : "new"} initial={draft} modelNames={modelNames} tierNames={tierNames} onClose={onClose} closeGuard={closeGuard} />}
     </Modal>
   );
 }
@@ -36,15 +38,31 @@ function TierEditor({
   modelNames,
   tierNames,
   onClose,
+  closeGuard,
 }: {
   initial: TierDraft;
   modelNames: readonly string[];
   tierNames: readonly string[];
   onClose: () => void;
+  closeGuard: RefObject<(() => void) | null>;
 }) {
   const qc = useQueryClient();
   const [d, setD] = useState<TierDraft>(initial);
   const [saving, setSaving] = useState(false);
+  const savingNow = useRef(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const dirty = JSON.stringify(d) !== JSON.stringify(initial);
+  const requestClose = () => {
+    // React also bubbles Escape from the nested discard dialog to the modal.
+    if (savingNow.current || confirmDiscard) return;
+    if (dirty) setConfirmDiscard(true);
+    else onClose();
+  };
+  // The modal's Escape and header close take the same path as Cancel.
+  useLayoutEffect(() => {
+    closeGuard.current = requestClose;
+    return () => { closeGuard.current = null; };
+  });
   const [error, setError] = useState<string | null>(null);
   const problem = tierProblem(d, tierNames);
   const set = <K extends keyof TierDraft>(k: K, v: TierDraft[K]) => setD((prev) => ({ ...prev, [k]: v }));
@@ -52,7 +70,8 @@ function TierEditor({
     setD((prev) => ({ ...prev, slots: prev.slots.map((s) => (s.key === key ? { ...s, ...patch } : s)) }));
 
   const save = async () => {
-    if (problem || saving) return;
+    if (problem || savingNow.current) return;
+    savingNow.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -68,6 +87,7 @@ function TierEditor({
         setError(errorMessage(err, "The tier was not saved."));
       }
     } finally {
+      savingNow.current = false;
       setSaving(false);
     }
   };
@@ -214,16 +234,30 @@ function TierEditor({
           </fieldset>
         </>
       )}
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       <div className="editor-actions">
-        <span className="muted small">{problem ?? "Saved to the daemon’s ycc.toml [reviews]."}</span>
-        <button type="button" className="btn" onClick={onClose} disabled={saving}>
+        <span className="muted small" role={problem ? "alert" : undefined}>{problem ?? "Saved to the daemon’s ycc.toml [reviews]."}</span>
+        <button type="button" className="btn" onClick={requestClose} disabled={saving}>
           Cancel
         </button>
         <button type="submit" className="btn primary" disabled={!!problem || saving}>
           {saving ? "Saving…" : "Save tier"}
         </button>
       </div>
+      <ConfirmDialog
+        open={confirmDiscard}
+        title="Discard your changes?"
+        body="Your unsaved review-tier edits will be lost."
+        confirmLabel="Discard"
+        danger
+        action="tier_editor.discard"
+        onCancel={() => setConfirmDiscard(false)}
+        onConfirm={() => {
+          if (savingNow.current) return;
+          setConfirmDiscard(false);
+          onClose();
+        }}
+      />
     </form>
   );
 }

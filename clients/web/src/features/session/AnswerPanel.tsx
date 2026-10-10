@@ -22,6 +22,9 @@ export function AnswerPanel({
   const [choices, setChoices] = useState<number[]>(() => question.questions.map(() => -1));
   const [texts, setTexts] = useState<string[]>(() => question.questions.map(() => ""));
   const disabled = inFlight || submitted;
+  const complete = question.questions.every((q, i) =>
+    !!texts[i].trim() || (choices[i] >= 0 && choices[i] < q.options.length),
+  );
 
   const sendSingleText = (via: Via) => {
     const t = texts[0].trim();
@@ -31,6 +34,7 @@ export function AnswerPanel({
   };
 
   const sendBatch = () => {
+    if (disabled || !complete) return;
     track.action("question.answer", "click", { kind: "batch", count: Math.min(question.questions.length, 10) });
     void controller.answerBatch(
       question.questions.map((q, i) => {
@@ -51,16 +55,18 @@ export function AnswerPanel({
         <div key={qi} className="answer-q">
           <div className="text prompt">{q.prompt}</div>
           {q.options.length > 0 && (
-            <div className="answer-options">
+            <div className="answer-options" role="group" aria-label={`Options for: ${q.prompt}`}>
               {q.options.map((o, oi) => (
                 <button
                   key={oi}
                   type="button"
-                  className={`opt${choices[qi] === oi ? " selected" : ""}`}
+                  className={`opt${choices[qi] === oi && !texts[qi].trim() ? " selected" : ""}`}
                   disabled={disabled}
+                  aria-pressed={batch ? choices[qi] === oi && !texts[qi].trim() : undefined}
                   onClick={() => {
                     if (batch) {
                       setChoices((c) => c.map((v, i) => (i === qi ? oi : v)));
+                      setTexts((t) => t.map((v, i) => (i === qi ? "" : v)));
                     } else {
                       track.action("question.answer", "click", { kind: "option" });
                       void controller.answerOption(oi);
@@ -94,7 +100,7 @@ export function AnswerPanel({
       ))}
       <div className="answer-actions">
         {batch ? (
-          <button type="button" className="btn primary" disabled={disabled} onClick={sendBatch}>
+          <button type="button" className="btn primary" disabled={disabled || !complete} onClick={sendBatch}>
             {inFlight ? "Sending…" : "Send answers"}
           </button>
         ) : (

@@ -9,6 +9,8 @@ import { paths } from "../../app/paths";
 import { setNeedsAnswerCount } from "../../app/title";
 import { displayProject, displayTitle, needsAnswer, type FeedRow } from "../sessions/feed";
 import { readMarks } from "../sessions/unread";
+import { isInboxSession } from "../sessions/attention";
+import { useLoopSessionIds } from "../workloop/hooks";
 import { notificationsActive, showNotification, userAway } from "./notifier";
 import { claimNotification, detectEvents, notificationText, shouldNotify, type WatchState } from "./policy";
 
@@ -23,6 +25,7 @@ function storage() {
 export function useSessionWatch(activeSessionId: string | null) {
   const { loads } = useSessionFeed(null);
   const navigate = useNavigate();
+  const loopIds = useLoopSessionIds();
   const watch = useRef<WatchState | null>(null);
   const active = useRef(activeSessionId);
   active.current = activeSessionId;
@@ -40,7 +43,7 @@ export function useSessionWatch(activeSessionId: string | null) {
     }
     readMarks.noteSeen(rows.map((r) => r.session));
     setNeedsAnswerCount(rows.filter((r) => needsAnswer(r.session)).length);
-    const { state, events } = detectEvents(watch.current, rows);
+    const { state, events } = detectEvents(watch.current, rows, (s) => isInboxSession(s, loopIds.has(s.sessionId)));
     watch.current = state;
     for (const e of events) {
       const away = userAway();
@@ -61,5 +64,5 @@ export function useSessionWatch(activeSessionId: string | null) {
       const text = notificationText(e.kind, displayTitle(row.session), displayProject(row));
       showNotification({ key: e.key, ...text, onClick: () => navigate(paths.session(e.project, e.sessionId)) });
     }
-  }, [loads, navigate]);
+  }, [loads, navigate, loopIds]);
 }

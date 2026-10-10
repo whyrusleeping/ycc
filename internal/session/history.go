@@ -21,16 +21,19 @@ import (
 // returned by ListSessionHistory so the session browser and cost views can
 // enumerate every session for a project, not just the live ones.
 type SessionSummary struct {
-	ID           string
-	Mode         string
-	Status       event.Status
-	Workspace    string
-	Title        string
-	StartedAt    time.Time
-	LastActivity time.Time
-	FocusTasks   []string
-	ModelUsage   []ModelUsage
-	TotalTokens  int64
+	ID string
+	// Origin is empty for unproven legacy logs; never inferred from prompt or mode.
+	Origin            string
+	HumanParticipated bool
+	Mode              string
+	Status            event.Status
+	Workspace         string
+	Title             string
+	StartedAt         time.Time
+	LastActivity      time.Time
+	FocusTasks        []string
+	ModelUsage        []ModelUsage
+	TotalTokens       int64
 	// ContextTokens is the coarse prompt-size estimate (context_tokens_est)
 	// from the newest coordinator model_turn — how full the session's active
 	// context is, as opposed to cumulative spend. Subagent turns are ignored
@@ -40,9 +43,9 @@ type SessionSummary struct {
 	Turns         int
 	ToolCalls     int
 	Live          bool
-	// Waiting is true when a live session is blocked on an unanswered ask_user
-	// question. Only ever set on live rows — a persisted-only session holds no
-	// in-memory pending question.
+	// Waiting is true for an unanswered human question. Persisted-only rows
+	// retain unresolved gates across process loss; live rows use the current
+	// in-memory gate instead of potentially stale log state.
 	Waiting bool
 	// AwaitingJobs is true when a live idle session will still be resumed by
 	// delegated work (Session.AwaitingJobs). Only ever set on live rows: jobs do
@@ -89,25 +92,123 @@ func reduceSessionSummary(workspace, path string, evs []event.Event) SessionSumm
 	id := filepath.Base(filepath.Dir(path))
 	proj := event.Reduce(evs)
 	models, totalTokens := sessionModelUsage(evs)
+	var participation sessionParticipation
+	participation.consume(evs)
 	ws := proj.Workspace
 	if ws == "" {
 		ws = workspace
 	}
 	return SessionSummary{
-		ID:            id,
-		Mode:          proj.Mode,
-		Status:        proj.Status,
-		Workspace:     ws,
-		Title:         deriveTitle(evs),
-		StartedAt:     evs[0].TS,
-		LastActivity:  evs[len(evs)-1].TS,
-		FocusTasks:    focusTasks(evs),
-		ModelUsage:    models,
-		TotalTokens:   totalTokens,
-		ContextTokens: sessionContextTokens(evs),
-		Turns:         proj.Turns,
-		ToolCalls:     proj.ToolCalls,
+		ID:                id,
+		Origin:            participation.origin,
+		HumanParticipated: participation.human,
+		Mode:              proj.Mode,
+		Status:            proj.Status,
+		Workspace:         ws,
+		Title:             deriveTitle(evs),
+		StartedAt:         evs[0].TS,
+		LastActivity:      evs[len(evs)-1].TS,
+		FocusTasks:        focusTasks(evs),
+		ModelUsage:        models,
+		TotalTokens:       totalTokens,
+		ContextTokens:     sessionContextTokens(evs),
+		Turns:             proj.Turns,
+		ToolCalls:         proj.ToolCalls,
+		Waiting:           sessionWaitingInput(evs),
 	}
+}
+
+// sessionWaitingInput tracks human gates without loading question payloads.
+// Automatic asks are assumptions, never pending human input (even if the process
+// dies before their immediate auto answer is recorded). Later coordinator
+// activity abandons an unresolved gate, just as findResumableQuestion does for
+// ask_user. In particular a cancelled Confirm is declined by its tool result,
+// not left waiting forever. Lifecycle markers do not answer a question: a
+// trailing ask_user remains restorable across stop/error/reopen.
+func sessionWaitingInput(evs []event.Event) bool {
+	waiting := false
+	for _, ev := range evs {
+		switch ev.Type {
+		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded:
+			waiting = false
+		default:
+			// Subagents may keep working while the coordinator waits for a human.
+			// Empty actors are accepted for older logs.
+			if ev.Actor != "" && ev.Actor != "coordinator" {
+				continue
+			}
+			switch ev.Type {
+			case event.QuestionAsked:
+				auto, _ := ev.Data["auto"].(bool)
+				waiting = !auto
+			case event.QuestionAnswered, event.ToolCall, event.ToolResult, event.ModelTurn, event.ContextViewChanged:
+				waiting = false
+			}
+		}
+	}
+	return waiting
+}
+
+// sessionParticipation uses explicit launch/echo metadata, not prompt contents.
+// New unmarked user_input events are human messages, even when queued/image-only
+// or accepted before the launch echo. Legacy first inputs remain unproven.
+type sessionParticipation struct {
+	origin       string
+	started      bool
+	knownOrigin  bool
+	openingSeen  bool
+	unmarkedSeen bool
+	human        bool
+}
+
+func knownSessionOrigin(origin string) bool {
+	switch origin {
+	case OriginUser, OriginWorkLoop, OriginMemoryGroom, OriginAutomation:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *sessionParticipation) consume(evs []event.Event) {
+	for _, ev := range evs {
+		switch ev.Type {
+		case event.SessionStarted:
+			if !p.started {
+				p.origin, _ = ev.Data["origin"].(string)
+				p.started = true
+				p.knownOrigin = knownSessionOrigin(p.origin)
+				p.human = p.human || p.origin == OriginUser || p.knownOrigin && p.unmarkedSeen
+			}
+		case event.UserInput:
+			opening, _ := ev.Data["opening"].(bool)
+			if !opening {
+				p.human = p.human || p.knownOrigin || p.openingSeen
+				p.unmarkedSeen = true
+			}
+			p.openingSeen = true
+		case event.QuestionAnswered:
+			auto, _ := ev.Data["auto"].(bool)
+			p.human = p.human || !auto
+		}
+	}
+}
+
+// liveParticipation reads only new durable events. It also covers the brief
+// launch-before-session_started window without manufacturing a legacy origin.
+func (s *Session) liveParticipation() (string, bool) {
+	s.participationMu.Lock()
+	defer s.participationMu.Unlock()
+	if s.log != nil {
+		evs, cursor := s.log.SnapshotFrom(s.participationCursor)
+		s.participation.consume(evs)
+		s.participationCursor = cursor
+	}
+	origin := s.participation.origin
+	if !s.participation.started {
+		origin = s.origin
+	}
+	return origin, s.participation.human || origin == OriginUser
 }
 
 // readEventsTolerant reads a session log line by line, skipping (with a logged
@@ -324,13 +425,13 @@ func modelTurnTokens(v any) int64 {
 }
 
 // truncateTitle collapses whitespace/newlines to a single line and truncates to
-// ~80 runes with an ellipsis, returning "" for empty/whitespace-only input.
+// ~160 runes with an ellipsis, returning "" for empty/whitespace-only input.
 func truncateTitle(s string) string {
 	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 	if s == "" {
 		return ""
 	}
-	const max = 80
+	const max = 160
 	r := []rune(s)
 	if len(r) <= max {
 		return s
@@ -471,11 +572,14 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		status   event.Status
 		waiting  bool
 		awaiting bool
+		origin   string
+		human    bool
 	}
 	live := make([]liveInfo, 0, len(liveSessions))
 	for _, s := range liveSessions {
 		status, awaiting := s.StatusWithJobContinuation()
-		live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: status, waiting: s.PendingQuestion(), awaiting: awaiting})
+		origin, human := s.liveParticipation()
+		live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: status, waiting: s.PendingQuestion(), awaiting: awaiting, origin: origin, human: human})
 	}
 
 	now := time.Now()
@@ -486,20 +590,24 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 			summaries[idx].Live = true
 			summaries[idx].Waiting = li.waiting
 			summaries[idx].AwaitingJobs = li.awaiting
+			summaries[idx].Origin = li.origin
+			summaries[idx].HumanParticipated = li.human
 			continue
 		}
 		// Live session with no on-disk snapshot yet (log just opened): include it
 		// with best-effort timestamps so it is still enumerable.
 		summaries = append(summaries, SessionSummary{
-			ID:           li.id,
-			Mode:         li.mode,
-			Status:       li.status,
-			Workspace:    absWS,
-			StartedAt:    now,
-			LastActivity: now,
-			Live:         true,
-			Waiting:      li.waiting,
-			AwaitingJobs: li.awaiting,
+			ID:                li.id,
+			Origin:            li.origin,
+			HumanParticipated: li.human,
+			Mode:              li.mode,
+			Status:            li.status,
+			Workspace:         absWS,
+			StartedAt:         now,
+			LastActivity:      now,
+			Live:              true,
+			Waiting:           li.waiting,
+			AwaitingJobs:      li.awaiting,
 		})
 	}
 

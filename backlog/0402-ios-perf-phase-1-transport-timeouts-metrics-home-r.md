@@ -1,10 +1,10 @@
 ---
 id: "0402"
 title: 'iOS perf phase 1: transport timeouts/metrics, home refresh fan-out, cached derived state'
-status: in_review
+status: done
 priority: 1
 created: "2026-09-28"
-updated: "2026-09-28"
+updated: "2026-10-10"
 depends_on: []
 spec_refs: []
 ---

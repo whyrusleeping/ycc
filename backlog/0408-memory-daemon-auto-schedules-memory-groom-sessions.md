@@ -1,10 +1,10 @@
 ---
 id: "0408"
 title: 'Memory: daemon auto-schedules memory-groom sessions under pressure'
-status: in_review
+status: done
 priority: 2
 created: "2026-09-30"
-updated: "2026-09-30"
+updated: "2026-10-10"
 depends_on: []
 spec_refs:
     - docs/design/project-memory.md#Write and grooming policy

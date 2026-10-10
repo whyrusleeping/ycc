@@ -133,7 +133,7 @@ export function buildFeed(loads: HistoryLoad[], scope: string | null): Feed {
 }
 
 export function needsAnswer(s: SessionSummary): boolean {
-  return s.live && s.waitingInput;
+  return s.waitingInput;
 }
 
 /** Needs-answer rows pinned in their own section, the rest most-recent first. */
@@ -220,22 +220,28 @@ export function displayTitle(s: SessionSummary): string {
   return short ? `${mode} · ${short}` : mode;
 }
 
-/** Attention-worthy lifecycle label; routine idle shows nothing. */
+/** User-facing state, independent of whether the daemon still holds the session. */
 export function lifecycleLabel(s: SessionSummary): string | null {
-  if (s.live && s.waitingInput) return "waiting";
-  if (s.live && s.awaitingJobs) return "background";
+  if (s.waitingInput) return "Needs your answer";
+  if (s.live && s.awaitingJobs) return "Waiting on background jobs";
   switch (s.status.toLowerCase()) {
     case "running":
-      return "running";
+      return "Working";
     case "paused":
-      return "paused";
+      return "Paused";
     case "error":
-      return "error";
+      return "Error";
     case "stopped":
-      return "stopped";
+      return "Stopped";
     default:
-      return null;
+      return s.live ? "Ready for your message" : null;
   }
+}
+
+export function lifecycleTone(s: SessionSummary): string {
+  if (s.waitingInput) return "waiting";
+  if (s.live && s.awaitingJobs) return "background";
+  return ["running", "paused", "error", "stopped"].includes(s.status.toLowerCase()) ? s.status.toLowerCase() : "idle";
 }
 
 export function compactTokenCount(tokens: number): string | null {

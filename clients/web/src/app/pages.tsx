@@ -30,7 +30,7 @@ export function HomePage() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Recent sessions</h1>
+        <h1>Sessions</h1>
         <Link to={paths.newSession(null)} className="btn primary">
           + New session
         </Link>

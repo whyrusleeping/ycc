@@ -17,7 +17,8 @@ export type TranscriptBlock =
   | { type: "activity"; start: number; end: number; key: string };
 
 function isActivity(row: TranscriptRow): boolean {
-  return row.kind.type === "tool" || row.kind.type === "thinking";
+  return (row.kind.type === "tool" && row.kind.status !== "error") || row.kind.type === "thinking" ||
+    (row.kind.type === "system" && row.kind.activity === true);
 }
 
 function sameNotice(a: TranscriptRow, b: TranscriptRow): boolean {
@@ -103,7 +104,7 @@ export function activitySummary(rows: readonly TranscriptRow[], start: number, e
   const first = Date.parse(rows[start]?.ts ?? "");
   const last = Date.parse(rows[end - 1]?.ts ?? "");
   const durationMs = Number.isFinite(first) && Number.isFinite(last) && last >= first ? last - first : null;
-  return { steps: end - start, tools, reasoning, failed, running, durationMs };
+  return { steps: tools.reduce((n, tool) => n + tool.count, reasoning), tools, reasoning, failed, running, durationMs };
 }
 
 /** "45s", "4m 12s", "1h 03m" (null under a second). */

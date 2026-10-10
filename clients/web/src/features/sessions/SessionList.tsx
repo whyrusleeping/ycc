@@ -7,10 +7,13 @@ import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
 import { useLoopSessionIds } from "../workloop/hooks";
 import { useReadMarks } from "./unread";
+import { filterSessions, isInboxSession, SESSION_FILTERS, type SessionFilter } from "./attention";
+import { setSidebarFilter, useSidebarFilter } from "./listFilter";
 import {
   displayProject,
   displayTitle,
   lifecycleLabel,
+  lifecycleTone,
   metadataItems,
   needsAnswer,
   onlyFollowUp,
@@ -97,6 +100,7 @@ export function SessionRowView({
         <Link
           to={paths.session(row.project, s.sessionId)}
           className="session-row-link title-text"
+          title={displayTitle(s)}
           data-track="sessions.open"
           aria-current={active ? "page" : undefined}
         >
@@ -104,8 +108,7 @@ export function SessionRowView({
         </Link>
       </div>
       <div className="session-row-meta">
-        {lifecycle && <span className={`badge badge-${lifecycle}`}>{lifecycle}</span>}
-        {s.live && <span className="badge badge-live">live</span>}
+        {lifecycle && <span className={`badge badge-${lifecycleTone(s)}`}>{lifecycle}</span>}
         {loopOwned && (
           <span className="tag loop-tag" title="Started by the work loop">
             loop
@@ -124,11 +127,6 @@ export function SessionRowView({
           ),
         )}
         {variant === "page" && metadataItems(s).map((m) => <span key={m}>{m}</span>)}
-        {variant === "sidebar" && (
-          <span>
-            {Number(s.turns)} {Number(s.turns) === 1 ? "turn" : "turns"}
-          </span>
-        )}
         {when && <span className="when">{when}</span>}
       </div>
     </div>
@@ -147,34 +145,52 @@ export function SessionList({
   const { feed, isLoading, error, loadOlder, loadingOlder } = useSessionFeed(scope);
   const now = useNow();
   const followUp = useSetFollowUp();
-  const [followUpOnly, setFollowUpOnly] = useState(false);
+  const [pageFilter, setPageFilter] = useState<SessionFilter>("inbox");
+  const sidebarFilter = useSidebarFilter();
+  const filter = variant === "sidebar" ? sidebarFilter : pageFilter;
+  const setFilter = variant === "sidebar" ? setSidebarFilter : setPageFilter;
+  const [query, setQuery] = useState("");
+  const followUpOnly = filter === "followup";
   const loopIds = useLoopSessionIds();
   const marks = useReadMarks();
   // The open session is being read right now.
-  const isUnread = (row: FeedRow) => row.session.sessionId !== activeSessionId && marks.isUnread(row.session);
+  const isUnread = (row: FeedRow) => row.session.sessionId !== activeSessionId &&
+    isInboxSession(row.session, loopIds.has(row.session.sessionId)) && marks.isUnread(row.session);
   if (isLoading) return <p className="muted pad">Loading sessions…</p>;
   if (error) return <p className="error pad">{errorMessage(error, "Couldn’t load sessions.")}</p>;
   if (!feed) return null;
   if (feed.error) return <p className="error pad">{feed.error}</p>;
   const flagged = onlyFollowUp(feed.rows);
-  const visibleRows = followUpOnly ? flagged : feed.rows;
+  const visibleRows = filterSessions(feed.rows, filter, query, isUnread, loopIds, activeSessionId);
   const groups = sections(visibleRows);
   const unreadRows = visibleRows.filter(isUnread);
   return (
     <div className={`session-list variant-${variant}`}>
-      {(variant === "page" || flagged.length > 0 || followUpOnly) && (
-        <div className="session-list-toolbar">
+      <div className="session-list-toolbar">
+        <select
+          aria-label="Filter sessions"
+          value={filter}
+          data-track="sessions.filter"
+          onChange={(e) => setFilter(e.target.value as SessionFilter)}
+        >
+          {SESSION_FILTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+        </select>
+        {variant === "page" && (
+          <input type="search" className="field" aria-label="Search loaded sessions" placeholder="Search sessions…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        )}
+        {(variant === "page" || flagged.length > 0 || followUpOnly) && (
           <button
             type="button"
             className="btn ghost small follow-up-filter"
             aria-pressed={followUpOnly}
             data-track="sessions.follow_up_filter"
-            onClick={() => setFollowUpOnly((value) => !value)}
+            onClick={() => setFilter(followUpOnly ? "inbox" : "followup")}
           >
             Follow-up ({flagged.length})
           </button>
-        </div>
-      )}
+        )}
+      </div>
+      {variant === "page" && <p className="muted small session-filter-hint">Automatic work stays in All history. Questions needing you always appear. Search covers loaded sessions{feed.hasMore ? "; load older sessions to search further" : ""}.</p>}
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
       {variant === "page" && unreadRows.length > 0 && (
         <div className="unread-bar">
@@ -194,8 +210,8 @@ export function SessionList({
       )}
       {groups.length === 0 && (
         <div className="pad empty-list">
-          <p className="muted">{followUpOnly ? "No sessions flagged for follow-up." : "No sessions yet."}</p>
-          {!followUpOnly && (
+          <p className="muted">{followUpOnly ? "No sessions flagged for follow-up." : feed.rows.length === 0 ? "No sessions yet." : "No sessions match this view."}</p>
+          {feed.rows.length === 0 && !followUpOnly && (
             <Link to={paths.newSession(scope)} className="btn primary small" data-track="sessions.start_first">
               Start a session
             </Link>

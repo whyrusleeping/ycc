@@ -7,7 +7,7 @@ import { SessionSummarySchema, type SessionSummary } from "../src/gen/ycc/v1/ycc
 import { claimNotification, detectEvents, notificationText, shouldNotify, titleWithCount, NOTIFIED_KEY, type NotifyContext } from "../src/features/notify/policy";
 import type { KeyValueStorage } from "../src/features/sessions/readStore";
 import { adjacentSession, nextNeedsAnswer } from "../src/features/sessions/navigation";
-import { activitySuffix, projectActivity } from "../src/features/sessions/activity";
+import { activityDescription, projectActivity } from "../src/features/sessions/activity";
 import { currentToasts, dismissToast, toast } from "../src/ui/toast";
 
 const ts = (m: number) => `2026-01-01T00:${String(m).padStart(2, "0")}:00.000Z`;
@@ -145,11 +145,24 @@ describe("session navigation", () => {
   it("counts waiting and unread sessions per project", () => {
     const all = [...list.map((r) => ({ ...r, project: r.session.sessionId === "d" ? "beta" : "alpha" }))];
     const { total, byProject } = projectActivity(all, (r) => r.session.sessionId === "a" || r.session.sessionId === "b");
-    expect(total).toEqual({ needsAnswer: 2, unread: 1 });
-    expect(byProject.get("alpha")).toEqual({ needsAnswer: 1, unread: 1 });
-    expect(byProject.get("beta")).toEqual({ needsAnswer: 1, unread: 0 });
-    expect(activitySuffix(byProject.get("alpha"))).toBe(" · 1 waiting · 1 unread");
-    expect(activitySuffix(undefined)).toBe("");
+    expect(total).toEqual({ needsAnswer: 2, unread: 1, active: 0 });
+    expect(byProject.get("alpha")).toEqual({ needsAnswer: 1, unread: 1, active: 0 });
+    expect(byProject.get("beta")).toEqual({ needsAnswer: 1, unread: 0, active: 0 });
+    expect(activityDescription(byProject.get("alpha"))).toBe("1 waiting for an answer, 1 unread");
+    expect(activityDescription(undefined)).toBe("");
+  });
+  it("counts live work in flight as active, as iOS does", () => {
+    const live = rows(
+      s("run", 6, { live: true, status: "running" }),
+      s("pause", 5, { live: true, status: "paused" }),
+      s("bg", 4, { live: true, status: "idle", awaitingJobs: true }),
+      s("idle", 3, { live: true, status: "idle" }),
+      s("log", 2, { status: "running" }), // a persisted log's last status is history
+      s("ask", 1, waiting), // waiting counts once, as waiting
+    );
+    const { total } = projectActivity(live, (r) => r.session.sessionId === "run");
+    expect(total).toEqual({ needsAnswer: 1, unread: 1, active: 3 });
+    expect(activityDescription(total)).toBe("1 waiting for an answer, 1 unread, 3 active");
   });
 });
 

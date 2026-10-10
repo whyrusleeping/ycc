@@ -2674,9 +2674,9 @@ type SessionSummary struct {
 	Turns        int64                  `protobuf:"varint,9,opt,name=turns,proto3" json:"turns,omitempty"`
 	ToolCalls    int64                  `protobuf:"varint,10,opt,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
 	Live         bool                   `protobuf:"varint,11,opt,name=live,proto3" json:"live,omitempty"`
-	// waiting_input is true when a live session is blocked on an unanswered
-	// ask_user question (single or batch) and needs the user to reply. Only ever
-	// set on live rows — a persisted-only session holds no in-memory question.
+	// An unanswered human question needs attention, including in persisted logs.
+	// Live rows reflect the current in-memory gate. A persisted session must be
+	// reopened before answering; ask_user gates restore, other gates revalidate.
 	WaitingInput bool `protobuf:"varint,12,opt,name=waiting_input,json=waitingInput,proto3" json:"waiting_input,omitempty"`
 	// Per-logical-model token totals, ordered by tokens descending then model name.
 	// Missing/zero-usage turns are omitted.
@@ -2693,10 +2693,17 @@ type SessionSummary struct {
 	// delegated work will still resume it. Only ever set on live rows.
 	AwaitingJobs bool `protobuf:"varint,16,opt,name=awaiting_jobs,json=awaitingJobs,proto3" json:"awaiting_jobs,omitempty"`
 	// User-owned bookmark, independent of agent status; cleared manually only.
-	FollowUp      bool   `protobuf:"varint,17,opt,name=follow_up,json=followUp,proto3" json:"follow_up,omitempty"`
-	FollowUpAt    string `protobuf:"bytes,18,opt,name=follow_up_at,json=followUpAt,proto3" json:"follow_up_at,omitempty"` // RFC3339, empty when not flagged
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	FollowUp   bool   `protobuf:"varint,17,opt,name=follow_up,json=followUp,proto3" json:"follow_up,omitempty"`
+	FollowUpAt string `protobuf:"bytes,18,opt,name=follow_up_at,json=followUpAt,proto3" json:"follow_up_at,omitempty"` // RFC3339, empty when not flagged
+	// Explicit launch source: user | work_loop | memory_groom | automation.
+	// Empty (or unknown) means an unproven legacy origin; clients must not hide it
+	// as automation based on titles, mode, or preset.
+	Origin string `protobuf:"bytes,19,opt,name=origin,proto3" json:"origin,omitempty"`
+	// A human-origin launch (even an empty opening), later actual user input, or
+	// nonautomatic question answer. Automatic opening prompts/answers do not count.
+	HumanParticipated bool `protobuf:"varint,20,opt,name=human_participated,json=humanParticipated,proto3" json:"human_participated,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SessionSummary) Reset() {
@@ -2853,6 +2860,20 @@ func (x *SessionSummary) GetFollowUpAt() string {
 		return x.FollowUpAt
 	}
 	return ""
+}
+
+func (x *SessionSummary) GetOrigin() string {
+	if x != nil {
+		return x.Origin
+	}
+	return ""
+}
+
+func (x *SessionSummary) GetHumanParticipated() bool {
+	if x != nil {
+		return x.HumanParticipated
+	}
+	return false
 }
 
 // Sessions are ordered by the serialized millisecond-precision last_activity
@@ -11064,7 +11085,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x19ListSessionHistoryRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"\xcc\x04\n" +
+	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"\x93\x05\n" +
 	"\x0eSessionSummary\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
@@ -11090,7 +11111,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\rawaiting_jobs\x18\x10 \x01(\bR\fawaitingJobs\x12\x1b\n" +
 	"\tfollow_up\x18\x11 \x01(\bR\bfollowUp\x12 \n" +
 	"\ffollow_up_at\x18\x12 \x01(\tR\n" +
-	"followUpAt\"\xa1\x01\n" +
+	"followUpAt\x12\x16\n" +
+	"\x06origin\x18\x13 \x01(\tR\x06origin\x12-\n" +
+	"\x12human_participated\x18\x14 \x01(\bR\x11humanParticipated\"\xa1\x01\n" +
 	"\x1aListSessionHistoryResponse\x122\n" +
 	"\bsessions\x18\x01 \x03(\v2\x16.ycc.v1.SessionSummaryR\bsessions\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +

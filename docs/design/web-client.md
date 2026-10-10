@@ -19,13 +19,14 @@ The client targets laptop and desktop viewports (about 1024px wide and up). It d
 phone layout; narrow windows remain usable but are not a design target. The shell has three
 regions:
 
-- a sidebar with the project switcher, the session list (status, live, needs-answer and unread
-  markers), and navigation to Backlog, Work loop, Workstreams, Usage, Files, Memory/Plans, and
-  Settings;
+- a sidebar with the project switcher, the personal session inbox (meaningful state, needs-answer,
+  follow-up and unread markers), and navigation to Backlog, Work loop, Workstreams, Usage, Files,
+  Memory/Plans, and Settings;
 - a main pane showing the selected surface, typically a session transcript with its composer;
 - a closable, resizable inspector pane for contextual detail: task detail, commit or working-tree
   diffs, file contents, and expanded tool or reasoning rows, so detail opens beside the transcript
-  instead of replacing it.
+  instead of replacing it. Its width adapts to preserve a readable conversation at laptop widths;
+  automatic narrowing does not overwrite the user's saved desktop width.
 
 Routes are real URL paths (for example `/p/<project>/s/<session>`, `/p/<project>/backlog/<id>`) so
 browser history, reload, multiple tabs, and bookmarks work. Desktop affordances are first-class:
@@ -70,6 +71,23 @@ changed on the daemon since editing began refuses the save (offering overwrite o
 non-overlapping changes merge. Open drafts are kept per task for the life of the tab. Unread state is a client-side watermark per session kept in
 browser storage, matching the iOS read store.
 
+The default session inbox emphasizes user-launched conversations, including automatic sessions a
+human subsequently engaged with, and manually flagged follow-ups. Routine automatic memory grooming
+and work-loop sessions remain in All history, without personal unread markers, inbox counts, or
+per-session completion/error notifications. Questions waiting for a human answer always surface,
+including through list filters and search. The sidebar and keyboard next/previous navigation share
+the same filter. The main list provides visible search and Inbox, Unread, Needs answer, Follow-up,
+Active, and All history filters; search is explicitly limited to loaded history and paging remains
+available. Default palette suggestions use the inbox; explicit palette search can reach all loaded
+history. Work-loop outcome notifications remain separate from routine per-session notifications.
+
+Classification uses durable origin and human participation from session summaries, never title,
+mode, or preset heuristics. Unknown legacy origins remain visible; current-loop membership is
+positive evidence of automatic work. Hiding an automatic session changes presentation, not its
+history or read watermark. A manually launched grooming preset is still a personal conversation.
+User-facing state describes work or attention, not whether a session happens to be in daemon memory;
+the technical `live` flag is not a UI badge.
+
 The daemon has no global change stream, so browser notifications are derived from the session-list
 poll (`ListSessionHistory` per project) and the open session's stream. While notifications are on,
 the list is polled every 15 seconds, also in a hidden tab (browsers may throttle long-hidden tabs to
@@ -83,10 +101,17 @@ non-loopback address) the client explains why notifications are unavailable.
 Starting, re-opening, and steering sessions use the same RPCs as the other clients: `StartSession`
 (project, mode, opening-prompt preset, optional per-session coordinator model, prompt, pictures),
 `ResumeSession` (the read-only history paints first, then the view goes live from its cursor), and
-`SendInput`. Starting from the daemon-wide Recent feed asks which project, offering the last viewed
+`SendInput`. Starting from the daemon-wide inbox asks which project, offering the last viewed
 one first. Per-session reasoning and role models are changed with `SetThinking` and
 `SetRoleConfig` scoped to the session; per-session usage is `GetUsage` grouped by session and model,
 filtered to that session.
+
+An unsent new-session draft keeps its prompt, project, mode, model, preset, and picture previews in
+memory for the life of the tab, across route changes but not reload or tab closure. Starting
+successfully clears it; a failed start retains it. Applying a preset asks before replacing an edited
+nonempty prompt. Model and review-tier editors confirm before discarding unsaved changes on Cancel,
+close, or Escape and cannot close during a save. Model-role and default-tier selectors use explicit
+Apply so keyboard browsing does not write intermediate choices; inline failures are announced.
 
 Pictures are attached by file picker, clipboard paste, or drag-and-drop. The client mirrors the
 daemon's attachment policy so obvious misses fail early: non-picture files and more than four
@@ -114,7 +139,9 @@ system detail folds, question plumbing coalesces into one exchange, and new even
 reader who has scrolled away from the live edge. An idle report that merely carries the agent's
 plain final reply (the daemon folds the repeated model turn into it, as in every chat turn) renders
 as that agent turn; a report produced by a control tool (`finish`, `request_integration`,
-`report_blocked`) keeps its distinct result card.
+`report_blocked`) keeps its distinct result card. Routine job/subagent lifecycle notices join
+foldable tool/reasoning activity; failed tools/jobs and pending questions remain prominent and
+search can still reveal any folded row.
 
 ### Usage analytics
 

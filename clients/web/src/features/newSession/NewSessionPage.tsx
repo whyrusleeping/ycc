@@ -4,7 +4,7 @@
 // coordinator model, and a multiline prompt with pictures → StartSession.
 // On success it navigates straight into the live session.
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
@@ -13,7 +13,11 @@ import { paths } from "../../app/paths";
 import { track, useFlow, type Via } from "../../app/analytics";
 import { lastMode, lastViewedProject } from "../../app/memory";
 import { openAddProject } from "../projects/ProjectDialogs";
-import { AttachButton, PictureStrip, filesFrom, revokePictures, useDropZone, usePictureDraft } from "../attachments/pictures";
+import { AttachButton, PictureStrip, filesFrom, loadPictures, revokePictures, useDropZone } from "../attachments/pictures";
+import { MAX_PICTURES } from "../attachments/attachments";
+import type { Preset } from "../../gen/ycc/v1/ycc_pb";
+import { ConfirmDialog } from "../../ui/ConfirmDialog";
+import { NewSessionDraftStore } from "./drafts";
 import {
   applyPreset,
   buildStartRequest,
@@ -23,6 +27,7 @@ import {
   modelChoices,
   projectChoices,
   promptIsOptional,
+  presetNeedsConfirmation,
   suggestedPresets,
   withMode,
   type NewSessionDraft,
@@ -30,6 +35,7 @@ import {
 
 /** The project picker's "Add project…" entry (never a project name: names cannot hold NUL). */
 const ADD_PROJECT = "\u0000add";
+const draftStore = new NewSessionDraftStore(loadPictures, revokePictures);
 
 export function NewSessionPage({ routeProject }: { routeProject: string | null }) {
   const projects = useProjects();
@@ -37,18 +43,19 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   const models = useModels("");
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const pictures = usePictureDraft();
+  const saved = useSyncExternalStore(draftStore.subscribe, draftStore.getSnapshot);
+  const { draft, projectSeeded, starting } = saved;
+  const setDraft = draftStore.update;
+  const pictures = {
+    pictures: draft.pictures,
+    loading: saved.pendingPictures > 0,
+    error: saved.pictureError,
+    full: draft.pictures.length >= MAX_PICTURES,
+    add: draftStore.add,
+    remove: draftStore.remove,
+  };
   const area = useRef<HTMLTextAreaElement>(null);
-
-  const [draft, setDraft] = useState<Omit<NewSessionDraft, "pictures">>({
-    project: "",
-    mode: "",
-    model: "",
-    prompt: "",
-    preset: "",
-  });
-  const [projectSeeded, setProjectSeeded] = useState(false);
-  const [starting, setStarting] = useState(false);
+  const [pendingPreset, setPendingPreset] = useState<Preset | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Leaving without starting records new_session.cancel.
   useFlow("new_session");
@@ -56,8 +63,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   // Seed the project once the list arrives (route project, or the sole one).
   useEffect(() => {
     if (projectSeeded || !projects.data) return;
-    setProjectSeeded(true);
-    setDraft((d) => ({ ...d, project: initialProject(routeProject, projects.data) }));
+    draftStore.seedProject(initialProject(routeProject, projects.data));
   }, [projects.data, projectSeeded, routeProject]);
 
   // Keep a valid mode selected (the remembered one when it still exists).
@@ -78,11 +84,6 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   // A start error is about the draft that was sent; editing pictures moves on.
   useEffect(() => setError(null), [pictures.pictures]);
 
-  // Revoke staged previews if the page is left without starting.
-  const staged = useRef(pictures.pictures);
-  staged.current = pictures.pictures;
-  useEffect(() => () => revokePictures(staged.current), []);
-
   const projectList = projects.data ?? [];
   const asking = projectSeeded && projectList.length > 1 && !draft.project;
   const choices = useMemo(() => projectChoices(projectList, lastViewedProject.get()), [projectList]);
@@ -101,8 +102,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   }, [asking]);
 
   const start = async (via: Via) => {
-    if (!gate.ok) return;
-    setStarting(true);
+    if (!gate.ok || !draftStore.beginStart()) return;
     setError(null);
     try {
       const resp = await client.startSession(buildStartRequest(full));
@@ -116,18 +116,17 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
       });
       lastMode.set(draft.mode);
       if (draft.project) lastViewedProject.set(draft.project);
-      revokePictures(pictures.pictures);
-      pictures.release();
+      draftStore.clear();
       void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
       navigate(paths.session(draft.project, resp.sessionId));
     } catch (err) {
+      draftStore.startFailed();
       if (isUnauthorized(err)) {
         authStore.expire();
         return;
       }
       track.error("session.start", err);
       setError(errorMessage(err, "The session could not be started."));
-      setStarting(false);
     }
   };
 
@@ -198,13 +197,12 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               <h2 id="mode-heading" className="section-label">
                 Mode
               </h2>
-              <div className="mode-grid" role="radiogroup" aria-labelledby="mode-heading">
+              <div className="mode-grid" role="group" aria-labelledby="mode-heading">
                 {modeList.map((m) => (
                   <button
                     key={m.name}
                     type="button"
-                    role="radio"
-                    aria-checked={draft.mode === m.name}
+                    aria-pressed={draft.mode === m.name}
                     className={`choice-card mode-card${draft.mode === m.name ? " selected" : ""}`}
                     disabled={starting}
                     onClick={() => {
@@ -232,8 +230,12 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                       disabled={starting}
                       onClick={() => {
                         track.action("new_session.preset", "click", { mode: p.mode });
-                        setDraft((d) => applyPreset(d, p));
-                        area.current?.focus();
+                        if (presetNeedsConfirmation(draft, p, modes.data?.presets ?? [])) {
+                          setPendingPreset(p);
+                        } else {
+                          setDraft((d) => applyPreset(d, p));
+                          area.current?.focus();
+                        }
                       }}
                     >
                       <span className="choice-title">{p.title || p.name}</span>
@@ -388,6 +390,19 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
           </Link>
         </div>
       </form>
+      <ConfirmDialog
+        open={pendingPreset !== null}
+        title="Replace your opening prompt?"
+        body="Applying this suggestion will replace your edited prompt and select its mode. Your pictures will be kept."
+        confirmLabel="Replace prompt"
+        action="new_session.replace_prompt"
+        onCancel={() => setPendingPreset(null)}
+        onConfirm={() => {
+          if (pendingPreset && !starting) setDraft((d) => applyPreset(d, pendingPreset));
+          setPendingPreset(null);
+          area.current?.focus();
+        }}
+      />
     </div>
   );
 }

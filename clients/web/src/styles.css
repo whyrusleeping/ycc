@@ -11,7 +11,7 @@
   --input-bg: #ffffff;
   --fg: #16181d;
   --fg-muted: #5f6673;
-  --fg-subtle: #8a909b;
+  --fg-subtle: #656d79;
   --border: #e4e6ea;
   --border-strong: #d2d6dc;
   --accent: #3a6cf0;
@@ -51,7 +51,7 @@
     --input-bg: #0b0d10;
     --fg: #e6e8ec;
     --fg-muted: #979eaa;
-    --fg-subtle: #6d7480;
+    --fg-subtle: #838c99;
     --border: #23272e;
     --border-strong: #323741;
     --accent: #7097ff;
@@ -302,6 +302,7 @@ select {
 .field::placeholder,
 textarea::placeholder {
   color: var(--fg-subtle);
+  opacity: 1;
 }
 
 .field:hover:not(:disabled, :focus),
@@ -521,11 +522,159 @@ h1.brand .brand-mark {
   padding: 0 12px 8px;
 }
 
-.project-switcher select {
+/* The project picker (ProjectPicker.tsx): a select-styled button over a listbox. */
+.project-picker {
+  position: relative;
+}
+
+.project-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
+  font: inherit;
   font-weight: 500;
   font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  color: var(--fg);
   background-color: var(--surface);
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 28px 5px 10px;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+
+.project-picker-btn:hover:not(:focus-visible) {
+  border-color: color-mix(in srgb, var(--fg-subtle) 60%, var(--border-strong));
+}
+
+.project-picker-btn:focus-visible,
+.project-picker-btn[aria-expanded="true"] {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.project-picker-name,
+.project-option-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-picker-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  outline: none;
+}
+
+.project-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.project-option.cursor {
+  background: var(--bg-sunk);
+}
+
+.project-option.selected .project-option-name {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.project-option.all {
+  margin-bottom: 4px;
+  box-shadow: 0 4px 0 -3px var(--border);
+}
+
+.project-option-git {
+  flex: none;
+  margin-right: auto;
+  padding-right: 6px;
+  font-size: 11px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The git badge hugs the name, keeping activity badges in a right-hand column. */
+.project-option:has(.project-option-git) .project-option-name {
+  flex: 0 1 auto;
+}
+
+/* Activity badges, iOS drawer order: waiting (loudest), unread, active. */
+.activity-badges {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.activity-badge {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-badge.waiting {
+  background: var(--warn);
+  color: var(--bg);
+}
+
+.activity-badge.unread {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.activity-badge.active {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 2px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.activity-badge.active::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
 }
 
 .sidebar-heading {
@@ -636,6 +785,7 @@ a.nav-item:hover {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  container: main / inline-size;
 }
 
 /* Session list */
@@ -2337,7 +2487,7 @@ pre.code.clamp {
 }
 
 .tok-comment {
-  color: #8b929b;
+  color: var(--fg-subtle);
   font-style: italic;
 }
 
@@ -2360,10 +2510,6 @@ pre.code.clamp {
 
   .tok-string {
     color: #98c379;
-  }
-
-  .tok-comment {
-    color: #7f8894;
   }
 
   .tok-number {
@@ -2724,7 +2870,32 @@ pre.error-output {
 
 /* User-owned follow-up bookmarks, visible independently of unread state. */
 .session-list-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 8px 10px;
+}
+
+.session-list-toolbar .field {
+  flex: 1;
+  min-width: 160px;
+  width: auto;
+}
+
+.variant-sidebar .session-list-toolbar select {
+  flex: 1;
+  min-width: 120px;
+}
+
+.session-filter-hint {
+  margin: 0;
+  padding: 0 10px 8px;
+}
+
+.segmented button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .follow-up-filter[aria-pressed="true"] {
@@ -3016,8 +3187,7 @@ kbd {
 }
 
 .filter-chip.on .count {
-  color: inherit;
-  opacity: 0.75;
+  color: var(--fg-muted);
 }
 
 .backlog-toolbar .check {
@@ -5902,6 +6072,7 @@ button.unread-dot:focus-visible {
 
 .palette-input::placeholder {
   color: var(--fg-subtle);
+  opacity: 1;
 }
 
 .palette-results {
@@ -6076,5 +6247,28 @@ button.unread-dot:focus-visible {
 
   .transcript-inner {
     padding: 16px 20px 28px;
+  }
+}
+
+/* Put actions on their own line before they can squeeze out the title/status. */
+@container main (max-width: 560px) {
+  .session-head {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 16px;
+  }
+
+  .session-title {
+    flex-basis: 100%;
+  }
+
+  .session-meta .status {
+    flex: none;
+  }
+
+  .session-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 }

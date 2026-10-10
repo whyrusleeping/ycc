@@ -111,6 +111,16 @@ export function applyPreset<T extends Pick<NewSessionDraft, "mode" | "prompt" | 
   return { ...draft, mode: preset.mode || draft.mode, prompt: preset.openingPrompt, preset: preset.name };
 }
 
+/** Only a blank or unchanged preset prompt may be replaced without confirmation. */
+export function presetNeedsConfirmation(
+  draft: Pick<NewSessionDraft, "prompt" | "preset">,
+  next: Preset,
+  presets: readonly Preset[],
+): boolean {
+  const applied = presets.find((p) => p.name === draft.preset);
+  return !!draft.prompt.trim() && draft.prompt !== next.openingPrompt && draft.prompt !== applied?.openingPrompt;
+}
+
 /** Changing the mode away from an applied preset's mode drops the preset. */
 export function withMode<T extends Pick<NewSessionDraft, "mode" | "preset">>(
   draft: T,

@@ -133,10 +133,11 @@ describe("labels", () => {
   });
 
   it("labels attention-worthy lifecycle states", () => {
-    expect(lifecycleLabel(s("x", 1, { live: true, waitingInput: true, status: "running" }))).toBe("waiting");
-    expect(lifecycleLabel(s("x", 1, { live: true, awaitingJobs: true }))).toBe("background");
+    expect(lifecycleLabel(s("x", 1, { live: true, waitingInput: true, status: "running" }))).toBe("Needs your answer");
+    expect(lifecycleLabel(s("x", 1, { live: true, awaitingJobs: true }))).toBe("Waiting on background jobs");
     expect(lifecycleLabel(s("x", 1, { status: "idle" }))).toBeNull();
-    expect(lifecycleLabel(s("x", 1, { status: "error" }))).toBe("error");
+    expect(lifecycleLabel(s("x", 1, { live: true, status: "idle" }))).toBe("Ready for your message");
+    expect(lifecycleLabel(s("x", 1, { status: "error" }))).toBe("Error");
   });
 
   it("formats compact token counts", () => {

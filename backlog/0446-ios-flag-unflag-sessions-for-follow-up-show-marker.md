@@ -1,7 +1,7 @@
 ---
 id: "0446"
 title: 'iOS: flag/unflag sessions for follow-up, show marker and Follow-up filter'
-status: in_review
+status: done
 priority: 3
 created: "2026-10-10"
 updated: "2026-10-10"

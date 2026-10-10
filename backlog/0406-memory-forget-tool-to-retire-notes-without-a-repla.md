@@ -1,10 +1,10 @@
 ---
 id: "0406"
 title: 'Memory: forget tool to retire notes without a replacement'
-status: in_review
+status: done
 priority: 2
 created: "2026-09-30"
-updated: "2026-09-30"
+updated: "2026-10-10"
 depends_on: []
 spec_refs:
     - docs/design/project-memory.md#Write and grooming policy

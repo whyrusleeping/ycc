@@ -1,10 +1,10 @@
 ---
 id: "0421"
 title: Show idle-with-live-subagents as active (awaiting background jobs) across clients
-status: in_review
+status: done
 priority: 2
 created: "2026-10-04"
-updated: "2026-10-04"
+updated: "2026-10-10"
 depends_on: []
 spec_refs:
     - Background jobs

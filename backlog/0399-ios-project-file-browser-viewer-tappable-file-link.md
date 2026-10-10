@@ -1,10 +1,10 @@
 ---
 id: "0399"
 title: 'iOS: project file browser/viewer + tappable file links in agent markdown'
-status: in_review
+status: done
 priority: 2
 created: "2026-09-24"
-updated: "2026-09-24"
+updated: "2026-10-10"
 depends_on:
     - "0398"
 spec_refs:

@@ -1,10 +1,10 @@
 ---
 id: "0403"
 title: 'iOS perf phase 2: optimistic mutations and non-blocking menu actions'
-status: in_review
+status: done
 priority: 2
 created: "2026-09-28"
-updated: "2026-09-28"
+updated: "2026-10-10"
 depends_on:
     - "0402"
 spec_refs: []

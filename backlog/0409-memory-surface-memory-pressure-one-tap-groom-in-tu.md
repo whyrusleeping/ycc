@@ -1,10 +1,10 @@
 ---
 id: "0409"
 title: 'Memory: surface memory pressure + one-tap groom in TUI and iOS'
-status: in_review
+status: done
 priority: 3
 created: "2026-09-30"
-updated: "2026-09-30"
+updated: "2026-10-10"
 depends_on: []
 spec_refs: []
 ---

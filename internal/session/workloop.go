@@ -816,7 +816,7 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 		startSession = wl.m.Start
 	}
 	sess, err := startSession(Config{
-		Project: wl.projectArg, Mode: "work", Unattended: true,
+		Project: wl.projectArg, Mode: "work", Unattended: true, Origin: OriginWorkLoop,
 		loopContinuation: wl.continuationContext(),
 	})
 	if err != nil {

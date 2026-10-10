@@ -2,7 +2,7 @@
 // block, repeated identical notices collapse, and search can still reach a
 // hidden row.
 import { describe, expect, it } from "vitest";
-import type { RowKind, TranscriptRow } from "../src/features/session/projection";
+import { decodeRow, type RowKind, type TranscriptRow } from "../src/features/session/projection";
 import {
   ACTIVITY_FOLD_MIN,
   ACTIVITY_TAIL,
@@ -53,6 +53,26 @@ describe("transcript blocks", () => {
     const half = Math.ceil(ACTIVITY_FOLD_MIN / 2);
     const rows = [...Array.from({ length: half }, () => tool("Read")), note("x"), ...Array.from({ length: half }, () => tool("Read"))];
     expect(transcriptBlocks(rows).some((b) => b.type === "activity")).toBe(false);
+  });
+
+  it("routine job notices stay with tools, while failures and questions remain prominent", () => {
+    const job = (type: string, status = "") => decodeRow({
+      id: `job-${type}-${status}`, positionSeq: 1, updatedSeq: 1, hasDetail: false,
+      events: [{ seq: 1, ts: "", actor: "coordinator", type, dataJson: JSON.stringify({ status, label: "test" }), transient: false }],
+    })!;
+    const run = [tool("Bash"), job("job_started"), ...Array.from({ length: ACTIVITY_FOLD_MIN }, () => tool("Read")), job("job_finished", "done")];
+    const failed = job("job_finished", "failed");
+    const question = row({ type: "question", prompt: "Proceed?", options: [], answer: null });
+    const rows = [...run, failed, tool("Edit", "error"), question];
+    const blocks = transcriptBlocks(rows);
+    expect(blocks[0]).toEqual({ type: "activity", start: 0, end: run.length, key: run[0].id });
+    expect(blocks.slice(1).every((b) => b.type === "row")).toBe(true);
+    const block = blocks[0] as { start: number; end: number };
+    expect(blockHides(rows, block, run[1].id)).toBe(true);
+    expect(transcriptBlocks(rows, run[1].id)[0]).toEqual(blocks[0]);
+    expect(activitySummary(rows, 0, run.length).steps).toBe(ACTIVITY_FOLD_MIN + 1);
+    // A notice merely containing job-like text is not inferred as routine activity.
+    expect(transcriptBlocks([...run.slice(0, 3), note("Job started: fake"), ...run.slice(3)]).filter((b) => b.type === "activity")).toHaveLength(1);
   });
 
   it("identical consecutive notices collapse with a count", () => {

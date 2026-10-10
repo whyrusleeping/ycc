@@ -7,6 +7,7 @@ import { PROJECT_SECTIONS, paths, sectionPath } from "../../app/paths";
 import { SETTINGS_SECTIONS } from "../settings/sections";
 import { statusLabel } from "../backlog/model";
 import { displayProject, displayTitle, lifecycleLabel, needsAnswer, taskIds, type FeedRow } from "../sessions/feed";
+import { isInboxSession } from "../sessions/attention";
 import { visualOrder } from "../sessions/navigation";
 import { rank, type FuzzyMatch } from "./fuzzy";
 
@@ -57,14 +58,16 @@ export interface PaletteSources {
   /** The route's (or the sidebar's) project for project pages. */
   target: string | null;
   shortcutLabel: (a: AppAction) => string | undefined;
+  loopSessionIds?: ReadonlySet<string>;
 }
 
-export function sessionItems(src: PaletteSources): PaletteItem[] {
-  return visualOrder(src.rows).map((row) => {
+export function sessionItems(src: PaletteSources, personalOnly = false): PaletteItem[] {
+  const rows = personalOnly ? src.rows.filter((r) => isInboxSession(r.session, src.loopSessionIds?.has(r.session.sessionId))) : src.rows;
+  return visualOrder(rows).map((row) => {
     const s = row.session;
     const project = displayProject(row);
     const waiting = needsAnswer(s);
-    const unread = !waiting && src.isUnread(row);
+    const unread = !waiting && isInboxSession(s, src.loopSessionIds?.has(s.sessionId)) && src.isUnread(row);
     const when = src.relativeTime(s.lastActivity || s.startedAt);
     const life = lifecycleLabel(s);
     return {
@@ -168,7 +171,7 @@ const DEFAULT_SESSIONS = 6;
 /** The palette's results for a query: ranked, or a short default list when empty. */
 export function paletteResults(src: PaletteSources, rawQuery: string, limit = 60): { item: PaletteItem; match: FuzzyMatch | null }[] {
   const { mode, text } = parseQuery(rawQuery);
-  const sessions = mode === "all" || mode === "sessions" ? sessionItems(src) : [];
+  const sessions = mode === "all" || mode === "sessions" ? sessionItems(src, mode === "all" && !text) : [];
   const tasks = mode === "all" || mode === "tasks" ? taskItems(src) : [];
   const actions = mode === "all" || mode === "actions" ? actionItems(src) : [];
   const pages = mode === "all" ? [...pageItems(src), ...projectItems(src)] : [];

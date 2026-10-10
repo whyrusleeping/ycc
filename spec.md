@@ -912,7 +912,14 @@ clients do not maintain a second backlog representation.
 ### 18.6 Session history and reopen
 
 Projects expose session history, transcripts, commit diffs, plans, memory, usage, allowance, work
-loops, and workstreams through read RPCs. History summaries are cached in memory against log file
+loops, and workstreams through read RPCs. History summaries include durable launch origin and real
+human participation so clients can distinguish personal conversations from automatic work without
+inferring provenance from titles or modes. New sessions record origin separately from preset and
+unattended policy; their automatic opening prompts and automatic question answers do not count as
+human participation. Later human input or nonautomatic question answers do. Unknown legacy origins
+remain unknown rather than being silently classified as automatic. Pending human questions remain
+visible in persisted history after process loss; live rows reflect the current gate. History
+summaries are cached in memory against log file
 identity, size, and modification time; cold or changed logs are read with a summary-only decoder
 that validates the JSON while avoiding materialization of unrelated transcript payloads. The full
 event reader remains authoritative for replay. Reopening a session reconstructs model history and

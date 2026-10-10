@@ -1,8 +1,8 @@
 // The per-session settings panel (inspector): reasoning level by role scope
 // (SetThinking), role models (SetRoleConfig scoped to the session), the
 // coordinator context meter with rollover, and this session's usage (GetUsage
-// grouped by session and model). Each change applies to the live session
-// immediately and the daemon's error is shown verbatim.
+// grouped by session and model). Model selects are drafts until Apply; the
+// daemon's error is shown verbatim.
 import { Icon } from "../../ui/icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -91,6 +91,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reviewers, setReviewers] = useState<string[] | null>(null);
+  const [roleModels, setRoleModels] = useState<Partial<Record<"coordinator" | "implementer", string>>>({});
 
   const data = models.data;
   useEffect(() => {
@@ -108,8 +109,8 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
     setError(null);
     try {
       await call();
-      onSuccess?.();
       await qc.invalidateQueries({ queryKey: queryKeys.models(sessionId) });
+      onSuccess?.();
     } catch (err) {
       if (isUnauthorized(err)) authStore.expire();
       else track.error("session_settings.apply", err);
@@ -120,7 +121,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
   };
 
   const chooseLevel = (level: ThinkingLevel) => {
-    if (!levels || !needsThinkingApply(role, level, levels)) return;
+    if (busy || !levels || !needsThinkingApply(role, level, levels)) return;
     track.action("session_settings.thinking", "click", { role, level });
     void apply(
       () => client.setThinking({ sessionId, level, role: thinkingRoleWire(role) }),
@@ -131,12 +132,18 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
   const setRoleModel = (field: "coordinator" | "implementer", name: string) => {
     if (!data || name === data[field]) return;
     track.action("session_settings.role", "click", { role: field });
-    void apply(() => client.setRoleConfig({ sessionId, [field]: name }));
+    void apply(() => client.setRoleConfig({ sessionId, [field]: name }), () =>
+      setRoleModels((draft) => {
+        const next = { ...draft };
+        delete next[field];
+        return next;
+      }),
+    );
   };
 
   if (!live) return null;
   if (models.isPending) return <p className="muted">Loading settings…</p>;
-  if (models.isError || !data) return <p className="error">{errorMessage(models.error, "Couldn’t load models.")}</p>;
+  if (models.isError || !data) return <p className="error" role="alert">{errorMessage(models.error, "Couldn’t load models.")}</p>;
   const current = levels ? thinkingFor(role, levels) : "medium";
   const shownReviewers = reviewers ?? data.reviewers;
   const reviewersChanged =
@@ -145,7 +152,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
 
   return (
     <>
-      {error && <p className="error settings-error">{error}</p>}
+      {error && <p className="error settings-error" role="alert">{error}</p>}
       <section className="settings-section">
         <h3>Reasoning</h3>
         <label className="settings-row">
@@ -158,15 +165,14 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
             ))}
           </select>
         </label>
-        <div className="segmented" role="radiogroup" aria-label="Reasoning level">
+        <div className="segmented" role="group" aria-label="Reasoning level">
           {THINKING_LEVELS.map((l) => (
             <button
               key={l.value}
               type="button"
-              role="radio"
-              aria-checked={current === l.value}
+              aria-pressed={current === l.value}
               className={current === l.value ? "selected" : ""}
-              disabled={busy}
+              aria-disabled={busy}
               onClick={() => chooseLevel(l.value)}
             >
               {l.title}
@@ -179,7 +185,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
         <h3>Models</h3>
         <label className="settings-row">
           <span>Coordinator</span>
-          <select aria-label="Coordinator model" value={data.coordinator} disabled={busy} onChange={(e) => setRoleModel("coordinator", e.target.value)}>
+          <select aria-label="Coordinator model" value={roleModels.coordinator ?? data.coordinator} disabled={busy} onChange={(e) => setRoleModels((draft) => ({ ...draft, coordinator: e.target.value }))}>
             {roleModelChoices(data.models, [data.coordinator]).map((m) => (
               <option key={m.name} value={m.name}>
                 {m.name}
@@ -188,9 +194,12 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
             ))}
           </select>
         </label>
+        <button type="button" className="btn small" disabled={busy || !roleModels.coordinator || roleModels.coordinator === data.coordinator} onClick={() => setRoleModel("coordinator", roleModels.coordinator!)}>
+          Apply coordinator model
+        </button>
         <label className="settings-row">
           <span>Implementer</span>
-          <select aria-label="Implementer model" value={data.implementer} disabled={busy} onChange={(e) => setRoleModel("implementer", e.target.value)}>
+          <select aria-label="Implementer model" value={roleModels.implementer ?? data.implementer} disabled={busy} onChange={(e) => setRoleModels((draft) => ({ ...draft, implementer: e.target.value }))}>
             {roleModelChoices(data.models, [data.implementer]).map((m) => (
               <option key={m.name} value={m.name}>
                 {m.name}
@@ -199,6 +208,9 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
             ))}
           </select>
         </label>
+        <button type="button" className="btn small" disabled={busy || !roleModels.implementer || roleModels.implementer === data.implementer} onClick={() => setRoleModel("implementer", roleModels.implementer!)}>
+          Apply implementer model
+        </button>
         <fieldset className="settings-reviewers" disabled={busy}>
           <legend>Reviewers</legend>
           {roleModelChoices(data.models, data.reviewers).map((m) => (
@@ -261,7 +273,7 @@ function SessionUsage({ project, sessionId }: { project: string; sessionId: stri
         </button>
       </h3>
       {q.isPending && <p className="muted">Loading…</p>}
-      {q.isError && <p className="error">{errorMessage(q.error, "Couldn’t load usage.")}</p>}
+      {q.isError && <p className="error" role="alert">{errorMessage(q.error, "Couldn’t load usage.")}</p>}
       {usage && !usage.total && <p className="muted">No model usage recorded yet.</p>}
       {(usage?.total || q.isError) && (
         <p className="small">

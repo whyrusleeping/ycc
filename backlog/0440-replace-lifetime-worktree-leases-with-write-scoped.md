@@ -1,7 +1,7 @@
 ---
 id: "0440"
 title: Replace lifetime worktree leases with write-scoped locks and manifest-based change attribution
-status: in_review
+status: done
 priority: 2
 created: "2026-10-09"
 updated: "2026-10-10"

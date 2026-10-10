@@ -97,9 +97,11 @@ type summaryEventData struct {
 func (d *summaryEventData) wants(key string) bool {
 	switch d.typ {
 	case event.SessionStarted:
-		return key == "mode" || key == "workspace"
+		return key == "mode" || key == "workspace" || key == "origin"
 	case event.UserInput:
-		return key == "text"
+		return key == "text" || key == "opening"
+	case event.QuestionAsked, event.QuestionAnswered:
+		return key == "auto"
 	case event.TaskFocus:
 		return key == "task" || key == "title"
 	case event.ModelTurn:

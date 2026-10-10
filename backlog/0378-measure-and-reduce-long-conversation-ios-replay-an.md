@@ -1,10 +1,10 @@
 ---
 id: "0378"
 title: Measure and reduce long-conversation iOS replay and rendering costs
-status: in_review
+status: done
 priority: 2
 created: "2026-09-09"
-updated: "2026-09-26"
+updated: "2026-10-10"
 depends_on:
     - "0376"
     - "0377"

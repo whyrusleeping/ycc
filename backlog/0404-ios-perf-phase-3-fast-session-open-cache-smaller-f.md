@@ -1,10 +1,10 @@
 ---
 id: "0404"
 title: 'iOS perf phase 3: fast session open (cache, smaller first page, off-main markdown, off-main stream decode)'
-status: in_review
+status: done
 priority: 2
 created: "2026-09-28"
-updated: "2026-09-28"
+updated: "2026-10-10"
 depends_on:
     - "0402"
 spec_refs: []

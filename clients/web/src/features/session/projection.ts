@@ -28,7 +28,7 @@ export type RowKind =
   | { type: "tool"; name: string; status: ToolStatus; args: string; output: string }
   | { type: "question"; prompt: string; options: string[]; answer: string | null }
   | { type: "assumption"; questions: Question[]; response: string | null }
-  | { type: "system"; text: string }
+  | { type: "system"; text: string; activity?: boolean }
   | { type: "commit"; text: string; sha: string }
   | { type: "review"; text: string; verdict: string; summary: string; task: string; reviewedSnapshot: string }
   | { type: "liveTail"; text: string };
@@ -168,7 +168,7 @@ export class SessionProjection {
       case "subagent_finished": {
         const related = relatedSubagentActor(event.type, data);
         const text = related ? subagentSummary(event.type, data) : systemSummary(event.type, data);
-        if (text !== null) this.appendDurable(event, { type: "system", text }, { actor: related ?? event.actor });
+        if (text !== null) this.appendDurable(event, { type: "system", text, activity: !str(data.error) }, { actor: related ?? event.actor });
         break;
       }
       case "session_error": {
@@ -206,7 +206,9 @@ export class SessionProjection {
       }
       default: {
         const text = systemSummary(event.type, data);
-        if (text !== null) this.appendDurable(event, { type: "system", text });
+        const routineJob = event.type === "job_started" ||
+          ((event.type === "job_finished" || event.type === "job_claimed") && data.status === "done");
+        if (text !== null) this.appendDurable(event, routineJob ? { type: "system", text, activity: true } : { type: "system", text });
       }
     }
   }

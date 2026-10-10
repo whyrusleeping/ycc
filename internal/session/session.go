@@ -37,12 +37,23 @@ import (
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
+// Origins identify explicit launch sites; an empty persisted origin is unknown.
+const (
+	OriginUser        = "user"
+	OriginWorkLoop    = "work_loop"
+	OriginMemoryGroom = "memory_groom"
+	OriginAutomation  = "automation"
+)
+
 // Config parameterizes a new session.
 type Config struct {
 	Workspace  string
 	Mode       string
 	Unattended bool
 	Prompt     string
+	// Origin records the launch source, not the mode or opening-prompt preset.
+	// Empty defaults to user, or automation for an unattended launch.
+	Origin string
 	// loopContinuation is daemon-generated context, seeded separately from the
 	// opening user input so a prior model report is never echoed as user intent.
 	loopContinuation string
@@ -70,6 +81,11 @@ type Session struct {
 	Mode      string
 
 	unattended bool
+	origin     string // immutable launch origin; empty for reopened legacy logs
+	// Compact incremental reduction of durable engagement for live history overlays.
+	participationMu     sync.Mutex
+	participationCursor int
+	participation       sessionParticipation
 
 	log                 *event.Log
 	emitter             *event.Emitter
@@ -1532,6 +1548,7 @@ func (s *Session) run() {
 		s.emitter.Emit(event.SessionStarted, map[string]any{
 			"workspace":            s.Workspace,
 			"mode":                 s.Mode,
+			"origin":               s.origin,
 			"preset":               s.preset,
 			"coordinator_explicit": s.coordinatorExplicit,
 			"work_implementation":  workImplementation,
@@ -1546,10 +1563,11 @@ func (s *Session) run() {
 		if s.ctx.Err() != nil {
 			return
 		}
-		// The opening prompt echoes like any other user input; pictures are recorded
-		// as metadata plus retained-payload references. Model replay still gets the
+		// Mark the launch echo so automatic prompts cannot count as human input,
+		// even if a real input races ahead of startup. Pictures are recorded as
+		// metadata plus retained-payload references; model replay still gets the
 		// explicit unavailable-in-history note rather than reinjected pixels.
-		initial := map[string]any{"text": s.prompt}
+		initial := map[string]any{"text": s.prompt, "opening": true}
 		if meta := imageMetadata(s.promptImages); meta != nil {
 			initial["images"] = meta
 		}
@@ -2341,6 +2359,15 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		log.Close()
 		return nil, err
 	}
+	s.origin = cfg.Origin
+	if s.origin == "" {
+		s.origin = OriginUser
+		if cfg.Unattended {
+			s.origin = OriginAutomation
+		}
+	}
+	s.participation.origin = s.origin
+	s.participation.knownOrigin = knownSessionOrigin(s.origin)
 	s.preset = cfg.Preset
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
 	s.startupNotice = startupNotice
@@ -3065,6 +3092,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		log.Close()
 		return nil, err
 	}
+	s.participation.consume(events)
+	s.participationCursor = len(events)
+	s.origin = s.participation.origin
 	s.preset = proj.Preset
 	s.startupNotice = startupNotice
 	s.deps.Jobs = engine.RestoreJobs(events)

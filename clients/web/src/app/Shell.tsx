@@ -1,7 +1,7 @@
 // The desktop shell: sidebar (project switcher, session list, navigation),
 // main pane (the routed surface), and the closable, resizable inspector.
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from "react-router";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { InspectorPane } from "../features/inspector/InspectorPane";
 import { useInspector } from "../features/inspector/inspector";
@@ -17,14 +17,17 @@ import { registerAction, shortcutLabel, useAction, useActionShortcuts, type AppA
 import { CAPTURE_SHORTCUT_LABEL, CaptureDialog, openCapture } from "../features/backlog/CaptureDialog";
 import { IS_MAC } from "./platform";
 import { canStart, canStop, currentSessionId, loopIndicator, loopState } from "../features/workloop/model";
-import { useLoopWatcher } from "../features/workloop/hooks";
+import { useLoopSessionIds, useLoopWatcher } from "../features/workloop/hooks";
+import { filterSessions, isInboxSession } from "../features/sessions/attention";
+import { useSidebarFilter } from "../features/sessions/listFilter";
 import { loopIntentKey } from "../features/workloop/WorkLoopPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { workstreamsIntentKey } from "../features/workstreams/WorkstreamsPage";
 import { requestIntent } from "./intents";
 import { MenuButton } from "../ui/Menu";
 import { Icon, type IconName } from "../ui/icons";
-import { gitSyncBadge } from "../features/projects/model";
+import { gitSyncBadge, gitSyncTitle } from "../features/projects/model";
+import { ProjectPicker, type ProjectOption } from "../features/projects/ProjectPicker";
 import { ProjectDialogs, openAddProject, openRemoveProject, openRenameProject } from "../features/projects/ProjectDialogs";
 import { AnthropicLoginDialog, openAnthropicLogin } from "../features/settings/AnthropicLogin";
 import { SETTINGS_INTENT } from "../features/settings/SettingsPage";
@@ -32,7 +35,7 @@ import { CommandPalette } from "../features/palette/Palette";
 import { HelpOverlay } from "../features/palette/HelpOverlay";
 import { openHelp, togglePalette } from "../features/palette/state";
 import { useReadMarks } from "../features/sessions/unread";
-import { activitySuffix, projectActivity } from "../features/sessions/activity";
+import { projectActivity } from "../features/sessions/activity";
 import { adjacentSession, nextNeedsAnswer } from "../features/sessions/navigation";
 import { useSessionWatch } from "../features/notify/useSessionWatch";
 import { NotificationPrompt, enableFromGesture, sendTestNotification } from "../features/notify/NotifyControls";
@@ -43,7 +46,7 @@ import type { FeedRow } from "../features/sessions/feed";
 
 /** Shell-owned shortcuts (Alt chords leave text fields alone on macOS, where Option types characters). */
 const SHORTCUTS = {
-  palette: { key: "k", mod: true, inDialog: true },
+  palette: { key: "k", mod: true },
   help: { key: "?" },
   newSession: { code: "KeyN", alt: true, shift: true, inEditable: !IS_MAC },
   nextSession: { code: "ArrowDown", alt: true, inEditable: !IS_MAC },
@@ -80,7 +83,9 @@ function focusComposer(): boolean {
 function useRowUnread(): (row: FeedRow) => boolean {
   const marks = useReadMarks();
   const { sessionId } = useParams();
-  return (row) => row.session.sessionId !== sessionId && marks.isUnread(row.session);
+  const loopIds = useLoopSessionIds();
+  return (row) => row.session.sessionId !== sessionId &&
+    isInboxSession(row.session, loopIds.has(row.session.sessionId)) && marks.isUnread(row.session);
 }
 
 function ProjectSwitcher() {
@@ -88,7 +93,8 @@ function ProjectSwitcher() {
   const { projects } = useSessionFeed(scope);
   const { feed: all } = useSessionFeed(null);
   const isUnread = useRowUnread();
-  const activity = projectActivity(all?.rows ?? [], isUnread);
+  const loopIds = useLoopSessionIds();
+  const activity = projectActivity((all?.rows ?? []).filter((r) => isInboxSession(r.session, loopIds.has(r.session.sessionId))), isUnread);
   const navigate = useNavigate();
   const location = useLocation();
   const names = (projects ?? []).map((p) => p.name);
@@ -96,14 +102,23 @@ function ProjectSwitcher() {
   useEffect(() => {
     if (scope && projects && !names.includes(scope)) setScope(null);
   }, [scope, projects, names, setScope]);
+  const options: ProjectOption[] = [
+    { value: null, label: "All projects", activity: activity.total },
+    ...(projects ?? []).map((p) => ({
+      value: p.name,
+      label: p.name,
+      activity: activity.byProject.get(p.name),
+      git: gitSyncBadge(p.git),
+      gitTitle: gitSyncTitle(p.git),
+    })),
+  ];
   return (
     <div className="project-switcher-row">
-      <label className="project-switcher">
-        <span className="sr-only">Project</span>
-        <select
-          value={scope ?? ""}
-          onChange={(e) => {
-            const next = e.target.value || null;
+      <div className="project-switcher">
+        <ProjectPicker
+          options={options}
+          value={scope}
+          onChange={(next) => {
             track.action("sidebar.scope", "click", { to: next ? "project" : "all" });
             setScope(next);
             // On a list page, follow the scope; elsewhere keep the current view.
@@ -117,22 +132,8 @@ function ProjectSwitcher() {
             else if (/^(\/p\/[^/]+)?\/(memory|plans)(\/|$)/.test(location.pathname)) navigate(paths.memory(next));
             else if (/^(\/p\/[^/]+)?\/usage\/?$/.test(location.pathname)) navigate(paths.usage(next, location.search));
           }}
-        >
-          {/* The closed select is narrow: with counts, drop "· Recent". */}
-          <option value="">{activitySuffix(activity.total) ? `All projects${activitySuffix(activity.total)}` : "All projects · Recent"}</option>
-          {(projects ?? []).map((p) => {
-            // The quiet git sync badge (ahead/behind, dirty, unfetched), as on iOS,
-            // after the attention counts (waiting for an answer, unread).
-            const badge = gitSyncBadge(p.git);
-            const label = `${p.name}${activitySuffix(activity.byProject.get(p.name))}`;
-            return (
-              <option key={p.name} value={p.name}>
-                {badge ? `${label}  ${badge}` : label}
-              </option>
-            );
-          })}
-        </select>
-      </label>
+        />
+      </div>
       <MenuButton
         label="⋯"
         ariaLabel="Project actions"
@@ -203,7 +204,7 @@ function Sidebar() {
       <ProjectSwitcher />
       <div className="sidebar-heading">
         <NavLink to={scope ? paths.project(scope) : paths.home()} end className="sidebar-heading-link" data-track="sidebar.sessions">
-          {scope ? "Sessions" : "Recent sessions"}
+          {scope ? "Sessions" : "Your sessions"}
         </NavLink>
         <span className="sidebar-heading-actions">
           {unreadRows.length > 0 && (
@@ -549,8 +550,16 @@ function useNavigationActions() {
   const marks = useReadMarks();
   const notify = useNotifyState();
   const active = sessionId ?? null;
-  // The latest rows, read when an action runs (keeps the registrations stable).
-  const rows = { scoped: scoped?.rows ?? [], all: all?.rows ?? [] };
+  const loopIds = useLoopSessionIds();
+  const sidebarFilter = useSidebarFilter();
+  const isUnread = useRowUnread();
+  const personal = (r: FeedRow) => isInboxSession(r.session, loopIds.has(r.session.sessionId));
+  // Navigation follows the sidebar filter; mark-read actions cover the personal inbox.
+  const rows = {
+    scoped: (scoped?.rows ?? []).filter(personal),
+    all: (all?.rows ?? []).filter(personal),
+    visible: filterSessions(scoped?.rows ?? [], sidebarFilter, "", isUnread, loopIds, sessionId),
+  };
   const latest = useRef(rows);
   latest.current = rows;
   // The open session at the moment an action runs: read from the URL, which
@@ -580,14 +589,14 @@ function useNavigationActions() {
         title: "Next session in the list",
         group: "Navigation",
         shortcut: SHORTCUTS.nextSession,
-        run: () => go(adjacentSession(latest.current.scoped, activeNow(), 1), "No next session."),
+        run: () => go(adjacentSession(latest.current.visible, activeNow(), 1), "No next session."),
       },
       {
         id: "nav.prevSession",
         title: "Previous session in the list",
         group: "Navigation",
         shortcut: SHORTCUTS.prevSession,
-        run: () => go(adjacentSession(latest.current.scoped, activeNow(), -1), "No previous session."),
+        run: () => go(adjacentSession(latest.current.visible, activeNow(), -1), "No previous session."),
       },
       {
         id: "nav.nextNeedsAnswer",
@@ -705,6 +714,18 @@ function useNavigationActions() {
 
 export function Shell() {
   const inspector = useInspector();
+  const shell = useRef<HTMLDivElement>(null);
+  const { setAvailableWidth } = inspector;
+  useLayoutEffect(() => {
+    const element = shell.current!;
+    const sidebar = element.querySelector<HTMLElement>(":scope > .sidebar")!;
+    const measure = () => setAvailableWidth(element.clientWidth - sidebar.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observer.observe(sidebar);
+    return () => observer.disconnect();
+  }, [setAvailableWidth]);
   const { sessionId } = useParams();
   const { pathname } = useLocation();
   // The routed surface is the bottom of the analytics view stack.
@@ -734,6 +755,7 @@ export function Shell() {
   }, []);
   return (
     <div
+      ref={shell}
       className={`shell${inspector.item ? " with-inspector" : ""}`}
       style={inspector.item ? { gridTemplateColumns: `var(--sidebar-width) minmax(0, 1fr) ${inspector.width}px` } : undefined}
     >

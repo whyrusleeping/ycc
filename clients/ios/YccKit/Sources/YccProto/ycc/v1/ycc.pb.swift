@@ -933,9 +933,9 @@ public nonisolated struct Ycc_V1_SessionSummary: @unchecked Sendable {
     set {_uniqueStorage()._live = newValue}
   }
 
-  /// waiting_input is true when a live session is blocked on an unanswered
-  /// ask_user question (single or batch) and needs the user to reply. Only ever
-  /// set on live rows — a persisted-only session holds no in-memory question.
+  /// An unanswered human question needs attention, including in persisted logs.
+  /// Live rows reflect the current in-memory gate. A persisted session must be
+  /// reopened before answering; ask_user gates restore, other gates revalidate.
   public var waitingInput: Bool {
     get {_storage._waitingInput}
     set {_uniqueStorage()._waitingInput = newValue}
@@ -981,6 +981,21 @@ public nonisolated struct Ycc_V1_SessionSummary: @unchecked Sendable {
   public var followUpAt: String {
     get {_storage._followUpAt}
     set {_uniqueStorage()._followUpAt = newValue}
+  }
+
+  /// Explicit launch source: user | work_loop | memory_groom | automation.
+  /// Empty (or unknown) means an unproven legacy origin; clients must not hide it
+  /// as automation based on titles, mode, or preset.
+  public var origin: String {
+    get {_storage._origin}
+    set {_uniqueStorage()._origin = newValue}
+  }
+
+  /// A human-origin launch (even an empty opening), later actual user input, or
+  /// nonautomatic question answer. Automatic opening prompts/answers do not count.
+  public var humanParticipated: Bool {
+    get {_storage._humanParticipated}
+    set {_uniqueStorage()._humanParticipated = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -5505,7 +5520,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0")
 
   fileprivate class _StorageClass {
     var _sessionID: String = String()
@@ -5526,6 +5541,8 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     var _awaitingJobs: Bool = false
     var _followUp: Bool = false
     var _followUpAt: String = String()
+    var _origin: String = String()
+    var _humanParticipated: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -5554,6 +5571,8 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       _awaitingJobs = source._awaitingJobs
       _followUp = source._followUp
       _followUpAt = source._followUpAt
+      _origin = source._origin
+      _humanParticipated = source._humanParticipated
     }
   }
 
@@ -5590,6 +5609,8 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         case 16: try { try decoder.decodeSingularBoolField(value: &_storage._awaitingJobs) }()
         case 17: try { try decoder.decodeSingularBoolField(value: &_storage._followUp) }()
         case 18: try { try decoder.decodeSingularStringField(value: &_storage._followUpAt) }()
+        case 19: try { try decoder.decodeSingularStringField(value: &_storage._origin) }()
+        case 20: try { try decoder.decodeSingularBoolField(value: &_storage._humanParticipated) }()
         default: break
         }
       }
@@ -5652,6 +5673,12 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       if !_storage._followUpAt.isEmpty {
         try visitor.visitSingularStringField(value: _storage._followUpAt, fieldNumber: 18)
       }
+      if !_storage._origin.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._origin, fieldNumber: 19)
+      }
+      if _storage._humanParticipated != false {
+        try visitor.visitSingularBoolField(value: _storage._humanParticipated, fieldNumber: 20)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -5679,6 +5706,8 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         if _storage._awaitingJobs != rhs_storage._awaitingJobs {return false}
         if _storage._followUp != rhs_storage._followUp {return false}
         if _storage._followUpAt != rhs_storage._followUpAt {return false}
+        if _storage._origin != rhs_storage._origin {return false}
+        if _storage._humanParticipated != rhs_storage._humanParticipated {return false}
         return true
       }
       if !storagesAreEqual {return false}

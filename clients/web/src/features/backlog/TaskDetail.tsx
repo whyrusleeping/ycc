@@ -20,7 +20,7 @@ import { CopyButton } from "../../ui/CopyButton";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { toast } from "../../ui/toast";
 import { track, useFlow } from "../../app/analytics";
-import { displayTitle, taskIds } from "../sessions/feed";
+import { displayTitle, lifecycleLabel, lifecycleTone, taskIds } from "../sessions/feed";
 import {
   blockedLabel,
   isActionable,
@@ -89,6 +89,7 @@ export function TaskDetailView({
   const navigate = useNavigate();
   const [open, setOpen] = useState<OpenDraft | null>(() => draftStore.get(project, id) ?? null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
+  const [statusDraft, setStatusDraft] = useState<TaskStatus | null>(null);
   const [starting, setStarting] = useState(false);
 
   const summary = backlog.data?.find((t) => t.id === id);
@@ -116,7 +117,8 @@ export function TaskDetailView({
   const setStatus = async (status: TaskStatus) => {
     if (statusBusy) return;
     setStatusBusy(status);
-    await changeTaskStatus(qc, project, id, status);
+    const updated = await changeTaskStatus(qc, project, id, status);
+    if (updated) setStatusDraft(null);
     setStatusBusy(null);
   };
 
@@ -182,7 +184,7 @@ export function TaskDetailView({
     return (
       <div className="task-detail">
         <TaskTopBar id={id} variant={variant} project={project} onClose={onClose} />
-        <p className="error">{notFound ? `Task ${id} was not found in this backlog.` : errorMessage(q.error)}</p>
+        <p className="error" role="alert">{notFound ? `Task ${id} was not found in this backlog.` : errorMessage(q.error)}</p>
         <button type="button" className="btn small" onClick={() => void q.refetch()}>
           Retry
         </button>
@@ -233,12 +235,9 @@ export function TaskDetailView({
           <span className="sr-only">Status</span>
           <select
             aria-label="Status"
-            value={(TASK_STATUSES as readonly string[]).includes(status) ? status : ""}
+            value={statusDraft ?? ((TASK_STATUSES as readonly string[]).includes(status) ? status : "")}
             disabled={statusBusy !== null}
-            onChange={(e) => {
-              track.action("task.status", "click", { to: e.target.value, surface: variant });
-              void setStatus(e.target.value as TaskStatus);
-            }}
+            onChange={(e) => setStatusDraft(e.target.value as TaskStatus)}
           >
             {!(TASK_STATUSES as readonly string[]).includes(status) && <option value="">{header.status || "unknown"}</option>}
             {TASK_STATUSES.map((s) => (
@@ -248,6 +247,18 @@ export function TaskDetailView({
             ))}
           </select>
         </label>
+        <button
+          type="button"
+          className="btn small"
+          disabled={statusBusy !== null || !statusDraft || statusDraft === status}
+          onClick={() => {
+            if (!statusDraft) return;
+            track.action("task.status", "click", { to: statusDraft, surface: variant });
+            void setStatus(statusDraft);
+          }}
+        >
+          Apply status
+        </button>
         {status === "proposed" && (
           <button
             type="button"
@@ -429,8 +440,7 @@ function FocusedSessions({ project, id }: { project: string; id: string }) {
         {rows.slice(0, 6).map((r) => (
           <li key={r.session.sessionId}>
             <Link to={paths.session(r.project, r.session.sessionId)}>{displayTitle(r.session)}</Link>{" "}
-            {r.session.live && <span className="badge badge-live">live</span>}{" "}
-            <span className="muted small">{r.session.status}</span>
+            {lifecycleLabel(r.session) && <span className={`badge badge-${lifecycleTone(r.session)}`}>{lifecycleLabel(r.session)}</span>}
           </li>
         ))}
       </ul>
