@@ -166,6 +166,14 @@ type Session struct {
 	// change via SetRoleConfig (which clears the gate and retries
 	// automatically). Cleared at the start of every run-loop iteration.
 	refused bool
+	// switchRetry latches the automatic retry owed after a coordinator switch
+	// cleared a refusal or context model-switch gate, and switchRetryCh (buffer
+	// 1, coalescing) wakes the parked owner to consume it. Unlike the unbuffered
+	// retryCh nudge, the token survives a switch that lands before the owner
+	// reaches its wait. The latch is cleared at the start of every run-loop
+	// iteration, so a stale token can never cause an extra turn.
+	switchRetry   bool
+	switchRetryCh chan struct{}
 
 	// Interrupt & steer state, guarded by a dedicated mutex so it
 	// never contends with the s.mu hot paths. pauseReq is set by Interrupt and
@@ -1071,6 +1079,9 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 		s.deps.SetReviewers(revSpecs)
 	}
 
+	// Sample the durable context gate before the role change clears it: a
+	// coordinator switch is its documented recovery and should retry by itself.
+	wasContextGated := coordChanged && s.contextModelSwitchRequired()
 	// Swap the live coordinator loop only when that assignment changed, preserving
 	// an already-constructed client until the disabled role is explicitly replaced.
 	if coordChanged {
@@ -1092,6 +1103,9 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if wasRefused {
 		s.refused = false
 	}
+	if wasRefused || wasContextGated {
+		s.switchRetry = true
+	}
 	s.mu.Unlock()
 
 	s.emitter.Emit(event.RoleConfigChanged, map[string]any{
@@ -1102,11 +1116,11 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
-	if wasRefused {
-		// Non-blocking, like Resume: if the loop is mid-run (not parked on the
-		// retry-aware wait) the nudge falls through as a harmless no-op.
+	if wasRefused || wasContextGated {
+		// Coalescing token for the latched retry: it is kept until the parked
+		// owner consumes it, even if that owner has not reached its wait yet.
 		select {
-		case s.retryCh <- struct{}{}:
+		case s.switchRetryCh <- struct{}{}:
 		default:
 		}
 	}
@@ -1495,32 +1509,20 @@ func (s *Session) run() {
 		// user-role messages, so a tool result (or bare user turn) immediately
 		// followed by a fresh user message is two consecutive user turns, which
 		// backends reject with a 400 invalid_request_error.
-		if !s.currentLoop().PendingResponse() {
+		//
+		// Exception: a durable model-switch gate (the compact view also
+		// overflowed this coordinator) means re-running would blindly resend the
+		// same oversized request. Park in error until an actual coordinator
+		// switch (which nudges the retry) or a successful explicit rollover.
+		if s.contextModelSwitchRequired() {
+			s.setStatus(event.StatusError)
+			if !s.awaitNextRun(false) {
+				return
+			}
+		} else if !s.currentLoop().PendingResponse() {
 			s.setStatus(event.StatusIdle)
-		waitReopened:
-			for {
-				select {
-				case input := <-s.messageCh:
-					if s.ctx.Err() != nil {
-						return
-					}
-					s.currentLoop().PostMessage(input)
-					break waitReopened
-				case req := <-s.rolloverCh:
-					absorbed := s.absorbBufferedIdleInputs()
-					rErr := s.performRolloverRequest(req, "explicit")
-					var released bool
-					released, rErr = s.releaseRolloverInputs(rErr, absorbed)
-					req.complete(rErr)
-					if rErr == nil {
-						s.emitter.Emit(event.Resumed, map[string]any{"reason": "context_rollover"})
-					}
-					if rErr == nil || absorbed || released {
-						break waitReopened
-					}
-				case <-s.ctx.Done():
-					return
-				}
+			if !s.awaitNextRun(false) {
+				return
 			}
 		}
 	} else {
@@ -1575,6 +1577,7 @@ func (s *Session) run() {
 		// (via Resume, a model switch, or reopen re-running the pending turn).
 		// If the provider refuses again the gate is simply re-established below.
 		s.setRefused(false)
+		s.takeSwitchRetry()
 		s.steerMu.Lock()
 		s.running = true
 		s.steerMu.Unlock()
@@ -1610,13 +1613,12 @@ func (s *Session) run() {
 					rolloverInputReady, rolloverErr = s.releaseRolloverInputs(rolloverErr, false)
 					req.complete(rolloverErr)
 				default:
-					absorbed, beginErr := s.beginOwnedRollover()
-					if beginErr != nil {
-						rolloverErr = beginErr
-					} else {
-						rolloverErr = s.performContextRollover(s.ctx, "context_error_recovery")
-						rolloverInputReady, rolloverErr = s.releaseRolloverInputs(rolloverErr, absorbed)
-					}
+					rolloverInputReady, rolloverErr = s.automaticOverflowRollover()
+				}
+				// Cancellation (Stop/reap) is not a recovery failure: never leave a
+				// durable model-switch gate behind for reopen, which retries instead.
+				if s.ctx.Err() != nil {
+					return
 				}
 				if rolloverErr == nil {
 					continue
@@ -1630,6 +1632,14 @@ func (s *Session) run() {
 				"kind": string(engine.KindContextLength), "retryable": false,
 				"action": "switch_model",
 			})
+			// Park behind the durable gate. Input released into the view above is
+			// retained (durably delivered) but must not trigger another request on
+			// the unchanged oversized view; an idle-path sender must also see
+			// running=false so a later coordinator switch can wake this owner.
+			rolloverInputReady = false
+			s.steerMu.Lock()
+			s.running = false
+			s.steerMu.Unlock()
 		} else if err != nil {
 			s.setStatus(event.StatusError)
 			// A model-turn failure was already recorded by the engine loop as a
@@ -1726,76 +1736,139 @@ func (s *Session) run() {
 			for _, input := range messages {
 				s.currentLoop().PostMessage(input)
 			}
-			continue
+			// Retained in the view, but a durable model-switch gate forbids
+			// resending the unchanged oversized request until a switch.
+			if !s.contextModelSwitchRequired() {
+				continue
+			}
 		}
 
-	waitForRun:
-		for {
-			// Background work that finished after the last checkpoint (including
-			// while this session was becoming idle) continues the conversation
-			// instead of stranding its report until the user types. Checked before
-			// blocking so a completion that raced the transition is never missed.
-			if jobWake {
-				resumed, err := s.resumeForFinishedJobs()
-				if err != nil {
-					return
-				}
-				if resumed {
-					break waitForRun
-				}
-			}
-			var completed <-chan struct{}
-			if jobWake {
-				completed = s.jobCompletions()
-			}
-			select {
-			case input := <-s.messageCh:
-				if s.ctx.Err() != nil {
-					return
-				}
-				s.currentLoop().PostMessage(input)
-				break waitForRun
-			case <-completed:
-				if s.ctx.Err() != nil {
-					return
-				}
-				// Re-check at the top: the completion may already have been claimed
-				// by a wait, or delivery may currently be held by a pause/rollover.
-			case <-s.retryCh:
-				if s.ctx.Err() != nil {
-					return
-				}
-				// Retry after a session error: mark the retry as resumed only when the
-				// parked run loop actually consumes it, then re-run the failed turn on
-				// existing history without injecting a user message.
-				s.emitter.Emit(event.Resumed, map[string]any{})
-				break waitForRun
-			case req := <-s.rolloverCh:
-				if s.ctx.Err() != nil {
-					s.steerMu.Lock()
-					s.rolloverPending = false
-					s.steerMu.Unlock()
-					req.complete(fmt.Errorf("session %s was cancelled before context rollover", s.ID))
-					return
-				}
-				absorbed := s.absorbBufferedIdleInputs()
-				rErr := s.performRolloverRequest(req, "explicit")
-				var released bool
-				released, rErr = s.releaseRolloverInputs(rErr, absorbed)
-				req.complete(rErr)
-				if rErr == nil {
-					s.emitter.Emit(event.Resumed, map[string]any{"reason": "context_rollover"})
-				}
-				// On failure the selected view stays unchanged, but independently
-				// accepted input must still run rather than remain a queued orphan.
-				if rErr == nil || absorbed || released {
-					break waitForRun
-				}
-			case <-s.ctx.Done():
-				return
-			}
+		if !s.awaitNextRun(jobWake) {
+			return
 		}
 	}
+}
+
+// awaitNextRun parks the run owner between turns until something warrants
+// another model turn, reporting false when the session ended. While the durable
+// context model-switch gate is active nothing may resend the unchanged
+// oversized view: input that raced the gate is retained in history (its durable
+// non-queued echo replays identically), and only an actual coordinator switch
+// (SetRoleConfig latches a retry and signals switchRetryCh) or a successful
+// explicit rollover proceeds.
+func (s *Session) awaitNextRun(jobWake bool) bool {
+	for {
+		// Background work that finished after the last checkpoint (including
+		// while this session was becoming idle) continues the conversation
+		// instead of stranding its report until the user types. Checked before
+		// blocking so a completion that raced the transition is never missed.
+		if jobWake {
+			resumed, err := s.resumeForFinishedJobs()
+			if err != nil {
+				return false
+			}
+			if resumed {
+				return true
+			}
+		}
+		var completed <-chan struct{}
+		if jobWake {
+			completed = s.jobCompletions()
+		}
+		select {
+		case input := <-s.messageCh:
+			if s.ctx.Err() != nil {
+				return false
+			}
+			s.currentLoop().PostMessage(input)
+			if s.contextModelSwitchRequired() {
+				continue
+			}
+			return true
+		case <-completed:
+			if s.ctx.Err() != nil {
+				return false
+			}
+			// Re-check at the top: the completion may already have been claimed
+			// by a wait, or delivery may currently be held by a pause/rollover.
+		case <-s.retryCh:
+			if s.ctx.Err() != nil {
+				return false
+			}
+			if s.contextModelSwitchRequired() {
+				continue
+			}
+			// Retry after a session error: mark the retry as resumed only when the
+			// parked run loop actually consumes it, then re-run the failed turn on
+			// existing history without injecting a user message.
+			s.emitter.Emit(event.Resumed, map[string]any{})
+			return true
+		case <-s.switchRetryCh:
+			if s.ctx.Err() != nil {
+				return false
+			}
+			// A stale token (its latch already consumed by a started run) is ignored.
+			if s.contextModelSwitchRequired() || !s.takeSwitchRetry() {
+				continue
+			}
+			s.emitter.Emit(event.Resumed, map[string]any{})
+			return true
+		case req := <-s.rolloverCh:
+			if s.ctx.Err() != nil {
+				s.steerMu.Lock()
+				s.rolloverPending = false
+				s.steerMu.Unlock()
+				req.complete(fmt.Errorf("session %s was cancelled before context rollover", s.ID))
+				return false
+			}
+			absorbed := s.absorbBufferedIdleInputs()
+			rErr := s.performRolloverRequest(req, "explicit")
+			var released bool
+			released, rErr = s.releaseRolloverInputs(rErr, absorbed)
+			req.complete(rErr)
+			if rErr == nil {
+				s.emitter.Emit(event.Resumed, map[string]any{"reason": "context_rollover"})
+				return true
+			}
+			// On failure the selected view stays unchanged, but independently
+			// accepted input must still run rather than remain a queued orphan —
+			// unless the model-switch gate forbids resending this view.
+			if (absorbed || released) && !s.contextModelSwitchRequired() {
+				return true
+			}
+			if !s.contextModelSwitchRequired() {
+				continue
+			}
+			// Gated: input stays retained in the view; keep idle senders on the
+			// idle path so they (or a coordinator switch) can still wake this
+			// owner. A sender that saw the brief running window was queued: retain
+			// it durably too.
+			s.steerMu.Lock()
+			s.running = false
+			corr := s.corrections
+			s.corrections = nil
+			s.steerMu.Unlock()
+			messages, err := s.deliverCorrections(corr)
+			if err != nil {
+				return false
+			}
+			for _, input := range messages {
+				s.currentLoop().PostMessage(input)
+			}
+		case <-s.ctx.Done():
+			return false
+		}
+	}
+}
+
+// takeSwitchRetry consumes the latched post-switch retry, reporting whether one
+// was owed.
+func (s *Session) takeSwitchRetry() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owed := s.switchRetry
+	s.switchRetry = false
+	return owed
 }
 
 // defaultPrompt is the starting instruction for a mode when the user gives none.
@@ -2735,26 +2808,27 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		ID:          id,
-		Workspace:   absWS,
-		Mode:        mode,
-		log:         log,
-		emitter:     emitter,
-		inter:       inter,
-		deps:        deps,
-		reg:         m.reg,
-		prompt:      prompt,
-		resumed:     resumed,
-		messageCh:   make(chan engine.UserMessage, 64),
-		retryCh:     make(chan struct{}),
-		rolloverCh:  make(chan *rolloverRequest, 1),
-		ctx:         ctx,
-		cancel:      cancel,
-		status:      event.StatusRunning,
-		coordinator: coordName,
-		implementer: implName,
-		reviewers:   reviewerNames,
-		thinkLevels: map[string]string{},
+		ID:            id,
+		Workspace:     absWS,
+		Mode:          mode,
+		log:           log,
+		emitter:       emitter,
+		inter:         inter,
+		deps:          deps,
+		reg:           m.reg,
+		prompt:        prompt,
+		resumed:       resumed,
+		messageCh:     make(chan engine.UserMessage, 64),
+		retryCh:       make(chan struct{}),
+		switchRetryCh: make(chan struct{}, 1),
+		rolloverCh:    make(chan *rolloverRequest, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		status:        event.StatusRunning,
+		coordinator:   coordName,
+		implementer:   implName,
+		reviewers:     reviewerNames,
+		thinkLevels:   map[string]string{},
 	}
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log

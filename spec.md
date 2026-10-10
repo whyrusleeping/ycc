@@ -349,12 +349,16 @@ summary is built is durably delivered after the selected-view event so live cont
 select the same order. Cancellation, summary failure, persistence failure, or a replacement that is
 not strictly smaller leaves the old selected view unchanged and does not release a pause. Because
 native picture/document bytes cannot currently be reconstructed in replay, rollover fails closed when
-the selected view contains media (including attachment-loss evidence after reopen); use a larger-context
+the selected view contains media (structured user attachments anywhere in the summarized authority, or
+image/document results from coordinator tools in the selected view); use a larger-context
 model or start a new session and re-attach the media. An actual provider context-length rejection may
 trigger one automatic rollover and retry because the rejected request performed no model/tool
-mutation; a second immediate overflow parks with guidance to switch the coordinator to a model with
+mutation (a pause requested during that request is honoured first; recovery proceeds on resume); a
+second immediate overflow, or a failed automatic rollover, parks with guidance to switch the coordinator to a model with
 a larger context window (or start a new session with narrower authorized input), never another rollover or retry of
-the same view; additional input is gated until the coordinator identity actually changes. This
+the same view. That durable gate also holds across reopen: input already accepted is retained in the
+view but does not resend it, new input and plain retries are refused, and an actual coordinator
+switch clears the gate and retries automatically. This
 recovery also applies to unattended sessions within their ordinary budgets.
 
 Provider refusals are not replayed into model history because they can poison continuation. They

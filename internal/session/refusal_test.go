@@ -127,10 +127,10 @@ func TestRefusalGatesInputUntilRetry(t *testing.T) {
 
 // A coordinator model change via SetRoleConfig is the provider-documented
 // recovery from a refusal: it clears the input gate and nudges the parked run
-// loop (retryCh) so the pending turn re-runs on the new backend automatically.
+// loop (latched retry + switchRetryCh) so the pending turn re-runs on the new backend automatically.
 func TestSetRoleConfigClearsRefusalAndRetries(t *testing.T) {
 	s, _ := newTestSession(t)
-	s.retryCh = make(chan struct{}, 1)
+	s.switchRetryCh = make(chan struct{}, 1)
 	s.setRefused(true)
 
 	if err := s.SetRoleConfig("b", "", nil); err != nil {
@@ -140,9 +140,12 @@ func TestSetRoleConfigClearsRefusalAndRetries(t *testing.T) {
 		t.Fatal("Refused() still true after a coordinator model change")
 	}
 	select {
-	case <-s.retryCh:
+	case <-s.switchRetryCh:
 	default:
 		t.Fatal("no retry nudge after a coordinator model change cleared the refusal")
+	}
+	if !s.takeSwitchRetry() {
+		t.Fatal("coordinator model change did not latch the owed retry")
 	}
 
 	// A role change that does NOT touch the coordinator leaves the gate alone:
@@ -155,7 +158,7 @@ func TestSetRoleConfigClearsRefusalAndRetries(t *testing.T) {
 		t.Fatal("implementer-only change must not clear the refusal gate")
 	}
 	select {
-	case <-s.retryCh:
+	case <-s.switchRetryCh:
 		t.Fatal("implementer-only change must not nudge a retry")
 	default:
 	}

@@ -616,6 +616,12 @@ func TestExplicitRolloverWaitsForCompleteMultiToolBatch(t *testing.T) {
 
 	rolloverDone := make(chan error, 1)
 	go func() { rolloverDone <- s.Rollover(context.Background()) }()
+	// Queue the request while the first tool is still running, so it can only be
+	// consumed at the batch's full-turn checkpoint.
+	deadline := time.Now().Add(time.Second)
+	for len(s.rolloverCh) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
 	close(releaseFirst)
 	select {
 	case <-secondRan:

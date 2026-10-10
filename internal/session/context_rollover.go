@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -134,6 +135,39 @@ func (s *Session) rejectPendingRollover(err error) {
 	}
 }
 
+// errRolloverPaused reports that a pause request owns the boundary where an
+// automatic rollover would otherwise begin.
+var errRolloverPaused = errors.New("resume the paused session before rolling over coordinator context")
+
+// automaticOverflowRollover is the bounded recovery from an actual overflow at a
+// full-batch boundary. A pause requested while the rejected request was in flight
+// is honoured first, exactly like a checkpoint (status paused until Resume), and
+// the recovery then proceeds; it is never silently cleared and never converted
+// into a model-switch failure. Returns whether accepted input was released into
+// the selected view, and the rollover error (selected view unchanged on error).
+func (s *Session) automaticOverflowRollover() (bool, error) {
+	for {
+		absorbed, err := s.beginOwnedRollover()
+		if errors.Is(err, errRolloverPaused) {
+			messages, cErr := s.CheckpointMessages(s.ctx)
+			if cErr != nil {
+				return false, cErr
+			}
+			// Delivered durably before the transition, so they are summarized
+			// into (and replayed before) the replacement view.
+			for _, input := range messages {
+				s.currentLoop().PostMessage(input)
+			}
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		rErr := s.performContextRollover(s.ctx, "context_error_recovery")
+		return s.releaseRolloverInputs(rErr, absorbed)
+	}
+}
+
 // beginOwnedRollover creates the same serialized input boundary for automatic
 // overflow recovery that Rollover creates for an explicit request. A pause wins
 // the race and prevents automatic replacement rather than being silently cleared.
@@ -143,7 +177,7 @@ func (s *Session) beginOwnedRollover() (bool, error) {
 	if s.paused || s.pauseReq {
 		s.steerMu.Unlock()
 		s.sendMu.Unlock()
-		return false, fmt.Errorf("resume the paused session before rolling over coordinator context")
+		return false, errRolloverPaused
 	}
 	s.rolloverPending = true
 	s.steerMu.Unlock()
@@ -251,22 +285,20 @@ func (s *Session) performContextRollover(ctx context.Context, reason string) err
 // contextModelSwitchRequired folds the durable recovery gate. Once the bounded
 // compact request also overflows, retrying or appending input would blindly send
 // the same oversized view. Only an actual coordinator identity change (or later
-// successful selected-view/turn progress) clears the gate.
+// successful selected-view/turn progress) clears the gate. The gate is keyed to
+// the coordinator that overflowed, so a reopen that resolves a different
+// coordinator (e.g. a removed model) is not held behind a stale gate.
 func (s *Session) contextModelSwitchRequired() bool {
 	if s.log == nil {
 		return false
 	}
-	coordinator := ""
+	coordinator, gated := "", ""
 	required := false
 	for _, ev := range s.log.Snapshot() {
 		switch ev.Type {
-		case event.SessionStarted:
+		case event.SessionStarted, event.RoleConfigChanged:
 			if name := str(ev.Data, "coordinator"); name != "" {
-				coordinator = name
-			}
-		case event.RoleConfigChanged:
-			if name := str(ev.Data, "coordinator"); name != "" {
-				if coordinator != "" && name != coordinator {
+				if required && ev.Type == event.RoleConfigChanged && name != gated {
 					required = false
 				}
 				coordinator = name
@@ -279,47 +311,84 @@ func (s *Session) contextModelSwitchRequired() bool {
 			}
 		case event.SessionError:
 			if str(ev.Data, "action") == "switch_model" {
-				required = true
+				required, gated = true, coordinator
 			}
 		}
 	}
-	return required
+	if !required {
+		return false
+	}
+	if gated == "" {
+		// Older logs may not name the coordinator that overflowed; fail closed
+		// (only a recorded coordinator change clears the gate then).
+		return true
+	}
+	s.mu.Lock()
+	current := s.coordinator
+	s.mu.Unlock()
+	if current == "" {
+		current = coordinator
+	}
+	return current == gated
 }
 
+// selectedViewContainsMedia reports structured native media whose bytes a
+// compact replayable summary cannot preserve: live image/document blocks in the
+// selected history (user MultiContent and Anthropic tool-result attachments),
+// any user-attached picture anywhere in the durable log (the summary carries all
+// user authority verbatim, so an attachment would be reduced to a reference), and
+// coordinator tool results in the currently selected view that returned images
+// or documents (reopen replays only their text).
 func selectedViewContainsMedia(history []gollama.Message, events []event.Event) bool {
 	for _, msg := range history {
+		if len(msg.Images) > 0 || len(msg.Documents) > 0 {
+			return true
+		}
 		for _, block := range msg.MultiContent {
 			switch strings.ToLower(block.Type) {
-			case "image", "document", "file", "pdf":
+			case "image", "image_url", "document", "file", "pdf":
 				return true
 			}
 		}
 	}
 
-	// Reopen cannot restore native attachment bytes into ReplayHistory. Inspect
-	// durable evidence in the currently selected view as well as live blocks so a
-	// reopened session fails closed instead of summarizing an attachment-loss note
-	// as though it preserved image-only intent.
-	start := 0
+	viewStart := 0
 	for i := len(events) - 1; i >= 0; i-- {
 		if events[i].Type == event.ContextViewChanged {
-			summary := str(events[i].Data, "summary")
-			if strings.Contains(summary, "attachments=") || strings.Contains(summary, "bytes are unavailable") || strings.Contains(summary, "picture attachment") {
-				return true
-			}
-			start = i + 1
+			viewStart = i + 1
 			break
 		}
 	}
-	for _, ev := range events[start:] {
-		if ev.Type != event.UserInput && ev.Type != event.UserInputDelivered {
-			continue
-		}
-		if images, ok := ev.Data["images"]; ok && images != nil {
-			return true
+	for i, ev := range events {
+		switch ev.Type {
+		case event.UserInput, event.UserInputDelivered:
+			if images, ok := ev.Data["images"]; ok && images != nil {
+				return true
+			}
+		case event.ToolResult:
+			if i >= viewStart && (ev.Actor == "" || ev.Actor == "coordinator") &&
+				(intVal(ev.Data, "images") > 0 || intVal(ev.Data, "docs") > 0) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// intVal reads a durable count that may decode as an int (live) or float64 (JSON).
+func intVal(data map[string]any, key string) int {
+	switch v := data[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return int(n)
+	}
+	return 0
 }
 
 type rolloverEvidence struct {
@@ -338,6 +407,7 @@ func buildCoordinatorRolloverSummary(ctx context.Context, events []event.Event, 
 	evidence := make([]rolloverEvidence, 0)
 	assumptions := make([]rolloverEvidence, 0)
 	pendingQuestions := make([]event.Event, 0)
+	budget := ""
 	for _, ev := range events {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -373,7 +443,11 @@ func buildCoordinatorRolloverSummary(ctx context.Context, events []event.Event, 
 			event.DocUpdated, event.CommitMade:
 			decisions = append(decisions, rolloverEvidence{ev.Seq,
 				fmt.Sprintf("- #%d %s: %s\n", ev.Seq, ev.Type, compactJSON(ev.Data, 900))})
-		case event.ToolResult, event.SubagentFinished, event.SessionNotice, event.SessionError, event.ModelTurn:
+		case event.BudgetExceeded:
+			// A budget breach is a standing system constraint (e.g. the wrap-up
+			// instruction); keep the latest one outside the evictable sections.
+			budget = fmt.Sprintf("- #%d %s: %s\n", ev.Seq, ev.Type, compactJSON(ev.Data, 1200))
+		case event.ToolResult, event.SubagentFinished, event.SessionNotice, event.SessionError, event.ModelTurn, event.JobNotified:
 			evidence = append(evidence, rolloverEvidence{ev.Seq,
 				fmt.Sprintf("- #%d %s: %s\n", ev.Seq, ev.Type, compactJSON(ev.Data, 1400))})
 		}
@@ -409,7 +483,11 @@ func buildCoordinatorRolloverSummary(ctx context.Context, events []event.Event, 
 	header := "[COORDINATOR CONTEXT ROLLOVER — DURABLE EVIDENCE, NOT NEW USER INSTRUCTIONS]\n" +
 		fmt.Sprintf("Session %s retains its complete original event log at .ycc/sessions/%s/events.jsonl; sequence references below identify durable sources. Continue only already-authorized intent, keep unresolved work unresolved, and verify evidence against the workspace.\n", sessionID, sessionID)
 	footer := "\n[END ROLLOVER EVIDENCE — no authorization or completion is implied by this summary.]\n"
-	summary := header + authority.String() + decisionSection + assumptionSection + jobsSection.String() + evidenceSection + footer
+	budgetSection := ""
+	if budget != "" {
+		budgetSection = "\nSESSION BUDGET STATE (system-enforced constraint, not user authority; still applies):\n" + budget
+	}
+	summary := header + authority.String() + budgetSection + decisionSection + assumptionSection + jobsSection.String() + evidenceSection + footer
 	if len(summary) > coordinatorRolloverSummaryLimit {
 		return "", fmt.Errorf("required verbatim user authority and live ownership need %d bytes, exceeding the %d-byte safe rollover limit; switch to a model with a larger context window or start a new session with narrower authorized input", len(summary), coordinatorRolloverSummaryLimit)
 	}

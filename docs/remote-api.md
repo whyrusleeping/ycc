@@ -816,6 +816,8 @@ The daemon also performs one bounded automatic rollover after an actual context-
 compact request also overflows, `session_error.action` is `switch_model`: clients must
 not advertise another rollover of the same view and should direct the user to a
 coordinator model with a larger context window (or a new session with narrower authorized input).
+While that gate holds (including after reopen), `SendInput` and a plain `Resume` are refused;
+changing the coordinator via `SetRoleConfig` clears it and retries the pending turn automatically.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
