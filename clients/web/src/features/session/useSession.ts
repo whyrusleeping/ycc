@@ -76,14 +76,6 @@ function release(controller: SessionController) {
   }, PARK_AFTER_MS);
 }
 
-/**
- * Re-open a persisted session (ResumeSession) on its shared controller; the
- * session view that mounts next paints history first and then goes live.
- */
-export function requestReopen(project: string, sessionId: string) {
-  void peekSession(project, sessionId).reopen();
-}
-
 /** Reconnect every open live session (e.g. the tab became visible again). */
 export function reconnectActiveSessions() {
   for (const entry of entries.values()) {

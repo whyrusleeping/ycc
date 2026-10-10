@@ -310,7 +310,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Exactly one: attach directly (ResumeSession is idempotent for a
 					// live session, so this reopens/attaches rather than restarts).
 					id := m.waitingSessions[0].SessionId
-					m.status = "reopening " + short(id) + "…"
+					m.status = "opening " + short(id) + "…"
 					return m, m.reopenSession(id)
 				}
 				// Several: open the session browser filtered to just the waiting
@@ -332,7 +332,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.lastSession != nil && strings.TrimSpace(m.prompt.Value()) == "" {
 				m.recordAction("session.continue_last")
 				id := m.lastSession.SessionId
-				m.status = "reopening " + short(id) + "…"
+				m.status = "opening " + short(id) + "…"
 				return m, m.reopenSession(id)
 			}
 		case "ctrl+r":

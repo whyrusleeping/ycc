@@ -375,11 +375,10 @@ struct SessionView: View {
                 if presentation == nil { presentation = SessionPresentation(model: model) }
                 presentation?.begin()
             }
-            // A Resume from the session list navigates straight here and lets the
-            // view model re-open the session concurrently with the history load.
             // `present` resumes a cached model from its cursor and is a no-op when
             // returning (e.g. from a diff) to a model that is still streaming.
-            .task { model.present(reopen: app.dataCache.consumeReopenRequest(sessionID: sessionID)) }
+            // A persisted session is re-opened transparently by its first send.
+            .task { model.present() }
             .onDisappear {
                 // Leaving the transcript is the moment the user has "read" it: record
                 // the newest event they were shown, so later agent activity — a turn
@@ -427,18 +426,6 @@ struct SessionView: View {
             if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
-            } else if model.isReopening {
-                banner(
-                    "Resuming session…",
-                    systemImage: "arrow.clockwise.circle",
-                    tint: .secondary
-                )
-            } else {
-                banner(
-                    "Reopen this session to continue the conversation",
-                    systemImage: "clock.arrow.circlepath",
-                    tint: .secondary
-                )
             }
             inputBar
         }

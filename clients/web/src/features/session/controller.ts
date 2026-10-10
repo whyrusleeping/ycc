@@ -2,7 +2,8 @@
 // indexed page (GetSessionView), streams SubscribeSessionView from the
 // indexed_through_seq cursor with backoff, pages earlier rows and row detail on
 // demand, and runs the interactive actions (send with pictures, answer,
-// interrupt/resume, stop, reopen via ResumeSession) with the daemon's durable
+// interrupt/resume, stop; a send to a persisted session transparently re-opens
+// it via ResumeSession) with the daemon's durable
 // state as the source of truth. React reads
 // immutable snapshots through useSyncExternalStore (see useSession.ts).
 import { Code, ConnectError } from "@connectrpc/connect";
@@ -58,7 +59,7 @@ export interface SessionSnapshot {
   /** Row id of a question this client answered that durable state still lists. */
   answeredRowId: string | null;
   control: { kind: ControlKind; acknowledged: boolean } | null;
-  /** A ResumeSession (reopen) call is in flight. */
+  /** A send is re-opening this persisted session (ResumeSession). */
   reopening: boolean;
 }
 
@@ -156,6 +157,7 @@ export class SessionController {
   private control: { kind: ControlKind; acknowledged: boolean; token: number } | null = null;
   private controlToken = 0;
   private reopening = false;
+  private reopenCall: Promise<string | null> | null = null;
   private opts: Required<ControllerOptions>;
 
   constructor(
@@ -498,7 +500,7 @@ export class SessionController {
     if (!trimmed && !pictures.length) return;
     // Pictures never answer a question (the daemon refuses them while one is
     // pending), so only text-only input takes the answer path.
-    if (this.projection.awaitsAnswer && !pictures.length) {
+    if (this.mode === "live" && this.projection.awaitsAnswer && !pictures.length) {
       this.answerInFlight = true;
       this.publish();
       try {
@@ -559,6 +561,12 @@ export class SessionController {
   private async deliver(id: string) {
     const msg = this.pendingMessages.find((m) => m.id === id);
     if (!msg) return;
+    const reopenError = await this.ensureLive();
+    if (reopenError !== null) {
+      this.markMessage(id, { status: "failed", error: reopenError });
+      this.publish();
+      return;
+    }
     try {
       await this.api.sendInput({ sessionId: this.sessionId, text: msg.text, images: toImageAttachments(msg.pictures) });
       this.markMessage(id, { status: "sent" });
@@ -620,27 +628,34 @@ export class SessionController {
   // MARK: reopen
 
   /**
-   * ResumeSession: re-open a persisted session on its existing log, then
-   * promote this view to live (subscribing from the painted history's cursor).
-   * Idempotent server-side when the session is already live. On failure the
-   * read-only history stays and the error is reported.
+   * Whether a session is still held by the daemon is a backend detail: a send
+   * to a persisted session first re-opens it (ResumeSession) on its existing
+   * log, then promotes this view to live from the painted history's cursor.
+   * Concurrent sends share one call. Resolves null on success, else the
+   * reported error.
    */
-  async reopen(): Promise<boolean> {
-    if (this.reopening || this.disposed) return false;
+  private ensureLive(): Promise<string | null> {
+    if (this.mode !== "persisted" || this.disposed) return Promise.resolve(null);
+    this.reopenCall ??= this.reopen().finally(() => {
+      this.reopenCall = null;
+    });
+    return this.reopenCall;
+  }
+
+  private async reopen(): Promise<string | null> {
     this.reopening = true;
     this.publish();
     try {
       await this.api.resumeSession({ project: this.project, sessionId: this.sessionId });
-      if (this.disposed) return true;
+      if (this.disposed) return null;
       this.mode = "live";
       if (this.loop !== null || this.conn === "finished" || this.conn === "failed") {
         this.stop();
         this.runLoop(!this.installed);
       }
-      return true;
+      return null;
     } catch (err) {
-      this.reportActionError("reopen", err);
-      return false;
+      return this.reportActionError("send", err);
     } finally {
       this.reopening = false;
       this.publish();

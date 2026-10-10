@@ -839,37 +839,15 @@ final class AppDataCacheTests: XCTestCase {
         let generation = cache.generation
         cache.store([1, 2], for: .backlog("p"))
         cache.updateProjects([Ycc_V1_ProjectInfo()])
-        cache.requestReopen(sessionID: "s1")
 
         cache.clear()
 
         XCTAssertNil(cache.value(.backlog("p"), as: [Int].self))
         XCTAssertNil(cache.projects)
-        XCTAssertFalse(cache.consumeReopenRequest(sessionID: "s1"))
         cache.store([3], for: .backlog("p"), ifGeneration: generation)
         XCTAssertNil(cache.value(.backlog("p"), as: [Int].self), "a pre-switch load must not repopulate")
         cache.store([4], for: .backlog("p"), ifGeneration: cache.generation)
         XCTAssertEqual(cache.value(.backlog("p"), as: [Int].self), [4])
-    }
-
-    func testReopenRequestIsConsumedOnce() async {
-        let cache = AppDataCache()
-        cache.requestReopen(sessionID: "s1")
-        XCTAssertTrue(cache.consumeReopenRequest(sessionID: "s1"))
-        XCTAssertFalse(cache.consumeReopenRequest(sessionID: "s1"))
-    }
-
-    func testReopenRequestExpiresAndOnlyAppliesToTheNextOpen() async {
-        var clock = Date(timeIntervalSince1970: 100)
-        let cache = AppDataCache(now: { clock })
-
-        cache.requestReopen(sessionID: "s1")
-        clock = clock.addingTimeInterval(AppDataCache.reopenRequestLifetime + 1)
-        XCTAssertFalse(cache.consumeReopenRequest(sessionID: "s1"), "a stale request expires")
-
-        cache.requestReopen(sessionID: "s1")
-        XCTAssertFalse(cache.consumeReopenRequest(sessionID: "s2"), "another screen opened first")
-        XCTAssertFalse(cache.consumeReopenRequest(sessionID: "s1"), "…which consumed the request")
     }
 }
 

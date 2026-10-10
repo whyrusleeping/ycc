@@ -39,7 +39,7 @@ export function SessionSettingsPanel({ project, sessionId }: { project: string; 
     <div className="settings-panel">
       {!live && snap.installed && (
         <p className="muted small">
-          This session is not live. Resume it to change its reasoning or models; usage below is from its log.
+          Reasoning and models can be changed once the session is running again — just send it a message. Usage below is from its log.
         </p>
       )}
       <ReasoningAndRoles sessionId={sessionId} live={live} />

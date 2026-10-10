@@ -255,14 +255,14 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// idempotent for a live session, so this attaches rather than restarts.
 		if w := m.wsCurrent(); w != nil && w.GetSessionId() != "" {
 			m.recordAction("workstreams.attach")
-			m.status = "reopening " + short(w.GetSessionId()) + "…"
+			m.status = "opening " + short(w.GetSessionId()) + "…"
 			return m, m.reopenSession(w.GetSessionId())
 		}
 		return m, nil
 	case "i":
 		if w := m.wsCurrent(); w != nil && w.GetIntegrateSessionId() != "" {
 			m.recordAction("workstreams.attach")
-			m.status = "reopening " + short(w.GetIntegrateSessionId()) + "…"
+			m.status = "opening " + short(w.GetIntegrateSessionId()) + "…"
 			return m, m.reopenSession(w.GetIntegrateSessionId())
 		}
 		m.wsNotice = "no integrate session"

@@ -621,8 +621,8 @@ public final class SessionViewModel {
     /// Begin loading. Idempotent: a second call while already running is ignored.
     ///
     /// `reopen` re-opens a persisted session (`ResumeSession`) *concurrently*
-    /// with the first transcript load, so a Resume from the session list can
-    /// navigate immediately: history paints from the read-only snapshot while
+    /// with the first transcript load (the app instead re-opens lazily on its
+    /// first ``send(text:images:)``): history paints from the read-only snapshot while
     /// the daemon re-instantiates the session, then the view promotes itself to
     /// the live stream. A reopen failure keeps the history and surfaces
     /// ``actionError``.
@@ -1130,8 +1130,8 @@ public final class SessionViewModel {
     }
 
     /// A daemon restart drops in-memory live sessions while leaving their event
-    /// logs on disk. Verify that history explicitly, then expose the normal
-    /// persisted-session reopen affordance; never resume execution implicitly.
+    /// logs on disk. Verify that history explicitly, then fall back to the
+    /// persisted view (the next send re-opens it); never resume implicitly.
     private func recoverPersistedSession(generation: UInt64) async {
         state = .loading
         clearTransientPresentation()
@@ -1290,7 +1290,7 @@ public final class SessionViewModel {
         guard let message = pendingUserMessages.first(where: { $0.id == messageID }) else { return }
         if mode == .persisted {
             guard await reopenForInteraction() else {
-                markSend(messageID, .failed(actionError ?? "resume failed"))
+                markSend(messageID, .failed(actionError ?? "send failed"))
                 return
             }
         }
@@ -1383,7 +1383,7 @@ public final class SessionViewModel {
         guard mode == .persisted else { return true }
         if let reopenTask { return await reopenTask.value }
         guard let actions else {
-            actionError = "resume unavailable"
+            actionError = "send unavailable"
             return false
         }
         isReopening = true
@@ -1397,7 +1397,7 @@ public final class SessionViewModel {
                 if Self.classify(error) == .unauthorized {
                     self.failUnauthorized()
                 } else {
-                    self.actionError = Self.actionMessage("resume", error)
+                    self.actionError = Self.actionMessage("send", error)
                 }
                 return false
             }

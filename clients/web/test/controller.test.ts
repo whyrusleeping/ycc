@@ -233,16 +233,20 @@ describe("SessionController", () => {
     c.dispose();
   });
 
-  it("reopens a persisted session and promotes the view to live from its cursor", async () => {
+  it("a send to a persisted session re-opens it, goes live from its cursor, then delivers", async () => {
     const { api, raw, subscribeCalls } = fakeApi({ live: false, scripts: [{ updates: [], end: "hang" }] });
     const c = new SessionController(api, "p", "s1", hooks(), fast);
     c.start();
     await until(() => c.getSnapshot().conn === "finished");
     expect(c.getSnapshot().mode).toBe("persisted");
-    const done = c.reopen();
+    const first = c.send("hello");
+    const second = c.send("again");
     expect(c.getSnapshot().reopening).toBe(true);
-    expect(await done).toBe(true);
+    await Promise.all([first, second]);
+    expect(raw.resumeSession).toHaveBeenCalledTimes(1);
     expect(raw.resumeSession).toHaveBeenCalledWith({ project: "p", sessionId: "s1" });
+    expect(raw.resumeSession.mock.invocationCallOrder[0]).toBeLessThan(raw.sendInput.mock.invocationCallOrder[0]);
+    expect(raw.sendInput).toHaveBeenCalledTimes(2);
     await until(() => c.getSnapshot().conn === "streaming");
     const snap = c.getSnapshot();
     expect(snap.mode).toBe("live");
@@ -253,28 +257,20 @@ describe("SessionController", () => {
     c.dispose();
   });
 
-  it("keeps the read-only history when reopen fails", async () => {
+  it("keeps the history and fails the message when re-opening fails", async () => {
     const { api, raw } = fakeApi({ live: false, scripts: [{ updates: [] }] });
     raw.resumeSession.mockRejectedValueOnce(new ConnectError("model disabled", Code.FailedPrecondition));
     const h = hooks();
     const c = new SessionController(api, "p", "s1", h, fast);
     c.start();
     await until(() => c.getSnapshot().conn === "finished");
-    expect(await c.reopen()).toBe(false);
-    expect(h.onError).toHaveBeenCalledWith("Reopen failed: model disabled", expect.objectContaining({ op: "session.reopen" }));
-    expect(c.getSnapshot().mode).toBe("persisted");
-    expect(c.getSnapshot().rows.length).toBe(1);
-    c.dispose();
-  });
-
-  it("a reopen requested before the view starts goes live without asking ListSessions", async () => {
-    const { api, raw, subscribeCalls } = fakeApi({ live: false, scripts: [{ updates: [], end: "hang" }] });
-    const c = new SessionController(api, "p", "s1", hooks(), fast);
-    await c.reopen();
-    c.start();
-    await until(() => c.getSnapshot().conn === "streaming");
-    expect(raw.listSessions).not.toHaveBeenCalled();
-    expect(subscribeCalls).toEqual([5n]);
+    await c.send("hello");
+    expect(h.onError).toHaveBeenCalledWith("Send failed: model disabled", expect.objectContaining({ op: "session.send" }));
+    expect(raw.sendInput).not.toHaveBeenCalled();
+    const snap = c.getSnapshot();
+    expect(snap.mode).toBe("persisted");
+    expect(snap.rows.length).toBe(1);
+    expect(snap.pendingMessages.map((m) => m.status)).toEqual(["failed"]);
     c.dispose();
   });
 

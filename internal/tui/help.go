@@ -107,7 +107,7 @@ func (m model) helpSections() []helpSection {
 		{"session browser", []helpBind{
 			{"↑ / ↓", "move between sessions"},
 			{"enter", "view the transcript (read-only replay)"},
-			{"o", "reopen / attach the selected session (from the menu only)"},
+			{"o", "open the selected session (from the menu only)"},
 			{"r", "refresh the list"},
 			{"/  n / N", "search a transcript · next / previous match"},
 			{"{ } ( ) < > [ ]", "jump to question · review · commit · error"},

@@ -62,7 +62,7 @@ enum Analytics {
         "question.answer",
         "transcript.load_earlier", "transcript.load_detail", "transcript.jump_latest",
         "message.retry", "message.edit",
-        "sessions.resume", "sessions.mark_read", "sessions.mark_all_read",
+        "sessions.mark_read", "sessions.mark_all_read",
         "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter",
         "drawer.open", "drawer.select_project", "drawer.rename_project", "drawer.remove_project",
         "drawer.disconnect",

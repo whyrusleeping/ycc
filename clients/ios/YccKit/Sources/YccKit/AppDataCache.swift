@@ -53,11 +53,6 @@ public final class AppDataCache {
     /// optimistic state), so re-opening one is instant and resumes its stream
     /// from the cached cursor. Stopped and emptied by ``clear()``.
     public let sessionModels = SessionModelCache()
-    /// At most one outstanding reopen request, for the next session screen.
-    private var reopenRequest: (sessionID: String, at: Date)?
-    private let now: () -> Date
-    /// How long a reopen request stays valid if no session screen opens.
-    public static let reopenRequestLifetime: TimeInterval = 5
 
     /// The registered projects last reported by the daemon, or `nil` when no
     /// screen has loaded them yet on this connection. Fed by the session list
@@ -70,9 +65,7 @@ public final class AppDataCache {
     /// switch can detect that its result belongs to the previous server.
     public private(set) var generation: UInt64 = 0
 
-    public init(now: @escaping () -> Date = Date.init) {
-        self.now = now
-    }
+    public init() {}
 
     /// The cached value for `key`, if one of the requested type is present.
     public func value<T>(_ key: Key, as type: T.Type = T.self) -> T? {
@@ -107,32 +100,10 @@ public final class AppDataCache {
         self.projects = projects
     }
 
-    /// Ask the *next* session screen, if it shows `sessionID`, to re-open the
-    /// persisted session (`ResumeSession`) concurrently with its first
-    /// transcript load, instead of the caller awaiting the resume before it
-    /// navigates. Replaces any earlier request and expires after
-    /// ``reopenRequestLifetime`` so a navigation that never built a new screen
-    /// cannot resume the session on some later, unrelated open.
-    public func requestReopen(sessionID: String) {
-        guard !sessionID.isEmpty else { return }
-        reopenRequest = (sessionID, now())
-    }
-
-    /// Called by every session screen as it opens: consumes any outstanding
-    /// request (whichever session it named) and reports whether it asked to
-    /// reopen `sessionID` and is still fresh.
-    public func consumeReopenRequest(sessionID: String) -> Bool {
-        guard let request = reopenRequest else { return false }
-        reopenRequest = nil
-        return request.sessionID == sessionID
-            && now().timeIntervalSince(request.at) <= Self.reopenRequestLifetime
-    }
-
     /// Forget everything — call on any connection/profile/credential change.
     public func clear() {
         entries.removeAll()
         sessionModels.removeAll()
-        reopenRequest = nil
         projects = nil
         generation &+= 1
     }

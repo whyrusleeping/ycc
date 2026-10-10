@@ -40,7 +40,7 @@ export function statusText(snap: SessionSnapshot): { text: string; tone: string 
       return { text: snap.failure ?? "Failed", tone: "error" };
     case "finished":
       if (snap.mode === "persisted") {
-        return snap.reopening ? { text: "Reopening…", tone: "warn" } : { text: "Not live · read-only", tone: "muted" };
+        return snap.reopening ? { text: "Starting…", tone: "warn" } : { text: "Idle", tone: "muted" };
       }
   }
   if (snap.pauseRequested) return { text: "Pausing at next checkpoint…", tone: "warn" };
@@ -293,7 +293,8 @@ export function SessionView({
     void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
   }, [qc, lifecycleKey, snap.installed]);
   const ctx = snap.contextTokens !== null ? compactTokenCount(snap.contextTokens) : null;
-  const canCompose = snap.mode === "live" && snap.conn !== "finished";
+  // A persisted session accepts input too: sending re-opens it transparently.
+  const canCompose = snap.mode === "persisted" || (snap.mode === "live" && snap.conn !== "finished");
   const drop = useDropZone((files) => composer.current?.addFiles(files), canCompose);
   const settingsOpen =
     inspector.item?.kind === "sessionSettings" &&
@@ -306,9 +307,11 @@ export function SessionView({
     !inspector.item.taskId;
 
   let placeholder = "Message the agent… (Enter to send, Shift+Enter for a newline)";
-  if (snap.awaitsAnswer) placeholder = "Type an answer to the pending question…";
-  else if (snap.phase.kind === "paused") placeholder = "Steer the paused session, then Resume…";
-  else if (snap.phase.kind === "running") placeholder = "Send a steer — delivered at the next checkpoint…";
+  // A persisted log's last phase says nothing about the next turn: keep the default.
+  const livePhase = snap.mode === "live";
+  if (livePhase && snap.awaitsAnswer) placeholder = "Type an answer to the pending question…";
+  else if (livePhase && snap.phase.kind === "paused") placeholder = "Steer the paused session, then Resume…";
+  else if (livePhase && snap.phase.kind === "running") placeholder = "Send a steer — delivered at the next checkpoint…";
 
   return (
     <div className={`session${drop.dragging ? " dragging" : ""}`} {...drop.handlers}>
@@ -449,31 +452,15 @@ export function SessionView({
           submitted={snap.answeredRowId === snap.pendingQuestion.rowId}
         />
       )}
-      {canCompose ? (
+      {canCompose && (
         <Composer
           ref={composer}
           sessionKey={`${project}\u0000${sessionId}`}
           placeholder={placeholder}
-          picturesBlocked={snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
+          picturesBlocked={livePhase && snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
           sendAttrs={{ phase: snap.awaitsAnswer ? "question" : snap.pauseRequested ? "pausing" : snap.phase.kind }}
           onSend={(t, pictures) => void controller.send(t, pictures)}
         />
-      ) : (
-        snap.mode === "persisted" && (
-          <div className="readonly-note">
-            <span className="muted">This session is not live, so this is a read-only transcript.</span>
-            <button
-              type="button"
-              className="btn primary small"
-              disabled={snap.reopening}
-              data-track="session.reopen"
-              onClick={() => void controller.reopen()}
-              title="Re-open this session on its existing log and continue it"
-            >
-              {snap.reopening ? "Resuming…" : "Resume session"}
-            </button>
-          </div>
-        )
       )}
       <NewTaskDialog
         project={project}
@@ -499,7 +486,6 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
     retry: live && idle && phase === "error" && snap.phase.kind === "error" && snap.phase.retryable,
     rollover: live && idle && snap.rolloverAvailable && phase !== "paused" && phase !== "stopped",
     stop: live && idle && phase !== "stopped",
-    reopen: snap.mode === "persisted" && !snap.reopening,
   };
   const g = "Session";
   useAction(
@@ -542,15 +528,6 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
           ? { id: "session.stop", title: "Stop this session…", group: g, keywords: "terminate kill end", run: () => requestIntent(stopIntentKey(sessionId), "stop") }
           : null,
       [can.stop, sessionId],
-    ),
-  );
-  useAction(
-    useMemo(
-      () =>
-        can.reopen
-          ? { id: "session.reopen", title: "Resume this session (re-open it live)", group: g, keywords: "reopen continue", run: () => void controller.reopen() }
-          : null,
-      [can.reopen, controller],
     ),
   );
   useAction(

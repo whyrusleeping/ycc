@@ -1,11 +1,10 @@
 // The session list: the daemon-wide Recent feed (or one project's sessions),
 // needs-answer sessions pinned on top, then most recent first.
-import { Link, useNavigate } from "react-router";
+import { Link } from "react-router";
 import { useEffect, useState } from "react";
 import { useSessionFeed, useSetFollowUp } from "../../api/queries";
 import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
-import { requestReopen } from "../session/useSession";
 import { useLoopSessionIds } from "../workloop/hooks";
 import { useReadMarks } from "./unread";
 import {
@@ -62,11 +61,10 @@ export function SessionRowView({
   const project = displayProject(row);
   const chips = taskChipLabels(s);
   const when = relativeTime(s.lastActivity || s.startedAt, now);
-  const navigate = useNavigate();
   const ids = taskIds(s);
   // The row is one stretched link (its ::after covers the row) so the focus
   // task chips can be links of their own without nesting anchors.
-  const link = (
+  return (
     <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}${unread ? " unread" : ""}`}>
       <div className="session-row-title">
         {needsAnswer(s) && (
@@ -133,27 +131,6 @@ export function SessionRowView({
         )}
         {when && <span className="when">{when}</span>}
       </div>
-    </div>
-  );
-  if (s.live) return link;
-  // Persisted sessions can be re-opened in place: navigate at once so the
-  // history paints while ResumeSession runs, then the view goes live.
-  return (
-    <div className="session-row-wrap">
-      {link}
-      <button
-        type="button"
-        className="btn small row-resume"
-        title="Resume this session"
-        aria-label={`Resume ${displayTitle(s)}`}
-        data-track="sessions.resume"
-        onClick={() => {
-          requestReopen(row.project, s.sessionId);
-          navigate(paths.session(row.project, s.sessionId));
-        }}
-      >
-        Resume
-      </button>
     </div>
   );
 }

@@ -242,7 +242,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Reopen the session whose transcript we're viewing (resume = replay).
 			m.historyTranscript = false
 			m.clearSearch()
-			m.historyMsgTxt = "reopening " + short(m.historyTransID) + "…"
+			m.historyMsgTxt = "opening " + short(m.historyTransID) + "…"
 			return m, m.reopenSession(m.historyTransID)
 		}
 		// Everything else (↑/↓, pgup/pgdn, wheel) scrolls the transcript viewport.
@@ -292,7 +292,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.recordAction("sessions.resume")
 		sel := m.history[m.historyCursor]
-		m.historyMsgTxt = "reopening " + short(sel.SessionId) + "…"
+		m.historyMsgTxt = "opening " + short(sel.SessionId) + "…"
 		return m, m.reopenSession(sel.SessionId)
 	}
 	return m, nil
@@ -728,7 +728,7 @@ func (m model) historyView() string {
 	b := browser{
 		title:  " ycc — sessions ",
 		cursor: m.historyCursor,
-		hint:   m.historyHint("↑/↓ choose · enter transcript · o reopen · f flag · F follow-ups · r refresh · esc/q back"),
+		hint:   m.historyHint("↑/↓ choose · enter transcript · o open · f flag · F follow-ups · r refresh · esc/q back"),
 		empty:  emptyMsg,
 	}
 	if m.historyFollowUpOnly {
@@ -862,9 +862,9 @@ func (m model) transcriptView() string {
 		help = m.searchBar()
 	case m.searchQuery != "":
 		total, cur := m.searchCount()
-		help = m.footerBar(fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear · o reopen · esc/q back", m.searchQuery, cur, total))
+		help = m.footerBar(fmt.Sprintf(" ⌕ %q %d/%d · n/N next/prev · esc clear · o open · esc/q back", m.searchQuery, cur, total))
 	default:
-		help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · <> commit · enter diff/reopen · o reopen · esc/q back")
+		help = m.footerBar(" ↑↓/pgup/pgdn scroll · / search · {}()<>[] jump · <> commit · enter diff/open · o open · esc/q back")
 	}
 	return top + "\n" + body + "\n" + help
 }

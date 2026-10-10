@@ -529,20 +529,6 @@ struct LandingView: View {
         return [lastViewedProject] + choices.filter { $0 != lastViewedProject }
     }
 
-    /// Re-open a persisted session on its existing log. Navigates immediately:
-    /// the session view paints the read-only history while `ResumeSession`
-    /// runs concurrently, then promotes itself to the live stream (a failure
-    /// surfaces in that view and keeps the history). Idempotent server-side if
-    /// the session is already live.
-    private func resume(_ session: Ycc_V1_SessionSummary) {
-        guard app.client != nil else { return }
-        let project = model?.project(for: session) ?? ""
-        app.dataCache.requestReopen(sessionID: session.sessionID)
-        router.open(.session(
-            id: session.sessionID, project: project, live: false,
-            title: SessionListModel.displayTitle(for: session)))
-    }
-
     // MARK: - Session list
 
     private func content(_ model: SessionListModel) -> some View {
@@ -676,8 +662,6 @@ struct LandingView: View {
                         }
                         .listRowBackground(section.kind == .needsAnswer
                             ? Color.orange.opacity(0.12) : nil)
-                        // Persisted (non-live) rows can be re-opened on their
-                        // existing log via ResumeSession.
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 setFollowUp(session, model: model, via: .swipe)
@@ -687,15 +671,6 @@ struct LandingView: View {
                             }
                             .tint(.orange)
                             .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
-                            if !session.live {
-                                Button {
-                                    Analytics.action("sessions.resume", via: .swipe)
-                                    resume(session)
-                                } label: {
-                                    Label("Resume", systemImage: "play.circle")
-                                }
-                                .tint(.green)
-                            }
                         }
                         // Acknowledging new agent output without reading it is a
                         // legitimate answer to a badge, so it gets the trailing
@@ -719,14 +694,6 @@ struct LandingView: View {
                                     systemImage: session.followUp ? "flag.slash" : "flag")
                             }
                             .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
-                            if !session.live {
-                                Button {
-                                    Analytics.action("sessions.resume", via: .contextMenu)
-                                    resume(session)
-                                } label: {
-                                    Label("Resume session", systemImage: "play.circle")
-                                }
-                            }
                             if model.isUnread(session) {
                                 Button {
                                     Analytics.action("sessions.mark_read", via: .contextMenu)
