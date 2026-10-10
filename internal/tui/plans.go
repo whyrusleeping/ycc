@@ -69,6 +69,7 @@ func (m model) updatePlans(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if len(m.plansList) > 0 {
+			m.recordAction("plans.view")
 			return m, m.fetchPlan(m.plansList[m.plansCursor].Name)
 		}
 		return m, nil

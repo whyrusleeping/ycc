@@ -78,6 +78,7 @@ func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if task == "" {
 			return m, nil
 		}
+		m.recordAction("usage.drill")
 		m.costTaskCursor = m.costCursor
 		m.costTask = task
 		m.costGroupBy = []string{"agent"}
@@ -87,6 +88,7 @@ func (m model) updateCost(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.costGen++
 		return m, m.fetchUsage
 	case "g":
+		m.recordAction("usage.group")
 		order := costGroupOrder
 		cur := "task"
 		if m.costTask != "" {

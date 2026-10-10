@@ -17,6 +17,7 @@ import (
 // openCapture enters the quick-add backlog capture overlay, resetting
 // it to the "describe" stage with a focused, empty input.
 func (m *model) openCapture() {
+	m.recordAction("quick_capture.open")
 	m.capture = true
 	m.captureStage = 0
 	m.captureQuestion = ""
@@ -43,6 +44,9 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m.confirmQuit()
 	case "esc":
+		if m.captureStage != 2 && m.captureDesc == "" {
+			m.recordAction("quick_capture.cancel")
+		}
 		m.capture = false
 		return m, nil
 	case "enter":
@@ -59,6 +63,7 @@ func (m model) updateCapture(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.captureStage == 0 {
+			m.recordAction("quick_capture.submit")
 			m.captureDesc = val
 			m.captureBusy = true
 			m.captureMsg = ""

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -57,6 +59,7 @@ const quitGuardWindow = 2 * time.Second
 const quitGuardHint = "agent running — ctrl+c again to quit"
 
 type model struct {
+	ana       *uiRecorder
 	client    yccv1connect.SessionServiceClient
 	ctx       context.Context
 	workspace string
@@ -503,8 +506,10 @@ type model struct {
 // project-picker screen for persistent/remote daemons. A one-shot daemon still
 // exposes cwd as a normal project, but it is the unambiguous sole choice.
 func Run(ctx context.Context, client yccv1connect.SessionServiceClient, workspace string, showPicker bool) error {
-	p := tea.NewProgram(initialModel(ctx, client, workspace, showPicker))
+	m := initialModel(ctx, client, workspace, showPicker)
+	p := tea.NewProgram(m)
 	_, err := p.Run()
+	m.ana.finish(time.Second)
 	return err
 }
 
@@ -537,6 +542,7 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 		initState = statePicker
 	}
 	return model{
+		ana:    newUIRecorder(client),
 		client: client, ctx: ctx, workspace: workspace,
 		showPicker: showPicker, projectSeq: 1,
 		state: initState, prompt: prompt, input: input, projectInput: projectInput,
@@ -557,6 +563,14 @@ func initialModel(ctx context.Context, client yccv1connect.SessionServiceClient,
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchModes, m.fetchModels, m.fetchProjects, m.menuRefreshTick()}
+	attrs := map[string]string{"input": "keyboard"}
+	if analyticsToken(m.prefs.Theme) {
+		attrs["theme"] = m.prefs.Theme
+	}
+	if m.ana.visitStart(attrs) {
+		m.ana.observeView(m.analyticsView())
+		cmds = append(cmds, analyticsTick())
+	}
 	if m.state == statePicker {
 		cmds = append(cmds, m.projectsRefreshTick())
 	}
@@ -582,6 +596,7 @@ func (m *model) flash(err error) tea.Cmd {
 		m.err = err
 		return nil
 	}
+	m.ana.errorEvent(m.analyticsView(), "flash", strings.ToLower(connect.CodeOf(err).String()))
 	m.flashSeq++
 	m.flashErr = err.Error()
 	seq := m.flashSeq
@@ -686,6 +701,19 @@ func (m model) dropMouseFragment(k tea.KeyMsg) bool {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(analyticsTickMsg); ok {
+		return m, tea.Batch(m.ana.flushCmd(), analyticsTick())
+	}
+	next, cmd := m.update(msg)
+	nm := next.(model)
+	nm.ana.observeView(nm.analyticsView())
+	if nm.ana.full() {
+		cmd = tea.Batch(cmd, nm.ana.flushCmd())
+	}
+	return nm, cmd
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Track mouse activity and swallow keystrokes that are really the leaked
 	// bytes of a split mouse report (bubbletea v1 input-parser bug). This runs
 	// ahead of all state dispatch so it protects every input box uniformly.

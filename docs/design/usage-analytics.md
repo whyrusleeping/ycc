@@ -75,6 +75,11 @@ The iOS client instead treats backgrounding as leaving: it closes the current vi
 flushes, and starts a new visit on the next foreground. The web client pauses a view's clock while the tab is hidden and ends its views on `pagehide`, so
 one `view` event covers a visit to a screen across tab switches.
 
+The TUI derives views from render precedence (including modal surfaces) and records key actions
+with `via=keyboard`. It flushes to the attached daemon every 30s or at 100 buffered events,
+and closes the final view's dwell and flushes best-effort on exit. Each TUI run is one visit;
+there is no background state.
+
 ### Catalog
 
 A client may send `catalog` entries (`kind`, `name`, optional `shortcut` label) naming everything

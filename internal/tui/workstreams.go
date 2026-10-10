@@ -204,6 +204,7 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter", "y":
 			if m.wsMerge.GetClean() {
+				m.recordAction("workstreams.merge")
 				id := m.wsMergeID
 				m.wsNotice = "merging " + short(id) + "…"
 				return m, m.mergeWorkstreamCmd(id)
@@ -223,6 +224,7 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.wsDiscardID = ""
 		switch key.String() {
 		case "y":
+			m.recordAction("workstreams.discard")
 			m.wsNotice = "discarding " + short(id) + "…"
 			return m, m.discardWorkstreamCmd(id)
 		default:
@@ -252,12 +254,14 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Drill into the workstream's session: ResumeSession is
 		// idempotent for a live session, so this attaches rather than restarts.
 		if w := m.wsCurrent(); w != nil && w.GetSessionId() != "" {
+			m.recordAction("workstreams.attach")
 			m.status = "reopening " + short(w.GetSessionId()) + "…"
 			return m, m.reopenSession(w.GetSessionId())
 		}
 		return m, nil
 	case "i":
 		if w := m.wsCurrent(); w != nil && w.GetIntegrateSessionId() != "" {
+			m.recordAction("workstreams.attach")
 			m.status = "reopening " + short(w.GetIntegrateSessionId()) + "…"
 			return m, m.reopenSession(w.GetIntegrateSessionId())
 		}
@@ -284,6 +288,7 @@ func (m model) updateWorkstreams(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.wsNotice = "no gated workstreams (merge all applies to gate mode)"
 			return m, nil
 		}
+		m.recordAction("workstreams.merge")
 		m.wsNotice = fmt.Sprintf("merging %d gated workstream(s)…", gated)
 		return m, m.mergeAllReadyCmd(m.wsList)
 	case "m":

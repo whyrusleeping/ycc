@@ -181,6 +181,7 @@ func (m *model) searchCount() (total, cur int) {
 // does NOT wrap: a no-op when there is no such event past the current selection.
 // Drives the {}()<>[] jump keys.
 func (m *model) jumpToEvent(dir int, types ...string) {
+	m.recordAction("session.jump")
 	if len(m.evs) == 0 {
 		return
 	}

@@ -170,6 +170,7 @@ func (m model) helpSections() []helpSection {
 
 // openHelp enters the keybinding help modal, resetting the scroll.
 func (m *model) openHelp() {
+	m.recordAction("help.open")
 	m.helpOpen = true
 	m.helpScroll = 0
 }

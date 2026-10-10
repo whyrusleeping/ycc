@@ -54,6 +54,7 @@ func (m model) toggleHistoryFollowUp() (tea.Model, tea.Cmd) {
 	if len(m.history) == 0 || m.historyFollowUpPending != nil {
 		return m, nil
 	}
+	m.recordAction("sessions.follow_up")
 	row := m.history[m.historyCursor]
 	result := sessionFollowUpMsg{
 		id: row.SessionId, previous: row.FollowUp, previousAt: row.FollowUpAt,
@@ -86,6 +87,7 @@ func (m model) historyHint(hint string) string {
 }
 
 func (m model) toggleHistoryFollowUpFilter() (tea.Model, tea.Cmd) {
+	m.recordAction("sessions.follow_up_filter")
 	m.historyFollowUpOnly = !m.historyFollowUpOnly
 	m.historyWaitingOnly = false
 	m.historyCursor = 0
@@ -236,6 +238,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			fallthrough
 		case "o":
+			m.recordAction("sessions.resume")
 			// Reopen the session whose transcript we're viewing (resume = replay).
 			m.historyTranscript = false
 			m.clearSearch()
@@ -265,6 +268,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "F":
 		return m.toggleHistoryFollowUpFilter()
 	case "r":
+		m.recordAction("sessions.refresh")
 		m.historyMsgTxt = "loading…"
 		return m, m.fetchHistory
 	case "up":
@@ -286,6 +290,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.history) == 0 {
 			return m, nil
 		}
+		m.recordAction("sessions.resume")
 		sel := m.history[m.historyCursor]
 		m.historyMsgTxt = "reopening " + short(sel.SessionId) + "…"
 		return m, m.reopenSession(sel.SessionId)
@@ -298,6 +303,7 @@ func (m model) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 // the live session's event pipeline untouched. Callers should return
 // m.fetchHistory to populate the list.
 func (m *model) openHistModal() {
+	m.recordAction("sessions.open")
 	m.histModal = true
 	m.histModalTranscript = false
 	m.histModalID = ""
@@ -445,6 +451,7 @@ func (m model) updateHistoryModal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "F":
 		return m.toggleHistoryFollowUpFilter()
 	case "r":
+		m.recordAction("sessions.refresh")
 		m.historyMsgTxt = "loading…"
 		return m, m.fetchHistory
 	case "up":
@@ -629,6 +636,7 @@ func (m *model) histSearchCount() (total, cur int) {
 // search it does NOT wrap: a no-op when there is no such event past the current
 // line. Drives the {}()<>[] jump keys.
 func (m *model) histJump(dir int, types ...string) {
+	m.recordAction("session.jump")
 	if len(m.histModalEventLines) == 0 {
 		return
 	}

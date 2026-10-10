@@ -281,6 +281,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openCapture()
 			return m, nil
 		case "ctrl+b":
+			m.recordAction("backlog.open")
 			// Open the read-only backlog browser.
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
@@ -292,6 +293,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// still gated on an empty prompt because the textarea binds ctrl+w to
 			// delete-word-backward — mid-composition it must keep deleting.
 			if m.blockedTaskCount() > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
+				m.recordAction("backlog.open_blocked")
 				m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 				m.backlogShowDone = false
 				m.backlogBlockedOnly = true
@@ -303,6 +305,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// gating as ctrl+w: only intercept when a session actually needs the
 			// user AND the prompt is empty, so a jump never abandons a drafted prompt.
 			if len(m.waitingSessions) > 0 && strings.TrimSpace(m.prompt.Value()) == "" {
+				m.recordAction("sessions.open_waiting")
 				if len(m.waitingSessions) == 1 {
 					// Exactly one: attach directly (ResumeSession is idempotent for a
 					// live session, so this reopens/attaches rather than restarts).
@@ -327,11 +330,13 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// gating as ctrl+w/ctrl+s: only intercept when a session exists AND the
 			// prompt is empty, so the jump never abandons a drafted prompt.
 			if m.lastSession != nil && strings.TrimSpace(m.prompt.Value()) == "" {
+				m.recordAction("session.continue_last")
 				id := m.lastSession.SessionId
 				m.status = "reopening " + short(id) + "…"
 				return m, m.reopenSession(id)
 			}
 		case "ctrl+r":
+			m.recordAction("sessions.open")
 			// Open the session browser to inspect/reopen a session.
 			m.state = stateHistory
 			m.historyCursor = 0
@@ -379,6 +384,7 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// starting fresh work sessions for each ready backlog task until none
 			// remain. Only the work mode supports it; tab is a no-op elsewhere.
 			if len(m.entries) > 0 && isWorkEntry(m.entries[m.cursor]) {
+				m.recordAction("workloop.toggle")
 				m.loop = !m.loop
 			}
 			return m, nil
@@ -412,6 +418,16 @@ func (m model) updateMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case e.openingPrompt != "":
 				prompt = e.openingPrompt + "\n\nContext from the user (supplied upfront with this request):\n" + prompt
 			}
+			attrs := map[string]string{"preset": "false"}
+			if e.preset != "" {
+				attrs["preset"] = "true"
+			}
+			// Mode is a built-in enum; never send a configurable preset name.
+			switch e.mode {
+			case "chat", "pm", "work":
+				attrs["mode"] = e.mode
+			}
+			m.ana.action(m.analyticsView(), "new_session.submit", attrs)
 			return m, m.startSession(e.mode, e.preset, prompt)
 		}
 	}

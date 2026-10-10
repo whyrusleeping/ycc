@@ -19,6 +19,7 @@ import (
 // fetchTranscript loads a session's full replayed event log for the read-only
 // transcript drill-in via the GetSessionTranscript RPC.
 func (m model) fetchTranscript(id string) tea.Cmd {
+	m.recordAction("sessions.view_transcript")
 	return func() tea.Msg {
 		resp, err := m.client.GetSessionTranscript(m.ctx, connect.NewRequest(&v1.GetSessionTranscriptRequest{
 			Project: m.project, SessionId: id,
@@ -189,6 +190,7 @@ func (m *model) cancelSubscription() {
 }
 
 func (m model) sendInput(text string) tea.Cmd {
+	m.recordAction("session.send")
 	return func() tea.Msg {
 		if _, err := m.client.SendInput(m.ctx, connect.NewRequest(&v1.SendInputRequest{SessionId: m.sessionID, Text: text})); err != nil {
 			return errMsg{err}
@@ -200,6 +202,7 @@ func (m model) sendInput(text string) tea.Cmd {
 // interrupt gracefully pauses the running session at its next safe checkpoint so
 // the user can steer or resume.
 func (m model) interrupt() tea.Cmd {
+	m.recordAction("session.interrupt")
 	return func() tea.Msg {
 		if m.sessionID == "" {
 			return nil
@@ -227,6 +230,7 @@ func (m model) resume() tea.Cmd {
 // rollover asks the daemon to durably select a compact coordinator view at a
 // safe between-turn checkpoint. The original transcript remains intact.
 func (m model) rollover() tea.Cmd {
+	m.recordAction("session.rollover")
 	return func() tea.Msg {
 		if m.sessionID == "" {
 			return nil
@@ -377,6 +381,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openCapture()
 				return m, nil
 			case "ctrl+b":
+				m.recordAction("backlog.open")
 				// Open the read-only backlog browser — often exactly
 				// what's needed to answer "which task next?". m.picking is left set
 				// so sessionView restores the picker on return.
@@ -409,6 +414,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openCapture()
 			return m, nil
 		case "ctrl+b":
+			m.recordAction("backlog.open")
 			// Open the read-only backlog browser.
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
@@ -458,6 +464,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode != "work" {
 				return m, nil
 			}
+			m.recordAction("workloop.toggle")
 			if m.looping {
 				m.status = "loop stopping: current task finishes, next not picked"
 				return m, m.stopWorkLoop()
@@ -485,6 +492,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// textarea mid-compose; falls through otherwise. Only fires on a finished,
 			// non-looping session (sessionFinished): the daemon owns loop sessions.
 			if m.sessionFinished() && strings.TrimSpace(m.input.Value()) == "" {
+				m.recordAction("session.quit")
 				// Build the stop command FIRST so it captures the current m.sessionID.
 				stop := m.stopSession()
 				status := m.status
@@ -516,6 +524,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if text == "" {
 					return m, nil
 				}
+				m.recordAction("session.copy")
 				return m, tea.Batch(tea.SetClipboard(text), m.noteFlash("copied ✓"))
 			}
 		case "ctrl+g":
@@ -524,6 +533,7 @@ func (m model) updateSession(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Enter transcript search. Gated on empty input so a bare
 			// "/" still types into the textarea mid-compose; falls through otherwise.
 			if strings.TrimSpace(m.input.Value()) == "" {
+				m.recordAction("session.search")
 				m.searching = true
 				m.searchQuery = ""
 				m.input.Blur()

@@ -152,6 +152,7 @@ func (m *model) openCommitDiff(sha, msg string) tea.Cmd {
 	if strings.TrimSpace(sha) == "" {
 		return nil
 	}
+	m.recordAction("session.commit_diff")
 	m.closeCommitDiff()
 	m.cdiffOpen = true
 	m.cdiffSha = sha

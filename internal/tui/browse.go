@@ -140,6 +140,7 @@ var browseTargets = []struct{ label, desc string }{
 
 // openBrowse enters the browse selector modal.
 func (m *model) openBrowse() {
+	m.recordAction("browse.open")
 	m.browse = true
 	m.browseCursor = 0
 }
@@ -164,14 +165,16 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browseCursor = navDown(m.browseCursor, len(browseTargets))
 		return m, nil
 	case "enter":
-		m.browse = false
 		switch browseTargets[m.browseCursor].label {
 		case "backlog":
+			m.recordAction("backlog.open")
+			m.browse = false
 			m.backlog, m.backlogCursor, m.backlogDetail = true, 0, nil
 			m.backlogShowDone = false
 			m.backlogBlockedOnly = false
 			return m, m.fetchBacklog
 		case "plans":
+			m.browse = false
 			m.plans, m.plansCursor, m.planDetail = true, 0, nil
 			return m, m.fetchPlans
 		case "sessions":
@@ -180,8 +183,11 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// the menu, use the full-state session browser as before.
 			if m.state == stateSession {
 				m.openHistModal()
+				m.browse = false
 				return m, m.fetchHistory
 			}
+			m.recordAction("sessions.open")
+			m.browse = false
 			m.state = stateHistory
 			m.historyCursor = 0
 			m.history = nil
@@ -190,6 +196,7 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyMsgTxt = "loading…"
 			return m, m.fetchHistory
 		case "cost":
+			m.browse = false
 			// The cost view opens grouped by task.
 			m.cost, m.costCursor = true, 0
 			m.costTask, m.costTaskCursor = "", 0
@@ -200,9 +207,11 @@ func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.costGen++
 			return m, m.fetchUsage
 		case "workstreams":
+			m.browse = false
 			m.openWorkstreams()
 			return m, tea.Batch(m.fetchWorkstreams, m.wsRefreshTick())
 		case "digest":
+			m.browse = false
 			// Load the daemon's durable snapshot so the last digest survives a TUI
 			// restart. A nil loop keeps the digest browser's empty state.
 			m.digest, m.digestCursor = true, 0

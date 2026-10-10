@@ -60,6 +60,7 @@ func (m model) setWorkImplementation(impl string) tea.Cmd {
 // openOverlay enters the modal settings overlay, seeding role defaults from the
 // configured models when this is a fresh session.
 func (m *model) openOverlay() {
+	m.recordAction("settings.open")
 	m.overlay = true
 	m.ovCursor = 0
 	if m.roleCoord == "" {
@@ -143,6 +144,10 @@ func (m model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd) {
 // overlayAdjust cycles the value under the cursor (left/right).
 func (m model) overlayAdjust(d int) (tea.Model, tea.Cmd) {
 	switch m.ovCursor {
+	case ovCoord, ovImpl, ovWorkImpl, ovTheme, ovFollow, ovAutoExpand, ovNotifyBell, ovNotifyDesktop:
+		m.recordAction("settings.change")
+	}
+	switch m.ovCursor {
 	case ovCoord:
 		m.roleCoord = cycleModel(m.models, m.roleCoord, d)
 		// Apply immediately so the choice sticks without a separate "apply" step.
@@ -206,12 +211,17 @@ func (m model) overlayAdjustThinking(d int) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+	m.recordAction("settings.change")
 	m.thinkLevels[role] = cycle(thinkLevels, m.thinkLevels[role], d)
 	return m, m.setThinking(role, m.thinkLevels[role])
 }
 
 // overlayActivate runs the action under the cursor (enter).
 func (m model) overlayActivate() (tea.Model, tea.Cmd) {
+	switch m.ovCursor {
+	case ovWorkImpl, ovAutoExpand, ovNotifyBell, ovNotifyDesktop:
+		m.recordAction("settings.change")
+	}
 	switch m.ovCursor {
 	case ovReviewers:
 		return m.toggleReviewerAndPersist()
@@ -240,8 +250,9 @@ func (m model) overlayActivate() (tea.Model, tea.Cmd) {
 			return m, m.resume()
 		}
 		if m.status == "running" {
+			cmd := m.interrupt()
 			m.overlay = false
-			return m, m.interrupt()
+			return m, cmd
 		}
 		return m, nil
 	case ovBackHome:
@@ -320,6 +331,7 @@ func (m *model) toggleReviewer() {
 // the new set immediately via SetRoleConfig. Shared by the space and enter key
 // paths on the reviewers row.
 func (m model) toggleReviewerAndPersist() (tea.Model, tea.Cmd) {
+	m.recordAction("settings.change")
 	m.toggleReviewer()
 	revs := m.roleReviewrs
 	if len(revs) == 0 {

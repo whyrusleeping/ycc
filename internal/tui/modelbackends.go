@@ -347,18 +347,21 @@ func (m model) mbUpdateList(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "a":
+		m.recordAction("model_backends.add")
 		m.mbStartAdd()
 		return m, nil
 	case "e", "enter":
 		if m.mbCursor >= len(m.models) {
 			return m, nil
 		}
+		m.recordAction("model_backends.edit")
 		m.mbErr = ""
 		return m, m.mbFetchConfig(m.models[m.mbCursor].Name, mbEdit)
 	case "d":
 		if m.mbCursor >= len(m.models) {
 			return m, nil
 		}
+		m.recordAction("model_backends.duplicate")
 		m.mbErr = ""
 		return m, m.mbFetchConfig(m.models[m.mbCursor].Name, mbDuplicate)
 	case "x":
@@ -571,6 +574,7 @@ func (m model) mbUpdateConfirm(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mbView = 0
 			return m, nil
 		}
+		m.recordAction("model_backends.delete")
 		return m, m.mbRemove(m.models[m.mbCursor].Name)
 	}
 	return m, nil

@@ -85,6 +85,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backlogStatusPrompt = false
 		if st, ok := statusForDigit(key.String()); ok {
 			if id := m.backlogTargetID(); id != "" {
+				m.ana.action(m.analyticsView(), "backlog.set_status", map[string]string{"status": st})
 				return m, m.updateTaskCmd(id, &st, nil)
 			}
 		}
@@ -131,6 +132,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.backlogCursor = navDown(m.backlogCursor, len(vis))
 		return m, nil
 	case "d":
+		m.recordAction("backlog.toggle_done")
 		m.backlogShowDone = !m.backlogShowDone
 		m.backlogCursor = clampCursor(m.backlogCursor, len(m.visibleBacklogTasks()))
 		return m, nil
@@ -162,6 +164,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(vis) > 0 {
 			t := vis[m.backlogCursor]
 			if t.Status == "todo" {
+				m.recordAction("backlog.multi_select")
 				if m.backlogSelected == nil {
 					m.backlogSelected = map[string]bool{}
 				}
@@ -186,6 +189,7 @@ func (m model) updateBacklog(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.backlogNotice = "workstreams need a registered project (open ycc on a project)"
 			return m, nil
 		}
+		m.recordAction("backlog.spawn_parallel")
 		m.backlogNotice = fmt.Sprintf("spawning %d workstream(s)…", len(sel))
 		return m, m.spawnWorkstreamsCmd(sel)
 	}
@@ -251,6 +255,7 @@ func (m model) reprioritizeCmd(id string, cur, dir int) tea.Cmd {
 	if next == cur {
 		return nil
 	}
+	m.recordAction("backlog.priority")
 	p := int32(next)
 	return m.updateTaskCmd(id, nil, &p)
 }
@@ -264,6 +269,7 @@ func (m model) openTaskInEditor(id, path string) (tea.Model, tea.Cmd) {
 		m.backlogNotice = "open-in-editor unavailable: workspace not local"
 		return m, nil
 	}
+	m.recordAction("task.edit")
 	m.backlogNotice = ""
 	return m, m.openEditorCmd(id, path)
 }

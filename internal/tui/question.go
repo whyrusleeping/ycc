@@ -89,6 +89,7 @@ func (m *model) clearWizard() {
 // the last question is answered it returns the command that submits all answers;
 // otherwise it loads the next question and returns nil.
 func (m *model) recordWizAnswer(idx int, text string, viaPicker bool) tea.Cmd {
+	m.recordAction("question.answer")
 	if m.wizIdx >= 0 && m.wizIdx < len(m.wizAnswers) {
 		m.wizAnswers[m.wizIdx] = wizAnswer{idx: idx, text: text, done: true, picking: viaPicker}
 	}
@@ -118,6 +119,7 @@ func (m *model) recordWizAnswer(idx int, text string, viaPicker bool) tea.Cmd {
 // selects a suggested option (resolved to its text on the daemon), otherwise
 // optIdx is -1 and text is taken as free text.
 func (m model) answerQuestion(optIdx int, text string) tea.Cmd {
+	m.recordAction("question.answer")
 	return func() tea.Msg {
 		_, err := m.client.AnswerQuestion(m.ctx, connect.NewRequest(&v1.AnswerQuestionRequest{
 			SessionId: m.sessionID, Text: text, OptionIndex: int32(optIdx),

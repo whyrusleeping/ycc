@@ -86,6 +86,7 @@ func (m *model) selectedProject() *v1.ProjectInfo {
 }
 
 func (m *model) openProjectHub() tea.Cmd {
+	m.recordAction("projects.open")
 	m.state = statePicker
 	m.projectMode = projectPickerList
 	m.projectBusy = false
@@ -208,6 +209,7 @@ func (m model) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if p := m.selectedProject(); p != nil {
+			m.recordAction("projects.switch")
 			return m, m.selectProject(p)
 		}
 	}
@@ -229,6 +231,7 @@ func (m model) updateProjectRename(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if p == nil || name == "" || m.projectBusy {
 				return m, nil
 			}
+			m.recordAction("projects.rename")
 			m.projectBusy, m.projectNote = true, "renaming…"
 			return m, m.renameProject(p.Name, name)
 		}
@@ -250,6 +253,7 @@ func (m model) updateProjectRemove(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectMode, m.projectBusy, m.projectNote = projectPickerList, false, ""
 	case "y", "Y":
 		if p := m.selectedProject(); p != nil && !m.projectBusy {
+			m.recordAction("projects.remove")
 			m.projectBusy, m.projectNote = true, "removing…"
 			return m, m.removeProject(p.Name)
 		}
@@ -293,6 +297,7 @@ func (m model) updateProjectAdd(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.listDir(target, false)
 	case "ctrl+a":
 		if m.dirPath != "" && !m.dirLoading && !m.projectBusy {
+			m.recordAction("projects.add")
 			m.projectBusy, m.projectNote = true, "adding…"
 			return m, m.addProject(m.dirPath)
 		}
