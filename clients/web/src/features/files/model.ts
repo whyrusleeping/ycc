@@ -153,6 +153,43 @@ export function isMarkdownPath(path: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(path);
 }
 
+/** SVG arrives as text; the viewer renders it as an image by default. */
+export function isSvgPath(path: string): boolean {
+  return /\.svg$/i.test(path);
+}
+
+/**
+ * A `data:` URL for showing SVG source in an `<img>`. Image context never runs
+ * script or fetches external resources, and a `data:` document has an opaque
+ * origin, so (unlike a `blob:` URL) opening it on its own can't reach the app's
+ * token.
+ */
+export function svgDataUrl(text: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
+}
+
+// Raster formats the viewer shows from ReadFile bytes via a blob: URL. Never
+// SVG or HTML: a blob: URL carries the app's origin, so those could run script.
+// HEIC/TIFF render only where the browser supports them (Safari).
+const RASTER_PREVIEW_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+  "image/x-icon",
+  "image/avif",
+  "image/heic",
+  "image/heif",
+  "image/tiff",
+]);
+
+export function isRasterPreviewType(type: string): boolean {
+  return RASTER_PREVIEW_TYPES.has(type.toLowerCase());
+}
+
+export const PDF_TYPE = "application/pdf";
+
 /** "1.2 KB"-style size. */
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

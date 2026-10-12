@@ -40,7 +40,7 @@ const (
 	// DefaultMaxEntries caps a directory listing.
 	DefaultMaxEntries = 5000
 	// DefaultMaxBytes is the default Read cap (text is truncated at a line
-	// boundary; images over the cap are not returned at all).
+	// boundary; images and PDFs over the cap are not returned at all).
 	DefaultMaxBytes = 1 << 20
 	// MaxBytesLimit bounds a caller-requested cap.
 	MaxBytesLimit = 8 << 20
@@ -50,6 +50,15 @@ const (
 	// listing.
 	gitTimeout = 5 * time.Second
 )
+
+// previewByExt names image formats http.DetectContentType doesn't sniff.
+var previewByExt = map[string]string{
+	".avif": "image/avif",
+	".heic": "image/heic",
+	".heif": "image/heif",
+	".tif":  "image/tiff",
+	".tiff": "image/tiff",
+}
 
 // Entry is one directory-listing row.
 type Entry struct {
@@ -71,7 +80,7 @@ type Listing struct {
 // File is a (possibly truncated) file read.
 type File struct {
 	Path      string // cleaned root-relative path, "/"-separated
-	Data      []byte // nil for non-image binaries and over-cap images
+	Data      []byte // nil for binaries other than images/PDFs, and over-cap ones
 	Size      int64  // full on-disk size
 	MediaType string
 	IsBinary  bool
@@ -246,7 +255,7 @@ func markIgnored(ctx context.Context, dir string, entries []Entry) {
 
 // Read returns a root-relative regular file. Text over maxBytes is cut at the
 // last line boundary within the cap and flagged Truncated; binary files carry
-// no data except images within the cap. maxBytes <= 0 uses DefaultMaxBytes and
+// no data except images and PDFs within the cap. maxBytes <= 0 uses DefaultMaxBytes and
 // larger requests are clamped to MaxBytesLimit.
 func Read(root, p string, maxBytes int64) (File, error) {
 	if maxBytes <= 0 {
@@ -284,11 +293,18 @@ func Read(root, p string, maxBytes int64) (File, error) {
 	}
 	head = head[:n]
 	ct := http.DetectContentType(head)
-	isImage := strings.HasPrefix(ct, "image/")
-	out.IsBinary = isImage || bytes.IndexByte(head, 0) >= 0
+	if ct == "application/octet-stream" {
+		// Formats the sniffer doesn't know, by extension.
+		if t, ok := previewByExt[strings.ToLower(filepath.Ext(real))]; ok {
+			ct = t
+		}
+	}
+	// Images and PDFs come back as bytes so clients can render them.
+	isPreview := strings.HasPrefix(ct, "image/") || ct == "application/pdf"
+	out.IsBinary = isPreview || bytes.IndexByte(head, 0) >= 0
 
 	switch {
-	case isImage:
+	case isPreview:
 		out.MediaType = ct
 		if out.Size > maxBytes {
 			out.Truncated = true

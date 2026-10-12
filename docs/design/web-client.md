@@ -133,7 +133,10 @@ profile is outside the trust model.
 
 Model, tool, and file text is untrusted. Markdown is rendered with raw HTML disabled, links are
 restricted to safe schemes, and code, diffs, and tool output render as text with syntax
-highlighting applied to escaped tokens. No event payload is inserted as HTML. The shared transcript
+highlighting applied to escaped tokens. No event payload is inserted as HTML. The file viewer
+renders SVG only as an `<img>` from a `data:` URL (no script, no external loads, and an opaque
+origin if opened alone); `blob:` URLs, which carry the app's origin, are built only for raster
+images and PDFs (`frame-src blob:` admits the PDF frame). The shared transcript
 invariants in spec §18 apply: model and user turns are prominent, tool, reasoning, review, and
 system detail folds, question plumbing coalesces into one exchange, and new events never move a
 reader who has scrolled away from the live edge. An idle report that merely carries the agent's

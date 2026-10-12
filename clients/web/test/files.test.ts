@@ -15,9 +15,12 @@ import {
   flattenTree,
   formatSize,
   isMarkdownPath,
+  isRasterPreviewType,
+  isSvgPath,
   parseFileLocation,
   parseGoToLine,
   splitLines,
+  svgDataUrl,
   toggle,
   type TreeEntry,
 } from "../src/features/files/model";
@@ -166,5 +169,17 @@ describe("file contents", () => {
     expect(formatSize(1536)).toBe("1.5 KB");
     expect(formatSize(5 * 1024 * 1024)).toBe("5.0 MB");
     expect(formatSize(300 * 1024)).toBe("300 KB");
+  });
+
+  it("renders SVG through a data: URL and only rasters through blob: URLs", () => {
+    expect(isSvgPath("assets/Logo.SVG")).toBe(true);
+    expect(isSvgPath("a.svgz")).toBe(false);
+    // "#" (colors) must be escaped or the URL ends at the fragment.
+    const url = svgDataUrl('<svg fill="#fff"/>');
+    expect(url.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
+    expect(url).not.toContain("#");
+    expect(decodeURIComponent(url.slice(url.indexOf(",") + 1))).toBe('<svg fill="#fff"/>');
+    for (const t of ["image/png", "image/bmp", "image/x-icon", "image/avif", "IMAGE/HEIC"]) expect(isRasterPreviewType(t), t).toBe(true);
+    for (const t of ["image/svg+xml", "text/html", "application/pdf", ""]) expect(isRasterPreviewType(t), t).toBe(false);
   });
 });

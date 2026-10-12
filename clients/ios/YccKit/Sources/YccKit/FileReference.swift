@@ -43,6 +43,9 @@ public struct FileReference: Hashable, Sendable {
     public var isMarkdown: Bool {
         ["md", "markdown", "mdx"].contains(fileExtension)
     }
+
+    /// SVG arrives as text; the viewer renders it as an image by default.
+    public var isSVG: Bool { fileExtension == "svg" }
 }
 
 /// Where a file reference is opened: a project, optionally a session (so links

@@ -79,7 +79,7 @@ public final class FileBrowserModel {
 }
 
 /// The read-only file viewer (`ReadFile`): text (syntax-highlighted off the
-/// main actor), rendered markdown, images, or a binary placeholder.
+/// main actor), rendered markdown or SVG, images, PDFs, or a binary placeholder.
 @MainActor
 @Observable
 public final class FileViewerModel {
@@ -87,9 +87,10 @@ public final class FileViewerModel {
         /// Decoded text, split into lines (no terminators).
         case text(String, lines: [String])
         case image(Data)
-        /// A binary we don't render; `imageTooLarge` when it is an image over
-        /// the read cap.
-        case binary(mediaType: String, imageTooLarge: Bool)
+        case pdf(Data)
+        /// A binary we don't render; `tooLargeToPreview` when it is an image
+        /// or PDF over the read cap.
+        case binary(mediaType: String, tooLargeToPreview: Bool)
     }
 
     public let route: FileRoute
@@ -124,6 +125,12 @@ public final class FileViewerModel {
     }
 
     public var isMarkdown: Bool { route.reference.isMarkdown }
+
+    /// Rendered (markdown, or SVG as an image) unless the user picks source. A
+    /// truncated SVG is a prefix that won't parse, so it stays source.
+    public var rendersByDefault: Bool {
+        isMarkdown || (route.reference.isSVG && !truncated)
+    }
 
     public func load() async {
         guard !isLoading, content == nil else { return }
@@ -164,13 +171,15 @@ public final class FileViewerModel {
     }
 
     nonisolated static func content(for response: Ycc_V1_ReadFileResponse) -> Content {
-        if response.mediaType.hasPrefix("image/") {
-            return response.data.isEmpty
-                ? .binary(mediaType: response.mediaType, imageTooLarge: true)
-                : .image(response.data)
+        let isPDF = response.mediaType == "application/pdf"
+        if response.mediaType.hasPrefix("image/") || isPDF {
+            if response.data.isEmpty {
+                return .binary(mediaType: response.mediaType, tooLargeToPreview: true)
+            }
+            return isPDF ? .pdf(response.data) : .image(response.data)
         }
         if response.isBinary {
-            return .binary(mediaType: response.mediaType, imageTooLarge: false)
+            return .binary(mediaType: response.mediaType, tooLargeToPreview: false)
         }
         let text = String(decoding: response.data, as: UTF8.self)
         return .text(text, lines: splitLines(text))

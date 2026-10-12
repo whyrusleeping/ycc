@@ -37,9 +37,10 @@ const (
 	cacheNone      = "no-cache"
 	// The bundle loads only same-origin scripts, styles, and Connect calls;
 	// no event or tool text is ever inserted as HTML, and this policy keeps a
-	// regression from executing injected markup.
+	// regression from executing injected markup. frame-src blob: lets the file
+	// viewer frame a PDF it built from ReadFile bytes.
 	contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; " +
-		"connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+		"frame-src blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
 
 // Assets returns the embedded bundle rooted at dist (index.html, assets/...).

@@ -260,6 +260,18 @@ final class FileModelsTests: XCTestCase {
         blob.isBinary = true
         blob.mediaType = "application/octet-stream"
         source.files["b.bin"] = blob
+        var pdf = Ycc_V1_ReadFileResponse()
+        pdf.isBinary = true
+        pdf.mediaType = "application/pdf"
+        pdf.data = Data("%PDF-".utf8)
+        source.files["d.pdf"] = pdf
+        var svg = Ycc_V1_ReadFileResponse()
+        svg.mediaType = "text/plain; charset=utf-8"
+        svg.data = Data("<svg/>".utf8)
+        source.files["i.svg"] = svg
+        var cutSVG = svg
+        cutSVG.truncated = true
+        source.files["cut.svg"] = cutSVG
         source.readErrors["dir"] = YccError.rpc(message: "not a regular file")
         source.listings["dir"] = Ycc_V1_ListFilesResponse()
         source.readErrors["bad"] = YccError.rpc(message: "boom")
@@ -272,9 +284,16 @@ final class FileModelsTests: XCTestCase {
         let image = await load("p.png")
         XCTAssertEqual(image.content, .image(Data([0x89, 0x50])))
         let tooBig = await load("big.png")
-        XCTAssertEqual(tooBig.content, .binary(mediaType: "image/png", imageTooLarge: true))
+        XCTAssertEqual(tooBig.content, .binary(mediaType: "image/png", tooLargeToPreview: true))
         let binary = await load("b.bin")
-        XCTAssertEqual(binary.content, .binary(mediaType: "application/octet-stream", imageTooLarge: false))
+        XCTAssertEqual(binary.content, .binary(mediaType: "application/octet-stream", tooLargeToPreview: false))
+        let document = await load("d.pdf")
+        XCTAssertEqual(document.content, .pdf(Data("%PDF-".utf8)))
+        let vector = await load("i.svg")
+        XCTAssertTrue(vector.rendersByDefault)
+        XCTAssertEqual(vector.content, .text("<svg/>", lines: ["<svg/>"]))
+        let cut = await load("cut.svg")
+        XCTAssertFalse(cut.rendersByDefault)
         let missing = await load("nope.go")
         XCTAssertTrue(missing.notFound)
         let dir = await load("dir")

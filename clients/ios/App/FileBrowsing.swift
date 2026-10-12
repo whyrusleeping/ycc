@@ -1,5 +1,7 @@
+import PDFKit
 import SwiftUI
 import UIKit
+import WebKit
 import YccKit
 import YccProto
 
@@ -279,8 +281,8 @@ private struct FallbackNote: View {
 // MARK: - Viewer
 
 /// The read-only file viewer: syntax-highlighted text with line numbers
-/// (scrolled to and highlighting a linked line range), rendered markdown with
-/// a raw toggle, images, or a binary placeholder.
+/// (scrolled to and highlighting a linked line range), rendered markdown or
+/// SVG with a source toggle, images, PDFs, or a binary placeholder.
 struct FileViewerView: View {
     @Environment(AppModel.self) private var app
     @State private var model: FileViewerModel
@@ -376,6 +378,9 @@ struct FileViewerView: View {
                         project: model.route.project, sessionID: model.route.sessionID,
                         baseDirectory: reference.directory),
                     presentation: .push)
+            } else if model.rendersByDefault && !showRaw {
+                // Not markdown, so SVG.
+                SVGView(source: text)
             } else if lines.isEmpty {
                 ContentUnavailableView("Empty file", systemImage: "doc")
             } else {
@@ -397,17 +402,19 @@ struct FileViewerView: View {
                         .frame(maxWidth: .infinity)
                 }
             } else {
-                binaryPlaceholder(mediaType: "image", imageTooLarge: false)
+                binaryPlaceholder(mediaType: "image", tooLargeToPreview: false)
             }
-        case .binary(let mediaType, let imageTooLarge):
-            binaryPlaceholder(mediaType: mediaType, imageTooLarge: imageTooLarge)
+        case .pdf(let data):
+            PDFDocumentView(data: data)
+        case .binary(let mediaType, let tooLargeToPreview):
+            binaryPlaceholder(mediaType: mediaType, tooLargeToPreview: tooLargeToPreview)
         }
     }
 
-    private func binaryPlaceholder(mediaType: String, imageTooLarge: Bool) -> some View {
+    private func binaryPlaceholder(mediaType: String, tooLargeToPreview: Bool) -> some View {
         ContentUnavailableView(
-            imageTooLarge ? "Image too large to preview" : "Binary file",
-            systemImage: imageTooLarge ? "photo" : "doc.zipper",
+            tooLargeToPreview ? "Too large to preview" : "Binary file",
+            systemImage: tooLargeToPreview ? (mediaType.hasPrefix("image/") ? "photo" : "doc.richtext") : "doc.zipper",
             description: Text("\(mediaType.isEmpty ? "binary" : mediaType) · \(FileViewerModel.formattedSize(model.size))"))
     }
 
@@ -415,12 +422,12 @@ struct FileViewerView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
-                if model.isMarkdown, case .text = model.content {
+                if model.rendersByDefault, case .text = model.content {
                     Toggle(isOn: $showRaw) {
                         Label("Show source", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
                 }
-                if case .text = model.content, !(model.isMarkdown && !showRaw) {
+                if case .text = model.content, !(model.rendersByDefault && !showRaw) {
                     Toggle(isOn: $wrapLines) {
                         Label("Wrap lines", systemImage: "text.word.spacing")
                     }
@@ -451,6 +458,74 @@ struct FileViewerView: View {
                 Label("More", systemImage: "ellipsis.circle")
             }
         }
+    }
+}
+
+/// SVG source shown as an image. It sits inside an `<img>` (image context runs
+/// no script and loads no external resources) in a web view with JavaScript off,
+/// no persistent storage, and a page CSP that allows only the `data:` image.
+private struct SVGView: UIViewRepresentable {
+    let source: String
+
+    final class Coordinator {
+        var loaded: String?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        config.defaultWebpagePreferences.allowsContentJavaScript = false
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.isOpaque = false
+        view.backgroundColor = .clear
+        view.scrollView.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {
+        guard context.coordinator.loaded != source else { return }
+        context.coordinator.loaded = source
+        view.loadHTMLString(Self.page(source), baseURL: nil)
+    }
+
+    static func page(_ source: String) -> String {
+        let encoded = Data(source.utf8).base64EncodedString()
+        return """
+            <!doctype html><html><head>
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+            <style>
+            html,body{margin:0;background:transparent}
+            body{display:flex;justify-content:center;padding:16px;box-sizing:border-box}
+            img{max-width:100%;height:auto;background:repeating-conic-gradient(rgba(128,128,128,.18) 0% 25%,transparent 0% 50%) 50%/16px 16px}
+            </style></head>
+            <body><img src="data:image/svg+xml;base64,\(encoded)"></body></html>
+            """
+    }
+}
+
+/// A PDF, paged and zoomable.
+private struct PDFDocumentView: UIViewRepresentable {
+    let data: Data
+
+    final class Coordinator {
+        var loaded: Data?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        return view
+    }
+
+    func updateUIView(_ view: PDFView, context: Context) {
+        guard context.coordinator.loaded != data else { return }
+        context.coordinator.loaded = data
+        view.document = PDFDocument(data: data)
     }
 }
 

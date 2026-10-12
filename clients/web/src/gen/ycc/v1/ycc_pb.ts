@@ -690,8 +690,8 @@ export type ReadFileResponse = Message<"ycc.v1.ReadFileResponse"> & {
   path: string;
 
   /**
-   * Text (a line-bounded prefix when truncated) or image bytes; empty for
-   * other binaries and for over-cap images.
+   * Text (a line-bounded prefix when truncated), or image or PDF bytes; empty
+   * for other binaries and for over-cap images/PDFs.
    *
    * @generated from field: bytes data = 3;
    */

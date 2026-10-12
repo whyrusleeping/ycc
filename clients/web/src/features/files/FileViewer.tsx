@@ -1,7 +1,7 @@
 // The read-only file viewer and directory listing, shared by the Files page
 // and the inspector: ReadFile text with a line-number gutter, syntax
 // highlighting over escaped text spans, a target line range (scrolled to and
-// highlighted), go-to-line, rendered markdown with a source toggle, images,
+// highlighted), go-to-line, rendered markdown and SVG with a source toggle, images, PDFs,
 // and binary/truncated/not-found/fallback notes. Nothing is inserted as HTML.
 import { useQuery } from "@tanstack/react-query";
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -17,11 +17,11 @@ import { Spans } from "../code/CodeBlock";
 import { highlightLines, languageForPath, type Span } from "../code/highlight";
 import { Markdown } from "../markdown/Markdown";
 import { relativeTime } from "../sessions/feed";
-import { isPictureType } from "../attachments/attachments";
 import { FileLinksProvider, type FileLinkHandler } from "./FileRef";
 import { formatReference, type FileReference, type LineRange } from "./fileReference";
 import {
   HIGHLIGHT_LINE_LIMIT,
+  PDF_TYPE,
   VIEWER_MAX_BYTES,
   basename,
   clampLines,
@@ -29,8 +29,11 @@ import {
   entryReference,
   formatSize,
   isMarkdownPath,
+  isRasterPreviewType,
+  isSvgPath,
   parseGoToLine,
   splitLines,
+  svgDataUrl,
 } from "./model";
 
 export interface FileTarget {
@@ -134,13 +137,16 @@ function FileContent({
   onOpen: (ref: FileReference) => void;
   onLines: (lines: LineRange | null) => void;
 }) {
-  const isImage = isPictureType(resp.mediaType);
-  const isText = !isImage && !resp.isBinary;
+  const isImage = isRasterPreviewType(resp.mediaType);
+  const isPdf = resp.mediaType === PDF_TYPE;
+  const isText = !isImage && !isPdf && !resp.isBinary;
   const text = useMemo(() => (isText ? new TextDecoder("utf-8").decode(resp.data) : ""), [isText, resp.data]);
   const fileLines = useMemo(() => splitLines(text), [text]);
   const markdown = isText && isMarkdownPath(resp.path || target.path);
-  // A line target reads in source; otherwise markdown renders.
-  const [rendered, setRendered] = useState(markdown && !lines);
+  // SVG renders as an image unless cut short (a prefix won't parse).
+  const svg = isText && !resp.truncated && isSvgPath(resp.path || target.path);
+  // A line target reads in source; otherwise markdown and SVG render.
+  const [rendered, setRendered] = useState((markdown || svg) && !lines);
   const [wrap, setWrap] = useState(false);
   useEffect(() => {
     if (lines) setRendered(false);
@@ -170,8 +176,8 @@ function FileContent({
           {isText && <> · {fileLines.length} {fileLines.length === 1 ? "line" : "lines"}</>}
         </span>
         <span className="file-actions">
-          {markdown && (
-            <SourceToggle rendered={rendered} onChange={setRendered} />
+          {(markdown || svg) && (
+            <SourceToggle rendered={rendered} onChange={setRendered} label={svg ? "SVG view" : "Markdown view"} />
           )}
           {isText && !rendered && (
             <>
@@ -196,9 +202,9 @@ function FileContent({
         </span>
       </div>
       <FallbackNote show={resp.rootFallback} />
-      {resp.truncated && (
+      {resp.truncated && isText && (
         <div className="banner warn file-note" role="note">
-          This file is {formatSize(size)}; only the first {formatSize(resp.data.length)} {isText ? `(${fileLines.length} lines) are` : "is"} shown.
+          This file is {formatSize(size)}; only the first {formatSize(resp.data.length)} ({fileLines.length} lines) are shown.
         </div>
       )}
       {lines && !clamped && isText && (
@@ -208,10 +214,16 @@ function FileContent({
       )}
       {isImage ? (
         <ImagePreview data={resp.data} mediaType={resp.mediaType} name={basename(target.path)} size={size} />
+      ) : isPdf ? (
+        <PdfPreview data={resp.data} name={basename(target.path)} size={size} />
       ) : resp.isBinary ? (
         <p className="muted pad">
           Binary file ({resp.mediaType || "unknown type"}, {formatSize(size)}) — not shown.
         </p>
+      ) : rendered && svg ? (
+        <div className="file-image">
+          <img src={svgDataUrl(text)} alt={basename(target.path)} />
+        </div>
       ) : rendered ? (
         <div className="file-markdown">
           <FileLinksProvider value={links}>
@@ -236,10 +248,18 @@ function FileContent({
   );
 }
 
-/** Rendered / Source switch for markdown documents. */
-export function SourceToggle({ rendered, onChange }: { rendered: boolean; onChange: (rendered: boolean) => void }) {
+/** Rendered / Source switch for markdown documents and SVG. */
+export function SourceToggle({
+  rendered,
+  onChange,
+  label = "Markdown view",
+}: {
+  rendered: boolean;
+  onChange: (rendered: boolean) => void;
+  label?: string;
+}) {
   return (
-    <span className="segmented inline" role="group" aria-label="Markdown view">
+    <span className="segmented inline" role="group" aria-label={label}>
       <button type="button" className={rendered ? "selected" : undefined} aria-pressed={rendered} onClick={() => onChange(true)}>
         Rendered
       </button>
@@ -338,10 +358,11 @@ const CodeLines = memo(function CodeLines({
   );
 });
 
-function ImagePreview({ data, mediaType, name, size }: { data: Uint8Array; mediaType: string; name: string; size: number }) {
+/** A blob: URL for previewable bytes (raster images, PDF), revoked on change. */
+function useBlobUrl(data: Uint8Array, mediaType: string): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!data.length || !isPictureType(mediaType)) {
+    if (!data.length || !(isRasterPreviewType(mediaType) || mediaType === PDF_TYPE)) {
       setUrl(null);
       return;
     }
@@ -349,8 +370,30 @@ function ImagePreview({ data, mediaType, name, size }: { data: Uint8Array; media
     setUrl(u);
     return () => URL.revokeObjectURL(u);
   }, [data, mediaType]);
+  return url;
+}
+
+function ImagePreview({ data, mediaType, name, size }: { data: Uint8Array; mediaType: string; name: string; size: number }) {
+  const url = useBlobUrl(data, mediaType);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => setBroken(false), [url]);
   if (!data.length) return <p className="muted pad">Image too large to preview ({formatSize(size)}).</p>;
-  return <div className="file-image">{url && <img src={url} alt={name} />}</div>;
+  if (broken) return <p className="muted pad">This browser can’t display {mediaType} images ({formatSize(size)}).</p>;
+  return <div className="file-image">{url && <img src={url} alt={name} onError={() => setBroken(true)} />}</div>;
+}
+
+function PdfPreview({ data, name, size }: { data: Uint8Array; name: string; size: number }) {
+  const url = useBlobUrl(data, PDF_TYPE);
+  if (!data.length) return <p className="muted pad">PDF too large to preview ({formatSize(size)}).</p>;
+  if (!url) return null;
+  return (
+    <div className="file-pdf">
+      <iframe src={url} title={name} />
+      <a className="btn ghost small" href={url} target="_blank" rel="noreferrer">
+        Open PDF in a new tab
+      </a>
+    </div>
+  );
 }
 
 /** A directory's entries: folders first, gitignored entries dimmed. */

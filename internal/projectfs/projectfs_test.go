@@ -286,6 +286,18 @@ func TestReadBinaryAndImages(t *testing.T) {
 	if err != nil || !f.Truncated || f.Data != nil {
 		t.Fatalf("over-cap image: truncated=%v len=%d %v", f.Truncated, len(f.Data), err)
 	}
+
+	// PDFs and extension-typed images the sniffer misses also carry bytes.
+	pdf := []byte("%PDF-1.7\n\x00\x01 rest")
+	heic := []byte("\x00\x00\x00\x18ftypheic\x00\x00\x00\x00")
+	write(t, root, "doc.pdf", pdf)
+	write(t, root, "photo.HEIC", heic)
+	for name, want := range map[string]string{"doc.pdf": "application/pdf", "photo.HEIC": "image/heic"} {
+		f, err = Read(root, name, 0)
+		if err != nil || !f.IsBinary || f.MediaType != want || len(f.Data) == 0 {
+			t.Fatalf("%s: %q data=%d %v", name, f.MediaType, len(f.Data), err)
+		}
+	}
 }
 
 func TestReadErrors(t *testing.T) {

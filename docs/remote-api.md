@@ -418,9 +418,10 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","path":"internal/projectfs"}
 `ReadFile` returns `data` (base64 in JSON), the full on-disk `size`,
 `mediaType`, `isBinary`, `truncated`, and `mtime`. `maxBytes` defaults to
 1 MiB and is clamped to 8 MiB. Text over the cap returns a prefix cut at a
-line boundary with `truncated: true`. Images (PNG/JPEG/GIF/WebP/BMP/ICO,
-sniffed from content) return their bytes when within the cap; over-cap images
-and other binaries return metadata only.
+line boundary with `truncated: true`. Images (PNG/JPEG/GIF/WebP/BMP/ICO
+sniffed from content; AVIF/HEIC/HEIF/TIFF by extension) and PDFs return their
+bytes when within the cap; over-cap ones and other binaries return metadata
+only. SVG is text.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","path":"spec.md"}' \
