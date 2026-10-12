@@ -26,7 +26,7 @@ const (
 	memoryGroomCooldown = 6 * time.Hour
 	// memoryGroomRegrowth is how many active bytes memory must grow past the last
 	// automatic groom's result before another is worthwhile.
-	memoryGroomRegrowth = 1024
+	memoryGroomRegrowth = 4096
 	// memoryGroomTimeout bounds one automatic groom session.
 	memoryGroomTimeout = 2 * time.Hour
 	// memoryGroomStateFile persists scheduling state per primary tree.

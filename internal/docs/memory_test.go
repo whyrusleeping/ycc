@@ -101,7 +101,7 @@ func TestAppendMemoryAppendsToExistingSection(t *testing.T) {
 func TestAppendMemorySoftBudgetNudgeThenHardRefusal(t *testing.T) {
 	s := NewStore(t.TempDir())
 
-	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 120)
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 480)
 	softSize := len(RenderMemoryForPrompt(overSoft))
 	if softSize < MemorySoftBudget || softSize >= MemoryHardBudget {
 		t.Fatalf("active fixture size %d must be in [soft=%d, hard=%d)", softSize, MemorySoftBudget, MemoryHardBudget)
@@ -124,7 +124,7 @@ func TestAppendMemorySoftBudgetNudgeThenHardRefusal(t *testing.T) {
 		t.Fatalf("note must be recorded even over budget:\n%s", body)
 	}
 
-	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 400)
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 1600)
 	if activeSize := len(RenderMemoryForPrompt(overHard)); activeSize < MemoryHardBudget {
 		t.Fatalf("active fixture too small for hard ceiling: %d", activeSize)
 	}
@@ -163,7 +163,7 @@ func TestAppendMemoryAllowsRawAuditOverCeilingWhenActiveMemoryIsSmall(t *testing
 	when := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	for i := 0; i < 2; i++ {
 		old, err := s.AppendMemoryEntry(MemoryEntry{
-			Note: strings.Repeat("obsolete audit evidence ", 500), Kind: MemoryInference,
+			Note: strings.Repeat("obsolete audit evidence ", 1000), Kind: MemoryInference,
 			Provenance: MemoryProvenance{EventTime: when.Add(time.Duration(2*i) * time.Second)},
 		})
 		if err != nil {
@@ -194,7 +194,7 @@ func TestAppendMemoryAllowsRawAuditOverCeilingWhenActiveMemoryIsSmall(t *testing
 func oversizedMemory(t *testing.T, s *Store) string {
 	t.Helper()
 	p := normalizeProvenance(MemoryProvenance{EventTime: time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)})
-	line := formatMemoryRecord(p, "m-big", memoryKindLabels[MemoryInference], strings.Repeat("oversized active note ", 800), MemoryInference, nil)
+	line := formatMemoryRecord(p, "m-big", memoryKindLabels[MemoryInference], strings.Repeat("oversized active note ", 2000), MemoryInference, nil)
 	if err := os.WriteFile(s.MemoryPath(), []byte(memoryHeader+"\n## Lessons learned\n"+line+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

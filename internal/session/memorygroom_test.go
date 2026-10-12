@@ -55,7 +55,7 @@ func TestMemoryPressureSchedulesOneAutomaticGroom(t *testing.T) {
 	// sessions and the watcher are torn down before the directory is removed.
 	ws, _ := filepath.Abs(t.TempDir())
 	t.Cleanup(m.ReclaimAll)
-	status := overBudgetMemory(t, ws, 60)
+	status := overBudgetMemory(t, ws, 240)
 
 	// Starting any session in an over-budget project schedules a groom.
 	chat, err := m.Start(Config{Workspace: ws, Mode: "chat", Prompt: "hi"})
@@ -137,7 +137,7 @@ func TestMemoryPressureSchedulesOneAutomaticGroom(t *testing.T) {
 		t.Fatalf("regrowth status = %q", msg)
 	}
 	// After enough growth, grooming resumes.
-	overBudgetMemory(t, ws, 90)
+	overBudgetMemory(t, ws, 360)
 	if msg := m.memoryPressure(ws, chat.ID); !strings.Contains(msg, "started an automatic memory-groom") {
 		t.Fatalf("regrown memory should start a groom: %q", msg)
 	}
@@ -169,7 +169,7 @@ func TestMemoryPressureIgnoresSmallMemoryAndHonoursKillSwitch(t *testing.T) {
 	disabled.SetProjects(project.NewMemory())
 	t.Cleanup(disabled.ReclaimAll)
 	disabled.startMemoryGroom = m.startMemoryGroom
-	overBudgetMemory(t, ws, 60)
+	overBudgetMemory(t, ws, 240)
 	if msg := disabled.memoryPressure(ws, "s_x"); msg != "" || started != 0 {
 		t.Fatalf("auto_groom=false must not groom: %q (%d)", msg, started)
 	}
@@ -189,7 +189,7 @@ func TestMemoryPressureIgnoresSmallMemoryAndHonoursKillSwitch(t *testing.T) {
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	overBudgetMemory(t, wt, 60)
+	overBudgetMemory(t, wt, 240)
 	if m.primaryTreeFor(wt) != ws {
 		t.Fatalf("fixture worktree does not resolve to its primary: %q", m.primaryTreeFor(wt))
 	}

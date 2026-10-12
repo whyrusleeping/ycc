@@ -923,7 +923,7 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
 
 ```json
 {"content":"# Project memory\n\n## Lessons learned\n- 2026-07-01: ...","path":"/home/me/code/ycc/memory.md",
- "activeBytes":5120,"activeNotes":31,"softBudget":4096,"hardBudget":16384,"autoGroom":true,
+ "activeBytes":20480,"activeNotes":120,"softBudget":16384,"hardBudget":32768,"autoGroom":true,
  "groomSessionId":"s_1a2b3c4d5e6f7a8b",
  "lastGroom":{"sessionId":"s_1a2b3c4d5e6f7a8b","startedUnix":"1790000000","activeBefore":5120}}
 ```

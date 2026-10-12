@@ -573,7 +573,7 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	d := depsFor(t)
 
 	// Over soft budget, under hard ceiling: recorded, with a nudge.
-	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 120)
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 480)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overSoft), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +589,7 @@ func TestRememberSoftNudgeThenHardRefusal(t *testing.T) {
 	}
 
 	// Over the hard ceiling: refused with consolidate guidance.
-	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 400)
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 1600)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overHard), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -611,7 +611,7 @@ func TestRememberDefersToAutomaticGroom(t *testing.T) {
 		calls = append(calls, active)
 		return "an automatic memory-groom session (s_groom) is already consolidating project memory"
 	}
-	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 120)
+	overSoft := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 480)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overSoft), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -623,7 +623,7 @@ func TestRememberDefersToAutomaticGroom(t *testing.T) {
 		t.Fatalf("pressure hook calls = %v", calls)
 	}
 
-	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 400)
+	overHard := "# Project memory\n\n## Lessons learned\n" + strings.Repeat("- 2020-01-01: filler line\n", 1600)
 	if err := os.WriteFile(d.Docs.MemoryPath(), []byte(overHard), 0o644); err != nil {
 		t.Fatal(err)
 	}

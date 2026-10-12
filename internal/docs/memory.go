@@ -16,8 +16,8 @@ import (
 // memory.md is considered due for grooming. Superseded and retired audit records
 // remain on disk but are excluded from this budget because they are not
 // injected. Crossing the soft budget does not block a write; the daemon uses it
-// as the trigger for automatic grooming.
-const MemorySoftBudget = 4096
+// as the trigger for automatic grooming. 16 KiB is roughly 4k tokens.
+const MemorySoftBudget = 16384
 
 // MemoryHardBudget is the active prompt-memory backstop (bytes). A write that
 // would leave active memory above it is refused unless it reduces active memory
@@ -25,7 +25,7 @@ const MemorySoftBudget = 4096
 // accepted note is actually delivered to agents. Automatic grooming is expected
 // to keep memory far below it; the refusal exists for when grooming is
 // disabled or failing.
-const MemoryHardBudget = 16384
+const MemoryHardBudget = 32768
 
 // memoryEntryHint is the soft per-entry length (bytes) over which AppendMemory
 // nudges toward a terser note. Long, prose-y entries burn the budget fast; the

@@ -41,7 +41,7 @@ verify it.
 
 Coordinator-level agents can append terse notes with `remember` and retire notes with `forget`.
 Implementers and reviewers report useful findings upward rather than independently mutating shared
-memory. The soft (4 KB) and hard (16 KB) budgets measure only the active notes rendered into
+memory. The soft (16 KB, roughly 4k tokens) and hard (32 KB) budgets measure only the active notes rendered into
 prompts, not superseded or retired audit records retained on disk. Crossing the soft budget accepts
 the note. A write that would leave active memory above the hard backstop is refused unless it
 reduces active memory (a consolidating supersession); the refusal states the bytes to free and lists
@@ -60,7 +60,7 @@ owns grooming: when a `remember` write leaves active memory at or over the soft 
 starts in a project already over it, the daemon starts an unattended memory-groom pm session in the
 project's primary tree. It uses the memory-groom preset binding, else the default coordinator —
 deliberately not a cheaper model, since judging which notes still matter is the whole job. At most
-one runs per project; a persisted cooldown (6 h) and a regrowth threshold (1 KB past the last
+one runs per project; a persisted cooldown (6 h) and a regrowth threshold (4 KB past the last
 *finished* groom's result, recorded in `.ycc/memory-groom.json`; a failed groom sets no baseline, and
 the threshold never applies at the hard backstop) keep a project that legitimately needs more memory
 from being re-groomed on every session start. Linked workstream worktrees carry their own
