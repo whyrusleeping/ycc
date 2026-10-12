@@ -94,6 +94,29 @@ public final class SessionReadStore {
         return activity > mark
     }
 
+    /// The raw read mark for a session (a daemon RFC3339 stamp), or nil when
+    /// this device has never seen the session.
+    public func mark(for sessionID: String) -> String? { marks[sessionID] }
+
+    /// The row an unread session should open at: the agent's newest reply
+    /// (model message or final report), provided it landed after `mark`.
+    /// Nil when there is no such reply, so the caller keeps its default
+    /// live-edge position.
+    public static func unreadReplyRowID(
+        in rows: some BidirectionalCollection<TranscriptRow>, after mark: String
+    ) -> String? {
+        guard let markDate = SessionListModel.parseTimestamp(mark) else { return nil }
+        guard let reply = rows.last(where: { row in
+            switch row.kind {
+            case .modelMessage, .finalReport: return true
+            default: return false
+            }
+        }) else { return nil }
+        guard let replyDate = SessionListModel.parseTimestamp(reply.ts),
+              replyDate > markDate else { return nil }
+        return reply.id
+    }
+
     /// How many of `sessions` carry unread agent activity.
     public func unreadCount(in sessions: [Ycc_V1_SessionSummary]) -> Int {
         sessions.reduce(into: 0) { count, session in

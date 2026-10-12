@@ -34,6 +34,10 @@ struct SessionView: View {
     @State private var isBrowsingEarlier = false
     @State private var historyAnchor: String?
     @State private var didRunInitialPin = false
+    /// This device's read mark as of opening the session, captured before
+    /// leaving can advance it. The initial pin uses it to open an unread
+    /// session at the agent's newest reply instead of the live edge.
+    @State private var openReadMark: String?
     /// User drags opt out of follow mode while the follow-state reconciler
     /// resumes it once the live edge is visible and dragging has gone quiet.
     /// Corrective scrolls keep a following transcript pinned through late layout.
@@ -374,6 +378,9 @@ struct SessionView: View {
                     model, project: project, sessionID: sessionID, live: listedLive, owner: client)
                 if presentation == nil { presentation = SessionPresentation(model: model) }
                 presentation?.begin()
+                if !didRunInitialPin, openReadMark == nil {
+                    openReadMark = app.readMarks.mark(for: sessionID) ?? ""
+                }
             }
             // `present` resumes a cached model from its cursor and is a no-op when
             // returning (e.g. from a diff) to a model that is still streaming.
@@ -908,6 +915,17 @@ struct SessionView: View {
     @MainActor
     private func pinInitialTranscript(proxy: ScrollViewProxy) async {
         guard !Task.isCancelled, model.hasCompletedInitialReplay, !didRunInitialPin else { return }
+        // An unread session opens at the top of the agent's newest reply so it
+        // reads from its start. A running session keeps following the live
+        // edge, matching the list, which never badges a running session unread.
+        var isRunning = false
+        if case .running = model.phase { isRunning = true }
+        if !isRunning, let mark = openReadMark,
+           let reply = SessionReadStore.unreadReplyRowID(
+               in: model.visibleDurableRows, after: mark) {
+            await pinUnreadReply(reply, proxy: proxy)
+            return
+        }
         // A yield alone is not a layout barrier for hundreds of newly mounted
         // rows. Make bounded initial-only corrections as text layout settles.
         // Live revision tokens must not cancel these; user scrollback must.
@@ -932,6 +950,43 @@ struct SessionView: View {
                bottomY <= measured.viewportHeight + 8 {
                 model.noteFirstDisplay()
             }
+        }
+    }
+
+    /// Open at the top of an unread reply. This is scrollback like a paged-in
+    /// history anchor: follow mode stays off (the Jump to latest pill shows)
+    /// until a drag or the pill hands control back.
+    @MainActor
+    private func pinUnreadReply(_ rowID: String, proxy: ScrollViewProxy) async {
+        didRunInitialPin = true
+        stopFollowingLatest()
+        isBrowsingEarlier = true
+        dragActivity.sawLiveEdge = false
+        historyAnchor = rowID
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        // Same bounded settle passes as the live-edge pin: freshly mounted
+        // rows keep laying out text after the first scroll.
+        for delay in [UInt64(0), 100_000_000, 250_000_000] {
+            if delay > 0 {
+                do { try await Task.sleep(nanoseconds: delay) }
+                catch { return }
+            } else {
+                await Task.yield()
+            }
+            guard !Task.isCancelled, isBrowsingEarlier, historyAnchor == rowID,
+                  !isDraggingTranscript else { return }
+            withTransaction(transaction) {
+                proxy.scrollTo(rowID, anchor: .top)
+            }
+        }
+        model.noteFirstDisplay()
+        // A reply short enough to leave the live edge on screen needs no
+        // scrollback state: keep following so later turns stay pinned.
+        if measured.latestVisible, isBrowsingEarlier, historyAnchor == rowID {
+            historyAnchor = nil
+            isBrowsingEarlier = false
+            isFollowingLatest = true
         }
     }
 

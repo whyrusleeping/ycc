@@ -231,4 +231,27 @@ final class SessionReadStoreTests: XCTestCase {
         XCTAssertFalse(store.isUnread(session(id: "old", lastActivity: "2026-08-07T10:00:00Z")))
         XCTAssertTrue(store.isUnread(session(id: "new", lastActivity: "2026-08-07T10:00:00Z")))
     }
+
+    // MARK: - Unread reply anchor
+
+    func testUnreadReplyIsTheNewestAgentMessageAfterTheMark() {
+        let rows = [
+            TranscriptRow(id: "u1", kind: .userMessage(text: "hi", pictures: []), seq: 1,
+                          actor: "user", ts: "2026-08-06T10:00:00Z"),
+            TranscriptRow(id: "m1", kind: .modelMessage(text: "looking"), seq: 2,
+                          actor: "coordinator", ts: "2026-08-06T10:01:00Z"),
+            TranscriptRow(id: "t1", kind: .tool(name: "Read", status: .ok, args: "", output: ""),
+                          seq: 3, actor: "coordinator", ts: "2026-08-06T10:02:00Z"),
+            TranscriptRow(id: "r1", kind: .finalReport(text: "done"), seq: 4,
+                          actor: "coordinator", ts: "2026-08-06T10:03:00Z"),
+            TranscriptRow(id: "s1", kind: .system(text: "Session stopped"), seq: 5,
+                          actor: "daemon", ts: "2026-08-06T10:04:00Z"),
+        ]
+        XCTAssertEqual(
+            SessionReadStore.unreadReplyRowID(in: rows, after: "2026-08-06T10:00:30Z"), "r1")
+        // Already read through the reply: open at the live edge as before.
+        XCTAssertNil(SessionReadStore.unreadReplyRowID(in: rows, after: "2026-08-06T10:03:00Z"))
+        XCTAssertNil(SessionReadStore.unreadReplyRowID(in: rows, after: ""))
+        XCTAssertNil(SessionReadStore.unreadReplyRowID(in: Array(rows.prefix(1)), after: "2026-08-06T09:00:00Z"))
+    }
 }
