@@ -65,6 +65,10 @@ func TestWorkLoopWaitingStatus(t *testing.T) {
 	if !strings.Contains(got, "rate_limit") || !strings.Contains(got, "resumes") {
 		t.Fatalf("waiting status = %q", got)
 	}
+	got = workLoopWaitingStatus(&v1.WorkLoopInfo{State: "waiting", WaitKind: "no_progress", ResumeAt: resume})
+	if !strings.HasPrefix(got, "loop waiting: last session made no progress; resumes") {
+		t.Fatalf("no-progress waiting status = %q", got)
+	}
 }
 
 func TestWorkLoopMessagesAndTick(t *testing.T) {

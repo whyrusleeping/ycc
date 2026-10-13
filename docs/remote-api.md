@@ -1058,7 +1058,10 @@ session list with an alert rather than a dead view.
 Drive the daemon-side unattended **work loop** (spec §9, §20.6; task 0179). The
 loop starts fresh unattended `work` sessions one after another, re-reading the
 live backlog before each pick and continuing while ready work remains, even when
-prior sessions leave task metadata unchanged (spec §9.1). Session and per-loop
+prior sessions leave task metadata unchanged (spec §9.1). A session that neither
+commits nor changes the backlog puts the loop in `waiting` with `wait_kind`
+`no_progress` and an escalating `resume_at` (2m, 5m, 15m, 30m, then hourly);
+after 12h of such waiting it finishes with a `loop stalled: …` outcome. Session and per-loop
 budget caps remain daemon-enforced; every session rolls up into an incremental/final digest
 with bounded continuation evidence.
 Because it lives in the daemon, a loop **survives client disconnects**: any client

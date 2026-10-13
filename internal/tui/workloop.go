@@ -79,7 +79,9 @@ func (m model) loopRefreshTick() tea.Cmd {
 
 func workLoopWaitingStatus(info *v1.WorkLoopInfo) string {
 	status := "loop waiting for provider"
-	if info.WaitKind != "" {
+	if info.WaitKind == "no_progress" {
+		status = "loop waiting: last session made no progress"
+	} else if info.WaitKind != "" {
 		status += " (" + info.WaitKind + ")"
 	}
 	if resumeAt, err := time.Parse(time.RFC3339, info.ResumeAt); err == nil {
@@ -160,7 +162,7 @@ func workLoopResourceLines(info *v1.WorkLoopInfo) []string {
 		"session: " + limit(info.SessionTokenLimit, info.SessionCostLimit, info.SessionTimeLimitSecs),
 		"loop: " + limit(info.LoopTokenLimit, info.LoopCostLimit, info.LoopTimeLimitSecs),
 		pricing,
-		"attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked",
+		"attempts: no fixed limit; sessions without progress back off, and 12h without progress stops the loop",
 	}
 }
 

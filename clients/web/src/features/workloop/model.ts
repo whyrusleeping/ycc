@@ -150,7 +150,7 @@ export function resourceEnvelopeLines(loop: WorkLoopInfo): string[] {
     loop.costLimitsPricedOnly
       ? "Cost caps and totals count priced models only; tokens count all models."
       : "Cost-limit pricing semantics unavailable.",
-    "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked.",
+    "Attempts: no fixed limit; sessions without progress back off, and 12h without progress stops the loop.",
   ];
 }
 
@@ -169,11 +169,12 @@ export function formatClock(iso: string): string | null {
   return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** "Waiting for provider (rate_limit) — resumes 03:15". */
+/** "Waiting for provider (rate_limit) — resumes 03:15", or the no-progress backoff. */
 export function waitingLine(loop: WorkLoopInfo): string {
   let line = "Waiting for provider";
   const kind = loop.waitKind.trim();
-  if (kind) line += ` (${kind})`;
+  if (kind === "no_progress") line = "Waiting: last session made no progress";
+  else if (kind) line += ` (${kind})`;
   const at = formatClock(loop.resumeAt);
   if (at) line += ` — resumes ${at}`;
   return line;

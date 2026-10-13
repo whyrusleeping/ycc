@@ -3,9 +3,11 @@ package session
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -40,6 +42,20 @@ var workLoopRetrySchedule = [...]time.Duration{
 // an unattended loop eventually terminates.
 const workLoopProviderPatience = 8 * time.Hour
 
+// A completed session that neither commits nor changes the backlog made no
+// progress (typically every ready task is waiting on time or an outside result).
+// The loop backs off before the next session so a time gate that opens later is
+// still picked up, and gives up once one stall has waited workLoopStallPatience.
+var workLoopStallSchedule = [...]time.Duration{
+	2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute, time.Hour,
+}
+
+const workLoopStallPatience = 12 * time.Hour
+
+// waitKindNoProgress is WorkLoop.WaitKind while backing off after a
+// no-progress session; provider waits use the failure kind instead.
+const waitKindNoProgress = "no_progress"
+
 // WorkLoop is a snapshot of a work loop's state for the RPC layer. It carries no
 // mutex (the live loop keeps that internally) so it is safe to hand to callers.
 type WorkLoop struct {
@@ -51,7 +67,7 @@ type WorkLoop struct {
 	Outcome          string // human outcome line once finished
 	StartedAt        time.Time
 	ResumeAt         time.Time // next retry time; zero unless waiting
-	WaitKind         string    // provider failure kind; empty unless waiting
+	WaitKind         string    // provider failure kind or "no_progress"; empty unless waiting
 	SessionsRun      int
 	Sessions         []WorkLoopSession
 	Completed        []WorkLoopDigestTask
@@ -429,6 +445,8 @@ func (wl *workLoop) run() {
 
 	var outageFailures int
 	var outageWait time.Duration
+	var stallSessions int
+	var stallWait, stallDelay time.Duration
 	for {
 		if wl.m.loopCtx.Err() != nil {
 			wl.finish("loop interrupted: daemon shutting down", tasks)
@@ -461,12 +479,25 @@ func (wl *workLoop) run() {
 			wl.finish(dec.outcome, tasks)
 			return
 		}
+		// Back off after a no-progress session only once another session would
+		// actually start, then re-read and re-decide: the backlog may have changed
+		// during the wait.
+		if stallDelay > 0 {
+			delay := stallDelay
+			stallDelay = 0
+			if !wl.waitBeforeNext(delay, waitKindNoProgress, tasks) {
+				return
+			}
+			continue
+		}
 
 		wl.mu.Lock()
 		wl.loopStarted = true
 		wl.mu.Unlock()
 
+		before := backlogFingerprint(store.Dir())
 		rec, breach, err := wl.runSession(wl.m.loopCtx)
+		progressed := len(rec.commits) > 0 || backlogFingerprint(store.Dir()) != before
 		wl.accumulate(rec, breach)
 		if err != nil {
 			// Re-read the backlog so the digest reflects any progress the session
@@ -499,6 +530,20 @@ func (wl *workLoop) run() {
 			// Any successful session ends the consecutive provider outage.
 			outageFailures = 0
 			outageWait = 0
+			if progressed {
+				stallSessions = 0
+				stallWait = 0
+				continue
+			}
+			stallSessions++
+			remaining := workLoopStallPatience - stallWait
+			if remaining <= 0 {
+				wl.finish(fmt.Sprintf("loop stalled: %d consecutive sessions made no progress (ready: %s); gave up after 12h",
+					stallSessions, strings.Join(readyTaskIDs(tasks), ", ")), tasks)
+				return
+			}
+			stallDelay = min(workLoopStallSchedule[min(stallSessions, len(workLoopStallSchedule))-1], remaining)
+			stallWait += stallDelay
 			continue
 		}
 		// A session may have changed the backlog before its final provider call
@@ -517,49 +562,53 @@ func (wl *workLoop) run() {
 			return
 		}
 
-		delay := workLoopRetrySchedule[len(workLoopRetrySchedule)-1]
-		if outageFailures < len(workLoopRetrySchedule) {
-			delay = workLoopRetrySchedule[outageFailures]
-		}
+		delay := workLoopRetrySchedule[min(outageFailures, len(workLoopRetrySchedule)-1)]
 		remaining := workLoopProviderPatience - outageWait
 		if remaining <= 0 {
 			wl.finish("loop stopped: provider unavailable ("+rec.errKind+"), gave up after 8h", tasks)
 			return
 		}
-		if delay > remaining {
-			delay = remaining
-		}
+		delay = min(delay, remaining)
 		outageFailures++
 		outageWait += delay
-
-		wl.mu.Lock()
-		wl.state = "waiting"
-		wl.resumeAt = time.Now().Add(delay)
-		wl.waitKind = rec.errKind
-		wl.mu.Unlock()
-		wl.persist()
-
-		elapsed := wl.waitFn(delay)
-		if wl.m.loopCtx.Err() != nil {
-			wl.finish("loop interrupted: daemon shutting down", tasks)
+		if !wl.waitBeforeNext(delay, rec.errKind, tasks) {
 			return
 		}
-		if !elapsed || wl.stopRequested() {
-			wl.finish("loop stopped: requested", tasks)
-			return
-		}
-		wl.mu.Lock()
-		if wl.stopReq {
-			wl.mu.Unlock()
-			wl.finish("loop stopped: requested", tasks)
-			return
-		}
-		wl.state = "running"
-		wl.resumeAt = time.Time{}
-		wl.waitKind = ""
-		wl.mu.Unlock()
-		wl.persist()
 	}
+}
+
+// waitBeforeNext holds the loop in the waiting state for delay before the next
+// session. It reports false after finishing the loop because a stop was
+// requested or the daemon is shutting down.
+func (wl *workLoop) waitBeforeNext(delay time.Duration, kind string, tasks []*docs.Task) bool {
+	wl.mu.Lock()
+	wl.state = "waiting"
+	wl.resumeAt = time.Now().Add(delay)
+	wl.waitKind = kind
+	wl.mu.Unlock()
+	wl.persist()
+
+	elapsed := wl.waitFn(delay)
+	if wl.m.loopCtx.Err() != nil {
+		wl.finish("loop interrupted: daemon shutting down", tasks)
+		return false
+	}
+	if !elapsed || wl.stopRequested() {
+		wl.finish("loop stopped: requested", tasks)
+		return false
+	}
+	wl.mu.Lock()
+	if wl.stopReq {
+		wl.mu.Unlock()
+		wl.finish("loop stopped: requested", tasks)
+		return false
+	}
+	wl.state = "running"
+	wl.resumeAt = time.Time{}
+	wl.waitKind = ""
+	wl.mu.Unlock()
+	wl.persist()
+	return true
 }
 
 // loopDecideInput is the pure input to a single loop decision.
@@ -582,8 +631,8 @@ type loopDecision struct {
 
 // decideLoop decides whether to start another work session or stop the loop. It
 // is pure so the control logic is unit-testable without a live model. Ready work
-// keeps the loop going regardless of unchanged backlog metadata. Graceful stop
-// and session errors are handled by the caller, before/after this.
+// keeps the loop going regardless of unchanged backlog metadata. Graceful stop,
+// session errors, and no-progress backoff/stall are handled by the caller.
 func decideLoop(in loopDecideInput) loopDecision {
 	switch {
 	case in.next == "" && len(in.heldReady) > 0:
@@ -955,6 +1004,41 @@ func pickReadyTask(tasks []*docs.Task, held map[string]string) (next string, hel
 		}
 	}
 	return next, heldReady
+}
+
+// readyTaskIDs lists every work-loop-eligible task id, for stall outcomes.
+func readyTaskIDs(tasks []*docs.Task) []string {
+	byID := docs.StatusByID(tasks)
+	var ids []string
+	for _, t := range tasks {
+		if docs.EligibilityFor(t, byID).Actionable {
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
+}
+
+// backlogFingerprint hashes the name and content of every backlog file, so any
+// status, body/work-log, creation, or removal change between two calls counts as
+// loop progress. An unreadable backlog hashes as empty.
+func backlogFingerprint(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	h := sha256.New()
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", e.Name(), len(data))
+		h.Write(data)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // heldTasks maps backlog task ids in workspace absWS to the live session

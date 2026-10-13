@@ -290,7 +290,7 @@ public final class WorkLoopModel {
         let pricing = loop.costLimitsPricedOnly
             ? "Cost caps and totals count priced models only; tokens count all models."
             : "Cost-limit pricing semantics unavailable."
-        let attempts = "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked."
+        let attempts = "Attempts: no fixed limit; sessions without progress back off, and 12h without progress stops the loop."
         return [session, wholeLoop, pricing, attempts]
     }
 
@@ -336,11 +336,14 @@ public final class WorkLoopModel {
     }
 
     /// A localized waiting status such as
-    /// "Waiting for provider (rate_limit) — resumes 03:15".
+    /// "Waiting for provider (rate_limit) — resumes 03:15", or the
+    /// no-progress backoff.
     public static func waitingLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
         let kind = loop.waitKind.trimmingCharacters(in: .whitespacesAndNewlines)
         var line = "Waiting for provider"
-        if !kind.isEmpty {
+        if kind == "no_progress" {
+            line = "Waiting: last session made no progress"
+        } else if !kind.isEmpty {
             line += " (\(kind))"
         }
         if let resumeAt = resumeAtDate(for: loop) {

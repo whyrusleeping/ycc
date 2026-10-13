@@ -627,7 +627,13 @@ waiting on its own background work or a question; once it is idle between turns,
 task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
 actionable, and a loop whose only ready work is held finishes saying which sessions hold it rather
 than starting sessions that would decline to collide. Unchanged task metadata after a session
-is not a stop condition, and there is no fixed retry count for unfinished ready work. Stop is
+is not a stop condition, and there is no fixed retry count for unfinished ready work. A completed
+session that neither commits nor changes any backlog file (status, body or work log, creation or
+removal) made no progress, typically because every ready task is waiting on time or an outside
+result. The loop then waits before re-deciding, escalating 2, 5, 15 and 30 minutes, then hourly,
+shown as waiting with wait kind `no_progress`; any progress resets the backoff, and graceful stop
+wakes the wait. Once one stall has waited 12 hours in total, the loop stops as stalled, naming
+the ready tasks. Stop is
 graceful: the current session finishes, then no next session starts. Session budget breaches and
 cumulative loop budgets still stop at the next safe decision point.
 
@@ -659,9 +665,9 @@ cost caps, with zero rendered explicitly as unbounded, plus explicitly unbounded
 wall time. Token totals include every model. Cost totals and cost-cap enforcement include only
 usage with configured pricing, and mixed or wholly unpriced totals remain labeled partial or
 unpriced rather than inventing dollars. Snapshots persisted before this envelope existed identify
-it as unavailable rather than misreporting missing historical caps as unbounded. There is no
-default wall-time, attempt-count, or unchanged-metadata limit; adding one would be a
-behavior-changing policy decision.
+it as unavailable rather than misreporting missing historical caps as unbounded. Apart from the
+no-progress stall stop above, there is no default wall-time, attempt-count, or unchanged-metadata
+limit; adding one would be a behavior-changing policy decision.
 
 Completed session records retain bounded reports and structured failure details. The digest counts
 attempts per task and exposes the latest evidence, remaining acceptance criteria, and a useful next

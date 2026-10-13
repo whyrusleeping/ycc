@@ -81,6 +81,10 @@ func TestWorkLoopRepeatedNonCommittingProgressRemainsActionable(t *testing.T) {
 	}
 	var ws string
 	m, _, ws = loopTestManager(t, factory)
+	var waits []time.Duration
+	m.newLoopWait = func(*workLoop) func(time.Duration) bool {
+		return func(d time.Duration) bool { waits = append(waits, d); return true }
+	}
 	store := docs.NewStore(ws)
 	task, err := store.Create("diagnose intermittent failure", "## Acceptance criteria\n- Reproduce the provider failure\n\n## Work log\n- inspect the next trace\n", 1, nil, nil)
 	if err != nil {
@@ -94,6 +98,10 @@ func TestWorkLoopRepeatedNonCommittingProgressRemainsActionable(t *testing.T) {
 	got := waitLoopFinished(t, m, "demo")
 	if got.Outcome != "loop stopped: requested" || got.SessionsRun != 4 {
 		t.Fatalf("loop stopped before explicit request: %+v", got)
+	}
+	// Sessions that leave no durable trace back off rather than stopping the loop.
+	if want := []time.Duration{2 * time.Minute, 5 * time.Minute, 15 * time.Minute}; fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("no-progress waits = %v, want %v", waits, want)
 	}
 	if got.TotalTokens != 100 || got.TotalCost != 0 || got.CostStatus != "unpriced" {
 		t.Fatalf("unpriced totals were not honest: %+v", got)

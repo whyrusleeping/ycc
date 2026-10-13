@@ -108,6 +108,7 @@ describe("digest and lines", () => {
   it("describes waiting and banner states", () => {
     expect(waitingLine(loop({ state: "waiting", waitKind: "rate_limit" }))).toBe("Waiting for provider (rate_limit)");
     expect(waitingLine(loop({ state: "waiting", resumeAt: "2026-10-06T03:15:00Z" }))).toMatch(/^Waiting for provider — resumes /);
+    expect(waitingLine(loop({ state: "waiting", waitKind: "no_progress" }))).toBe("Waiting: last session made no progress");
     expect(bannerLine(null)).toBe("Not running");
     expect(bannerLine(loop({ sessionsRun: 2 }))).toBe("Running · 2 sessions");
     expect(bannerLine(loop({ state: "stopping" }))).toBe("Stopping…");

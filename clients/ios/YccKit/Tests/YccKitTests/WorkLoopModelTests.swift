@@ -252,7 +252,7 @@ final class WorkLoopModelTests: XCTestCase {
             "Session: 12.0k tokens · $1.25 priced cost · wall time unbounded",
             "Loop: 100.0k tokens · $8.50 priced cost · wall time unbounded",
             "Cost caps and totals count priced models only; tokens count all models.",
-            "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked.",
+            "Attempts: no fixed limit; sessions without progress back off, and 12h without progress stops the loop.",
         ])
 
         value = loop(state: "running")
@@ -265,7 +265,7 @@ final class WorkLoopModelTests: XCTestCase {
             "Session: tokens unbounded · cost unbounded · wall time unbounded",
             "Loop: tokens unbounded · cost unbounded · wall time unbounded",
             "Cost caps and totals count priced models only; tokens count all models.",
-            "Attempts: no fixed limit; ready work continues until stopped, budget-limited, or blocked.",
+            "Attempts: no fixed limit; sessions without progress back off, and 12h without progress stops the loop.",
         ])
     }
 

@@ -1238,6 +1238,135 @@ func TestStopWorkLoopDuringProviderWait(t *testing.T) {
 	}
 }
 
+// A session that neither commits nor changes the backlog made no progress: the
+// loop backs off on an escalating schedule, and a commit or any backlog change
+// (here a work-log entry) resets it.
+func TestWorkLoopNoProgressBackoffResetsOnProgress(t *testing.T) {
+	var m *Manager
+	var store *docs.Store
+	var id string
+	calls := 0
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			rec := loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id}
+			switch calls {
+			case 3:
+				_, err := store.AppendWorkLog(id, "ruled out the cache")
+				return rec, false, err
+			case 5:
+				rec.commits = []loopCommit{{task: id, sha: "abc123"}}
+			case 6:
+				_, err := m.StopWorkLoop("demo")
+				return rec, false, err
+			}
+			return rec, false, nil
+		}
+	}
+	var ws string
+	m, _, ws = loopTestManager(t, factory)
+	var waits []time.Duration
+	var kinds []string
+	m.newLoopWait = func(wl *workLoop) func(time.Duration) bool {
+		return func(d time.Duration) bool {
+			snap := wl.snapshot()
+			if snap.State != "waiting" || snap.ResumeAt.IsZero() {
+				t.Errorf("waiting snapshot = %+v", snap)
+			}
+			waits = append(waits, d)
+			kinds = append(kinds, snap.WaitKind)
+			return true
+		}
+	}
+	store = docs.NewStore(ws)
+	task, err := store.Create("time-gated", "## Work log", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id = task.ID
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if final.Outcome != "loop stopped: requested" || final.SessionsRun != 6 {
+		t.Fatalf("final = %+v", final)
+	}
+	want := []time.Duration{2 * time.Minute, 5 * time.Minute, 2 * time.Minute}
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("waits = %v, want %v", waits, want)
+	}
+	for _, k := range kinds {
+		if k != waitKindNoProgress {
+			t.Fatalf("wait kinds = %v, want %s", kinds, waitKindNoProgress)
+		}
+	}
+}
+
+// A stall that outlasts the patience stops the loop and names the ready work.
+func TestWorkLoopStallPatienceStops(t *testing.T) {
+	calls := 0
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			return loopSessRec{id: fmt.Sprintf("idle-%d", calls), report: "nothing actionable yet"}, false, nil
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	var waited time.Duration
+	m.newLoopWait = func(*workLoop) func(time.Duration) bool {
+		return func(d time.Duration) bool { waited += d; return true }
+	}
+	task, err := docs.NewStore(ws).Create("waits for a download", "", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	// 2+5+15+30 minutes, eleven hourly waits, then the 8 minutes left: 16 waits.
+	want := "loop stalled: 17 consecutive sessions made no progress (ready: " + task.ID + "); gave up after 12h"
+	if final.Outcome != want || final.SessionsRun != 17 {
+		t.Fatalf("final = %q after %d sessions, want %q", final.Outcome, final.SessionsRun, want)
+	}
+	if waited != workLoopStallPatience {
+		t.Fatalf("waited = %v, want exactly %v", waited, workLoopStallPatience)
+	}
+}
+
+// The loop re-reads the backlog after a no-progress wait, so work parked during
+// the wait ends the loop without another session; budget stops never wait.
+func TestWorkLoopRedecidesAfterNoProgressWait(t *testing.T) {
+	calls := 0
+	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			calls++
+			return loopSessRec{id: fmt.Sprintf("idle-%d", calls)}, false, nil
+		}
+	}
+	m, _, ws := loopTestManager(t, factory)
+	store := docs.NewStore(ws)
+	task, err := store.Create("parked while waiting", "", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waits := 0
+	m.newLoopWait = func(*workLoop) func(time.Duration) bool {
+		return func(time.Duration) bool {
+			waits++
+			_, err := store.Update(task.ID, func(tk *docs.Task) { tk.Status = docs.StatusBlocked })
+			return err == nil
+		}
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitLoopFinished(t, m, "demo")
+	if final.Outcome != "loop complete: no ready tasks remain" || final.SessionsRun != 1 || waits != 1 {
+		t.Fatalf("final = %+v after %d waits", final, waits)
+	}
+}
+
 func TestStartWorkLoopRejectsDuplicate(t *testing.T) {
 	// A runner that blocks until released so the loop stays running.
 	release := make(chan struct{})
