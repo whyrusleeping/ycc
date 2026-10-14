@@ -579,6 +579,15 @@ public final class SessionViewModel {
         }
     }
 
+    /// Default reconnect sleep. A named function rather than a closure literal
+    /// in the parameter default: with Swift 6.2 debug codegen, an `async throws`
+    /// closure written as a default argument (following the `clock` default
+    /// closure) is miscompiled and aborts with "freed pointer was not the last
+    /// allocation" after the first backoff sleep.
+    public nonisolated static func systemSleep(_ nanoseconds: UInt64) async throws {
+        try await Task.sleep(nanoseconds: nanoseconds)
+    }
+
     public init(
         source: SessionTranscriptSource,
         actions: SessionActionSource? = nil,
@@ -594,9 +603,7 @@ public final class SessionViewModel {
         earlierPrefetchDelay: UInt64 = 400_000_000,
         resumeWindow: TimeInterval = SessionViewModel.defaultResumeWindow,
         clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        sleep: @escaping @Sendable (UInt64) async throws -> Void = {
-            try await Task.sleep(nanoseconds: $0)
-        }
+        sleep: @escaping @Sendable (UInt64) async throws -> Void = SessionViewModel.systemSleep
     ) {
         self.source = source
         self.publishInterval = publishInterval
