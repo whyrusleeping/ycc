@@ -190,7 +190,7 @@ export function SessionList({
           </button>
         )}
       </div>
-      {variant === "page" && <p className="muted small session-filter-hint">Automatic work stays in All history. Questions needing you always appear. Search covers loaded sessions{feed.hasMore ? "; load older sessions to search further" : ""}.</p>}
+      {variant === "page" && <p className="muted small session-filter-hint">Automatic work stays out of your inbox; it shows in Active while running and in All history. Questions needing you always appear. Search covers loaded sessions{feed.hasMore ? "; load older sessions to search further" : ""}.</p>}
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
       {variant === "page" && unreadRows.length > 0 && (
         <div className="unread-bar">

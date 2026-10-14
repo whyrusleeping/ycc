@@ -239,6 +239,39 @@ export function loopIndicator(loops: readonly (WorkLoopInfo | null | undefined)[
   return { label, title, tone: waiting ? "warn" : "live" };
 }
 
+/** How long a finished loop stays in the sidebar's ambient status. */
+export const RECENT_LOOP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Loops worth ambient sidebar status: live ones, and ones that ran sessions and
+ * finished within RECENT_LOOP_MS unless dismissed. A finished snapshot without
+ * finishedAt (pre-upgrade daemon) has no known age and stays hidden.
+ */
+export function ambientLoops(
+  loops: readonly { project: string; loop: WorkLoopInfo | null }[],
+  now: number,
+  dismissed: ReadonlySet<string>,
+): { project: string; loop: WorkLoopInfo }[] {
+  const out: { project: string; loop: WorkLoopInfo }[] = [];
+  for (const { project, loop } of loops) {
+    if (!loop) continue;
+    const state = loopState(loop);
+    if (isActive(state)) out.push({ project, loop });
+    else if (state === "finished" && loop.sessionsRun > 0 && !dismissed.has(loop.loopId)) {
+      const at = Date.parse(loop.finishedAt);
+      if (!Number.isNaN(at) && now - at < RECENT_LOOP_MS) out.push({ project, loop });
+    }
+  }
+  return out;
+}
+
+/** Completed tasks, most recently worked first (by the last session focused on each). */
+export function recentCompleted(loop: WorkLoopInfo): WorkLoopDigestTask[] {
+  const last = new Map<string, number>();
+  loop.sessions.forEach((s, i) => s.focus && last.set(s.focus, i));
+  return [...loop.completed].sort((a, b) => (last.get(b.id) ?? -1) - (last.get(a.id) ?? -1));
+}
+
 export const WORK_IMPLEMENTATIONS = [
   { value: "direct", label: "Direct", detail: "The coordinator edits the code itself (default); independent review stays delegated." },
   { value: "delegate", label: "Delegate", detail: "The coordinator hands code changes to an implementer subagent." },

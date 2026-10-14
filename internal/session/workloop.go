@@ -66,6 +66,7 @@ type WorkLoop struct {
 	CurrentSessionID string // session being driven now (Subscribe target); empty between sessions
 	Outcome          string // human outcome line once finished
 	StartedAt        time.Time
+	FinishedAt       time.Time // zero unless finished
 	ResumeAt         time.Time // next retry time; zero unless waiting
 	WaitKind         string    // provider failure kind or "no_progress"; empty unless waiting
 	SessionsRun      int
@@ -160,6 +161,7 @@ type workLoop struct {
 	currentSessionID string
 	outcome          string
 	startedAt        time.Time
+	finishedAt       time.Time
 	loopStarted      bool
 	prevBreach       bool
 	stopReq          bool
@@ -221,6 +223,7 @@ func (wl *workLoop) snapshotLocked() *WorkLoop {
 		CurrentSessionID:         wl.currentSessionID,
 		Outcome:                  wl.outcome,
 		StartedAt:                wl.startedAt,
+		FinishedAt:               wl.finishedAt,
 		ResumeAt:                 wl.resumeAt,
 		WaitKind:                 wl.waitKind,
 		SessionsRun:              len(wl.sessions),
@@ -692,6 +695,7 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	wl.mu.Lock()
 	wl.buildDigestLocked(final)
 	wl.state = "finished"
+	wl.finishedAt = time.Now()
 	wl.resumeAt = time.Time{}
 	wl.waitKind = ""
 	wl.outcome = outcome

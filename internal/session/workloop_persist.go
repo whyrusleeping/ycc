@@ -24,6 +24,7 @@ type persistedWorkLoop struct {
 	CurrentSessionID         string                     `json:"current_session_id,omitempty"`
 	Outcome                  string                     `json:"outcome,omitempty"`
 	StartedAt                time.Time                  `json:"started_at"`
+	FinishedAt               *time.Time                 `json:"finished_at,omitempty"`
 	ResumeAt                 *time.Time                 `json:"resume_at,omitempty"`
 	WaitKind                 string                     `json:"wait_kind,omitempty"`
 	Sessions                 []persistedWorkLoopSession `json:"sessions,omitempty"`
@@ -122,6 +123,10 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 	if !snapshot.ResumeAt.IsZero() {
 		resumeAt := snapshot.ResumeAt
 		p.ResumeAt = &resumeAt
+	}
+	if !snapshot.FinishedAt.IsZero() {
+		finishedAt := snapshot.FinishedAt
+		p.FinishedAt = &finishedAt
 	}
 	for _, s := range snapshot.Sessions {
 		p.Sessions = append(p.Sessions, persistedWorkLoopSession{
@@ -232,6 +237,9 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		created:          restoredTasks(p.Created),
 		unfinished:       restoredTasks(p.Unfinished),
 	}
+	if p.FinishedAt != nil {
+		wl.finishedAt = *p.FinishedAt
+	}
 	if p.ResumeAt != nil {
 		wl.resumeAt = *p.ResumeAt
 	}
@@ -251,6 +259,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 	if interrupted {
 		wl.state = "finished"
 		wl.outcome = "loop interrupted: daemon restarted"
+		wl.finishedAt = time.Now()
 		wl.currentSessionID = ""
 		wl.resumeAt = time.Time{}
 		wl.waitKind = ""

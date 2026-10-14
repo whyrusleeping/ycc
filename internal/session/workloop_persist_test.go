@@ -92,6 +92,9 @@ func TestFinishedWorkLoopRestoresDigest(t *testing.T) {
 	if !got.StartedAt.Equal(want.StartedAt) {
 		t.Fatalf("restored started_at = %v, want %v", got.StartedAt, want.StartedAt)
 	}
+	if want.FinishedAt.IsZero() || !got.FinishedAt.Equal(want.FinishedAt) {
+		t.Fatalf("restored finished_at = %v, want %v (non-zero)", got.FinishedAt, want.FinishedAt)
+	}
 	if got.TotalTokens != want.TotalTokens || got.TotalCost != want.TotalCost || got.CostStatus != want.CostStatus {
 		t.Fatalf("restored totals = (%d, %v, %q), want (%d, %v, %q)",
 			got.TotalTokens, got.TotalCost, got.CostStatus, want.TotalTokens, want.TotalCost, want.CostStatus)

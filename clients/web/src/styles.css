@@ -3944,6 +3944,99 @@ th[aria-sort="descending"] .sort-btn {
   color: var(--accent);
 }
 
+/* Ambient work-loop status above the sidebar inbox */
+.loop-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.loop-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunk);
+  font-size: 12px;
+}
+
+.loop-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.loop-status-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+
+.loop-status-title:hover {
+  color: var(--fg);
+}
+
+.loop-status-head .icon-btn {
+  padding: 0 6px;
+  line-height: 18px;
+}
+
+.loop-status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.loop-status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-subtle);
+}
+
+.loop-status-label .live-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.loop-status-session {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.loop-status-session:hover {
+  text-decoration: underline;
+}
+
+.loop-status-line.error {
+  color: var(--error);
+}
+
+.loop-status-attention {
+  color: var(--warn);
+  text-decoration: none;
+}
+
+.loop-status-attention:hover {
+  text-decoration: underline;
+}
+
 /* Work loop */
 .loop-page,
 .workstreams-page {

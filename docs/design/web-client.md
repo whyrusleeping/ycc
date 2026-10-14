@@ -75,9 +75,14 @@ The default session inbox emphasizes user-launched conversations, including auto
 human subsequently engaged with, and manually flagged follow-ups. Routine automatic memory grooming
 and work-loop sessions remain in All history, without personal unread markers, inbox counts, or
 per-session completion/error notifications. Questions waiting for a human answer always surface,
-including through list filters and search. The sidebar and keyboard next/previous navigation share
+including through list filters and search. Above the inbox, the sidebar shows ambient status for
+each live work loop, and for each loop that finished within the last day until dismissed: its
+state, the task and session it is working on now, the tasks it completed (most recently worked
+first), and its blocked and in-review counts. This status carries no unread marks or
+notifications. The sidebar and keyboard next/previous navigation share
 the same filter. The main list provides visible search and Inbox, Unread, Needs answer, Follow-up,
-Active, and All history filters; search is explicitly limited to loaded history and paging remains
+Active, and All history filters; Active also lists running automatic sessions. Search is explicitly
+limited to loaded history and paging remains
 available. Default palette suggestions use the inbox; explicit palette search can reach all loaded
 history. Work-loop outcome notifications remain separate from routine per-session notifications.
 

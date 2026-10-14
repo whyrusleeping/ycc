@@ -18,6 +18,7 @@ import { CAPTURE_SHORTCUT_LABEL, CaptureDialog, openCapture } from "../features/
 import { IS_MAC } from "./platform";
 import { canStart, canStop, currentSessionId, loopIndicator, loopState } from "../features/workloop/model";
 import { useLoopSessionIds, useLoopWatcher } from "../features/workloop/hooks";
+import { LoopStatus } from "../features/workloop/LoopStatus";
 import { filterSessions, isInboxSession } from "../features/sessions/attention";
 import { useSidebarFilter } from "../features/sessions/listFilter";
 import { loopIntentKey } from "../features/workloop/WorkLoopPage";
@@ -232,6 +233,7 @@ function Sidebar() {
         </span>
       </div>
       <div className="sidebar-list">
+        <LoopStatus scope={scope} />
         <SessionList scope={scope} activeSessionId={sessionId} variant="sidebar" />
       </div>
       <NotificationPrompt />

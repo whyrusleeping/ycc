@@ -11,6 +11,7 @@ import {
   type WorkLoopInfo,
 } from "../src/gen/ycc/v1/ycc_pb";
 import {
+  ambientLoops,
   bannerLine,
   budgetLines,
   canStart,
@@ -26,6 +27,7 @@ import {
   loopSessionIds,
   loopState,
   pollInterval,
+  recentCompleted,
   resourceEnvelopeLines,
   stateTitle,
   summaryLine,
@@ -166,5 +168,36 @@ describe("loop-owned sessions and the sidebar indicator", () => {
     const two = loopIndicator([loop(), loop({ project: "beta", state: "stopping" })]);
     expect(two?.label).toBe("2 running");
     expect(two?.title).toBe("gamma: Running · 0 sessions\nbeta: Stopping…");
+  });
+});
+
+describe("ambient sidebar status", () => {
+  const now = Date.parse("2026-10-11T12:00:00Z");
+  const finished = (loopId: string, finishedAt: string, sessionsRun = 2) =>
+    loop({ loopId, state: "finished", finishedAt, sessionsRun });
+
+  it("shows live loops and recently finished ones that ran, until dismissed", () => {
+    const shown = ambientLoops(
+      [
+        { project: "live", loop: loop({ loopId: "live" }) },
+        { project: "recent", loop: finished("recent", "2026-10-11T02:00:00Z") },
+        { project: "stale", loop: finished("stale", "2026-10-10T11:00:00Z") },
+        { project: "legacy", loop: finished("legacy", "") },
+        { project: "empty", loop: finished("empty", "2026-10-11T11:00:00Z", 0) },
+        { project: "gone", loop: finished("gone", "2026-10-11T11:00:00Z") },
+        { project: "none", loop: null },
+      ],
+      now,
+      new Set(["gone", "live"]),
+    );
+    expect(shown.map((l) => l.project)).toEqual(["live", "recent"]);
+  });
+
+  it("orders completed tasks by the last session that worked on them", () => {
+    const l = loop({
+      completed: [task("0001"), task("0002"), task("0003")],
+      sessions: [{ sessionId: "a", focus: "0002" }, { sessionId: "b", focus: "0001" }, { sessionId: "c", focus: "0002" }],
+    });
+    expect(recentCompleted(l).map((t) => t.id)).toEqual(["0002", "0001", "0003"]);
   });
 });

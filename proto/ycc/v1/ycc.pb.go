@@ -9228,6 +9228,7 @@ type WorkLoopInfo struct {
 	CostLimitsPricedOnly     bool                   `protobuf:"varint,24,opt,name=cost_limits_priced_only,json=costLimitsPricedOnly,proto3" json:"cost_limits_priced_only,omitempty"`           // cost totals/limits exclude unpriced usage
 	Unfinished               []*WorkLoopDigestTask  `protobuf:"bytes,25,rep,name=unfinished,proto3" json:"unfinished,omitempty"`                                                                // attempted accepted work still todo/in_progress
 	ResourceEnvelopeCaptured bool                   `protobuf:"varint,26,opt,name=resource_envelope_captured,json=resourceEnvelopeCaptured,proto3" json:"resource_envelope_captured,omitempty"` // false only for pre-envelope persisted snapshots
+	FinishedAt               string                 `protobuf:"bytes,27,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`                                              // RFC3339; empty unless finished (and for pre-upgrade snapshots)
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -9442,6 +9443,13 @@ func (x *WorkLoopInfo) GetResourceEnvelopeCaptured() bool {
 		return x.ResourceEnvelopeCaptured
 	}
 	return false
+}
+
+func (x *WorkLoopInfo) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
 }
 
 // StartWorkLoop starts an unattended work loop for a project. It fails
@@ -11628,7 +11636,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"error_kind\x18\t \x01(\tR\terrorKind\x12#\n" +
 	"\rerror_message\x18\n" +
 	" \x01(\tR\ferrorMessage\x12'\n" +
-	"\x0ferror_retryable\x18\v \x01(\bR\x0eerrorRetryable\"\xdb\b\n" +
+	"\x0ferror_retryable\x18\v \x01(\bR\x0eerrorRetryable\"\xfc\b\n" +
 	"\fWorkLoopInfo\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x14\n" +
@@ -11661,7 +11669,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"unfinished\x18\x19 \x03(\v2\x1a.ycc.v1.WorkLoopDigestTaskR\n" +
 	"unfinished\x12<\n" +
-	"\x1aresource_envelope_captured\x18\x1a \x01(\bR\x18resourceEnvelopeCaptured\"0\n" +
+	"\x1aresource_envelope_captured\x18\x1a \x01(\bR\x18resourceEnvelopeCaptured\x12\x1f\n" +
+	"\vfinished_at\x18\x1b \x01(\tR\n" +
+	"finishedAt\"0\n" +
 	"\x14StartWorkLoopRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"A\n" +
 	"\x15StartWorkLoopResponse\x12(\n" +

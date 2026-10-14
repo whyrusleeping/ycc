@@ -1726,6 +1726,10 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 	if !wl.ResumeAt.IsZero() {
 		resumeAt = wl.ResumeAt.UTC().Format(time.RFC3339)
 	}
+	finishedAt := ""
+	if !wl.FinishedAt.IsZero() {
+		finishedAt = wl.FinishedAt.UTC().Format(time.RFC3339)
+	}
 	info := &v1.WorkLoopInfo{
 		LoopId:                   wl.LoopID,
 		Project:                  wl.Project,
@@ -1733,6 +1737,7 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 		CurrentSessionId:         wl.CurrentSessionID,
 		Outcome:                  wl.Outcome,
 		StartedAt:                startedAt,
+		FinishedAt:               finishedAt,
 		ResumeAt:                 resumeAt,
 		WaitKind:                 wl.WaitKind,
 		SessionsRun:              int32(wl.SessionsRun),

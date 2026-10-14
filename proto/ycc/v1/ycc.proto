@@ -1045,6 +1045,7 @@ message WorkLoopInfo {
   bool cost_limits_priced_only = 24;  // cost totals/limits exclude unpriced usage
   repeated WorkLoopDigestTask unfinished = 25; // attempted accepted work still todo/in_progress
   bool resource_envelope_captured = 26; // false only for pre-envelope persisted snapshots
+  string finished_at = 27; // RFC3339; empty unless finished (and for pre-upgrade snapshots)
 }
 
 // StartWorkLoop starts an unattended work loop for a project. It fails

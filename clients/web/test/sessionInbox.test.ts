@@ -32,6 +32,12 @@ describe("personal session inbox", () => {
     expect(isInboxSession(row("manual", { origin: "user" }).session, true)).toBe(true);
   });
 
+  it("lists running automatic work under Active without adding it to the inbox", () => {
+    const running = [row("loop-live", { origin: "work_loop", live: true, status: "running" }), row("idle-manual", { origin: "user", live: true })];
+    expect(ids(filterSessions(running, "active", "", () => false, loops))).toEqual(["loop-live"]);
+    expect(ids(filterSessions(running, "inbox", "", () => false, loops))).toEqual(["idle-manual"]);
+  });
+
   it("always surfaces questions despite filters or search, and retains explicitly opened automatic sessions", () => {
     for (const filter of SESSION_FILTERS) {
       expect(ids(filterSessions(rows, filter.value, "no match", () => false, loops))).toEqual(["asks"]);

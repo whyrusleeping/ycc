@@ -43,7 +43,7 @@ export function filterSessions(
       case "unread": include = personal && unread(row); break;
       case "questions": include = false; break;
       case "followup": include = s.followUp; break;
-      case "active": include = personal && isActive(s); break;
+      case "active": include = isActive(s); break;
       case "all": include = true; break;
     }
     const text = [displayTitle(s), displayProject(row), s.sessionId, ...taskIds(s)].join(" ").toLocaleLowerCase();

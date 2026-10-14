@@ -3327,6 +3327,12 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
     set {_uniqueStorage()._resourceEnvelopeCaptured = newValue}
   }
 
+  /// RFC3339; empty unless finished (and for pre-upgrade snapshots)
+  public var finishedAt: String {
+    get {_storage._finishedAt}
+    set {_uniqueStorage()._finishedAt = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -9831,7 +9837,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0\u{3}finished_at\0")
 
   fileprivate class _StorageClass {
     var _loopID: String = String()
@@ -9860,6 +9866,7 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
     var _costLimitsPricedOnly: Bool = false
     var _unfinished: [Ycc_V1_WorkLoopDigestTask] = []
     var _resourceEnvelopeCaptured: Bool = false
+    var _finishedAt: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -9896,6 +9903,7 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       _costLimitsPricedOnly = source._costLimitsPricedOnly
       _unfinished = source._unfinished
       _resourceEnvelopeCaptured = source._resourceEnvelopeCaptured
+      _finishedAt = source._finishedAt
     }
   }
 
@@ -9940,6 +9948,7 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         case 24: try { try decoder.decodeSingularBoolField(value: &_storage._costLimitsPricedOnly) }()
         case 25: try { try decoder.decodeRepeatedMessageField(value: &_storage._unfinished) }()
         case 26: try { try decoder.decodeSingularBoolField(value: &_storage._resourceEnvelopeCaptured) }()
+        case 27: try { try decoder.decodeSingularStringField(value: &_storage._finishedAt) }()
         default: break
         }
       }
@@ -10026,6 +10035,9 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       if _storage._resourceEnvelopeCaptured != false {
         try visitor.visitSingularBoolField(value: _storage._resourceEnvelopeCaptured, fieldNumber: 26)
       }
+      if !_storage._finishedAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._finishedAt, fieldNumber: 27)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -10061,6 +10073,7 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         if _storage._costLimitsPricedOnly != rhs_storage._costLimitsPricedOnly {return false}
         if _storage._unfinished != rhs_storage._unfinished {return false}
         if _storage._resourceEnvelopeCaptured != rhs_storage._resourceEnvelopeCaptured {return false}
+        if _storage._finishedAt != rhs_storage._finishedAt {return false}
         return true
       }
       if !storagesAreEqual {return false}
