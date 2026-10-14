@@ -858,10 +858,19 @@ private struct NewSessionRequest: Identifiable {
     var id: String { project ?? "" }
 }
 
-/// A single session row: title, task chips, attention-worthy lifecycle state,
-/// mode/model/token metadata, and relative activity time. An unread row (agent
-/// activity this device has not been shown) is marked the way a mail inbox marks
-/// one: a leading dot and a heavier title.
+/// A single session row, laid out like a mail inbox entry so it scans fast:
+///
+///     ●  project · 0431                          13m
+///        Title of the session, wrapping to at
+///        most two lines
+///        [running] work · sol +1 · 87K ctx · via loop
+///
+/// The leading gutter carries the loudest attention signal (needs-answer bell,
+/// else the unread dot) without shifting the text column; unread also bolds
+/// the title. The header says *where* (project in the unscoped feed, focus
+/// tasks) and *when*; the footer is one quiet line of routine metadata. A row
+/// with nothing to put in the header (a plain chat in a project-scoped list)
+/// moves the timestamp onto the title line instead of spending a line on it.
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
     var project = ""
@@ -870,87 +879,127 @@ private struct SessionRow: View {
     var isUnread = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if session.live && session.waitingInput {
-                    Image(systemName: "bell.badge.fill")
-                        .foregroundStyle(.orange)
-                        .font(.subheadline)
-                        .accessibilityLabel("needs answer")
-                } else if isUnread {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 9, height: 9)
-                        .accessibilityLabel("unread")
-                }
-                if session.followUp {
-                    Image(systemName: "flag.fill")
-                        .foregroundStyle(.orange)
-                        .font(.subheadline)
-                        .accessibilityLabel("flagged for follow-up")
-                }
-                Text(SessionListModel.displayTitle(for: session))
-                    .font(isUnread ? .headline.weight(.bold) : .headline)
-                    // Titles are derived from the opening prompt, so one line
-                    // truncates almost every row into uselessness.
-                    .lineLimit(2)
-                Spacer(minLength: 4)
-            }
-
-            let taskLabels = SessionListModel.taskChipLabels(for: session)
-            if !taskLabels.isEmpty {
-                HistoryFlowLayout(spacing: 5) {
-                    ForEach(Array(taskLabels.enumerated()), id: \.offset) { _, label in
-                        Text(label)
-                            .font(.caption2.monospacedDigit().weight(.semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.secondary.opacity(0.12), in: Capsule())
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            indicator
+                .font(.subheadline)
+                .imageScale(.small)
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 3) {
+                if hasHeaderLead {
+                    header
+                    title
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        title
+                        Spacer(minLength: 4)
+                        trailingStatus
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .accessibilityLabel(taskAccessibilityLabel(label))
                     }
                 }
+                footer
             }
+        }
+        .padding(.vertical, 2)
+    }
 
-            HistoryFlowLayout(spacing: 8) {
-                if let lifecycle = SessionListModel.lifecycleLabel(for: session) {
+    @ViewBuilder
+    private var indicator: some View {
+        if session.live && session.waitingInput {
+            Image(systemName: "bell.badge.fill")
+                .foregroundStyle(.orange)
+                .accessibilityLabel("needs answer")
+        } else if isUnread {
+            Image(systemName: "circle.fill")
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel("unread")
+        } else {
+            // Zero height so it sits on the baseline without growing the row.
+            Color.clear.frame(height: 0)
+        }
+    }
+
+    private var visibleProject: String? {
+        showsProject && !project.isEmpty ? project : nil
+    }
+
+    private var taskLabels: [String] {
+        SessionListModel.taskChipLabels(for: session)
+    }
+
+    private var hasHeaderLead: Bool {
+        visibleProject != nil || !taskLabels.isEmpty
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if let visibleProject {
+                Text(visibleProject)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .accessibilityLabel("project \(visibleProject)")
+            }
+            if !taskLabels.isEmpty {
+                Text(taskLabels.joined(separator: " "))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .layoutPriority(-1)
+                    .accessibilityLabel(taskLabels.map(taskAccessibilityLabel).joined(separator: ", "))
+            }
+            Spacer(minLength: 4)
+            trailingStatus
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+    }
+
+    private var title: some View {
+        Text(SessionListModel.displayTitle(for: session))
+            .font(isUnread ? .body.weight(.semibold) : .body)
+            .foregroundStyle(.primary)
+            // Titles are derived from the opening prompt, so one line
+            // truncates almost every row into uselessness.
+            .lineLimit(2)
+    }
+
+    /// The follow-up flag and the compact activity age, right-aligned.
+    @ViewBuilder
+    private var trailingStatus: some View {
+        if session.followUp {
+            Image(systemName: "flag.fill")
+                .imageScale(.small)
+                .foregroundStyle(.orange)
+                .accessibilityLabel("flagged for follow-up")
+        }
+        if let date = SessionListModel.recencyDate(session) {
+            Text(SessionListModel.compactAge(of: date))
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+                .accessibilityLabel(date.formatted(.relative(presentation: .named, unitsStyle: .wide)))
+        }
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        let lifecycle = SessionListModel.lifecycleLabel(for: session)
+        let items = SessionListModel.metadataItems(for: session, isLoopOwned: isLoopOwned)
+        if lifecycle != nil || !items.isEmpty {
+            HStack(spacing: 6) {
+                if let lifecycle {
                     StatusBadge(label: lifecycle)
                 }
-                if isUnread {
-                    Label("new", systemImage: "text.bubble.fill")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.16), in: Capsule())
-                        .foregroundStyle(Color.accentColor)
+                if !items.isEmpty {
+                    Text(items.joined(separator: " · "))
                         .lineLimit(1)
-                        .fixedSize()
-                        .accessibilityLabel("unread agent messages")
-                }
-                if showsProject && !project.isEmpty {
-                    Label(project, systemImage: "folder")
-                        .lineLimit(1)
-                        .accessibilityLabel("project \(project)")
-                }
-                ForEach(
-                    Array(SessionListModel.metadataItems(
-                        for: session, isLoopOwned: isLoopOwned
-                    ).enumerated()), id: \.offset
-                ) { _, item in
-                    Text(item)
-                        .lineLimit(1)
-                        .accessibilityLabel(item == "via loop" ? "via work loop" : item)
-                }
-                if let text = relativeLastActivity {
-                    Text(text)
-                        .lineLimit(1)
+                        .accessibilityLabel(items
+                            .map { $0 == "via loop" ? "via work loop" : $0 }
+                            .joined(separator: ", "))
                 }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
     }
 
     private func taskAccessibilityLabel(_ label: String) -> String {
@@ -958,14 +1007,6 @@ private struct SessionRow: View {
             return "\(count) more tasks"
         }
         return "task \(label)"
-    }
-
-    private var relativeLastActivity: String? {
-        guard let date = SessionListModel.recencyDate(session) else { return nil }
-        // Abbreviated units ("12 min. ago" instead of "12 minutes ago") keep
-        // the timestamp on one line even when badges crowd the metadata row.
-        return date.formatted(
-            Date.RelativeFormatStyle(presentation: .named, unitsStyle: .abbreviated))
     }
 }
 
@@ -994,71 +1035,5 @@ private struct StatusBadge: View {
         case "stopped": return .gray
         default: return .secondary
         }
-    }
-}
-
-/// A lightweight wrapping layout for task chips and routine metadata. Unlike a
-/// fixed HStack it remains legible at narrow iPhone widths and larger Dynamic
-/// Type sizes, moving whole labels to the next line rather than truncating them.
-private struct HistoryFlowLayout: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        arrange(proposal: proposal, subviews: subviews).size
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        let arrangement = arrange(
-            proposal: ProposedViewSize(width: bounds.width, height: proposal.height),
-            subviews: subviews
-        )
-        for (index, point) in arrangement.points.enumerated() {
-            let size = arrangement.itemSizes[index]
-            subviews[index].place(
-                at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
-                anchor: .topLeading,
-                proposal: ProposedViewSize(width: size.width, height: size.height)
-            )
-        }
-    }
-
-    private func arrange(
-        proposal: ProposedViewSize, subviews: Subviews
-    ) -> (size: CGSize, points: [CGPoint], itemSizes: [CGSize]) {
-        let availableWidth = proposal.width ?? .infinity
-        var points: [CGPoint] = []
-        var itemSizes: [CGSize] = []
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var lineHeight: CGFloat = 0
-        var usedWidth: CGFloat = 0
-
-        for subview in subviews {
-            var size = subview.sizeThatFits(.unspecified)
-            if availableWidth.isFinite && size.width > availableWidth {
-                size = subview.sizeThatFits(ProposedViewSize(width: availableWidth, height: nil))
-            }
-            if x > 0, x + size.width > availableWidth {
-                x = 0
-                y += lineHeight + spacing
-                lineHeight = 0
-            }
-            points.append(CGPoint(x: x, y: y))
-            itemSizes.append(size)
-            x += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
-            usedWidth = max(usedWidth, min(x - spacing, availableWidth))
-        }
-        let height = subviews.isEmpty ? 0 : y + lineHeight
-        return (CGSize(width: usedWidth, height: height), points, itemSizes)
     }
 }

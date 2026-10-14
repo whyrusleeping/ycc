@@ -1092,6 +1092,20 @@ public final class SessionListModel {
         parseTimestamp(session.lastActivity) ?? parseTimestamp(session.startedAt)
     }
 
+    /// A mail-style compact age for a row's trailing timestamp ("now", "13m",
+    /// "2h", "3d", then a short date), short enough to sit beside the project
+    /// name without wrapping. Future dates (clock skew) read as "now".
+    public static func compactAge(of date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        switch seconds {
+        case ..<60: return "now"
+        case ..<3_600: return "\(Int(seconds / 60))m"
+        case ..<86_400: return "\(Int(seconds / 3_600))h"
+        case ..<(7 * 86_400): return "\(Int(seconds / 86_400))d"
+        default: return date.formatted(.dateTime.month(.abbreviated).day())
+        }
+    }
+
     /// Parse an RFC3339 / ISO8601 timestamp. Daemon timestamps may carry
     /// fractional seconds and a numeric offset, so try with fractional seconds
     /// first, then without. Empty / unparseable input returns `nil`.

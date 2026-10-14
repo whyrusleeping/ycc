@@ -464,6 +464,19 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "c", contextTokens: 12_000)), "12K ctx")
     }
 
+    func testCompactAgeBuckets() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        func age(_ seconds: TimeInterval) -> String {
+            SessionListModel.compactAge(of: now.addingTimeInterval(-seconds), now: now)
+        }
+        XCTAssertEqual(age(-30), "now")
+        XCTAssertEqual(age(59), "now")
+        XCTAssertEqual(age(13 * 60 + 5), "13m")
+        XCTAssertEqual(age(2 * 3_600 + 59 * 60), "2h")
+        XCTAssertEqual(age(6 * 86_400), "6d")
+        XCTAssertFalse(age(8 * 86_400).hasSuffix("d"))
+    }
+
     func testContextSummaryPromotesRoundedUnitBoundaries() {
         XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-low", contextTokens: 999_499)), "999K ctx")
         XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-carry", contextTokens: 999_500)), "1M ctx")
