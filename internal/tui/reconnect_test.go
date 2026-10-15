@@ -26,6 +26,7 @@ type flapServer struct {
 	live    chan *v1.Event
 	code    connect.Code
 	resumes int
+	sends   []string
 }
 
 func (s *flapServer) Subscribe(ctx context.Context, req *connect.Request[v1.SubscribeRequest], stream *connect.ServerStream[v1.Event]) error {
@@ -70,6 +71,71 @@ func (s *flapServer) ResumeSession(_ context.Context, req *connect.Request[v1.Re
 	s.code = 0
 	s.mu.Unlock()
 	return connect.NewResponse(&v1.ResumeSessionResponse{SessionId: req.Msg.SessionId, Mode: "work"}), nil
+}
+
+// SendInput mirrors the daemon: input to a session it no longer holds reopens
+// it, so subscribing works again afterwards.
+func (s *flapServer) SendInput(_ context.Context, req *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error) {
+	s.mu.Lock()
+	s.sends = append(s.sends, req.Msg.Text)
+	s.code = 0
+	s.mu.Unlock()
+	return connect.NewResponse(&v1.SendInputResponse{}), nil
+}
+
+// Typing into a session whose stream ended (daemon restart/reap → NotFound, a
+// stopped session's clean close, or exhausted automatic reconnects) delivers
+// the message and reattaches the stream without any manual reconnect or
+// resume step.
+func TestSendToEndedSessionReattaches(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code connect.Code
+		lost bool
+	}{
+		{name: "not found", code: connect.CodeNotFound},
+		{name: "stream closed"},
+		{name: "reconnects exhausted", lost: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &flapServer{code: tc.code, live: make(chan *v1.Event, 1)}
+			m := newFlapModel(t, s)
+			if tc.code != 0 {
+				updated, _ := m.Update(m.startSubscription()())
+				m = updated.(model)
+				if m.conn != connNotFound {
+					t.Fatalf("conn = %v, want connNotFound", m.conn)
+				}
+			} else if tc.lost {
+				m.conn, m.reconnectAttempt = connLost, maxReconnectAttempts
+			} else {
+				updated, _ := m.Update(streamClosedMsg{sessionID: m.sessionID})
+				m = updated.(model)
+			}
+			m.input.SetValue("keep going")
+			updated, cmd := m.Update(keyMsg("enter"))
+			m = updated.(model)
+			if cmd == nil {
+				t.Fatal("enter produced no send")
+			}
+			updated, cmd = m.Update(cmd())
+			m = updated.(model)
+			s.mu.Lock()
+			sends := append([]string(nil), s.sends...)
+			s.mu.Unlock()
+			if len(sends) != 1 || sends[0] != "keep going" {
+				t.Fatalf("sends = %q", sends)
+			}
+			if cmd == nil {
+				t.Fatal("send to an ended session did not reattach the stream")
+			}
+			updated, _ = m.Update(cmd())
+			m = updated.(model)
+			if m.conn != connLive || m.status != "running" || m.flashErr != "" {
+				t.Fatalf("after reattach: conn=%v status=%q flash=%q", m.conn, m.status, m.flashErr)
+			}
+		})
+	}
 }
 
 func newFlapModel(t *testing.T, s *flapServer) model {

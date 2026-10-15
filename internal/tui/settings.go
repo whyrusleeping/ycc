@@ -431,9 +431,9 @@ func (m model) overlayView() string {
 	case m.sessionID == "" || m.state != stateSession:
 		interruptVal = "(no active session)"
 	case m.paused:
-		interruptLabel, interruptVal = "resume agent", "continue from the pause"
+		interruptLabel, interruptVal = "continue agent", "continue from the pause"
 	case m.pausePending:
-		interruptLabel, interruptVal = "cancel pause", "resume before next checkpoint"
+		interruptLabel, interruptVal = "cancel pause", "keep running past the checkpoint"
 	case m.status != "running":
 		interruptVal = "(agent is " + m.status + ")"
 	}

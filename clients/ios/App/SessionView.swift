@@ -364,7 +364,7 @@ struct SessionView: View {
                 }
                 Button("Cancel", role: .cancel) { Analytics.action("session.stop.cancel") }
             } message: {
-                Text("This hard-terminates the agent — there is no resume.")
+                Text("This hard-terminates the agent and its background jobs. Sending a message later continues the conversation.")
             }
     }
 
@@ -481,10 +481,10 @@ struct SessionView: View {
             switch model.displayPhase {
             case .paused:
                 banner(
-                    "Paused — send a steer or Resume",
+                    "Paused — send a message to steer and continue",
                     systemImage: "pause.circle.fill",
                     tint: .orange,
-                    action: ("Resume", {
+                    action: ("Continue", {
                         Analytics.action("session.resume")
                         Task { await model.resumeSession() }
                     }),
@@ -1220,7 +1220,7 @@ struct SessionView: View {
                             Analytics.action("session.resume", via: .menu)
                             Task { await model.resumeSession() }
                         } label: {
-                            Label(model.displayPauseRequested ? "Cancel pause" : "Resume", systemImage: "play.circle")
+                            Label(model.displayPauseRequested ? "Cancel pause" : "Continue", systemImage: "play.circle")
                         }
                         .disabled(model.isControlInFlight || model.isStopPending)
                     }

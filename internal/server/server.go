@@ -723,11 +723,9 @@ func checkInputImages(attachments []*v1.ImageAttachment) ([]engine.Image, error)
 
 // SendInput delivers user text and optional pictures: it answers a pending
 // question only for text-only input, otherwise queues a multimodal instruction.
+// A session the daemon no longer holds is reopened from its persisted log
+// first, so sending to an opened session never needs a separate resume step.
 func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error) {
-	sess, ok := s.mgr.Get(req.Msg.SessionId)
-	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
-	}
 	if strings.TrimSpace(req.Msg.Text) == "" && len(req.Msg.Images) == 0 {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("message must contain text or a picture"))
 	}
@@ -737,6 +735,17 @@ func (s *Server) SendInput(_ context.Context, req *connect.Request[v1.SendInputR
 	images, err := checkInputImages(req.Msg.Images)
 	if err != nil {
 		return nil, err
+	}
+	sess, err := s.mgr.ReopenForInput(req.Msg.SessionId)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownSession):
+			return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+		case errors.Is(err, session.ErrDisabledModel):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
 	}
 	input := engine.UserMessage{Text: req.Msg.Text, Images: images}
 	if err := sess.SendInputMessage(input); err != nil {

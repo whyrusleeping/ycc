@@ -59,7 +59,7 @@ func (m model) statusBar() string {
 	case connAuth:
 		segs = append(segs, seg{errStyle.Render("✖ subscription auth failed — ctrl+y retry"), -1})
 	case connNotFound:
-		segs = append(segs, seg{errStyle.Render("✖ disconnected from session — ctrl+y reconnect"), -1})
+		segs = append(segs, seg{errStyle.Render("✖ disconnected from session — ctrl+y reconnect, or send a message"), -1})
 	case connTerminal:
 		segs = append(segs, seg{errStyle.Render("✖ subscription rejected — ctrl+y retry"), -1})
 	}

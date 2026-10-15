@@ -1301,6 +1301,9 @@ public final class SessionViewModel {
                 return
             }
         }
+        // Sending into a paused session steers it and continues it: there is no
+        // separate Continue step the user must remember.
+        let continuePaused = projection.phase == .paused
         let startedAwaitingActivity = phase != .paused && !isAwaitingAgentActivity
         if startedAwaitingActivity {
             isAwaitingAgentActivity = true
@@ -1312,6 +1315,10 @@ public final class SessionViewModel {
         }
         if succeeded {
             markSend(messageID, .sent)
+            // A concurrent send may already have continued it.
+            if continuePaused, projection.phase == .paused, pendingControl?.kind != .resume {
+                await resumeSession()
+            }
         } else {
             markSend(messageID, .failed(actionError ?? "send failed"))
             if startedAwaitingActivity, isAwaitingAgentActivity {

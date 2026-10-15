@@ -567,6 +567,9 @@ export class SessionController {
       this.publish();
       return;
     }
+    // Sending into a paused session steers it and continues it: there is no
+    // separate Continue step the user must remember.
+    const continuePaused = this.mode === "live" && this.projection.phase.kind === "paused";
     try {
       await this.api.sendInput({ sessionId: this.sessionId, text: msg.text, images: toImageAttachments(msg.pictures) });
       this.markMessage(id, { status: "sent" });
@@ -582,8 +585,14 @@ export class SessionController {
       this.reconcile();
     } catch (err) {
       this.markMessage(id, { status: "failed", error: this.reportActionError("send", err) });
+      this.publish();
+      return;
     }
     this.publish();
+    // A concurrent send may already have continued it.
+    if (continuePaused && this.projection.phase.kind === "paused" && this.control?.kind !== "resume") {
+      await this.resume();
+    }
   }
 
   private markMessage(id: string, patch: Partial<PendingMessage>) {

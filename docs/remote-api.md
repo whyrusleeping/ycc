@@ -746,6 +746,11 @@ Picture bytes are passed to the model but are not written to the event log — `
 retains filename/media-type metadata and an opaque id for authenticated retrieval from the
 session's separate attachment store. Pictures cannot answer an open `ask_user` gate.
 
+A session the daemon no longer holds (idle-reaped, stopped, or lost to a daemon restart) is
+reopened from its persisted log before the input is delivered, exactly as
+[`ResumeSession`](#resumesession) would, so a client never needs a separate resume step: send,
+then resubscribe from its cursor. A session with no persisted log is `not_found`.
+
 ```
 curl -sS -H "$AUTH" -H "$JSON" \
   -d '{"sessionId":"s_doc","text":"keep going"}' \
@@ -835,7 +840,8 @@ Both return `{}`.
 
 **Hard-terminate** a session: cancel its agent loop, close its event log, and remove
 it from the daemon. There is no resume from `Interrupt`'s graceful pause — but the
-durable log survives, so [`ResumeSession`](#resumesession) can re-open it later.
+durable log survives, so a later [`SendInput`](#sendinput) (or
+[`ResumeSession`](#resumesession)) continues it.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
@@ -851,7 +857,8 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \
 Re-open a **persisted** (finished/idle/stopped) session on its **existing** event
 log — "resume = replay": the coordinator is re-instantiated with history
 reconstructed from the log, and new activity appends to the same continuous
-`events.jsonl`. Idempotent if already live.
+`events.jsonl`. Idempotent if already live. Optional: `SendInput` reopens implicitly, so
+clients only need this to attach to a persisted session before the user types.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc"}' \

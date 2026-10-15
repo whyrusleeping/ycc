@@ -63,14 +63,15 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
 7. Answer a single question with an option, and a batch question with a mix of options and free
    text; the panel dismisses only when the session reports the question closed. Ask another
    question and answer it from the second client; the browser panel dismisses.
-8. Interrupt a running turn (Pausing… then Paused), send a steer, then Resume. Cancel a pause
+8. Interrupt a running turn (Pausing… then Paused), then send a steer: it continues the session
+   with no separate step. Pause again and use Continue to go on unchanged. Cancel a pause
    once. Open More → Stop session, cancel once, then confirm; the view becomes read-only.
 9. Drop the network or sleep the machine briefly while the second client produces output. On
    return the view reconnects and shows every durable row once, with no stale live tail.
-10. Open the persisted session: a finite read-only transcript with no composer, controls, or
-    reconnect churn. Resume session re-opens it in place (history stays, then the composer and
-    controls return and a "Session reopened" row appears). Hovering a non-live row in the session
-    list shows Resume, which navigates to the session and re-opens it the same way.
+10. Open the persisted (or stopped) session: its transcript loads with no live controls or
+    reconnect churn, and the status reads "Ready for your message". Sending a message continues
+    it in place (history stays, a "Session reopened" row appears, controls return, and the reply
+    streams) with no separate resume step.
 11. From the unscoped Recent feed, New session asks "Which project?" with the last-viewed project
     first; from a scoped project it preselects that project. Mode cards show descriptions; a
     suggestion card adopts its mode and seeds the prompt (changing the mode drops the preset). Work
@@ -251,7 +252,7 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     session, quick capture, new task, start/stop loop, follow the loop's session, spawn
     workstream, merge all ready, groom memory, projects (add, rename, remove, manage), usage,
     settings (add model, review tiers, Anthropic), notifications, mark all read, sign out, and in a
-    session interrupt / cancel pause / resume / retry / roll over / stop (asks first) / reopen,
+    session interrupt / cancel pause / continue / retry / roll over / stop (asks first),
     search, working changes, settings, and files. From Settings, "Settings › Review tiers" scrolls
     to that section even though Settings is already open.
 38. Keyboard shortcuts. `?` (not while typing) opens the help overlay listing every shortcut,

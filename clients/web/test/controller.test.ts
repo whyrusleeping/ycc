@@ -257,6 +257,23 @@ describe("SessionController", () => {
     c.dispose();
   });
 
+  it("a send into a paused session steers it, then continues it", async () => {
+    const { api, raw } = fakeApi({ live: true, scripts: [{ updates: [], end: "hang" }] });
+    raw.getSessionView.mockResolvedValueOnce(
+      create(GetSessionViewResponseSchema, { state: viewState(5, { phase: "paused" }), rows: [protoRow(5, "snapshot")] }),
+    );
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "streaming");
+    expect(c.getSnapshot().phase.kind).toBe("paused");
+    await c.send("use the other API");
+    expect(raw.sendInput).toHaveBeenCalledWith({ sessionId: "s1", text: "use the other API", images: [] });
+    expect(raw.resume).toHaveBeenCalledTimes(1);
+    expect(raw.resume).toHaveBeenCalledWith({ sessionId: "s1" });
+    expect(raw.sendInput.mock.invocationCallOrder[0]).toBeLessThan(raw.resume.mock.invocationCallOrder[0]);
+    c.dispose();
+  });
+
   it("keeps the history and fails the message when re-opening fails", async () => {
     const { api, raw } = fakeApi({ live: false, scripts: [{ updates: [] }] });
     raw.resumeSession.mockRejectedValueOnce(new ConnectError("model disabled", Code.FailedPrecondition));

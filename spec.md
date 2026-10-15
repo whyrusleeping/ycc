@@ -934,8 +934,13 @@ summaries are cached in memory against log file
 identity, size, and modification time; cold or changed logs are read with a summary-only decoder
 that validates the JSON while avoiding materialization of unrelated transcript payloads. The full
 event reader remains authoritative for replay. Reopening a session reconstructs model history and
-continues its existing event log. A persisted-only transcript is finite and read-only until the
-session is explicitly resumed. A human `ask_user` question survives the process that asked it: when
+continues its existing event log. Reopening is a daemon detail, never a user step: `SendInput` to a
+session the daemon no longer holds (idle-reaped, stopped, lost to a restart, or fail-stopped on its
+log) reopens it from its persisted log before delivering the input, so typing into any opened
+session continues it. A persisted-only transcript stays read-only until such input arrives; clients
+reattach their stream after it is accepted and surface an error only if the reopen fails.
+`ResumeSession` remains as an idempotent explicit reopen for clients that attach eagerly. A human
+`ask_user` question survives the process that asked it: when
 the log ends while the coordinator waits on one, reopen restores that exact question as a live gate
 (marking `session_reopened` with `question_restored`) instead of handing the model a placeholder
 result, and the answer is recorded as usual before the model continues. Answering such a persisted
@@ -957,7 +962,9 @@ opt-in auto-clearing are deferred; the current API stores only the flag and time
 ### 18.7 Interrupt and steer
 
 Interrupt durably acknowledges a `pause_requested` action immediately; it requests a graceful pause at a safe checkpoint and does not cancel a tool mid-write. `interrupted` alone confirms the pause. `pause_cancelled` (Resume before the checkpoint), `interrupted`, `resumed`, stop, and reopen clear the pending indication.
-While paused, input queues as steering and Resume drains it before the next model turn. Hard Stop
+While paused, input queues as steering and Resume drains it before the next model turn. Interactive
+clients follow an accepted send to a paused session with Resume, so sending a correction continues
+the session; their Continue control (Resume) continues it unchanged. Hard Stop
 terminates instead and requires destructive confirmation in interactive clients. Resume also
 retries a parked retryable model failure.
 

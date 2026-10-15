@@ -180,9 +180,9 @@ A typical loop looks like this:
    a conflicted state.
 
 While a session runs you can send input at any time. It is delivered at the next safe point.
-You can also **interrupt** a session, which pauses it at a checkpoint so you can steer it and
-then resume. **Stop** ends a session immediately. A finished session can be reopened later
-with its full history.
+You can also **interrupt** a session, which pauses it at a checkpoint so you can steer it; sending
+the correction continues it. **Stop** ends a session immediately. Any earlier session, finished or
+stopped, can be opened later with its full history; sending it a message continues it.
 
 Usage and cost are calculated from the event logs. You can break them down by project, task,
 model, or actor in the Usage view, or from the command line with

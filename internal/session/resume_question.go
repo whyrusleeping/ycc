@@ -236,29 +236,59 @@ func (m *Manager) ReopenForAnswer(id string) (*Session, error) {
 	if s, ok := m.Get(id); ok {
 		return s, nil
 	}
-	if id == "" || id == "." || filepath.Base(id) != id {
+	project, ok := m.persistedSessionProject(id)
+	if !ok {
 		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	events, err := m.SessionTranscript(project, id)
+	if err != nil {
+		return nil, err
+	}
+	if findResumableQuestion(events) == nil {
+		return nil, fmt.Errorf("session %s: %w", id, ErrNoPendingQuestion)
+	}
+	s, err := m.Reopen(project, id)
+	if err != nil {
+		return nil, err
+	}
+	if !s.PendingQuestion() {
+		return nil, fmt.Errorf("session %s: %w", id, ErrNoPendingQuestion)
+	}
+	return s, nil
+}
+
+// ReopenForInput returns the live session that user input should reach. Whether
+// the daemon still holds a session is a backend detail: one that is no longer
+// live (idle-reaped, stopped, or lost to a daemon restart) or whose live
+// instance fail-stopped on its event log is reopened from its persisted log, so
+// typing into an opened session simply continues it. Input RPCs carry no
+// project, so the owning project is located by session id.
+func (m *Manager) ReopenForInput(id string) (*Session, error) {
+	live, ok := m.Get(id)
+	if ok && live.logFailure() == nil {
+		return live, nil
+	}
+	project, found := m.persistedSessionProject(id)
+	if !found {
+		if ok {
+			return live, nil
+		}
+		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	return m.Reopen(project, id)
+}
+
+// persistedSessionProject names the registered project whose root workspace
+// holds a persisted log for session id.
+func (m *Manager) persistedSessionProject(id string) (string, bool) {
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return "", false
 	}
 	for _, p := range m.projects.List() {
 		logPath := filepath.Join(p.Path, ".ycc", "sessions", id, "events.jsonl")
-		if _, err := os.Stat(logPath); err != nil {
-			continue
+		if _, err := os.Stat(logPath); err == nil {
+			return p.Name, true
 		}
-		events, err := m.SessionTranscript(p.Name, id)
-		if err != nil {
-			return nil, err
-		}
-		if findResumableQuestion(events) == nil {
-			return nil, fmt.Errorf("session %s: %w", id, ErrNoPendingQuestion)
-		}
-		s, err := m.Reopen(p.Name, id)
-		if err != nil {
-			return nil, err
-		}
-		if !s.PendingQuestion() {
-			return nil, fmt.Errorf("session %s: %w", id, ErrNoPendingQuestion)
-		}
-		return s, nil
 	}
-	return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	return "", false
 }

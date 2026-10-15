@@ -191,9 +191,19 @@ func (m *model) cancelSubscription() {
 
 func (m model) sendInput(text string) tea.Cmd {
 	m.recordAction("session.send")
+	// The daemon reopens a session it no longer holds (reaped, stopped, or lost
+	// to a restart) when input arrives, so typing simply continues it. Our stream
+	// ended with it, though: reattach once the input has been accepted. A
+	// connRetrying stream already has a resubscribe scheduled.
+	reattach := m.conn == connNotFound || m.conn == connLost || m.conn == connAuth ||
+		m.conn == connTerminal || m.status == "stream closed"
+	id, gen := m.sessionID, m.subGen
 	return func() tea.Msg {
-		if _, err := m.client.SendInput(m.ctx, connect.NewRequest(&v1.SendInputRequest{SessionId: m.sessionID, Text: text})); err != nil {
+		if _, err := m.client.SendInput(m.ctx, connect.NewRequest(&v1.SendInputRequest{SessionId: id, Text: text})); err != nil {
 			return errMsg{err}
+		}
+		if reattach {
+			return recoveredSessionMsg{sessionID: id, gen: gen}
 		}
 		return nil
 	}
@@ -690,7 +700,7 @@ func (m model) sessionView() string {
 		return top + "\n" + body + "\n" + m.pickerView() + "\n" + help
 	}
 	if m.paused {
-		help := m.footer(" ⏸ paused — type a correction + enter to steer · enter to resume · esc settings")
+		help := m.footer(" ⏸ paused — type a correction + enter to steer and continue · enter to continue · esc settings")
 		return top + "\n" + body + "\n" + m.inputRow() + "\n" + help
 	}
 	if m.pausePending {

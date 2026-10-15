@@ -96,7 +96,7 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
   if (phase === "paused") {
     buttons.push(
       <button key="resume" type="button" className="btn primary" disabled={busy} data-track="session.resume" onClick={() => void controller.resume()}>
-        {pending === "resume" ? "Resuming…" : "Resume"}
+        {pending === "resume" ? "Continuing…" : "Continue"}
       </button>,
     );
   }
@@ -143,7 +143,7 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
       <ConfirmDialog
         open={confirmStop}
         title="Stop this session?"
-        body="Stopping terminates the agent and its background jobs instead of waiting for a safe checkpoint. Unlike Pause, it cannot be resumed here."
+        body="Stopping terminates the agent and its background jobs instead of waiting for a safe checkpoint. Sending a message later continues the conversation."
         confirmLabel="Stop session"
         danger
         action="session.stop"
@@ -265,7 +265,7 @@ export function SessionView({
   // A persisted log's last phase says nothing about the next turn: keep the default.
   const livePhase = snap.mode === "live";
   if (livePhase && snap.awaitsAnswer) placeholder = "Type an answer to the pending question…";
-  else if (livePhase && snap.phase.kind === "paused") placeholder = "Steer the paused session, then Resume…";
+  else if (livePhase && snap.phase.kind === "paused") placeholder = "Steer the paused session; sending continues it…";
   else if (livePhase && snap.phase.kind === "running") placeholder = "Send a steer — delivered at the next checkpoint…";
 
   return (
@@ -457,7 +457,7 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
   );
   useAction(
     useMemo(
-      () => (can.resume ? { id: "session.resume", title: "Resume this paused session", group: g, keywords: "continue", run: () => void controller.resume() } : null),
+      () => (can.resume ? { id: "session.resume", title: "Continue this paused session", group: g, keywords: "resume", run: () => void controller.resume() } : null),
       [can.resume, controller],
     ),
   );

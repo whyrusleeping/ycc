@@ -132,7 +132,7 @@ func (m model) browserCard(b browser) string {
 var browseTargets = []struct{ label, desc string }{
 	{"backlog", "tasks · readiness · drill-in detail"},
 	{"plans", "saved runbooks · view markdown"},
-	{"sessions", "previous + live · transcript · reopen"},
+	{"sessions", "previous + live · transcript · open"},
 	{"cost", "subscription allowance + token/cost breakdown"},
 	{"workstreams", "parallel worktrees · status · merge/discard"},
 	{"digest", "last work-loop run — done · blocked · cost"},

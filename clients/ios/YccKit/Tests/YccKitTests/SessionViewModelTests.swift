@@ -1056,7 +1056,7 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.actionError, "offline")
     }
 
-    func testPausedSteerActionWaitsForAuthoritativeResumeAndDeliveryEvents() async {
+    func testPausedSendSteersThenContinuesAndWaitsForAuthoritativeEvents() async {
         let source = MockSource()
         source.transcript = [event(1, "interrupted", "{}")]
         var continuation: AsyncThrowingStream<Ycc_V1_Event, Error>.Continuation!
@@ -1067,19 +1067,18 @@ final class SessionViewModelTests: XCTestCase {
         vm.start()
         await waitUntil { vm.phase == .paused && source.recordedFromSeqs.count == 1 }
 
+        // Sending into a paused session steers it and continues it: no separate
+        // Resume/Continue step.
         await vm.send(text: "change course")
+        XCTAssertEqual(actions.calls.first, .init(kind: "send", text: "change course"))
+        XCTAssertEqual(actions.calls.map(\.kind), ["send", "resume"])
         continuation.yield(event(
             2, "user_input", #"{"text":"change course","queued":true}"#, actor: "user"))
         await waitUntil { vm.projection.lastPersistedSeq == 2 }
 
-        XCTAssertEqual(actions.calls, [.init(kind: "send", text: "change course")])
-        XCTAssertEqual(vm.phase, .paused, "the queued echo must leave Resume available")
+        XCTAssertEqual(vm.phase, .paused, "the RPC response does not replace the durable event")
         XCTAssertFalse(vm.isAwaitingAgentActivity)
         XCTAssertEqual(vm.durableRows.first { $0.seq == 2 }?.userInputStatus, .queued)
-
-        await vm.resumeSession()
-        XCTAssertEqual(actions.calls.map(\.kind), ["send", "resume"])
-        XCTAssertEqual(vm.phase, .paused, "the RPC response does not replace the durable event")
 
         // These stream events could equally result from another client's Resume;
         // projection state, rather than local optimistic state, remains decisive.

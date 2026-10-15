@@ -57,8 +57,9 @@ Linux reducer timings are not a substitute for this device/rendering check.
 1. Answer one option question and one free-text or batched question from the app.
 2. Leave another question sheet open and answer from the second client. Confirm it dismisses from
    the streamed durable answer.
-3. Interrupt, send a steer, and Resume. Then Stop and cancel once before confirming the destructive
-   action.
+3. Interrupt, then send a steer: it continues the session with no separate step (Continue goes on
+   unchanged). Then Stop and cancel once before confirming the destructive action, and send a
+   message to the stopped session: it continues with its history.
 
 Pass condition: question ownership is daemon-wide, action errors remain non-fatal, interrupt is
 resumable, and Stop is clearly destructive.

@@ -427,8 +427,10 @@ func (m *model) appendEvent(ev *v1.Event) {
 	// spinner runs, so the accepted follow-up looks like it went nowhere.
 	//
 	// Only coordinator-side activity counts: a subagent's turns and tool calls
-	// run beside an idle coordinator and say nothing about its own state.
-	if (m.status == "error" || m.status == "idle" || m.status == statusAwaitingJobs) && !subagentActor(ev.Actor) {
+	// run beside an idle coordinator and say nothing about its own state. A
+	// stopped or stream-closed session clears the same way once input reopens it.
+	if (m.status == "error" || m.status == "idle" || m.status == statusAwaitingJobs ||
+		m.status == "stopped" || m.status == "stream closed") && !subagentActor(ev.Actor) {
 		switch ev.Type {
 		case "model_turn", "tool_call", "tool_result", "thinking", "user_input", "user_input_delivered":
 			m.status = "running"

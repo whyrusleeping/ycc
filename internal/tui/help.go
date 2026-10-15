@@ -69,7 +69,7 @@ func (m model) helpSections() []helpSection {
 			{"type…", "compose an opening prompt"},
 		}},
 		{"session", []helpBind{
-			{"enter", "send input · expand/collapse selected turn · resume when paused"},
+			{"enter", "send input · expand/collapse selected turn · continue when paused"},
 			{"shift+enter", "newline in the input"},
 			{"↑ / ↓", "select a turn"},
 			{"pgup / pgdn", "scroll the transcript"},
