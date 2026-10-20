@@ -72,7 +72,7 @@ const NEW_SESSION_LABEL = shortcutLabel(SHORTCUTS.newSession);
 /** Focus the pending question's answer box, else the message composer. */
 function focusComposer(): boolean {
   const el =
-    document.querySelector<HTMLElement>(".answer-panel textarea:not([disabled])") ??
+    document.querySelector<HTMLElement>(".answer-panel .answer-q:not([hidden]) :is(.opt, textarea):not([disabled])") ??
     document.querySelector<HTMLElement>(".composer textarea:not([disabled])") ??
     document.querySelector<HTMLElement>(".new-session-composer textarea:not([disabled])");
   if (!el) return false;
@@ -125,6 +125,8 @@ function ProjectSwitcher() {
             // On a list page, follow the scope; elsewhere keep the current view.
             const onList = location.pathname === "/" || /^\/p\/[^/]+\/?$/.test(location.pathname);
             if (onList) navigate(next ? paths.project(next) : paths.home());
+            // On the new-session page, retarget the draft at the new project.
+            else if (next && /^(\/p\/[^/]+)?\/new\/?$/.test(location.pathname)) navigate(paths.newSession(next));
             // On the backlog, show the new project's backlog (or ask which one).
             else if (/^(\/p\/[^/]+)?\/backlog(\/|$)/.test(location.pathname)) navigate(paths.backlog(next));
             else if (/^(\/p\/[^/]+)?\/loop\/?$/.test(location.pathname)) navigate(paths.loop(next));

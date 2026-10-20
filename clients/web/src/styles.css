@@ -1512,69 +1512,239 @@ pre.clamp {
   border-color: var(--accent);
 }
 
-/* Answer panel + composer */
+/* Answer panel (takes the composer's place while a question is open) + composer */
+.row.question.answering {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+}
+
+.row.question.answering .who {
+  font-weight: 600;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.question-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+}
+
 .answer-panel {
-  border-top: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
-  background: var(--warn-soft);
-  padding: 12px 24px;
-  max-height: 45vh;
-  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  padding: 4px 24px 18px;
+}
+
+.answer-card {
+  width: 100%;
+  max-width: 824px;
+  max-height: min(62vh, 640px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border-strong));
+  border-top: 3px solid var(--warn);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.answer-card.submitted {
+  opacity: 0.75;
 }
 
 .answer-head {
-  font-weight: 600;
   display: flex;
-  gap: 10px;
   align-items: center;
-  margin-bottom: 8px;
+  gap: 10px;
+  padding: 10px 14px 0;
+  font-weight: 600;
+  font-size: 13.5px;
 }
 
-.answer-q {
+.answer-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.answer-title {
+  flex: 1;
+}
+
+.answer-steps {
+  display: flex;
+  gap: 4px;
+}
+
+.answer-step {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  line-height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.answer-step:hover {
+  border-color: var(--accent);
+}
+
+.answer-step.done {
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.answer-step.current {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* The current question fills the card: prompt + options scroll, the text box stays put. */
+.answer-q:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.answer-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 14px 4px;
+}
+
+.answer-count {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-subtle);
+  margin-bottom: 4px;
+}
+
+.answer-prompt {
   margin-bottom: 10px;
 }
 
-.answer-q .prompt {
-  margin-bottom: 6px;
+.answer-prompt > :first-child {
+  margin-top: 0;
+}
+
+.answer-prompt > :last-child {
+  margin-bottom: 0;
 }
 
 .answer-options {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
-  margin-bottom: 8px;
 }
 
 .opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--fg);
-  padding: 4px 14px;
-  border-radius: 999px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 14px;
+  line-height: 1.4;
   cursor: pointer;
   transition:
     border-color 0.12s,
     background-color 0.12s;
 }
 
-.opt:hover {
+.opt:hover:not(:disabled) {
   border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
+}
+
+.opt:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.opt:disabled {
+  cursor: default;
+}
+
+.opt-label {
+  flex: 1;
+}
+
+.opt-check {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .opt.selected {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.opt.selected kbd {
+  border-color: var(--accent);
   color: var(--accent);
 }
 
 .answer-text {
-  width: 100%;
+  display: block;
+  width: calc(100% - 28px);
+  margin: 6px 14px 0;
+  resize: none;
+  field-sizing: content;
+  min-height: 34px;
+  max-height: 30vh;
+}
+
+.answer-text.filled {
+  border-color: var(--accent);
 }
 
 .answer-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 12px;
+}
+
+.answer-hint {
+  flex: 1;
+  min-width: 0;
+}
+
+.answer-hint kbd {
+  margin: 0 1px;
 }
 
 .composer {
@@ -6352,6 +6522,10 @@ button.unread-dot:focus-visible {
     padding: 4px 16px 14px;
   }
 
+  .answer-panel {
+    padding: 4px 16px 14px;
+  }
+
   .transcript-inner {
     padding: 16px 20px 28px;
   }
@@ -6377,5 +6551,12 @@ button.unread-dot:focus-visible {
     width: 100%;
     justify-content: flex-end;
     flex-wrap: wrap;
+  }
+}
+
+/* Narrow: the answer panel's keyboard hint is the first thing to go. */
+@container main (max-width: 560px) {
+  .answer-hint {
+    display: none;
   }
 }

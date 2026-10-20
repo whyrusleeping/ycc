@@ -398,7 +398,9 @@ export function SessionView({
           search={search}
         />
       </FileLinksProvider>
-      {snap.mode === "live" && snap.pendingQuestion && (
+      {snap.mode === "live" && snap.pendingQuestion ? (
+        // The panel takes the composer's place: text sent now could only
+        // answer the question anyway (the composer keeps its draft).
         <AnswerPanel
           key={snap.pendingQuestion.rowId}
           controller={controller}
@@ -406,16 +408,17 @@ export function SessionView({
           inFlight={snap.answerInFlight}
           submitted={snap.answeredRowId === snap.pendingQuestion.rowId}
         />
-      )}
-      {canCompose && (
-        <Composer
-          ref={composer}
-          sessionKey={`${project}\u0000${sessionId}`}
-          placeholder={placeholder}
-          picturesBlocked={livePhase && snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
-          sendAttrs={{ phase: snap.awaitsAnswer ? "question" : snap.pauseRequested ? "pausing" : snap.phase.kind }}
-          onSend={(t, pictures) => void controller.send(t, pictures)}
-        />
+      ) : (
+        canCompose && (
+          <Composer
+            ref={composer}
+            sessionKey={`${project}\u0000${sessionId}`}
+            placeholder={placeholder}
+            picturesBlocked={livePhase && snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
+            sendAttrs={{ phase: snap.awaitsAnswer ? "question" : snap.pauseRequested ? "pausing" : snap.phase.kind }}
+            onSend={(t, pictures) => void controller.send(t, pictures)}
+          />
+        )
       )}
       <NewTaskDialog
         project={project}

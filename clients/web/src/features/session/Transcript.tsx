@@ -176,6 +176,7 @@ export function Transcript({
         loadingDetail={snap.loadingDetail.has(row.id)}
         report={row.kind.type === "report" ? reportPresentation(snap.rows, i) : undefined}
         repeat={repeat}
+        answering={snap.mode === "live" && row.id === snap.pendingQuestion?.rowId}
         search={
           search?.needle
             ? row.id === search.currentRowId

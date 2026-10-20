@@ -112,7 +112,9 @@ one first. Per-session reasoning and role models are changed with `SetThinking` 
 filtered to that session.
 
 An unsent new-session draft keeps its prompt, project, mode, model, preset, and picture previews in
-memory for the life of the tab, across route changes but not reload or tab closure. Starting
+memory for the life of the tab, across route changes but not reload or tab closure. Reopening it
+through a project route (New session with a sidebar project selected, or switching that project
+while on the page) moves the draft to that project and keeps the rest of it. Starting
 successfully clears it; a failed start retains it. Applying a preset asks before replacing an edited
 nonempty prompt. Model and review-tier editors confirm before discarding unsaved changes on Cancel,
 close, or Escape and cannot close during a save. Model-role and default-tier selectors use explicit

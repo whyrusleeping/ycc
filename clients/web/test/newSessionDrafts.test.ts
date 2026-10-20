@@ -36,6 +36,16 @@ describe("tab-local new-session drafts", () => {
     expect(revoke.mock.calls.flatMap(([pics]) => pics)).toEqual([pic]);
   });
 
+  it("retargets a kept draft at the project of the route it is reopened through", () => {
+    const store = new NewSessionDraftStore(async () => ({ pictures: [], errors: [] }), vi.fn());
+    store.seedProject("alpha", true);
+    store.update((d) => ({ ...d, mode: "pm", prompt: "Keep me", preset: "doctor" }));
+    store.seedProject("", false);
+    expect(store.getSnapshot().draft.project).toBe("alpha");
+    store.seedProject("beta", true);
+    expect(store.getSnapshot().draft).toMatchObject({ project: "beta", mode: "pm", prompt: "Keep me", preset: "" });
+  });
+
   it("does not start twice after navigating away and back during a request, but allows retry after failure", () => {
     const store = new NewSessionDraftStore(async () => ({ pictures: [], errors: [] }), vi.fn());
     const leave = store.subscribe(vi.fn());

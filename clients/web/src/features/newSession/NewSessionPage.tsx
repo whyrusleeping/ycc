@@ -60,10 +60,15 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   // Leaving without starting records new_session.cancel.
   useFlow("new_session");
 
-  // Seed the project once the list arrives (route project, or the sole one).
+  // Seed the project once per visit when the list arrives (route project, or
+  // the sole one); a project route also retargets a kept draft. Later list
+  // refetches must not undo a choice made in the page's own picker.
+  const seeded = useRef(false);
   useEffect(() => {
-    if (projectSeeded || !projects.data) return;
-    draftStore.seedProject(initialProject(routeProject, projects.data));
+    if ((seeded.current && projectSeeded) || !projects.data) return;
+    seeded.current = true;
+    const project = initialProject(routeProject, projects.data);
+    draftStore.seedProject(project, project === routeProject);
   }, [projects.data, projectSeeded, routeProject]);
 
   // Keep a valid mode selected (the remembered one when it still exists).

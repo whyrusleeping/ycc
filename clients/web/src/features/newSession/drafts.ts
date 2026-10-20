@@ -37,9 +37,15 @@ export class NewSessionDraftStore {
     this.publish({ draft: change(this.snapshot.draft) });
   };
 
-  seedProject(project: string) {
-    if (this.snapshot.projectSeeded) return;
-    this.publish({ projectSeeded: true, draft: { ...this.snapshot.draft, project } });
+  /**
+   * The first open seeds the project. Reopening through a project route (the
+   * sidebar's scope) switches the kept draft to that project, as the page's
+   * project picker would; the rest of the draft stays.
+   */
+  seedProject(project: string, routed = false) {
+    const { draft, projectSeeded } = this.snapshot;
+    if (!projectSeeded) this.publish({ projectSeeded: true, draft: { ...draft, project } });
+    else if (routed && project && project !== draft.project) this.publish({ draft: { ...draft, project, preset: "" } });
   }
 
   add = async (files: File[]) => {

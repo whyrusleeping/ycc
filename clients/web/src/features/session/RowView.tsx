@@ -151,6 +151,8 @@ interface RowViewProps {
   search?: SearchMark;
   /** System notices: how many identical consecutive notices this row stands for. */
   repeat?: number;
+  /** A question row the answer panel is showing in full right now. */
+  answering?: boolean;
 }
 
 export const RowView = memo(function RowView({
@@ -160,6 +162,7 @@ export const RowView = memo(function RowView({
   report = "finished",
   search = null,
   repeat = 1,
+  answering = false,
 }: RowViewProps) {
   const inspector = useInspector();
   const openInInspector = () =>
@@ -220,6 +223,16 @@ export const RowView = memo(function RowView({
         </div>
       );
     case "question":
+      if (answering && k.answer === null) {
+        // The answer panel below shows it in full; don't repeat it here.
+        return (
+          <div className={`row question open answering${searchCls}`} data-row-id={row.id}>
+            <span className="who">Question{actor ? ` · ${actor}` : ""}</span>
+            <span className="question-summary">{k.prompt}</span>
+            <span className="tag warn">answer below ↓</span>
+          </div>
+        );
+      }
       return (
         <div className={`row question${k.answer === null ? " open" : ""}${searchCls}`} data-row-id={row.id}>
           <div className="turn-head">
