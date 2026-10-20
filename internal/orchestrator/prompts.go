@@ -52,7 +52,13 @@ Adopt the existing layout; keep a split entry point as an index. Use list_backlo
 create_task/update_task for bookkeeping. Accepted work is todo or in_progress; unaccepted ideas
 are proposed. Only user acceptance promotes proposed work. Save plans/*.md for reusable runbooks,
 not routine one-off work. Record useful operational learnings with remember; design belongs in
-the spec, work in the backlog.`
+the spec, work in the backlog.
+
+Size tasks as coherent, independently verifiable outcomes; ordinary implementation steps belong
+within the current task, in its plan when useful. Split for a meaningful deliverable, dependency,
+risk-isolation, or evidenced context/resource boundary—not merely to give each step its own
+review/commit cycle. Before splitting again, reassess how the next slice advances the parent's
+connected outcome and why it needs a separate task. Preserve the parent's original acceptance criteria.`
 
 const backgroundGuidance = `Use background work to overlap independent tasks or run an intentional watcher, not to
 spawn then immediately wait. Reports arrive automatically in coordinator sessions; use wait
@@ -87,6 +93,9 @@ Self-review is for tiny low-risk changes and requires actual diff inspection. Ju
 against correctness and acceptance criteria, not stylistic preferences. Fix substantive issues
 and re_review. Retain useful context for local revisions; use fresh context with a self-contained
 handoff for changed approaches, obsolete history, or context-length failures.
+When closing a parent task, check its original criteria and integration seams against existing
+valid evidence. Repeat verification only for a concrete gap, relevant change, or regression risk;
+do not infer parent completion solely from child statuses.
 
 Once criteria are met and review is accepted, call commit with the task and concise outcome,
 then finish. Commit owns the done transition and task compaction; do not mark done first or
@@ -96,9 +105,9 @@ In attended work, after about three unsuccessful review rounds, leave in_review 
 Ask only for user intent or hard-to-reverse decisions you cannot responsibly resolve. An
 implementer blocked outcome may be resolved by your ordinary judgement or relayed to the user.
 A genuine external/user blocker gets blocked with a reason and unblock requirement; ordinary
-diagnosis and failing tests are not external blockers. Split necessary accepted scope into todo
-tasks; adjacent speculative work stays proposed. A newly added backlog task is not an instruction
-to change course.
+diagnosis and failing tests are not external blockers. When a split is justified, necessary scope
+already accepted by the user stays todo; adjacent speculative work stays proposed. A newly added
+backlog task is not an instruction to change course.
 
 ` + projectDocsGuidance + `
 

@@ -199,6 +199,14 @@ and commit subject. Session event logs are the source of detailed execution and 
 retains the prior task body and is the reversible migration/rollback path. Backlog summaries and
 dependency checks read frontmatter only, while lookup by id loads the selected body in full.
 
+Task-sizing guidance favors coherent, independently verifiable outcomes over per-step tasks.
+Ordinary implementation steps stay within the current task; separate deliverable, dependency,
+risk-isolation, or evidenced context/resource boundaries justify splitting. Further splits are
+reassessed against the parent's connected outcome and preserve its original acceptance criteria.
+Parent closure checks those criteria and integration seams against valid existing evidence, with
+repeat verification for concrete gaps, relevant changes, or regression risks—not merely because
+children finished. Child statuses alone do not establish parent completion.
+
 The selected task's canonical document is explicitly included in its changeset even when it was
 untracked, unstaged, or staged at session startup. Review sees its full change against HEAD, and
 acceptance commits it with the implementation. Only that document is adopted: unrelated baseline-dirty
