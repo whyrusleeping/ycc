@@ -391,16 +391,8 @@ struct FileViewerView: View {
                     wrap: wrapLines)
             }
         case .image(let data):
-            if let image = UIImage(data: data) {
-                ScrollView {
-                    // Fit the screen width, but never upscale a small image.
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: max(image.size.width, 1))
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                }
+            if UIImage(data: data) != nil {
+                ZoomableImageView(data: data)
             } else {
                 binaryPlaceholder(mediaType: "image", tooLargeToPreview: false)
             }
@@ -464,11 +456,36 @@ struct FileViewerView: View {
 /// SVG source shown as an image. It sits inside an `<img>` (image context runs
 /// no script and loads no external resources) in a web view with JavaScript off,
 /// no persistent storage, and a page CSP that allows only the `data:` image.
+/// Pinch zooms the page (the vector stays sharp). WebKit turns its own
+/// double-tap zoom off for `width=device-width` pages, so the coordinator adds
+/// one that matches the raster image viewer.
 private struct SVGView: UIViewRepresentable {
     let source: String
 
-    final class Coordinator {
+    @MainActor
+    final class Coordinator: NSObject {
         var loaded: String?
+
+        @objc func doubleTapped(_ gesture: UITapGestureRecognizer) {
+            guard let scroll = (gesture.view as? WKWebView)?.scrollView else { return }
+            if scroll.zoomScale > scroll.minimumZoomScale + 0.01 {
+                scroll.setZoomScale(scroll.minimumZoomScale, animated: true)
+                return
+            }
+            let scale = min(scroll.minimumZoomScale * 3, scroll.maximumZoomScale)
+            guard let content = scroll.delegate?.viewForZooming?(in: scroll) else {
+                scroll.setZoomScale(scale, animated: true)
+                return
+            }
+            // zoom(to:) takes a rect in the zooming view's own (unscaled) space.
+            let point = gesture.location(in: content)
+            let size = CGSize(width: scroll.bounds.width / scale, height: scroll.bounds.height / scale)
+            scroll.zoom(
+                to: CGRect(
+                    x: point.x - size.width / 2, y: point.y - size.height / 2,
+                    width: size.width, height: size.height),
+                animated: true)
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -477,10 +494,15 @@ private struct SVGView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
+        config.ignoresViewportScaleLimits = true
         let view = WKWebView(frame: .zero, configuration: config)
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
+        let doubleTap = UITapGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        view.addGestureRecognizer(doubleTap)
         return view
     }
 
@@ -494,7 +516,7 @@ private struct SVGView: UIViewRepresentable {
         let encoded = Data(source.utf8).base64EncodedString()
         return """
             <!doctype html><html><head>
-            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=10,user-scalable=yes">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
             <style>
             html,body{margin:0;background:transparent}
@@ -506,7 +528,7 @@ private struct SVGView: UIViewRepresentable {
     }
 }
 
-/// A PDF, paged and zoomable.
+/// A PDF, paged and zoomable: pinch, plus PDFKit's own double-tap zoom.
 private struct PDFDocumentView: UIViewRepresentable {
     let data: Data
 
@@ -516,17 +538,157 @@ private struct PDFDocumentView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        return view
-    }
+    func makeUIView(context: Context) -> FittingPDFView { FittingPDFView() }
 
-    func updateUIView(_ view: PDFView, context: Context) {
+    func updateUIView(_ view: FittingPDFView, context: Context) {
         guard context.coordinator.loaded != data else { return }
         context.coordinator.loaded = data
         view.document = PDFDocument(data: data)
+        view.refit()
     }
+}
+
+/// Opens fitted to the width and sets explicit zoom limits around that fit.
+/// The limits are computed in layout, once the view has real bounds:
+/// `scaleFactorForSizeToFit` is meaningless while a SwiftUI-hosted view is
+/// still zero-sized, and `autoScales` alone leaves the limits unset.
+private final class FittingPDFView: PDFView {
+    /// The width the limits were computed for; 0 forces a refit.
+    private var fittedWidth: CGFloat = 0
+
+    func refit() {
+        fittedWidth = 0
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard document != nil, bounds.width > 0, bounds.width != fittedWidth else { return }
+        let fit = scaleFactorForSizeToFit
+        guard fit > 0 else { return }
+        // Rotation refits only if the reader hadn't zoomed.
+        let wasFitted = fittedWidth == 0 || abs(scaleFactor - minScaleFactor) < 0.001
+        fittedWidth = bounds.width
+        minScaleFactor = fit
+        maxScaleFactor = max(fit * 6, 4)
+        if wasFitted { scaleFactor = fit }
+    }
+}
+
+/// A raster image with the standard photo gestures: pinch to zoom, drag to pan,
+/// double-tap to zoom in on a point and back out. It opens fitted to the screen
+/// width (never upscaling a small image) and can pinch out to show all of a
+/// tall image. Keyed by the bytes so a SwiftUI re-render keeps the zoom.
+private struct ZoomableImageView: UIViewRepresentable {
+    let data: Data
+
+    final class Coordinator {
+        var loaded: Data?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> ImageZoomScrollView { ImageZoomScrollView() }
+
+    func updateUIView(_ view: ImageZoomScrollView, context: Context) {
+        guard context.coordinator.loaded != data else { return }
+        context.coordinator.loaded = data
+        view.display(UIImage(data: data))
+    }
+}
+
+private final class ImageZoomScrollView: UIScrollView, UIScrollViewDelegate {
+    private let imageView = UIImageView()
+    /// The bounds the zoom limits were last computed for; a change (rotation,
+    /// split view) refits.
+    private var fittedSize: CGSize = .zero
+    /// The scale the image opens at, and the one double-tap returns to.
+    private var initialScale: CGFloat = 1
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        delegate = self
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        decelerationRate = .fast
+        contentInsetAdjustmentBehavior = .never
+        imageView.isAccessibilityElement = true
+        imageView.accessibilityTraits = .image
+        addSubview(imageView)
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        addGestureRecognizer(doubleTap)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func display(_ image: UIImage?) {
+        // Reset the zoom before resizing so the frame is in unscaled points.
+        minimumZoomScale = 1
+        maximumZoomScale = 1
+        zoomScale = 1
+        imageView.image = image
+        imageView.frame = CGRect(origin: .zero, size: image?.size ?? .zero)
+        contentSize = imageView.frame.size
+        fittedSize = .zero
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.size != fittedSize { fit() }
+        centerContent()
+    }
+
+    private func fit() {
+        let image = imageView.bounds.size
+        guard image.width > 0, image.height > 0, bounds.width > 0, bounds.height > 0 else { return }
+        let firstFit = fittedSize == .zero
+        let wasAtInitial = abs(zoomScale - initialScale) < 0.001
+        fittedSize = bounds.size
+
+        let widthFit = bounds.width / image.width
+        let wholeFit = min(widthFit, bounds.height / image.height)
+        initialScale = min(widthFit, 1)
+        minimumZoomScale = min(wholeFit, 1)
+        maximumZoomScale = max(initialScale * 4, 2)
+
+        if firstFit || wasAtInitial {
+            zoomScale = initialScale
+            centerContent()
+            contentOffset = CGPoint(x: -contentInset.left, y: -contentInset.top)
+        } else {
+            zoomScale = min(max(zoomScale, minimumZoomScale), maximumZoomScale)
+        }
+    }
+
+    /// Keeps an image smaller than the screen centered rather than pinned to
+    /// the top-left corner.
+    private func centerContent() {
+        let x = max((bounds.width - contentSize.width) / 2, 0)
+        let y = max((bounds.height - contentSize.height) / 2, 0)
+        let inset = UIEdgeInsets(top: y, left: x, bottom: y, right: x)
+        if contentInset != inset { contentInset = inset }
+    }
+
+    @objc private func doubleTapped(_ gesture: UITapGestureRecognizer) {
+        if zoomScale > initialScale + 0.001 {
+            setZoomScale(initialScale, animated: true)
+            return
+        }
+        let scale = min(initialScale * 3, maximumZoomScale)
+        let point = gesture.location(in: imageView)
+        let size = CGSize(width: bounds.width / scale, height: bounds.height / scale)
+        zoom(
+            to: CGRect(
+                x: point.x - size.width / 2, y: point.y - size.height / 2,
+                width: size.width, height: size.height),
+            animated: true)
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerContent() }
 }
 
 /// Monospaced, line-numbered source text. Rows are lazy so a large file
