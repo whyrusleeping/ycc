@@ -320,8 +320,9 @@ message SessionSummary {
 message ListSessionHistoryResponse {
   repeated SessionSummary sessions = 1;
   string next_cursor = 2; // empty when there are no older rows
-  // First bounded page only: live rows outside sessions, for discovery even
-  // when they are older than the page. Copies inside sessions are not repeated.
+  // First bounded page only: live and follow-up-flagged rows outside sessions,
+  // for discovery even when they are older than the page. Copies inside
+  // sessions are not repeated.
   repeated SessionSummary pinned = 3;
 }
 

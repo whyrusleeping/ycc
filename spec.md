@@ -961,10 +961,12 @@ repeated sets are idempotent. Bookmarks live in the project's root workspace at
 workstream worktree, and are atomically replaced under a manager mutex. A missing file means no
 bookmarks; a corrupt file makes `SetSessionFollowUp` fail without overwriting it, while history
 lists without bookmarks. History summaries (including pinned rows) overlay these
-fields after the event-log cache. Clearing is **manual only**: sending input, answering a question,
+fields after the event-log cache, and the first bounded history page pins flagged rows beyond it
+alongside live ones. Desktop web and iOS lists show flagged sessions in a "Follow up" section at
+the top (below "Needs answer"). Clearing is **manual only**: sending input, answering a question,
 and reopening do not clear a bookmark. The TUI session browser and its transcript-browsing modal
-show `⚑` on flagged rows; `f` toggles the selected bookmark and `F` filters to follow-ups. Desktop
-web and iOS controls are separate follow-up work. Optional notes, remind-at/snooze reminders, and
+show `⚑` on flagged rows; `f` toggles the selected bookmark and `F` filters to follow-ups. Optional
+notes, remind-at/snooze reminders, and
 opt-in auto-clearing are deferred; the current API stores only the flag and timestamp.
 
 ### 18.7 Interrupt and steer

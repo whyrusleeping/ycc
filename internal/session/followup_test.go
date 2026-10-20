@@ -51,6 +51,10 @@ func TestSessionFollowUpPersistenceAndHistory(t *testing.T) {
 	if err != nil || len(page) != 1 || len(pinned) != 1 || !pinned[0].FollowUp || !pinned[0].FollowUpAt.Equal(at) {
 		t.Fatalf("pinned overlay: %+v %+v %v", page, pinned, err)
 	}
+	// Flagged rows are pinned to the first page even when not live.
+	if _, flagged, _, err := m.ListSessionHistoryPage("", 1, ""); err != nil || len(flagged) != 1 || flagged[0].ID != "older" || flagged[0].Live {
+		t.Fatalf("flagged pinned: %+v %v", flagged, err)
+	}
 	page, _, _, err = m.ListSessionHistoryPage("", 1, next)
 	if err != nil || len(page) != 1 || !page[0].FollowUp || !page[0].FollowUpAt.Equal(at) {
 		t.Fatalf("page overlay: %+v %v", page, err)

@@ -1508,8 +1508,9 @@ export type ListSessionHistoryResponse = Message<"ycc.v1.ListSessionHistoryRespo
   nextCursor: string;
 
   /**
-   * First bounded page only: live rows outside sessions, for discovery even
-   * when they are older than the page. Copies inside sessions are not repeated.
+   * First bounded page only: live and follow-up-flagged rows outside sessions,
+   * for discovery even when they are older than the page. Copies inside
+   * sessions are not repeated.
    *
    * @generated from field: repeated ycc.v1.SessionSummary pinned = 3;
    */

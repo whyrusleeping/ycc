@@ -92,21 +92,23 @@ describe("session follow-up", () => {
     rpc.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
     await render(variant);
     expect(container.querySelector('[data-track="sessions.follow_up_filter"]') !== null).toBe(variant === "page");
-    const flag = button("sessions.follow_up");
-    expect(flag.getAttribute("aria-label")).toBe("Flag First session for follow-up");
-    await click(flag);
+    // Flagging moves the row into the Follow up section, so re-query it.
+    const flag = () => button("sessions.follow_up");
+    expect(flag().getAttribute("aria-label")).toBe("Flag First session for follow-up");
+    await click(flag());
     expect(rpc).toHaveBeenCalledWith({ project: "work", sessionId: "one", followUp: true });
     expect(cachedFirst().followUp).toBe(true);
-    expect(flag.getAttribute("aria-pressed")).toBe("true");
-    expect(flag.disabled).toBe(true);
-    await click(flag);
+    expect(flag().getAttribute("aria-pressed")).toBe("true");
+    expect(flag().disabled).toBe(true);
+    expect(container.querySelector(".session-section.followUp .session-row-link")?.textContent).toBe("First session");
+    await click(flag());
     expect(rpc).toHaveBeenCalledTimes(1);
 
     await act(async () => { resolve(create(SetSessionFollowUpResponseSchema, { followUp: true, followUpAt: serverAt })); await flush(); });
     expect(cachedFirst().followUpAt).toBe(serverAt);
-    expect(flag.disabled).toBe(false);
-    expect(flag.title).toContain(new Date(serverAt).toLocaleString());
-    expect(flag.getAttribute("aria-label")).toBe("Clear follow-up on First session");
+    expect(flag().disabled).toBe(false);
+    expect(flag().title).toContain(new Date(serverAt).toLocaleString());
+    expect(flag().getAttribute("aria-label")).toBe("Clear follow-up on First session");
 
     const filter = button("sessions.follow_up_filter");
     expect(filter.textContent).toBe("Follow-up (1)");

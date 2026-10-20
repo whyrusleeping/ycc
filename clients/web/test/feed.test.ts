@@ -93,8 +93,23 @@ describe("feed", () => {
       nextCursor: "",
     }], null).rows;
     expect(ids(onlyFollowUp(rows))).toEqual(["flagged", "asks"]);
-    expect(sections(onlyFollowUp(rows)).map((g) => [g.kind, ids(g.rows)])).toEqual([
-      ["needsAnswer", ["asks"]], ["all", ["flagged"]],
+    expect(sections(onlyFollowUp(rows)).map((g) => [g.kind, g.title, ids(g.rows)])).toEqual([
+      ["needsAnswer", "Needs answer", ["asks"]], ["followUp", "Follow up", ["flagged"]],
+    ]);
+    expect(sections(onlyFollowUp(rows).slice(0, 1)).map((g) => [g.kind, g.title])).toEqual([["followUp", null]]);
+  });
+
+  it("pins follow-up rows below needs-answer, including old pinned ones", () => {
+    const rows = buildFeed([{
+      project: "a",
+      sessions: [s("new", 50), s("flag2", 40, { followUp: true }), s("old", 20)],
+      pinned: [s("flag1", 1, { followUp: true }), s("asks", 2, { followUp: true, live: true, waitingInput: true })],
+      nextCursor: "c",
+    }], null).rows;
+    expect(sections(rows).map((g) => [g.kind, g.title, ids(g.rows)])).toEqual([
+      ["needsAnswer", "Needs answer", ["asks"]],
+      ["followUp", "Follow up", ["flag2", "flag1"]],
+      ["all", "Recent", ["new", "old"]],
     ]);
   });
 

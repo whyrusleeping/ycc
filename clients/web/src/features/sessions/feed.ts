@@ -1,6 +1,6 @@
 // Pure session-list logic: merge per-project ListSessionHistory pages into the
 // daemon-wide Recent feed (or one project's list), section it with needs-answer
-// sessions pinned first, and derive row labels. Mirrors YccKit's
+// then follow-up sessions pinned first, and derive row labels. Mirrors YccKit's
 // SessionListModel so the web and iOS clients order and label rows alike.
 import type { ProjectInfo, SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 
@@ -21,7 +21,7 @@ export interface FeedRow {
 }
 
 export interface FeedSection {
-  kind: "needsAnswer" | "all";
+  kind: "needsAnswer" | "followUp" | "all";
   title: string | null;
   rows: FeedRow[];
 }
@@ -136,13 +136,21 @@ export function needsAnswer(s: SessionSummary): boolean {
   return s.waitingInput;
 }
 
-/** Needs-answer rows pinned in their own section, the rest most-recent first. */
+/**
+ * Needs-answer rows pinned first, then follow-up-flagged rows, then the rest,
+ * each most-recent first. A lone follow-up section (the Follow-up filter)
+ * needs no header.
+ */
 export function sections(rows: FeedRow[]): FeedSection[] {
-  const pinned = rows.filter((r) => needsAnswer(r.session));
-  const rest = rows.filter((r) => !needsAnswer(r.session));
+  const asks = rows.filter((r) => needsAnswer(r.session));
+  const flagged = rows.filter((r) => !needsAnswer(r.session) && r.session.followUp);
+  const rest = rows.filter((r) => !needsAnswer(r.session) && !r.session.followUp);
   const out: FeedSection[] = [];
-  if (pinned.length) out.push({ kind: "needsAnswer", title: "Needs answer", rows: pinned });
-  if (rest.length) out.push({ kind: "all", title: pinned.length ? "Recent" : null, rows: rest });
+  if (asks.length) out.push({ kind: "needsAnswer", title: "Needs answer", rows: asks });
+  if (flagged.length) {
+    out.push({ kind: "followUp", title: asks.length || rest.length ? "Follow up" : null, rows: flagged });
+  }
+  if (rest.length) out.push({ kind: "all", title: out.length ? "Recent" : null, rows: rest });
   return out;
 }
 

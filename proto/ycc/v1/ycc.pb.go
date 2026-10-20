@@ -2884,8 +2884,9 @@ type ListSessionHistoryResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Sessions   []*SessionSummary      `protobuf:"bytes,1,rep,name=sessions,proto3" json:"sessions,omitempty"`
 	NextCursor string                 `protobuf:"bytes,2,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"` // empty when there are no older rows
-	// First bounded page only: live rows outside sessions, for discovery even
-	// when they are older than the page. Copies inside sessions are not repeated.
+	// First bounded page only: live and follow-up-flagged rows outside sessions,
+	// for discovery even when they are older than the page. Copies inside
+	// sessions are not repeated.
 	Pinned        []*SessionSummary `protobuf:"bytes,3,rep,name=pinned,proto3" json:"pinned,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

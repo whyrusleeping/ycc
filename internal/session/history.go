@@ -650,7 +650,8 @@ var ErrInvalidHistoryCursor = errors.New("invalid session history cursor")
 
 // ListSessionHistoryPage applies a keyset after the live overlay and sort. A
 // refreshed first page discovers rows whose activity moved ahead of the cursor.
-// Pinned contains live rows outside the first bounded page only.
+// Pinned contains live and follow-up-flagged rows outside the first bounded
+// page only, so clients can surface them without paging.
 func (m *Manager) ListSessionHistoryPage(project string, limit int, cursor string) (page, pinned []SessionSummary, next string, err error) {
 	if limit < 0 || (limit == 0 && cursor != "") {
 		return nil, nil, "", ErrInvalidHistoryCursor
@@ -701,7 +702,7 @@ func (m *Manager) ListSessionHistoryPage(project string, limit int, cursor strin
 	}
 	if cursor == "" {
 		for _, row := range all[end:] {
-			if row.Live {
+			if row.Live || row.FollowUp {
 				pinned = append(pinned, row)
 			}
 		}

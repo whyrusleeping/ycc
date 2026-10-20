@@ -1019,8 +1019,9 @@ public nonisolated struct Ycc_V1_ListSessionHistoryResponse: Sendable {
   /// empty when there are no older rows
   public var nextCursor: String = String()
 
-  /// First bounded page only: live rows outside sessions, for discovery even
-  /// when they are older than the page. Copies inside sessions are not repeated.
+  /// First bounded page only: live and follow-up-flagged rows outside sessions,
+  /// for discovery even when they are older than the page. Copies inside
+  /// sessions are not repeated.
   public var pinned: [Ycc_V1_SessionSummary] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
