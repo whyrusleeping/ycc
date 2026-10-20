@@ -549,6 +549,101 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(sections[0].kind, .all)
     }
 
+    private func flagged(_ s: Ycc_V1_SessionSummary) -> Ycc_V1_SessionSummary {
+        var s = s
+        s.followUp = true
+        return s
+    }
+
+    func testScopedSectionsPinNeedsAnswerThenFollowUpThenRest() {
+        let sessions = [
+            session(id: "plain-old", lastActivity: "2026-07-08T08:00:00Z"),
+            flagged(session(id: "flag-old", lastActivity: "2026-07-08T09:00:00Z")),
+            // Both flagged and waiting: needs-answer wins.
+            flagged(session(id: "both", lastActivity: "2026-07-08T10:00:00Z", live: true, waitingInput: true)),
+            session(id: "plain-new", lastActivity: "2026-07-08T13:00:00Z"),
+            flagged(session(id: "flag-new", lastActivity: "2026-07-08T12:00:00Z")),
+            session(id: "ask", lastActivity: "2026-07-08T11:00:00Z", live: true, waitingInput: true),
+        ]
+        let sections = SessionListModel.sections(from: sessions)
+        XCTAssertEqual(sections.map(\.kind), [.needsAnswer, .followUp, .all])
+        XCTAssertEqual(sections.map(\.title), ["Needs answer", "Follow up", "All sessions"])
+        XCTAssertEqual(sections[0].sessions.map(\.sessionID), ["ask", "both"])
+        XCTAssertEqual(sections[1].sessions.map(\.sessionID), ["flag-new", "flag-old"])
+        XCTAssertEqual(sections[2].sessions.map(\.sessionID), ["plain-new", "plain-old"])
+
+        // Follow-up alone still labels the remainder.
+        let noAsk = SessionListModel.sections(from: sessions.filter { !$0.waitingInput })
+        XCTAssertEqual(noAsk.map(\.kind), [.followUp, .all])
+        XCTAssertEqual(noAsk.map(\.title), ["Follow up", "All sessions"])
+    }
+
+    func testRecentFeedPinsFollowUpSectionFirst() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "old", lastActivity: "2026-07-08T08:00:00Z"),
+                    flagged(session(id: "flag-old", lastActivity: "2026-07-08T07:00:00Z")),
+                    // The home feed does not pin needs-answer rows.
+                    session(id: "ask", lastActivity: "2026-07-08T09:00:00Z", live: true, waitingInput: true)],
+            "two": [session(id: "new", lastActivity: "2026-07-08T12:00:00Z"),
+                    flagged(session(id: "flag-new", lastActivity: "2026-07-08T10:00:00Z"))],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.sections.map(\.kind), [.followUp, .all])
+        XCTAssertEqual(model.sections.map(\.title), ["Follow up", "Recent"])
+        XCTAssertEqual(model.sections[0].sessions.map(\.sessionID), ["flag-new", "flag-old"])
+        XCTAssertEqual(model.sections[1].sessions.map(\.sessionID), ["new", "ask", "old"])
+        // The flat list stays in recency order.
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["new", "flag-new", "ask", "old", "flag-old"])
+
+        // The follow-up filter shows one untitled section, not a redundant header.
+        model.showsFollowUpOnly = true
+        XCTAssertEqual(model.sections.map(\.kind), [.all])
+        XCTAssertNil(model.sections[0].title)
+        XCTAssertEqual(model.sections[0].sessions.map(\.sessionID), ["flag-new", "flag-old"])
+        model.selectedProject = "one"
+        XCTAssertEqual(model.sections.map(\.kind), [.all])
+        XCTAssertNil(model.sections[0].title)
+        model.showsFollowUpOnly = false
+        XCTAssertEqual(model.sections.map(\.kind), [.needsAnswer, .followUp, .all])
+
+        // Unflagging collapses the home feed back to one untitled section.
+        model.selectedProject = nil
+        _ = await model.setFollowUp(sessionID: "flag-new", followUp: false)
+        _ = await model.setFollowUp(sessionID: "flag-old", followUp: false)
+        XCTAssertEqual(model.sections.map(\.kind), [.all])
+        XCTAssertNil(model.sections[0].title)
+        XCTAssertEqual(model.sections[0].sessions.map(\.sessionID), ["new", "flag-new", "ask", "old", "flag-old"])
+    }
+
+    func testFlaggedRowOnlyInPinnedIsPinnedToFollowUp() async {
+        let source = MockListSource()
+        source.projects = [project("a")]
+        let old = flagged(session(id: "flag-ancient", lastActivity: "2026-01-01T00:00:00Z"))
+        source.pagesByProject = [
+            "a": [
+                "": SessionHistoryPage(
+                    sessions: [session(id: "new", lastActivity: "2026-07-08T12:00:00Z"),
+                               session(id: "mid", lastActivity: "2026-07-08T11:00:00Z")],
+                    pinned: [old], nextCursor: "a1"),
+                "a1": SessionHistoryPage(
+                    sessions: [session(id: "older", lastActivity: "2026-07-08T10:00:00Z")],
+                    pinned: [], nextCursor: "")],
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.sections.map(\.kind), [.followUp, .all])
+        XCTAssertEqual(model.sections[0].sessions.map(\.sessionID), ["flag-ancient"])
+        XCTAssertEqual(model.sections[1].sessions.map(\.sessionID), ["new", "mid"])
+        XCTAssertEqual(model.project(for: model.sections[0].sessions[0]), "a")
+        model.selectedProject = "a"
+        XCTAssertEqual(model.sections.map(\.kind), [.followUp, .all])
+        XCTAssertEqual(model.sections[0].sessions.map(\.sessionID), ["flag-ancient"])
+        XCTAssertEqual(model.followUpCount, 1)
+    }
+
     func testFallsBackToStartedAtWhenNoLastActivity() {
         let sessions = [
             session(id: "a", startedAt: "2026-07-08T08:00:00Z"),

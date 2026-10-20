@@ -712,6 +712,9 @@ struct LandingView: View {
                             if section.kind == .needsAnswer {
                                 Image(systemName: "bell.badge.fill")
                                     .foregroundStyle(.orange)
+                            } else if section.kind == .followUp {
+                                Image(systemName: "flag.fill")
+                                    .foregroundStyle(.orange)
                             }
                         }
                     }

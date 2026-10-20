@@ -134,20 +134,23 @@ public struct ProjectActivity: Sendable, Equatable {
     public var isEmpty: Bool { active == 0 && needsAnswer == 0 && unread == 0 }
 }
 
-/// A grouped list of sessions for display. Needs-answer sessions are pinned to
-/// the top in their own section; the rest follow most-recent-first.
+/// A grouped list of sessions for display. Pinned sections (needs-answer in a
+/// project scope, then follow-up) come first; the rest follow
+/// most-recent-first. Every section keeps recency order internally.
 public struct SessionSection: Identifiable, Sendable {
     public enum Kind: String, Sendable {
         /// Live sessions blocked on an unanswered question — the loud, pinned
         /// section a phone client exists to surface.
         case needsAnswer
+        /// Sessions the user flagged for follow-up, pinned below needs-answer.
+        case followUp
         /// Everything else, most-recent-first.
         case all
     }
 
     public let kind: Kind
     /// A section header title, or `nil` for the ungrouped remainder when there
-    /// is no needs-answer section to distinguish it from.
+    /// is no pinned section above it to distinguish it from.
     public let title: String?
     public let sessions: [Ycc_V1_SessionSummary]
 
@@ -162,7 +165,8 @@ public struct SessionSection: Identifiable, Sendable {
 @MainActor
 @Observable
 public final class SessionListModel {
-    /// Globally ordered visible sessions, plus pinned live rows. Rows below
+    /// Globally ordered visible sessions, plus the daemon's pinned (live or
+    /// follow-up-flagged) rows. Rows below
     /// the newest truncated project's oldest page row are held back until all
     /// projects have paged past them. ``sessions`` shows the selected project's
     /// loaded pages without that aggregate frontier.
@@ -278,10 +282,14 @@ public final class SessionListModel {
         }
         let followUpCount = rows.filter(\.followUp).count
         if followUpOnly { rows = rows.filter(\.followUp) }
-        // A scoped project view keeps the needs-answer pinning.
+        // Flagged rows are pinned in both scopes, except under the follow-up
+        // filter where every row is flagged and a header would be redundant.
+        // Only a scoped project view keeps the needs-answer pinning.
         sections = project == nil
-            ? (rows.isEmpty ? [] : [SessionSection(kind: .all, title: nil, sessions: rows)])
-            : Self.sectionsFromSorted(rows)
+            ? Self.sectionsFromSorted(rows, pinsNeedsAnswer: false,
+                pinsFollowUp: !followUpOnly, remainderTitle: "Recent")
+            : Self.sectionsFromSorted(rows, pinsNeedsAnswer: true,
+                pinsFollowUp: !followUpOnly, remainderTitle: "All sessions")
         let value = ScopedRows(revision: revision, project: project,
             followUpOnly: followUpOnly, followUpCount: followUpCount, sessions: rows, sections: sections)
         scopedCache = value
@@ -302,8 +310,11 @@ public final class SessionListModel {
     /// Project names offered by the Recent Sessions new-chat prompt.
     public var newSessionProjectChoices: [String] { projects.map(\.name) }
 
-    /// The daemon-wide home feed is one globally recency-sorted list. A scoped
-    /// project view retains the phone-focused needs-answer pinning behavior.
+    /// The daemon-wide home feed pins follow-up-flagged rows in a "Follow up"
+    /// section above the remaining "Recent" rows (a single untitled section
+    /// when nothing is flagged). A scoped project view pins needs-answer rows,
+    /// then flagged rows, above "All sessions". Each section keeps recency
+    /// order; ``sessions`` stays the flat recency-ordered list.
     public var sections: [SessionSection] { scopedRows.sections }
 
     /// Maps each aggregate-visible session id to the project argument required by
@@ -1025,21 +1036,32 @@ public final class SessionListModel {
 
     // MARK: - Pure logic (unit-tested)
 
-    /// Group + sort sessions: needs-answer rows (live && waitingInput) pinned to
-    /// a top section, the remainder most-recent-first. Both sections are sorted
-    /// by `lastActivity` (RFC3339) descending, falling back to `startedAt` then
-    /// session ID ascending for ties (matching the daemon's cursor order).
+    /// Group + sort sessions as a project scope does: needs-answer rows
+    /// (live && waitingInput) pinned to a top section, then follow-up-flagged
+    /// rows, then the remainder. Every section is sorted by `lastActivity`
+    /// (RFC3339) descending, falling back to `startedAt` then session ID
+    /// ascending for ties (matching the daemon's cursor order).
     public static func sections(from sessions: [Ycc_V1_SessionSummary]) -> [SessionSection] {
-        sectionsFromSorted(sortedByRecency(sessions))
+        sectionsFromSorted(sortedByRecency(sessions), pinsNeedsAnswer: true,
+            pinsFollowUp: true, remainderTitle: "All sessions")
     }
 
-    private static func sectionsFromSorted(_ sessions: [Ycc_V1_SessionSummary]) -> [SessionSection] {
-        // Stable partition of the already recency-sorted input.
+    private static func sectionsFromSorted(
+        _ sessions: [Ycc_V1_SessionSummary],
+        pinsNeedsAnswer: Bool,
+        pinsFollowUp: Bool,
+        remainderTitle: String
+    ) -> [SessionSection] {
+        // Stable partition of the already recency-sorted input. A row that both
+        // needs an answer and is flagged belongs to needs-answer.
         var needsAnswer: [Ycc_V1_SessionSummary] = []
+        var followUp: [Ycc_V1_SessionSummary] = []
         var rest: [Ycc_V1_SessionSummary] = []
         for session in sessions {
-            if session.live && session.waitingInput {
+            if pinsNeedsAnswer && session.live && session.waitingInput {
                 needsAnswer.append(session)
+            } else if pinsFollowUp && session.followUp {
+                followUp.append(session)
             } else {
                 rest.append(session)
             }
@@ -1052,12 +1074,18 @@ public final class SessionListModel {
                 title: "Needs answer",
                 sessions: needsAnswer))
         }
+        if !followUp.isEmpty {
+            out.append(SessionSection(
+                kind: .followUp,
+                title: "Follow up",
+                sessions: followUp))
+        }
         if !rest.isEmpty {
             out.append(SessionSection(
                 kind: .all,
-                // Only label the remainder when there's a needs-answer section
-                // above it to distinguish from.
-                title: needsAnswer.isEmpty ? nil : "All sessions",
+                // Only label the remainder when there's a pinned section above
+                // it to distinguish from.
+                title: out.isEmpty ? nil : remainderTitle,
                 sessions: rest))
         }
         return out
