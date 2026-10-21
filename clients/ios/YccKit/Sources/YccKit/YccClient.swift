@@ -377,6 +377,41 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// The session's agent/job graph (`GetSessionActivity`): a flat node list,
+    /// root first, linked by `parentID`. Polled while an activity view is open.
+    public func getSessionActivity(
+        project: String = "", sessionId: String
+    ) async throws -> Ycc_V1_GetSessionActivityResponse {
+        var request = Ycc_V1_GetSessionActivityRequest()
+        request.project = project
+        request.sessionID = sessionId
+        let response = await generated.getSessionActivity(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
+    /// A background job's retained output (`GetJobOutput`) by absolute byte
+    /// `offset`, or the newest `tailLines` when that is > 0.
+    public func getJobOutput(
+        project: String = "", sessionId: String, jobId: String,
+        offset: Int64, limit: Int32, tailLines: Int32
+    ) async throws -> Ycc_V1_GetJobOutputResponse {
+        var request = Ycc_V1_GetJobOutputRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.jobID = jobId
+        request.offset = offset
+        request.limit = limit
+        request.tailLines = tailLines
+        let response = await generated.getJobOutput(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
     public func subscribeSessionView(
         sessionId: String, fromSeq: Int64
     ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {

@@ -30,9 +30,11 @@ struct NewSessionView: View {
     /// A picture-loading failure (the model owns only RPC errors).
     @State private var pictureError: String?
 
-    /// Called with (sessionID, project) once a session starts successfully. The
-    /// parent dismisses the sheet and pushes the live view.
-    private let onStarted: (String, String) -> Void
+    /// Called with (sessionID, project, title) once a session starts
+    /// successfully. The parent dismisses the sheet and pushes the live view;
+    /// `title` is the prompt's first line (the list titles sessions by their
+    /// opening prompt too), or empty for a prompt-less start.
+    private let onStarted: (String, String, String) -> Void
 
     /// - Parameter initialProject: the project to preselect (the landing
     ///   screen's current named-project filter). Overrides the
@@ -42,7 +44,7 @@ struct NewSessionView: View {
         client: YccClient,
         initialProject: String? = nil,
         cache: AppDataCache? = nil,
-        onStarted: @escaping (String, String) -> Void
+        onStarted: @escaping (String, String, String) -> Void
     ) {
         // A cached catalog/project list renders the composer without a
         // spinner; load() still revalidates in the background.
@@ -344,6 +346,8 @@ struct NewSessionView: View {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.title2)
                     }
+                    // Otherwise VoiceOver reads the SF Symbol name.
+                    .accessibilityLabel("Start session")
                     .disabled(!model.canStart || loadingPictures)
                 }
             }
@@ -362,10 +366,13 @@ struct NewSessionView: View {
         // Hand the staged pictures to the model right before starting, so
         // `canStart` and the request see the same draft.
         model.images = pictures.map(\.image)
+        let title = model.prompt
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
         Task {
             let project = model.selectedProject
             if let sessionID = await model.start() {
-                onStarted(sessionID, project)
+                onStarted(sessionID, project, title)
             }
         }
     }

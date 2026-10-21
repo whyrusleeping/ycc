@@ -23,6 +23,31 @@ final class MarkdownBlocksTests: XCTestCase {
         ])
     }
 
+    func testDocumentModeReflowsWrappedProseButKeepsListItemsAndHardBreaks() {
+        let doc = [
+            "A long paragraph that was",
+            "hard-wrapped in the source.",
+            "",
+            "- first item that",
+            "  continues here",
+            "- second",
+            "1. numbered",
+            "2) also numbered",
+            "hard break  ",
+            "next \\",
+            "last",
+            "> quoted and",
+            "> wrapped",
+        ].joined(separator: "\n")
+        XCTAssertEqual(MarkdownBlocks.parse(doc, reflowsSoftBreaks: true), [
+            .markdown("A long paragraph that was hard-wrapped in the source."),
+            .markdown("•  first item that continues here\n•  second\n1. numbered\n2) also numbered hard break  \nnext \nlast"),
+            .quote("quoted and wrapped"),
+        ])
+        // Chat text is untouched by default.
+        XCTAssertEqual(MarkdownBlocks.parse("one\ntwo"), [.markdown("one\ntwo")])
+    }
+
     func testHeadingsNeedOneToSixHashesAndASpace() {
         XCTAssertEqual(MarkdownBlocks.parse("# Title\n###### Six\n####### seven\n#NoSpace\n##  Padded  "), [
             .heading(level: 1, text: "Title"),

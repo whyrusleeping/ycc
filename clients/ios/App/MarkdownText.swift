@@ -20,6 +20,10 @@ import YccKit
 /// `AttributedString(markdown:)` for each block on the main actor.
 struct MarkdownText: View {
     let text: String
+    /// Documents (repo files, task bodies) are hard-wrapped at ~100 columns;
+    /// join those soft breaks into flowing paragraphs instead of rendering each
+    /// source line as its own visual line. Chat text keeps its newlines.
+    var reflowsSoftBreaks = false
 
     /// Set by `.fileLinks(_:)`: path-like code spans become tappable file
     /// links (and markdown links open the in-app viewer).
@@ -27,7 +31,7 @@ struct MarkdownText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(MarkdownBlockCache.blocks(for: text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(MarkdownBlockCache.blocks(for: text, reflowsSoftBreaks: reflowsSoftBreaks).enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .code(let language, let code):
                     CodeBlock(language: language, code: code)

@@ -28,7 +28,13 @@ public enum MarkdownBlocks {
     /// and paragraph groups (blank-line separated). List markers are normalised
     /// to bullets so `- item` reads as `• item` (the inline parser would
     /// otherwise show the raw dash).
-    public static func parse(_ text: String) -> [MarkdownBlock] {
+    ///
+    /// Chat-style text (agent messages) keeps every single newline as a line
+    /// break. Documents (repo files, task bodies) are hard-wrapped prose, so
+    /// `reflowsSoftBreaks` joins a wrapped line onto the previous one with a
+    /// space, CommonMark-style — except where a new list item starts or the
+    /// previous line ends in an explicit hard break (two spaces or `\`).
+    public static func parse(_ text: String, reflowsSoftBreaks: Bool = false) -> [MarkdownBlock] {
         var result: [MarkdownBlock] = []
         var paragraph: [String] = []
         var quote: [String] = []
@@ -36,14 +42,18 @@ public enum MarkdownBlocks {
         var codeLanguage = ""
         var inCode = false
 
+        func join(_ lines: [String]) -> String {
+            reflowsSoftBreaks ? reflow(lines) : lines.joined(separator: "\n")
+        }
+
         func flushParagraph() {
-            let joined = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let joined = join(paragraph).trimmingCharacters(in: .whitespacesAndNewlines)
             if !joined.isEmpty { result.append(.markdown(joined)) }
             paragraph.removeAll()
         }
 
         func flushQuote() {
-            let joined = quote.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let joined = join(quote).trimmingCharacters(in: .whitespacesAndNewlines)
             if !joined.isEmpty { result.append(.quote(joined)) }
             quote.removeAll()
         }
@@ -127,6 +137,39 @@ public enum MarkdownBlocks {
             }
         }
         return strings
+    }
+
+    /// Join hard-wrapped document lines (see `parse(_:reflowsSoftBreaks:)`).
+    static func reflow(_ lines: [String]) -> String {
+        var out = ""
+        for line in lines {
+            if out.isEmpty {
+                out = line
+                continue
+            }
+            if startsListItem(line) {
+                out += "\n" + line
+            } else if out.hasSuffix("\\") {
+                out.removeLast()
+                out += "\n" + line
+            } else if out.hasSuffix("  ") {
+                out += "\n" + line
+            } else {
+                // Leading indent only: trailing spaces may be a hard break.
+                out += " " + line.drop(while: { $0 == " " || $0 == "\t" })
+            }
+        }
+        return out
+    }
+
+    /// A bullet (already normalised by `bulleted`) or `1.` / `1)` item.
+    static func startsListItem(_ line: String) -> Bool {
+        let rest = line.drop(while: { $0 == " " || $0 == "\t" })
+        if rest.hasPrefix("•") { return true }
+        let digits = rest.prefix(while: { $0.isASCII && $0.isNumber })
+        guard !digits.isEmpty, digits.count <= 9 else { return false }
+        let after = rest.dropFirst(digits.count)
+        return after.hasPrefix(". ") || after.hasPrefix(") ")
     }
 
     /// `---`, `***` or `___` on their own line (three or more of one marker).
@@ -225,9 +268,15 @@ public final class BoundedCache<Key: Hashable, Value>: @unchecked Sendable {
 /// (or how many times the same session is reopened).
 public enum MarkdownBlockCache {
     public static let shared = BoundedCache<String, [MarkdownBlock]>(capacity: 1_024)
+    /// Documents parse differently (soft breaks reflowed), so they get their
+    /// own table rather than sharing keys with chat text.
+    public static let documents = BoundedCache<String, [MarkdownBlock]>(capacity: 64)
 
-    public static func blocks(for text: String) -> [MarkdownBlock] {
-        shared.value(for: text) { MarkdownBlocks.parse(text) }
+    public static func blocks(for text: String, reflowsSoftBreaks: Bool = false) -> [MarkdownBlock] {
+        if reflowsSoftBreaks {
+            return documents.value(for: text) { MarkdownBlocks.parse(text, reflowsSoftBreaks: true) }
+        }
+        return shared.value(for: text) { MarkdownBlocks.parse(text) }
     }
 }
 

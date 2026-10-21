@@ -57,7 +57,9 @@ struct DiffView: View {
         .safeAreaInset(edge: .top) {
             if let scopeNotice {
                 Text(scopeNotice).font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
             }
         }
         .navigationTitle(title)
@@ -90,7 +92,17 @@ struct DiffView: View {
             do {
                 let result = try await client.getWorkingChanges(
                     project: project, session: session, task: task, knownSnapshot: knownSnapshot)
-                scopeNotice = "\(result.changedSinceKnown ? "Changed since review · " : "")\(result.scope) · current snapshot \(String(result.snapshotID.prefix(12))) · \(result.excludedDirtyPaths) unrelated dirty paths excluded\(result.truncated ? " · truncated" : "")"
+                // `scope` and the snapshot id are daemon diagnostics (session
+                // ids, full baseline hashes); show only what changes how the
+                // diff should be read.
+                var notes: [String] = []
+                if result.changedSinceKnown { notes.append("Changed since review") }
+                if result.excludedDirtyPaths > 0 {
+                    let count = result.excludedDirtyPaths
+                    notes.append("\(count) unrelated changed \(count == 1 ? "file" : "files") hidden")
+                }
+                if result.truncated { notes.append("Truncated") }
+                scopeNotice = notes.isEmpty ? nil : notes.joined(separator: " · ")
                 lines = DiffFormatter.parse(result.diff, truncated: result.truncated)
             } catch YccError.unauthorized {
                 app.handleUnauthorized()

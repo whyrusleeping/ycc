@@ -273,14 +273,16 @@ struct UsageRowView: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(status == .unpriced ? .secondary : .primary)
             }
-            HStack(spacing: 10) {
-                tokenClass("in", row.input)
-                tokenClass("out", row.output)
-                if row.cacheRead > 0 { tokenClass("cache r", row.cacheRead) }
-                if row.cacheWrite > 0 { tokenClass("cache w", row.cacheWrite) }
-                Spacer(minLength: 4)
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                // One Text with non-breaking spaces inside each class, so a
+                // narrow row wraps between classes ("cache r 902.3M" stays
+                // together) instead of splitting a label from its number.
+                Text(tokenClasses)
+                    .monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Σ \(UsageModel.formatTokens(row.total))")
                     .monospacedDigit()
+                    .fixedSize()
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -288,9 +290,13 @@ struct UsageRowView: View {
         .padding(.vertical, 2)
     }
 
-    private func tokenClass(_ label: String, _ n: Int64) -> some View {
-        Text("\(label) \(UsageModel.formatTokens(n))")
-            .monospacedDigit()
+    private var tokenClasses: String {
+        var classes = [("in", row.input), ("out", row.output)]
+        if row.cacheRead > 0 { classes.append(("cache r", row.cacheRead)) }
+        if row.cacheWrite > 0 { classes.append(("cache w", row.cacheWrite)) }
+        return classes
+            .map { "\($0.0) \(UsageModel.formatTokens($0.1))".replacingOccurrences(of: " ", with: "\u{00A0}") }
+            .joined(separator: "   ")
     }
 
     private var badgeColor: Color {

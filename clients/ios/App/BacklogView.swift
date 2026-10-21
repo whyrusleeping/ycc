@@ -243,7 +243,7 @@ struct BacklogView: View {
             } label: {
                 HStack(spacing: 8) {
                     WorkLoopStateBadge(state: state)
-                    Text(WorkLoopModel.bannerLine(for: loopModel?.loop))
+                    Text(Self.bannerDetail(for: loopModel?.loop, state: state))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(state == .finished ? 3 : 1)
@@ -282,6 +282,24 @@ struct BacklogView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color(.secondarySystemGroupedBackground))
+    }
+
+    /// The banner text beside the state badge. `bannerLine` leads with the
+    /// state ("Not running", "Running · …"), which the badge already shows —
+    /// the banner read "Not running  Not running". Name the loop instead and
+    /// keep only the detail.
+    private static func bannerDetail(for loop: Ycc_V1_WorkLoopInfo?, state: WorkLoopState) -> String {
+        guard let loop else { return "Work loop" }
+        switch state {
+        case .running:
+            return "Work loop · \(WorkLoopModel.summaryLine(for: loop))"
+        case .waiting:
+            return WorkLoopModel.waitingLine(for: loop)
+        case .finished:
+            return loop.outcome.isEmpty ? "Work loop · \(WorkLoopModel.summaryLine(for: loop))" : loop.outcome
+        case .stopping, .none, .unknown:
+            return "Work loop"
+        }
     }
 
     private func updateErrorBinding(_ model: BacklogModel) -> Binding<Bool> {
@@ -634,7 +652,10 @@ private struct BacklogCard: View {
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .lineLimit(1)
-                } else if task.ready, status != .done {
+                } else if task.ready, status == .todo {
+                    // `ready` only means "dependencies done"; a proposed,
+                    // blocked or in-review task is not ready to work, so the
+                    // green badge is reserved for todo (work-loop eligible).
                     Label("Ready", systemImage: "checkmark.circle")
                         .font(.caption2)
                         .foregroundStyle(.green)
@@ -714,10 +735,16 @@ private struct BacklogRow: View {
                 Label(annotation, systemImage: "lock.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
-            } else if task.ready, TaskStatus(status: task.status) != .done {
-                Label("Ready", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+            } else if task.ready, TaskStatus(status: task.status) == .todo {
+                // An HStack, not a Label: list rows give a Label's icon its
+                // own wide leading column.
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark.circle")
+                    Text("Ready")
+                }
+                .font(.caption)
+                .foregroundStyle(.green)
+                .accessibilityElement(children: .combine)
             }
         }
         .padding(.vertical, 2)

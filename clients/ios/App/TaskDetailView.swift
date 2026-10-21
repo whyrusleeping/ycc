@@ -118,7 +118,7 @@ struct TaskDetailView: View {
                 Section("Details") {
                     // Task bodies live in backlog/, so relative links (sibling
                     // tasks) resolve there; code-span paths from the root.
-                    MarkdownText(text: task.body)
+                    MarkdownText(text: task.body, reflowsSoftBreaks: true)
                         .fileLinks(FileLinkContext(project: project, baseDirectory: "backlog"))
                 }
             }
@@ -143,12 +143,21 @@ struct TaskDetailView: View {
             }
             .disabled(model.isUpdating)
             PriorityBadge(priority: task.priority)
-            if task.ready, model.status != .done {
-                Label("Ready", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.green)
+            // Plain HStack, not a Label: a list row turns a Label's icon into
+            // a wide leading column and starts the row separator at its text.
+            // Reserved for todo — `ready` alone only means deps are done.
+            if task.ready, model.status == .todo {
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark.circle")
+                    Text("Ready")
+                }
+                .font(.caption)
+                .foregroundStyle(.green)
+                .accessibilityElement(children: .combine)
             }
+            Spacer(minLength: 0)
         }
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
         if !task.blockedBy.isEmpty, model.status != .done {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(task.blockedBy, id: \.self) { blockerID in

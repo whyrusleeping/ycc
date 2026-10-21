@@ -59,7 +59,12 @@ public enum UsageGrouping: String, Sendable, CaseIterable, Identifiable {
         case .agent: value = row.agent
         case .day: value = row.day
         }
-        return value.isEmpty ? "—" : value
+        if value.isEmpty {
+            // Usage outside any task (chat turns, untracked work) — a bare
+            // dash read as a rendering glitch at the top of the task list.
+            return self == .task ? "No task" : "—"
+        }
+        return value
     }
 }
 

@@ -134,7 +134,7 @@ struct LandingView: View {
                     client: client,
                     initialProject: request.project,
                     cache: app.dataCache
-                ) { sessionID, project in
+                ) { sessionID, project, title in
                     Analytics.submit("new_session")
                     newSessionRequest = nil
                     // Follow the session's project so the list shows it when
@@ -143,7 +143,7 @@ struct LandingView: View {
                         model?.selectedProject = project
                         Task { await model?.refresh() }
                     }
-                    router.open(.session(id: sessionID, project: project, live: true, title: ""))
+                    router.open(.session(id: sessionID, project: project, live: true, title: title))
                 }
                 .trackedFlow("new_session")
             }
@@ -531,46 +531,10 @@ struct LandingView: View {
 
     // MARK: - Session list
 
-    private func content(_ model: SessionListModel) -> some View {
-        VStack(spacing: 0) {
-            // Shown once something is flagged (and while filtering) so the
-            // phone list carries no permanent extra chrome.
-            if model.followUpCount > 0 || model.showsFollowUpOnly {
-                followUpFilterBar(model)
-            }
-            sessionContent(model)
-        }
-    }
-
-    private func followUpFilterBar(_ model: SessionListModel) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    Analytics.action("sessions.follow_up_filter")
-                    model.showsFollowUpOnly.toggle()
-                } label: {
-                    Label("Follow up (\(model.followUpCount))",
-                        systemImage: model.showsFollowUpOnly ? "flag.fill" : "flag")
-                }
-                .buttonStyle(.bordered)
-                .tint(model.showsFollowUpOnly ? .orange : .accentColor)
-                .accessibilityAddTraits(model.showsFollowUpOnly ? .isSelected : [])
-                Spacer()
-            }
-            .padding(.horizontal)
-            if model.showsFollowUpOnly {
-                Text("Filters loaded sessions only.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-                    .padding(.top, 4)
-            }
-        }
-    }
-
+    // Flagged sessions are surfaced by the pinned "Follow up" section inside
+    // the list, so there is no separate filter chrome above it.
     @ViewBuilder
-    private func sessionContent(_ model: SessionListModel) -> some View {
+    private func content(_ model: SessionListModel) -> some View {
         if model.isLoading && model.sessions.isEmpty {
             ProgressView()
         } else if let errorMessage = model.errorMessage, model.sessions.isEmpty {
@@ -579,20 +543,6 @@ struct LandingView: View {
                     "Couldn’t load sessions",
                     systemImage: "exclamationmark.triangle",
                     description: Text(errorMessage))
-            }
-        } else if model.sessions.isEmpty && model.showsFollowUpOnly {
-            refreshableUnavailable(model) {
-                ContentUnavailableView {
-                    Label("No sessions flagged for follow-up", systemImage: "flag")
-                } description: {
-                    Text("Flag a session from its swipe actions or actions menu.")
-                } actions: {
-                    Button("Show all sessions") { model.showsFollowUpOnly = false }
-                    if model.hasMoreHistory {
-                        Button("Load older sessions") { Task { await model.loadMoreHistory() } }
-                            .disabled(model.isLoadingMoreHistory)
-                    }
-                }
             }
         } else if model.sessions.isEmpty {
             refreshableUnavailable(model) {

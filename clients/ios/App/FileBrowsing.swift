@@ -366,7 +366,7 @@ struct FileViewerView: View {
         case .text(let text, let lines):
             if model.isMarkdown && !showRaw {
                 ScrollView {
-                    MarkdownText(text: text)
+                    MarkdownText(text: text, reflowsSoftBreaks: true)
                         .textSelection(.enabled)
                         .padding()
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -705,10 +705,20 @@ private struct CodeTextView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(wrap ? [.vertical] : [.vertical, .horizontal]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(lines.indices, id: \.self) { index in
-                        row(index)
-                            .id(index + 1)
+                VStack(alignment: .leading, spacing: 0) {
+                    // A lazy stack sizes itself from the rows it has built so
+                    // far and proposes that width to later rows, so a long line
+                    // further down was squeezed (gutter wrapped, row shifted)
+                    // and could not be scrolled to. A zero-height copy of the
+                    // longest row pins the content width up front.
+                    if !wrap {
+                        widestRow
+                    }
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines.indices, id: \.self) { index in
+                            row(index)
+                                .id(index + 1)
+                        }
                     }
                 }
                 .padding(.vertical, 8)
@@ -728,6 +738,20 @@ private struct CodeTextView: View {
         String(repeating: "8", count: String(lines.count).count)
     }
 
+    /// The longest line (by characters — the font is monospaced), laid out
+    /// like a real row but with no height, to fix the scrollable width.
+    private var widestRow: some View {
+        let longest = lines.max { $0.utf8.count < $1.utf8.count } ?? ""
+        return HStack(spacing: 10) {
+            Text(gutterTemplate)
+            Text(longest).fixedSize()
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 0)
+        .hidden()
+        .accessibilityHidden(true)
+    }
+
     private func row(_ index: Int) -> some View {
         let number = index + 1
         let isTarget = target?.contains(number) ?? false
@@ -737,6 +761,9 @@ private struct CodeTextView: View {
                 Text("\(number)")
                     .foregroundStyle(isTarget ? Color.primary : Color.secondary.opacity(0.6))
             }
+            // Never let a long line squeeze the gutter (it used to wrap "19"
+            // onto two lines and shift the row).
+            .fixedSize()
             .accessibilityHidden(true)
             Text(attributed(index))
                 .fixedSize(horizontal: !wrap, vertical: true)

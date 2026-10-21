@@ -114,6 +114,8 @@ struct SessionView: View {
     @State private var showSettings = false
     /// Presents the per-session usage sheet.
     @State private var showSessionUsage = false
+    /// Presents the session activity (agents / jobs) sheet.
+    @State private var showActivity = false
     /// A commit to drill into via the diff viewer (set by tapping a commit row).
     @State private var commitTarget: CommitDiffTarget?
     @State private var workingChangesTarget: WorkingChangesTarget?
@@ -286,6 +288,10 @@ struct SessionView: View {
                     sessionID: sessionID,
                     currentContextTokensEstimate: model.currentContextTokensEstimate)
                 .trackedView("session_usage")
+            }
+            .sheet(isPresented: $showActivity) {
+                SessionActivitySheet(client: client, project: project, sessionID: sessionID, session: model)
+                    .trackedView("activity")
             }
             .sheet(isPresented: $showQuestionSheet) {
                 if let pending = model.pendingQuestion ?? sheetQuestion {
@@ -577,6 +583,8 @@ struct SessionView: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
                 }
+                // Otherwise VoiceOver reads the SF Symbol name.
+                .accessibilityLabel("Send")
                 .disabled(
                     loadingPictures ||
                     (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pictures.isEmpty)
@@ -1175,6 +1183,12 @@ struct SessionView: View {
                     Label("Session usage", systemImage: "sum")
                 }
                 Button {
+                    Analytics.action("session.activity", via: .menu)
+                    showActivity = true
+                } label: {
+                    Label("Activity", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                Button {
                     router.open(.workLoop(project: project))
                 } label: {
                     Label("Work loop", systemImage: "arrow.triangle.2.circlepath")
@@ -1418,7 +1432,8 @@ private struct TranscriptTopPreferenceKey: PreferenceKey {
 
 /// Renders a single ``TranscriptRow``. Bubbles for messages; collapsed,
 /// tappable disclosure rows for thinking and tool calls; compact system rows.
-private struct TranscriptRowView: View, Equatable {
+/// Also used by the Activity sheet for an agent's filtered transcript.
+struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
     /// The logical model currently producing turns, shown beside the coordinator's
     /// streaming indicator. Only supplied for live tails; durable rows leave it
@@ -2016,9 +2031,13 @@ private struct QuestionRowView: View {
     let answer: String?
 
     var body: some View {
+        // Orange is "needs you"; once answered the card goes neutral so an old
+        // question doesn't keep reading as an open gate.
+        let tint: Color = answer == nil ? .orange : .secondary
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: "questionmark.bubble").foregroundStyle(.orange)
+                Image(systemName: answer == nil ? "questionmark.bubble" : "checkmark.bubble")
+                    .foregroundStyle(answer == nil ? Color.orange : Color.green)
                 Text(prompt).font(.callout.weight(.medium))
             }
             if !options.isEmpty {
@@ -2041,8 +2060,8 @@ private struct QuestionRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.3)))
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.3)))
     }
 }
 
@@ -2116,21 +2135,6 @@ private struct QuestionSheet: View {
                 Form {
                     ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
                         Section {
-                            // The question is the point of this sheet: render it
-                            // as full-size prose, not a small-caps section header
-                            // that truncates a multi-sentence, self-contained ask.
-                            VStack(alignment: .leading, spacing: 4) {
-                                if pending.isBatch {
-                                    Text("Question \(index + 1) of \(pending.questions.count)")
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                MarkdownText(text: question.prompt)
-                                    .font(.callout)
-                            }
-                            .padding(.vertical, 2)
-                            .listRowBackground(Color.clear)
-
                             ForEach(Array(question.options.enumerated()), id: \.offset) { optIdx, option in
                                 optionRow(index: index, optIdx: optIdx, option: option, proxy: proxy)
                             }
@@ -2145,6 +2149,27 @@ private struct QuestionSheet: View {
                             if !pending.isBatch {
                                 singleSendSection
                             }
+                        } header: {
+                            // The question is the point of this sheet: render it
+                            // as full-size prose, not a small-caps section header
+                            // that truncates a multi-sentence, self-contained ask.
+                            // As the header (not a clear first row) it sits above
+                            // a properly rounded card of answers.
+                            VStack(alignment: .leading, spacing: 4) {
+                                if pending.isBatch {
+                                    Text("Question \(index + 1) of \(pending.questions.count)")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                MarkdownText(text: question.prompt)
+                                    .font(.callout)
+                                    // Color.primary, not `.primary`: the header's
+                                    // style is secondary and `.primary` is
+                                    // hierarchical relative to it.
+                                    .foregroundStyle(Color.primary)
+                            }
+                            .textCase(nil)
+                            .padding(.bottom, 4)
                         }
                         .id(Self.anchor(forQuestion: index))
                     }
