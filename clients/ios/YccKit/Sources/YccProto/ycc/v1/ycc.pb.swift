@@ -1359,6 +1359,232 @@ public nonisolated struct Ycc_V1_SessionViewUpdate: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
+/// Session activity graph: the coordinator root, one node per subagent actor
+/// (with one span per spawn→finish round), and one node per background
+/// non-agent job under the actor that started it. Timestamps are RFC 3339.
+public nonisolated struct Ycc_V1_ActivitySpan: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// empty for foreground rounds
+  public var jobID: String = String()
+
+  public var round: Int32 = 0
+
+  /// running | done | failed | blocked | killed | lost
+  public var status: String = String()
+
+  public var contextMode: String = String()
+
+  public var startedAt: String = String()
+
+  /// empty while running
+  public var finishedAt: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ActivityNode: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// "coordinator", the subagent actor, or the job id
+  public var id: String {
+    get {_storage._id}
+    set {_uniqueStorage()._id = newValue}
+  }
+
+  /// empty for the coordinator root
+  public var parentID: String {
+    get {_storage._parentID}
+    set {_uniqueStorage()._parentID = newValue}
+  }
+
+  /// coordinator | generic | implementer | reviewer | job kind (bash)
+  public var kind: String {
+    get {_storage._kind}
+    set {_uniqueStorage()._kind = newValue}
+  }
+
+  public var label: String {
+    get {_storage._label}
+    set {_uniqueStorage()._label = newValue}
+  }
+
+  /// Actor whose transcript events belong to this node; empty for jobs.
+  public var actor: String {
+    get {_storage._actor}
+    set {_uniqueStorage()._actor = newValue}
+  }
+
+  public var model: String {
+    get {_storage._model}
+    set {_uniqueStorage()._model = newValue}
+  }
+
+  /// coordinator: the session phase; others: running | done | failed | blocked | killed | lost
+  public var status: String {
+    get {_storage._status}
+    set {_uniqueStorage()._status = newValue}
+  }
+
+  public var mutates: Bool {
+    get {_storage._mutates}
+    set {_uniqueStorage()._mutates = newValue}
+  }
+
+  /// job nodes: their own id; actors: the latest round's job
+  public var jobID: String {
+    get {_storage._jobID}
+    set {_uniqueStorage()._jobID = newValue}
+  }
+
+  /// bounded final report or output tail
+  public var result: String {
+    get {_storage._result}
+    set {_uniqueStorage()._result = newValue}
+  }
+
+  public var startedAt: String {
+    get {_storage._startedAt}
+    set {_uniqueStorage()._startedAt = newValue}
+  }
+
+  public var finishedAt: String {
+    get {_storage._finishedAt}
+    set {_uniqueStorage()._finishedAt = newValue}
+  }
+
+  public var spans: [Ycc_V1_ActivitySpan] {
+    get {_storage._spans}
+    set {_uniqueStorage()._spans = newValue}
+  }
+
+  /// Progress of an agent's latest round: metadata only, never model text.
+  public var currentTool: String {
+    get {_storage._currentTool}
+    set {_uniqueStorage()._currentTool = newValue}
+  }
+
+  public var turns: Int32 {
+    get {_storage._turns}
+    set {_uniqueStorage()._turns = newValue}
+  }
+
+  public var totalTokens: Int64 {
+    get {_storage._totalTokens}
+    set {_uniqueStorage()._totalTokens = newValue}
+  }
+
+  /// coordinator: the session's last durable event
+  public var lastActivityAt: String {
+    get {_storage._lastActivityAt}
+    set {_uniqueStorage()._lastActivityAt = newValue}
+  }
+
+  /// GetJobOutput can read this job's retained output (live session only).
+  public var outputAvailable: Bool {
+    get {_storage._outputAvailable}
+    set {_uniqueStorage()._outputAvailable = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+public nonisolated struct Ycc_V1_GetSessionActivityRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetSessionActivityResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// root first, then by start time
+  public var nodes: [Ycc_V1_ActivityNode] = []
+
+  public var live: Bool = false
+
+  public var indexedThroughSeq: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetJobOutputRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  public var jobID: String = String()
+
+  /// absolute byte offset into the job's whole output stream
+  public var offset: Int64 = 0
+
+  /// bytes; zero uses 64 KiB, clamped to 256 KiB
+  public var limit: Int32 = 0
+
+  /// > 0 selects the retained tail instead of offset
+  public var tailLines: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetJobOutputResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// False when the session is not live or the job is unknown to its registry;
+  /// fall back to the activity node's result.
+  public var available: Bool = false
+
+  public var unavailableReason: String = String()
+
+  public var data: Data = Data()
+
+  public var start: Int64 = 0
+
+  public var end: Int64 = 0
+
+  /// earlier bytes were dropped from the bounded buffer
+  public var retainedStart: Int64 = 0
+
+  public var retainedEnd: Int64 = 0
+
+  /// job status
+  public var status: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// GetSessionAttachment returns one picture referenced by attachment_id in a
 /// user_input event. The payload is stored beside (not inside) events.jsonl and
 /// follows the session log's retention lifecycle.
@@ -6470,6 +6696,441 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
       }
       if !storagesAreEqual {return false}
     }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ActivitySpan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActivitySpan"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{1}round\0\u{1}status\0\u{3}context_mode\0\u{3}started_at\0\u{3}finished_at\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.round) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.contextMode) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.startedAt) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.finishedAt) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 1)
+    }
+    if self.round != 0 {
+      try visitor.visitSingularInt32Field(value: self.round, fieldNumber: 2)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 3)
+    }
+    if !self.contextMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.contextMode, fieldNumber: 4)
+    }
+    if !self.startedAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.startedAt, fieldNumber: 5)
+    }
+    if !self.finishedAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.finishedAt, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ActivitySpan, rhs: Ycc_V1_ActivitySpan) -> Bool {
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.round != rhs.round {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.contextMode != rhs.contextMode {return false}
+    if lhs.startedAt != rhs.startedAt {return false}
+    if lhs.finishedAt != rhs.finishedAt {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActivityNode"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}parent_id\0\u{1}kind\0\u{1}label\0\u{1}actor\0\u{1}model\0\u{1}status\0\u{1}mutates\0\u{3}job_id\0\u{1}result\0\u{3}started_at\0\u{3}finished_at\0\u{1}spans\0\u{3}current_tool\0\u{1}turns\0\u{3}total_tokens\0\u{3}last_activity_at\0\u{3}output_available\0")
+
+  fileprivate class _StorageClass {
+    var _id: String = String()
+    var _parentID: String = String()
+    var _kind: String = String()
+    var _label: String = String()
+    var _actor: String = String()
+    var _model: String = String()
+    var _status: String = String()
+    var _mutates: Bool = false
+    var _jobID: String = String()
+    var _result: String = String()
+    var _startedAt: String = String()
+    var _finishedAt: String = String()
+    var _spans: [Ycc_V1_ActivitySpan] = []
+    var _currentTool: String = String()
+    var _turns: Int32 = 0
+    var _totalTokens: Int64 = 0
+    var _lastActivityAt: String = String()
+    var _outputAvailable: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _id = source._id
+      _parentID = source._parentID
+      _kind = source._kind
+      _label = source._label
+      _actor = source._actor
+      _model = source._model
+      _status = source._status
+      _mutates = source._mutates
+      _jobID = source._jobID
+      _result = source._result
+      _startedAt = source._startedAt
+      _finishedAt = source._finishedAt
+      _spans = source._spans
+      _currentTool = source._currentTool
+      _turns = source._turns
+      _totalTokens = source._totalTokens
+      _lastActivityAt = source._lastActivityAt
+      _outputAvailable = source._outputAvailable
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._id) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._parentID) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._kind) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._label) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._actor) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._model) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._status) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._mutates) }()
+        case 9: try { try decoder.decodeSingularStringField(value: &_storage._jobID) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._result) }()
+        case 11: try { try decoder.decodeSingularStringField(value: &_storage._startedAt) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._finishedAt) }()
+        case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._spans) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._currentTool) }()
+        case 15: try { try decoder.decodeSingularInt32Field(value: &_storage._turns) }()
+        case 16: try { try decoder.decodeSingularInt64Field(value: &_storage._totalTokens) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._lastActivityAt) }()
+        case 18: try { try decoder.decodeSingularBoolField(value: &_storage._outputAvailable) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if !_storage._id.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._id, fieldNumber: 1)
+      }
+      if !_storage._parentID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._parentID, fieldNumber: 2)
+      }
+      if !_storage._kind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._kind, fieldNumber: 3)
+      }
+      if !_storage._label.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._label, fieldNumber: 4)
+      }
+      if !_storage._actor.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._actor, fieldNumber: 5)
+      }
+      if !_storage._model.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._model, fieldNumber: 6)
+      }
+      if !_storage._status.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._status, fieldNumber: 7)
+      }
+      if _storage._mutates != false {
+        try visitor.visitSingularBoolField(value: _storage._mutates, fieldNumber: 8)
+      }
+      if !_storage._jobID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._jobID, fieldNumber: 9)
+      }
+      if !_storage._result.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._result, fieldNumber: 10)
+      }
+      if !_storage._startedAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._startedAt, fieldNumber: 11)
+      }
+      if !_storage._finishedAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._finishedAt, fieldNumber: 12)
+      }
+      if !_storage._spans.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._spans, fieldNumber: 13)
+      }
+      if !_storage._currentTool.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._currentTool, fieldNumber: 14)
+      }
+      if _storage._turns != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._turns, fieldNumber: 15)
+      }
+      if _storage._totalTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._totalTokens, fieldNumber: 16)
+      }
+      if !_storage._lastActivityAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastActivityAt, fieldNumber: 17)
+      }
+      if _storage._outputAvailable != false {
+        try visitor.visitSingularBoolField(value: _storage._outputAvailable, fieldNumber: 18)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ActivityNode, rhs: Ycc_V1_ActivityNode) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._id != rhs_storage._id {return false}
+        if _storage._parentID != rhs_storage._parentID {return false}
+        if _storage._kind != rhs_storage._kind {return false}
+        if _storage._label != rhs_storage._label {return false}
+        if _storage._actor != rhs_storage._actor {return false}
+        if _storage._model != rhs_storage._model {return false}
+        if _storage._status != rhs_storage._status {return false}
+        if _storage._mutates != rhs_storage._mutates {return false}
+        if _storage._jobID != rhs_storage._jobID {return false}
+        if _storage._result != rhs_storage._result {return false}
+        if _storage._startedAt != rhs_storage._startedAt {return false}
+        if _storage._finishedAt != rhs_storage._finishedAt {return false}
+        if _storage._spans != rhs_storage._spans {return false}
+        if _storage._currentTool != rhs_storage._currentTool {return false}
+        if _storage._turns != rhs_storage._turns {return false}
+        if _storage._totalTokens != rhs_storage._totalTokens {return false}
+        if _storage._lastActivityAt != rhs_storage._lastActivityAt {return false}
+        if _storage._outputAvailable != rhs_storage._outputAvailable {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetSessionActivityRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetSessionActivityRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetSessionActivityRequest, rhs: Ycc_V1_GetSessionActivityRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetSessionActivityResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetSessionActivityResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}nodes\0\u{1}live\0\u{3}indexed_through_seq\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.nodes) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.live) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.indexedThroughSeq) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.nodes.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.nodes, fieldNumber: 1)
+    }
+    if self.live != false {
+      try visitor.visitSingularBoolField(value: self.live, fieldNumber: 2)
+    }
+    if self.indexedThroughSeq != 0 {
+      try visitor.visitSingularInt64Field(value: self.indexedThroughSeq, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetSessionActivityResponse, rhs: Ycc_V1_GetSessionActivityResponse) -> Bool {
+    if lhs.nodes != rhs.nodes {return false}
+    if lhs.live != rhs.live {return false}
+    if lhs.indexedThroughSeq != rhs.indexedThroughSeq {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetJobOutputRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetJobOutputRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{3}job_id\0\u{1}offset\0\u{1}limit\0\u{3}tail_lines\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.offset) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
+      case 6: try { try decoder.decodeSingularInt32Field(value: &self.tailLines) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 3)
+    }
+    if self.offset != 0 {
+      try visitor.visitSingularInt64Field(value: self.offset, fieldNumber: 4)
+    }
+    if self.limit != 0 {
+      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 5)
+    }
+    if self.tailLines != 0 {
+      try visitor.visitSingularInt32Field(value: self.tailLines, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetJobOutputRequest, rhs: Ycc_V1_GetJobOutputRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.jobID != rhs.jobID {return false}
+    if lhs.offset != rhs.offset {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.tailLines != rhs.tailLines {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetJobOutputResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetJobOutputResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}available\0\u{3}unavailable_reason\0\u{1}data\0\u{1}start\0\u{1}end\0\u{3}retained_start\0\u{3}retained_end\0\u{1}status\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.available) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.unavailableReason) }()
+      case 3: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.start) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.end) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.retainedStart) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.retainedEnd) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.available != false {
+      try visitor.visitSingularBoolField(value: self.available, fieldNumber: 1)
+    }
+    if !self.unavailableReason.isEmpty {
+      try visitor.visitSingularStringField(value: self.unavailableReason, fieldNumber: 2)
+    }
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 3)
+    }
+    if self.start != 0 {
+      try visitor.visitSingularInt64Field(value: self.start, fieldNumber: 4)
+    }
+    if self.end != 0 {
+      try visitor.visitSingularInt64Field(value: self.end, fieldNumber: 5)
+    }
+    if self.retainedStart != 0 {
+      try visitor.visitSingularInt64Field(value: self.retainedStart, fieldNumber: 6)
+    }
+    if self.retainedEnd != 0 {
+      try visitor.visitSingularInt64Field(value: self.retainedEnd, fieldNumber: 7)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetJobOutputResponse, rhs: Ycc_V1_GetJobOutputResponse) -> Bool {
+    if lhs.available != rhs.available {return false}
+    if lhs.unavailableReason != rhs.unavailableReason {return false}
+    if lhs.data != rhs.data {return false}
+    if lhs.start != rhs.start {return false}
+    if lhs.end != rhs.end {return false}
+    if lhs.retainedStart != rhs.retainedStart {return false}
+    if lhs.retainedEnd != rhs.retainedEnd {return false}
+    if lhs.status != rhs.status {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

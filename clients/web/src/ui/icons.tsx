@@ -18,7 +18,8 @@ export type IconName =
   | "more"
   | "diff"
   | "file"
-  | "chevron";
+  | "chevron"
+  | "activity";
 
 const PATHS: Record<IconName, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
@@ -102,6 +103,8 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   chevron: <path d="m9 6 6 6-6 6" />,
+  /** Swimlanes: the session's agents and jobs over time. */
+  activity: <path d="M4 6h9M8 12h12M4 18h6M15 18h5" />,
   more: (
     <>
       <circle cx="5" cy="12" r="1" />

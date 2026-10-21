@@ -47,6 +47,14 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `subscribeSessionView`(headers: Connect.Headers) -> any Connect.ServerOnlyAsyncStreamInterface<Ycc_V1_SubscribeSessionViewRequest, Ycc_V1_SessionViewUpdate>
 
+    /// GetSessionActivity returns the session's agent/subagent/job graph with live
+    /// progress overlaid; GetJobOutput reads a live job's retained output.
+    @available(iOS 13, *)
+    func `getSessionActivity`(request: Ycc_V1_GetSessionActivityRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSessionActivityResponse>
+
+    @available(iOS 13, *)
+    func `getJobOutput`(request: Ycc_V1_GetJobOutputRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetJobOutputResponse>
+
     /// GetSessionAttachment returns a retained picture referenced by a user_input
     /// event, without putting binary payloads in the event log.
     @available(iOS 13, *)
@@ -338,6 +346,16 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     @available(iOS 13, *)
     public func `subscribeSessionView`(headers: Connect.Headers = [:]) -> any Connect.ServerOnlyAsyncStreamInterface<Ycc_V1_SubscribeSessionViewRequest, Ycc_V1_SessionViewUpdate> {
         return self.client.serverOnlyStream(path: "/ycc.v1.SessionService/SubscribeSessionView", headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getSessionActivity`(request: Ycc_V1_GetSessionActivityRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSessionActivityResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetSessionActivity", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getJobOutput`(request: Ycc_V1_GetJobOutputRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetJobOutputResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetJobOutput", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
@@ -637,6 +655,8 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getSessionViewPage = Connect.MethodSpec(name: "GetSessionViewPage", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionViewDetail = Connect.MethodSpec(name: "GetSessionViewDetail", service: "ycc.v1.SessionService", type: .unary)
             public static let subscribeSessionView = Connect.MethodSpec(name: "SubscribeSessionView", service: "ycc.v1.SessionService", type: .serverStream)
+            public static let getSessionActivity = Connect.MethodSpec(name: "GetSessionActivity", service: "ycc.v1.SessionService", type: .unary)
+            public static let getJobOutput = Connect.MethodSpec(name: "GetJobOutput", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionAttachment = Connect.MethodSpec(name: "GetSessionAttachment", service: "ycc.v1.SessionService", type: .unary)
             public static let getCommitDiff = Connect.MethodSpec(name: "GetCommitDiff", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkingChanges = Connect.MethodSpec(name: "GetWorkingChanges", service: "ycc.v1.SessionService", type: .unary)

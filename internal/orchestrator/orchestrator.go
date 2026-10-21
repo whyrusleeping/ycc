@@ -1307,7 +1307,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				d.mu.Unlock()
 				d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
 				go func() {
-					results := runReviewers(job.Context(), d, handles, id)
+					results := runReviewers(job.Context(), d, handles, id, job.ID())
 					if job.Finish(jobs.Done, aggregateReviews(results)) {
 						emitAgentJobFinished(d.Emitter, job)
 					}
@@ -1317,7 +1317,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					"Their verdicts arrive automatically when the review finishes, or call wait([%q]).", job.ID(), id, job.ID())), nil
 			}
 
-			results := runReviewers(ctx, d, handles, id)
+			results := runReviewers(ctx, d, handles, id, "")
 			return tools.OkResultView(aggregateReviews(results), aggregateReviewsView(results)), nil
 		},
 	}
@@ -1388,7 +1388,7 @@ func reReview(d *Deps) *gollama.Tool {
 				h.evidence = currentDiff
 				h.round++
 			}
-			results := runReviewers(ctx, d, handles, id)
+			results := runReviewers(ctx, d, handles, id, "")
 			return tools.OkResultView(aggregateReviews(results), aggregateReviewsView(results)), nil
 		},
 	}
@@ -1600,8 +1600,15 @@ func updateTask(d *Deps) *gollama.Tool {
 }
 
 // runReviewers runs each reviewer's loop concurrently and waits for all (barrier),
-// emitting each verdict into the session log.
-func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskID string) []reviewResult {
+// emitting each verdict into the session log. A non-empty jobID (the background
+// fan-out's shared job) tags their lifecycle events.
+func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskID, jobID string) []reviewResult {
+	tagJob := func(data map[string]any) map[string]any {
+		if jobID != "" {
+			data["job_id"] = jobID
+		}
+		return data
+	}
 	results := make([]reviewResult, len(handles))
 	var wg sync.WaitGroup
 	for i, h := range handles {
@@ -1615,7 +1622,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			spawnData := map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
 				"context_mode": mode, "round": h.round, "prior_context_tokens_est": h.priorContextTokens}
 			addRolloverFields(spawnData, h.rolloverReason, h.priorContextTokens, h.newContextTokens)
-			d.Emitter.Emit(event.SubagentSpawned, spawnData)
+			d.Emitter.Emit(event.SubagentSpawned, tagJob(spawnData))
 			res, err := h.loop.Run(ctx)
 
 			// Reviewers are read-only and ReviewSubmitted is emitted only below, after
@@ -1637,7 +1644,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 						recoverySpawn := map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
 							"context_mode": mode, "round": h.round, "prior_context_tokens_est": oldTokens}
 						addRolloverFields(recoverySpawn, h.rolloverReason, oldTokens, h.newContextTokens)
-						d.Emitter.Emit(event.SubagentSpawned, recoverySpawn)
+						d.Emitter.Emit(event.SubagentSpawned, tagJob(recoverySpawn))
 						res, err = h.loop.Run(ctx)
 					}
 				}
@@ -1694,7 +1701,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			if err != nil {
 				finishData["error"] = err.Error()
 			}
-			d.Emitter.Emit(event.SubagentFinished, finishData)
+			d.Emitter.Emit(event.SubagentFinished, tagJob(finishData))
 			results[i] = reviewResult{name: h.name, model: h.model, rv: rv, contextMode: mode,
 				round: h.round, contextTokens: contextTokens, priorContextTokens: h.priorContextTokens}
 		}(i, h)

@@ -429,6 +429,71 @@ message SessionViewUpdate {
   Event transient_event = 5;
 }
 
+// Session activity graph: the coordinator root, one node per subagent actor
+// (with one span per spawn→finish round), and one node per background
+// non-agent job under the actor that started it. Timestamps are RFC 3339.
+message ActivitySpan {
+  string job_id = 1; // empty for foreground rounds
+  int32 round = 2;
+  string status = 3; // running | done | failed | blocked | killed | lost
+  string context_mode = 4;
+  string started_at = 5;
+  string finished_at = 6; // empty while running
+}
+message ActivityNode {
+  string id = 1;        // "coordinator", the subagent actor, or the job id
+  string parent_id = 2; // empty for the coordinator root
+  string kind = 3;      // coordinator | generic | implementer | reviewer | job kind (bash)
+  string label = 4;
+  // Actor whose transcript events belong to this node; empty for jobs.
+  string actor = 5;
+  string model = 6;
+  // coordinator: the session phase; others: running | done | failed | blocked | killed | lost
+  string status = 7;
+  bool mutates = 8;
+  string job_id = 9; // job nodes: their own id; actors: the latest round's job
+  string result = 10; // bounded final report or output tail
+  string started_at = 11;
+  string finished_at = 12;
+  repeated ActivitySpan spans = 13;
+  // Progress of an agent's latest round: metadata only, never model text.
+  string current_tool = 14; // set only while the round runs
+  int32 turns = 15;
+  int64 total_tokens = 16;
+  string last_activity_at = 17; // coordinator: the session's last durable event
+  // GetJobOutput can read this job's retained output (live session only).
+  bool output_available = 18;
+}
+message GetSessionActivityRequest {
+  string project = 1;
+  string session_id = 2;
+}
+message GetSessionActivityResponse {
+  repeated ActivityNode nodes = 1; // root first, then by start time
+  bool live = 2;
+  int64 indexed_through_seq = 3;
+}
+message GetJobOutputRequest {
+  string project = 1;
+  string session_id = 2;
+  string job_id = 3;
+  int64 offset = 4;     // absolute byte offset into the job's whole output stream
+  int32 limit = 5;      // bytes; zero uses 64 KiB, clamped to 256 KiB
+  int32 tail_lines = 6; // > 0 selects the retained tail instead of offset
+}
+message GetJobOutputResponse {
+  // False when the session is not live or the job is unknown to its registry;
+  // fall back to the activity node's result.
+  bool available = 1;
+  string unavailable_reason = 2;
+  bytes data = 3;
+  int64 start = 4;
+  int64 end = 5;
+  int64 retained_start = 6; // earlier bytes were dropped from the bounded buffer
+  int64 retained_end = 7;
+  string status = 8; // job status
+}
+
 // GetSessionAttachment returns one picture referenced by attachment_id in a
 // user_input event. The payload is stored beside (not inside) events.jsonl and
 // follows the session log's retention lifecycle.
@@ -1204,6 +1269,10 @@ service SessionService {
   rpc GetSessionViewPage(GetSessionViewPageRequest) returns (GetSessionViewPageResponse);
   rpc GetSessionViewDetail(GetSessionViewDetailRequest) returns (GetSessionViewDetailResponse);
   rpc SubscribeSessionView(SubscribeSessionViewRequest) returns (stream SessionViewUpdate);
+  // GetSessionActivity returns the session's agent/subagent/job graph with live
+  // progress overlaid; GetJobOutput reads a live job's retained output.
+  rpc GetSessionActivity(GetSessionActivityRequest) returns (GetSessionActivityResponse);
+  rpc GetJobOutput(GetJobOutputRequest) returns (GetJobOutputResponse);
   // GetSessionAttachment returns a retained picture referenced by a user_input
   // event, without putting binary payloads in the event log.
   rpc GetSessionAttachment(GetSessionAttachmentRequest) returns (GetSessionAttachmentResponse);

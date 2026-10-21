@@ -3949,6 +3949,575 @@ func (x *SessionViewUpdate) GetTransientEvent() *Event {
 	return nil
 }
 
+// Session activity graph: the coordinator root, one node per subagent actor
+// (with one span per spawn→finish round), and one node per background
+// non-agent job under the actor that started it. Timestamps are RFC 3339.
+type ActivitySpan struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"` // empty for foreground rounds
+	Round         int32                  `protobuf:"varint,2,opt,name=round,proto3" json:"round,omitempty"`
+	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | done | failed | blocked | killed | lost
+	ContextMode   string                 `protobuf:"bytes,4,opt,name=context_mode,json=contextMode,proto3" json:"context_mode,omitempty"`
+	StartedAt     string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt    string                 `protobuf:"bytes,6,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"` // empty while running
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActivitySpan) Reset() {
+	*x = ActivitySpan{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivitySpan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivitySpan) ProtoMessage() {}
+
+func (x *ActivitySpan) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivitySpan.ProtoReflect.Descriptor instead.
+func (*ActivitySpan) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *ActivitySpan) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *ActivitySpan) GetRound() int32 {
+	if x != nil {
+		return x.Round
+	}
+	return 0
+}
+
+func (x *ActivitySpan) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ActivitySpan) GetContextMode() string {
+	if x != nil {
+		return x.ContextMode
+	}
+	return ""
+}
+
+func (x *ActivitySpan) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *ActivitySpan) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
+}
+
+type ActivityNode struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                             // "coordinator", the subagent actor, or the job id
+	ParentId string                 `protobuf:"bytes,2,opt,name=parent_id,json=parentId,proto3" json:"parent_id,omitempty"` // empty for the coordinator root
+	Kind     string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`                         // coordinator | generic | implementer | reviewer | job kind (bash)
+	Label    string                 `protobuf:"bytes,4,opt,name=label,proto3" json:"label,omitempty"`
+	// Actor whose transcript events belong to this node; empty for jobs.
+	Actor string `protobuf:"bytes,5,opt,name=actor,proto3" json:"actor,omitempty"`
+	Model string `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
+	// coordinator: the session phase; others: running | done | failed | blocked | killed | lost
+	Status     string          `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	Mutates    bool            `protobuf:"varint,8,opt,name=mutates,proto3" json:"mutates,omitempty"`
+	JobId      string          `protobuf:"bytes,9,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"` // job nodes: their own id; actors: the latest round's job
+	Result     string          `protobuf:"bytes,10,opt,name=result,proto3" json:"result,omitempty"`           // bounded final report or output tail
+	StartedAt  string          `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt string          `protobuf:"bytes,12,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	Spans      []*ActivitySpan `protobuf:"bytes,13,rep,name=spans,proto3" json:"spans,omitempty"`
+	// Progress of an agent's latest round: metadata only, never model text.
+	CurrentTool    string `protobuf:"bytes,14,opt,name=current_tool,json=currentTool,proto3" json:"current_tool,omitempty"` // set only while the round runs
+	Turns          int32  `protobuf:"varint,15,opt,name=turns,proto3" json:"turns,omitempty"`
+	TotalTokens    int64  `protobuf:"varint,16,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	LastActivityAt string `protobuf:"bytes,17,opt,name=last_activity_at,json=lastActivityAt,proto3" json:"last_activity_at,omitempty"` // coordinator: the session's last durable event
+	// GetJobOutput can read this job's retained output (live session only).
+	OutputAvailable bool `protobuf:"varint,18,opt,name=output_available,json=outputAvailable,proto3" json:"output_available,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ActivityNode) Reset() {
+	*x = ActivityNode{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivityNode) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivityNode) ProtoMessage() {}
+
+func (x *ActivityNode) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivityNode.ProtoReflect.Descriptor instead.
+func (*ActivityNode) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *ActivityNode) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetParentId() string {
+	if x != nil {
+		return x.ParentId
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetMutates() bool {
+	if x != nil {
+		return x.Mutates
+	}
+	return false
+}
+
+func (x *ActivityNode) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetResult() string {
+	if x != nil {
+		return x.Result
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetSpans() []*ActivitySpan {
+	if x != nil {
+		return x.Spans
+	}
+	return nil
+}
+
+func (x *ActivityNode) GetCurrentTool() string {
+	if x != nil {
+		return x.CurrentTool
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetTurns() int32 {
+	if x != nil {
+		return x.Turns
+	}
+	return 0
+}
+
+func (x *ActivityNode) GetTotalTokens() int64 {
+	if x != nil {
+		return x.TotalTokens
+	}
+	return 0
+}
+
+func (x *ActivityNode) GetLastActivityAt() string {
+	if x != nil {
+		return x.LastActivityAt
+	}
+	return ""
+}
+
+func (x *ActivityNode) GetOutputAvailable() bool {
+	if x != nil {
+		return x.OutputAvailable
+	}
+	return false
+}
+
+type GetSessionActivityRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSessionActivityRequest) Reset() {
+	*x = GetSessionActivityRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSessionActivityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSessionActivityRequest) ProtoMessage() {}
+
+func (x *GetSessionActivityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSessionActivityRequest.ProtoReflect.Descriptor instead.
+func (*GetSessionActivityRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *GetSessionActivityRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *GetSessionActivityRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type GetSessionActivityResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Nodes             []*ActivityNode        `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"` // root first, then by start time
+	Live              bool                   `protobuf:"varint,2,opt,name=live,proto3" json:"live,omitempty"`
+	IndexedThroughSeq int64                  `protobuf:"varint,3,opt,name=indexed_through_seq,json=indexedThroughSeq,proto3" json:"indexed_through_seq,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *GetSessionActivityResponse) Reset() {
+	*x = GetSessionActivityResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSessionActivityResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSessionActivityResponse) ProtoMessage() {}
+
+func (x *GetSessionActivityResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSessionActivityResponse.ProtoReflect.Descriptor instead.
+func (*GetSessionActivityResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *GetSessionActivityResponse) GetNodes() []*ActivityNode {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *GetSessionActivityResponse) GetLive() bool {
+	if x != nil {
+		return x.Live
+	}
+	return false
+}
+
+func (x *GetSessionActivityResponse) GetIndexedThroughSeq() int64 {
+	if x != nil {
+		return x.IndexedThroughSeq
+	}
+	return 0
+}
+
+type GetJobOutputRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	JobId         string                 `protobuf:"bytes,3,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	Offset        int64                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`                        // absolute byte offset into the job's whole output stream
+	Limit         int32                  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`                          // bytes; zero uses 64 KiB, clamped to 256 KiB
+	TailLines     int32                  `protobuf:"varint,6,opt,name=tail_lines,json=tailLines,proto3" json:"tail_lines,omitempty"` // > 0 selects the retained tail instead of offset
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetJobOutputRequest) Reset() {
+	*x = GetJobOutputRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetJobOutputRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetJobOutputRequest) ProtoMessage() {}
+
+func (x *GetJobOutputRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetJobOutputRequest.ProtoReflect.Descriptor instead.
+func (*GetJobOutputRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *GetJobOutputRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *GetJobOutputRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *GetJobOutputRequest) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *GetJobOutputRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *GetJobOutputRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *GetJobOutputRequest) GetTailLines() int32 {
+	if x != nil {
+		return x.TailLines
+	}
+	return 0
+}
+
+type GetJobOutputResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// False when the session is not live or the job is unknown to its registry;
+	// fall back to the activity node's result.
+	Available         bool   `protobuf:"varint,1,opt,name=available,proto3" json:"available,omitempty"`
+	UnavailableReason string `protobuf:"bytes,2,opt,name=unavailable_reason,json=unavailableReason,proto3" json:"unavailable_reason,omitempty"`
+	Data              []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	Start             int64  `protobuf:"varint,4,opt,name=start,proto3" json:"start,omitempty"`
+	End               int64  `protobuf:"varint,5,opt,name=end,proto3" json:"end,omitempty"`
+	RetainedStart     int64  `protobuf:"varint,6,opt,name=retained_start,json=retainedStart,proto3" json:"retained_start,omitempty"` // earlier bytes were dropped from the bounded buffer
+	RetainedEnd       int64  `protobuf:"varint,7,opt,name=retained_end,json=retainedEnd,proto3" json:"retained_end,omitempty"`
+	Status            string `protobuf:"bytes,8,opt,name=status,proto3" json:"status,omitempty"` // job status
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *GetJobOutputResponse) Reset() {
+	*x = GetJobOutputResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetJobOutputResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetJobOutputResponse) ProtoMessage() {}
+
+func (x *GetJobOutputResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetJobOutputResponse.ProtoReflect.Descriptor instead.
+func (*GetJobOutputResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *GetJobOutputResponse) GetAvailable() bool {
+	if x != nil {
+		return x.Available
+	}
+	return false
+}
+
+func (x *GetJobOutputResponse) GetUnavailableReason() string {
+	if x != nil {
+		return x.UnavailableReason
+	}
+	return ""
+}
+
+func (x *GetJobOutputResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *GetJobOutputResponse) GetStart() int64 {
+	if x != nil {
+		return x.Start
+	}
+	return 0
+}
+
+func (x *GetJobOutputResponse) GetEnd() int64 {
+	if x != nil {
+		return x.End
+	}
+	return 0
+}
+
+func (x *GetJobOutputResponse) GetRetainedStart() int64 {
+	if x != nil {
+		return x.RetainedStart
+	}
+	return 0
+}
+
+func (x *GetJobOutputResponse) GetRetainedEnd() int64 {
+	if x != nil {
+		return x.RetainedEnd
+	}
+	return 0
+}
+
+func (x *GetJobOutputResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
 // GetSessionAttachment returns one picture referenced by attachment_id in a
 // user_input event. The payload is stored beside (not inside) events.jsonl and
 // follows the session log's retention lifecycle.
@@ -3963,7 +4532,7 @@ type GetSessionAttachmentRequest struct {
 
 func (x *GetSessionAttachmentRequest) Reset() {
 	*x = GetSessionAttachmentRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[63]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3975,7 +4544,7 @@ func (x *GetSessionAttachmentRequest) String() string {
 func (*GetSessionAttachmentRequest) ProtoMessage() {}
 
 func (x *GetSessionAttachmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[63]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3988,7 +4557,7 @@ func (x *GetSessionAttachmentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionAttachmentRequest.ProtoReflect.Descriptor instead.
 func (*GetSessionAttachmentRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{63}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *GetSessionAttachmentRequest) GetProject() string {
@@ -4022,7 +4591,7 @@ type GetSessionAttachmentResponse struct {
 
 func (x *GetSessionAttachmentResponse) Reset() {
 	*x = GetSessionAttachmentResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[64]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4034,7 +4603,7 @@ func (x *GetSessionAttachmentResponse) String() string {
 func (*GetSessionAttachmentResponse) ProtoMessage() {}
 
 func (x *GetSessionAttachmentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[64]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4047,7 +4616,7 @@ func (x *GetSessionAttachmentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionAttachmentResponse.ProtoReflect.Descriptor instead.
 func (*GetSessionAttachmentResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{64}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *GetSessionAttachmentResponse) GetData() []byte {
@@ -4078,7 +4647,7 @@ type GetCommitDiffRequest struct {
 
 func (x *GetCommitDiffRequest) Reset() {
 	*x = GetCommitDiffRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[65]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4090,7 +4659,7 @@ func (x *GetCommitDiffRequest) String() string {
 func (*GetCommitDiffRequest) ProtoMessage() {}
 
 func (x *GetCommitDiffRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[65]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4103,7 +4672,7 @@ func (x *GetCommitDiffRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCommitDiffRequest.ProtoReflect.Descriptor instead.
 func (*GetCommitDiffRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{65}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *GetCommitDiffRequest) GetProject() string {
@@ -4130,7 +4699,7 @@ type GetCommitDiffResponse struct {
 
 func (x *GetCommitDiffResponse) Reset() {
 	*x = GetCommitDiffResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[66]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4142,7 +4711,7 @@ func (x *GetCommitDiffResponse) String() string {
 func (*GetCommitDiffResponse) ProtoMessage() {}
 
 func (x *GetCommitDiffResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[66]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4155,7 +4724,7 @@ func (x *GetCommitDiffResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCommitDiffResponse.ProtoReflect.Descriptor instead.
 func (*GetCommitDiffResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{66}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *GetCommitDiffResponse) GetDiff() string {
@@ -4185,7 +4754,7 @@ type ListModelsRequest struct {
 
 func (x *ListModelsRequest) Reset() {
 	*x = ListModelsRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[67]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4197,7 +4766,7 @@ func (x *ListModelsRequest) String() string {
 func (*ListModelsRequest) ProtoMessage() {}
 
 func (x *ListModelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[67]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4210,7 +4779,7 @@ func (x *ListModelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListModelsRequest.ProtoReflect.Descriptor instead.
 func (*ListModelsRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{67}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ListModelsRequest) GetSessionId() string {
@@ -4244,7 +4813,7 @@ type ModelInfo struct {
 
 func (x *ModelInfo) Reset() {
 	*x = ModelInfo{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[68]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4256,7 +4825,7 @@ func (x *ModelInfo) String() string {
 func (*ModelInfo) ProtoMessage() {}
 
 func (x *ModelInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[68]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4269,7 +4838,7 @@ func (x *ModelInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelInfo.ProtoReflect.Descriptor instead.
 func (*ModelInfo) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{68}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *ModelInfo) GetName() string {
@@ -4357,7 +4926,7 @@ type ListModelsResponse struct {
 
 func (x *ListModelsResponse) Reset() {
 	*x = ListModelsResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[69]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4369,7 +4938,7 @@ func (x *ListModelsResponse) String() string {
 func (*ListModelsResponse) ProtoMessage() {}
 
 func (x *ListModelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[69]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4382,7 +4951,7 @@ func (x *ListModelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListModelsResponse.ProtoReflect.Descriptor instead.
 func (*ListModelsResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{69}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *ListModelsResponse) GetModels() []*ModelInfo {
@@ -4467,7 +5036,7 @@ type ModelConfig struct {
 
 func (x *ModelConfig) Reset() {
 	*x = ModelConfig{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[70]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4479,7 +5048,7 @@ func (x *ModelConfig) String() string {
 func (*ModelConfig) ProtoMessage() {}
 
 func (x *ModelConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[70]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4492,7 +5061,7 @@ func (x *ModelConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelConfig.ProtoReflect.Descriptor instead.
 func (*ModelConfig) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{70}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *ModelConfig) GetName() string {
@@ -4605,7 +5174,7 @@ type UpsertModelRequest struct {
 
 func (x *UpsertModelRequest) Reset() {
 	*x = UpsertModelRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[71]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4617,7 +5186,7 @@ func (x *UpsertModelRequest) String() string {
 func (*UpsertModelRequest) ProtoMessage() {}
 
 func (x *UpsertModelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[71]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4630,7 +5199,7 @@ func (x *UpsertModelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertModelRequest.ProtoReflect.Descriptor instead.
 func (*UpsertModelRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{71}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *UpsertModelRequest) GetModel() *ModelConfig {
@@ -4655,7 +5224,7 @@ type UpsertModelResponse struct {
 
 func (x *UpsertModelResponse) Reset() {
 	*x = UpsertModelResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[72]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4667,7 +5236,7 @@ func (x *UpsertModelResponse) String() string {
 func (*UpsertModelResponse) ProtoMessage() {}
 
 func (x *UpsertModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[72]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4680,7 +5249,7 @@ func (x *UpsertModelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertModelResponse.ProtoReflect.Descriptor instead.
 func (*UpsertModelResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{72}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{78}
 }
 
 // RemoveModel deletes a logical model backend. Rejected if a role still
@@ -4695,7 +5264,7 @@ type RemoveModelRequest struct {
 
 func (x *RemoveModelRequest) Reset() {
 	*x = RemoveModelRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[73]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4707,7 +5276,7 @@ func (x *RemoveModelRequest) String() string {
 func (*RemoveModelRequest) ProtoMessage() {}
 
 func (x *RemoveModelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[73]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4720,7 +5289,7 @@ func (x *RemoveModelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveModelRequest.ProtoReflect.Descriptor instead.
 func (*RemoveModelRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{73}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *RemoveModelRequest) GetName() string {
@@ -4745,7 +5314,7 @@ type RemoveModelResponse struct {
 
 func (x *RemoveModelResponse) Reset() {
 	*x = RemoveModelResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[74]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4757,7 +5326,7 @@ func (x *RemoveModelResponse) String() string {
 func (*RemoveModelResponse) ProtoMessage() {}
 
 func (x *RemoveModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[74]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4770,7 +5339,7 @@ func (x *RemoveModelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveModelResponse.ProtoReflect.Descriptor instead.
 func (*RemoveModelResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{74}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{80}
 }
 
 // GetModelConfig returns a model backend's full record for editing.
@@ -4783,7 +5352,7 @@ type GetModelConfigRequest struct {
 
 func (x *GetModelConfigRequest) Reset() {
 	*x = GetModelConfigRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[75]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4795,7 +5364,7 @@ func (x *GetModelConfigRequest) String() string {
 func (*GetModelConfigRequest) ProtoMessage() {}
 
 func (x *GetModelConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[75]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4808,7 +5377,7 @@ func (x *GetModelConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetModelConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetModelConfigRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{75}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *GetModelConfigRequest) GetName() string {
@@ -4827,7 +5396,7 @@ type GetModelConfigResponse struct {
 
 func (x *GetModelConfigResponse) Reset() {
 	*x = GetModelConfigResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[76]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4839,7 +5408,7 @@ func (x *GetModelConfigResponse) String() string {
 func (*GetModelConfigResponse) ProtoMessage() {}
 
 func (x *GetModelConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[76]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4852,7 +5421,7 @@ func (x *GetModelConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetModelConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetModelConfigResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{76}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *GetModelConfigResponse) GetModel() *ModelConfig {
@@ -4878,7 +5447,7 @@ type DiscoverModelsRequest struct {
 
 func (x *DiscoverModelsRequest) Reset() {
 	*x = DiscoverModelsRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[77]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4890,7 +5459,7 @@ func (x *DiscoverModelsRequest) String() string {
 func (*DiscoverModelsRequest) ProtoMessage() {}
 
 func (x *DiscoverModelsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[77]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4903,7 +5472,7 @@ func (x *DiscoverModelsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoverModelsRequest.ProtoReflect.Descriptor instead.
 func (*DiscoverModelsRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{77}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *DiscoverModelsRequest) GetBackend() string {
@@ -4938,7 +5507,7 @@ type DiscoverModelsResponse struct {
 
 func (x *DiscoverModelsResponse) Reset() {
 	*x = DiscoverModelsResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[78]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4950,7 +5519,7 @@ func (x *DiscoverModelsResponse) String() string {
 func (*DiscoverModelsResponse) ProtoMessage() {}
 
 func (x *DiscoverModelsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[78]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4963,7 +5532,7 @@ func (x *DiscoverModelsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoverModelsResponse.ProtoReflect.Descriptor instead.
 func (*DiscoverModelsResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{78}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *DiscoverModelsResponse) GetModelIds() []string {
@@ -5004,7 +5573,7 @@ type SetRoleConfigRequest struct {
 
 func (x *SetRoleConfigRequest) Reset() {
 	*x = SetRoleConfigRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5016,7 +5585,7 @@ func (x *SetRoleConfigRequest) String() string {
 func (*SetRoleConfigRequest) ProtoMessage() {}
 
 func (x *SetRoleConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[79]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5029,7 +5598,7 @@ func (x *SetRoleConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRoleConfigRequest.ProtoReflect.Descriptor instead.
 func (*SetRoleConfigRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{79}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *SetRoleConfigRequest) GetSessionId() string {
@@ -5068,7 +5637,7 @@ type SetRoleConfigResponse struct {
 
 func (x *SetRoleConfigResponse) Reset() {
 	*x = SetRoleConfigResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5080,7 +5649,7 @@ func (x *SetRoleConfigResponse) String() string {
 func (*SetRoleConfigResponse) ProtoMessage() {}
 
 func (x *SetRoleConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[80]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5093,7 +5662,7 @@ func (x *SetRoleConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRoleConfigResponse.ProtoReflect.Descriptor instead.
 func (*SetRoleConfigResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{80}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{86}
 }
 
 // SetThinking maps role to its currently assigned model(s) and stores the level
@@ -5112,7 +5681,7 @@ type SetThinkingRequest struct {
 
 func (x *SetThinkingRequest) Reset() {
 	*x = SetThinkingRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5124,7 +5693,7 @@ func (x *SetThinkingRequest) String() string {
 func (*SetThinkingRequest) ProtoMessage() {}
 
 func (x *SetThinkingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[81]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5137,7 +5706,7 @@ func (x *SetThinkingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetThinkingRequest.ProtoReflect.Descriptor instead.
 func (*SetThinkingRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{81}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *SetThinkingRequest) GetSessionId() string {
@@ -5169,7 +5738,7 @@ type SetThinkingResponse struct {
 
 func (x *SetThinkingResponse) Reset() {
 	*x = SetThinkingResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5181,7 +5750,7 @@ func (x *SetThinkingResponse) String() string {
 func (*SetThinkingResponse) ProtoMessage() {}
 
 func (x *SetThinkingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[82]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5194,7 +5763,7 @@ func (x *SetThinkingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetThinkingResponse.ProtoReflect.Descriptor instead.
 func (*SetThinkingResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{82}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{88}
 }
 
 // SetWorkImplementation changes the persisted work-mode implementation strategy.
@@ -5209,7 +5778,7 @@ type SetWorkImplementationRequest struct {
 
 func (x *SetWorkImplementationRequest) Reset() {
 	*x = SetWorkImplementationRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5221,7 +5790,7 @@ func (x *SetWorkImplementationRequest) String() string {
 func (*SetWorkImplementationRequest) ProtoMessage() {}
 
 func (x *SetWorkImplementationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[83]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5234,7 +5803,7 @@ func (x *SetWorkImplementationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetWorkImplementationRequest.ProtoReflect.Descriptor instead.
 func (*SetWorkImplementationRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{83}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *SetWorkImplementationRequest) GetImplementation() string {
@@ -5252,7 +5821,7 @@ type SetWorkImplementationResponse struct {
 
 func (x *SetWorkImplementationResponse) Reset() {
 	*x = SetWorkImplementationResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5264,7 +5833,7 @@ func (x *SetWorkImplementationResponse) String() string {
 func (*SetWorkImplementationResponse) ProtoMessage() {}
 
 func (x *SetWorkImplementationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[84]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5277,7 +5846,7 @@ func (x *SetWorkImplementationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetWorkImplementationResponse.ProtoReflect.Descriptor instead.
 func (*SetWorkImplementationResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{84}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{90}
 }
 
 // ReviewerSlot is one reviewer slot of a tier's long form
@@ -5295,7 +5864,7 @@ type ReviewerSlot struct {
 
 func (x *ReviewerSlot) Reset() {
 	*x = ReviewerSlot{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5307,7 +5876,7 @@ func (x *ReviewerSlot) String() string {
 func (*ReviewerSlot) ProtoMessage() {}
 
 func (x *ReviewerSlot) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[85]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5320,7 +5889,7 @@ func (x *ReviewerSlot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewerSlot.ProtoReflect.Descriptor instead.
 func (*ReviewerSlot) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{85}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *ReviewerSlot) GetName() string {
@@ -5370,7 +5939,7 @@ type ReviewTierInfo struct {
 
 func (x *ReviewTierInfo) Reset() {
 	*x = ReviewTierInfo{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5382,7 +5951,7 @@ func (x *ReviewTierInfo) String() string {
 func (*ReviewTierInfo) ProtoMessage() {}
 
 func (x *ReviewTierInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[86]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5395,7 +5964,7 @@ func (x *ReviewTierInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewTierInfo.ProtoReflect.Descriptor instead.
 func (*ReviewTierInfo) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{86}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *ReviewTierInfo) GetName() string {
@@ -5466,7 +6035,7 @@ type ListReviewTiersRequest struct {
 
 func (x *ListReviewTiersRequest) Reset() {
 	*x = ListReviewTiersRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5478,7 +6047,7 @@ func (x *ListReviewTiersRequest) String() string {
 func (*ListReviewTiersRequest) ProtoMessage() {}
 
 func (x *ListReviewTiersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[87]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5491,7 +6060,7 @@ func (x *ListReviewTiersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReviewTiersRequest.ProtoReflect.Descriptor instead.
 func (*ListReviewTiersRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{87}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{93}
 }
 
 type ListReviewTiersResponse struct {
@@ -5504,7 +6073,7 @@ type ListReviewTiersResponse struct {
 
 func (x *ListReviewTiersResponse) Reset() {
 	*x = ListReviewTiersResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5516,7 +6085,7 @@ func (x *ListReviewTiersResponse) String() string {
 func (*ListReviewTiersResponse) ProtoMessage() {}
 
 func (x *ListReviewTiersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[88]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5529,7 +6098,7 @@ func (x *ListReviewTiersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReviewTiersResponse.ProtoReflect.Descriptor instead.
 func (*ListReviewTiersResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{88}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *ListReviewTiersResponse) GetTiers() []*ReviewTierInfo {
@@ -5560,7 +6129,7 @@ type UpsertReviewTierRequest struct {
 
 func (x *UpsertReviewTierRequest) Reset() {
 	*x = UpsertReviewTierRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5572,7 +6141,7 @@ func (x *UpsertReviewTierRequest) String() string {
 func (*UpsertReviewTierRequest) ProtoMessage() {}
 
 func (x *UpsertReviewTierRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[89]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5585,7 +6154,7 @@ func (x *UpsertReviewTierRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertReviewTierRequest.ProtoReflect.Descriptor instead.
 func (*UpsertReviewTierRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{89}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *UpsertReviewTierRequest) GetTier() *ReviewTierInfo {
@@ -5603,7 +6172,7 @@ type UpsertReviewTierResponse struct {
 
 func (x *UpsertReviewTierResponse) Reset() {
 	*x = UpsertReviewTierResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[90]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5615,7 +6184,7 @@ func (x *UpsertReviewTierResponse) String() string {
 func (*UpsertReviewTierResponse) ProtoMessage() {}
 
 func (x *UpsertReviewTierResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[90]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5628,7 +6197,7 @@ func (x *UpsertReviewTierResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpsertReviewTierResponse.ProtoReflect.Descriptor instead.
 func (*UpsertReviewTierResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{90}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{96}
 }
 
 // RemoveReviewTier deletes the CONFIGURED entry for a tier and persists. A
@@ -5645,7 +6214,7 @@ type RemoveReviewTierRequest struct {
 
 func (x *RemoveReviewTierRequest) Reset() {
 	*x = RemoveReviewTierRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[91]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5657,7 +6226,7 @@ func (x *RemoveReviewTierRequest) String() string {
 func (*RemoveReviewTierRequest) ProtoMessage() {}
 
 func (x *RemoveReviewTierRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[91]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5670,7 +6239,7 @@ func (x *RemoveReviewTierRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveReviewTierRequest.ProtoReflect.Descriptor instead.
 func (*RemoveReviewTierRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{91}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *RemoveReviewTierRequest) GetName() string {
@@ -5688,7 +6257,7 @@ type RemoveReviewTierResponse struct {
 
 func (x *RemoveReviewTierResponse) Reset() {
 	*x = RemoveReviewTierResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[92]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5700,7 +6269,7 @@ func (x *RemoveReviewTierResponse) String() string {
 func (*RemoveReviewTierResponse) ProtoMessage() {}
 
 func (x *RemoveReviewTierResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[92]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5713,7 +6282,7 @@ func (x *RemoveReviewTierResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveReviewTierResponse.ProtoReflect.Descriptor instead.
 func (*RemoveReviewTierResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{92}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{98}
 }
 
 // SetReviewDefault sets reviews.default (persisted canonically). The tier must
@@ -5728,7 +6297,7 @@ type SetReviewDefaultRequest struct {
 
 func (x *SetReviewDefaultRequest) Reset() {
 	*x = SetReviewDefaultRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[93]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5740,7 +6309,7 @@ func (x *SetReviewDefaultRequest) String() string {
 func (*SetReviewDefaultRequest) ProtoMessage() {}
 
 func (x *SetReviewDefaultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[93]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5753,7 +6322,7 @@ func (x *SetReviewDefaultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetReviewDefaultRequest.ProtoReflect.Descriptor instead.
 func (*SetReviewDefaultRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{93}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *SetReviewDefaultRequest) GetName() string {
@@ -5771,7 +6340,7 @@ type SetReviewDefaultResponse struct {
 
 func (x *SetReviewDefaultResponse) Reset() {
 	*x = SetReviewDefaultResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[94]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5783,7 +6352,7 @@ func (x *SetReviewDefaultResponse) String() string {
 func (*SetReviewDefaultResponse) ProtoMessage() {}
 
 func (x *SetReviewDefaultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[94]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5796,7 +6365,7 @@ func (x *SetReviewDefaultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetReviewDefaultResponse.ProtoReflect.Descriptor instead.
 func (*SetReviewDefaultResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{94}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{100}
 }
 
 // Backlog browser RPCs expose the durable backlog (internal/docs Store) so
@@ -5810,7 +6379,7 @@ type ListBacklogRequest struct {
 
 func (x *ListBacklogRequest) Reset() {
 	*x = ListBacklogRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[95]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5822,7 +6391,7 @@ func (x *ListBacklogRequest) String() string {
 func (*ListBacklogRequest) ProtoMessage() {}
 
 func (x *ListBacklogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[95]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5835,7 +6404,7 @@ func (x *ListBacklogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBacklogRequest.ProtoReflect.Descriptor instead.
 func (*ListBacklogRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{95}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *ListBacklogRequest) GetProject() string {
@@ -5860,7 +6429,7 @@ type BacklogTaskSummary struct {
 
 func (x *BacklogTaskSummary) Reset() {
 	*x = BacklogTaskSummary{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[96]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5872,7 +6441,7 @@ func (x *BacklogTaskSummary) String() string {
 func (*BacklogTaskSummary) ProtoMessage() {}
 
 func (x *BacklogTaskSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[96]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5885,7 +6454,7 @@ func (x *BacklogTaskSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BacklogTaskSummary.ProtoReflect.Descriptor instead.
 func (*BacklogTaskSummary) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{96}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *BacklogTaskSummary) GetId() string {
@@ -5946,7 +6515,7 @@ type ListBacklogResponse struct {
 
 func (x *ListBacklogResponse) Reset() {
 	*x = ListBacklogResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[97]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5958,7 +6527,7 @@ func (x *ListBacklogResponse) String() string {
 func (*ListBacklogResponse) ProtoMessage() {}
 
 func (x *ListBacklogResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[97]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5971,7 +6540,7 @@ func (x *ListBacklogResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBacklogResponse.ProtoReflect.Descriptor instead.
 func (*ListBacklogResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{97}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *ListBacklogResponse) GetTasks() []*BacklogTaskSummary {
@@ -5991,7 +6560,7 @@ type GetTaskRequest struct {
 
 func (x *GetTaskRequest) Reset() {
 	*x = GetTaskRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[98]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6003,7 +6572,7 @@ func (x *GetTaskRequest) String() string {
 func (*GetTaskRequest) ProtoMessage() {}
 
 func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[98]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6016,7 +6585,7 @@ func (x *GetTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskRequest.ProtoReflect.Descriptor instead.
 func (*GetTaskRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{98}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *GetTaskRequest) GetProject() string {
@@ -6053,7 +6622,7 @@ type TaskDetail struct {
 
 func (x *TaskDetail) Reset() {
 	*x = TaskDetail{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[99]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6065,7 +6634,7 @@ func (x *TaskDetail) String() string {
 func (*TaskDetail) ProtoMessage() {}
 
 func (x *TaskDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[99]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6078,7 +6647,7 @@ func (x *TaskDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskDetail.ProtoReflect.Descriptor instead.
 func (*TaskDetail) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{99}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *TaskDetail) GetId() string {
@@ -6174,7 +6743,7 @@ type GetTaskResponse struct {
 
 func (x *GetTaskResponse) Reset() {
 	*x = GetTaskResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[100]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[106]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6186,7 +6755,7 @@ func (x *GetTaskResponse) String() string {
 func (*GetTaskResponse) ProtoMessage() {}
 
 func (x *GetTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[100]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[106]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6199,7 +6768,7 @@ func (x *GetTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTaskResponse.ProtoReflect.Descriptor instead.
 func (*GetTaskResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{100}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{106}
 }
 
 func (x *GetTaskResponse) GetTask() *TaskDetail {
@@ -6231,7 +6800,7 @@ type UpdateTaskRequest struct {
 
 func (x *UpdateTaskRequest) Reset() {
 	*x = UpdateTaskRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[101]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[107]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6243,7 +6812,7 @@ func (x *UpdateTaskRequest) String() string {
 func (*UpdateTaskRequest) ProtoMessage() {}
 
 func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[101]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[107]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6256,7 +6825,7 @@ func (x *UpdateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTaskRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{101}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{107}
 }
 
 func (x *UpdateTaskRequest) GetProject() string {
@@ -6338,7 +6907,7 @@ type UpdateTaskResponse struct {
 
 func (x *UpdateTaskResponse) Reset() {
 	*x = UpdateTaskResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[102]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[108]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6350,7 +6919,7 @@ func (x *UpdateTaskResponse) String() string {
 func (*UpdateTaskResponse) ProtoMessage() {}
 
 func (x *UpdateTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[102]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[108]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6363,7 +6932,7 @@ func (x *UpdateTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTaskResponse.ProtoReflect.Descriptor instead.
 func (*UpdateTaskResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{102}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{108}
 }
 
 func (x *UpdateTaskResponse) GetTask() *TaskDetail {
@@ -6391,7 +6960,7 @@ type CreateTaskRequest struct {
 
 func (x *CreateTaskRequest) Reset() {
 	*x = CreateTaskRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[103]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[109]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6403,7 +6972,7 @@ func (x *CreateTaskRequest) String() string {
 func (*CreateTaskRequest) ProtoMessage() {}
 
 func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[103]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[109]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6416,7 +6985,7 @@ func (x *CreateTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTaskRequest.ProtoReflect.Descriptor instead.
 func (*CreateTaskRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{103}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{109}
 }
 
 func (x *CreateTaskRequest) GetProject() string {
@@ -6470,7 +7039,7 @@ type CreateTaskResponse struct {
 
 func (x *CreateTaskResponse) Reset() {
 	*x = CreateTaskResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[104]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[110]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6482,7 +7051,7 @@ func (x *CreateTaskResponse) String() string {
 func (*CreateTaskResponse) ProtoMessage() {}
 
 func (x *CreateTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[104]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[110]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6495,7 +7064,7 @@ func (x *CreateTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTaskResponse.ProtoReflect.Descriptor instead.
 func (*CreateTaskResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{104}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{110}
 }
 
 func (x *CreateTaskResponse) GetTask() *TaskDetail {
@@ -6516,7 +7085,7 @@ type ListPlansRequest struct {
 
 func (x *ListPlansRequest) Reset() {
 	*x = ListPlansRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[105]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[111]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6528,7 +7097,7 @@ func (x *ListPlansRequest) String() string {
 func (*ListPlansRequest) ProtoMessage() {}
 
 func (x *ListPlansRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[105]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[111]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6541,7 +7110,7 @@ func (x *ListPlansRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlansRequest.ProtoReflect.Descriptor instead.
 func (*ListPlansRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{105}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{111}
 }
 
 func (x *ListPlansRequest) GetProject() string {
@@ -6562,7 +7131,7 @@ type PlanSummary struct {
 
 func (x *PlanSummary) Reset() {
 	*x = PlanSummary{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[106]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[112]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6574,7 +7143,7 @@ func (x *PlanSummary) String() string {
 func (*PlanSummary) ProtoMessage() {}
 
 func (x *PlanSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[106]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[112]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6587,7 +7156,7 @@ func (x *PlanSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanSummary.ProtoReflect.Descriptor instead.
 func (*PlanSummary) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{106}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{112}
 }
 
 func (x *PlanSummary) GetName() string {
@@ -6620,7 +7189,7 @@ type ListPlansResponse struct {
 
 func (x *ListPlansResponse) Reset() {
 	*x = ListPlansResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[107]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[113]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6632,7 +7201,7 @@ func (x *ListPlansResponse) String() string {
 func (*ListPlansResponse) ProtoMessage() {}
 
 func (x *ListPlansResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[107]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[113]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6645,7 +7214,7 @@ func (x *ListPlansResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlansResponse.ProtoReflect.Descriptor instead.
 func (*ListPlansResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{107}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{113}
 }
 
 func (x *ListPlansResponse) GetPlans() []*PlanSummary {
@@ -6665,7 +7234,7 @@ type GetPlanRequest struct {
 
 func (x *GetPlanRequest) Reset() {
 	*x = GetPlanRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[108]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[114]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6677,7 +7246,7 @@ func (x *GetPlanRequest) String() string {
 func (*GetPlanRequest) ProtoMessage() {}
 
 func (x *GetPlanRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[108]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[114]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6690,7 +7259,7 @@ func (x *GetPlanRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPlanRequest.ProtoReflect.Descriptor instead.
 func (*GetPlanRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{108}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{114}
 }
 
 func (x *GetPlanRequest) GetProject() string {
@@ -6718,7 +7287,7 @@ type GetPlanResponse struct {
 
 func (x *GetPlanResponse) Reset() {
 	*x = GetPlanResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[109]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[115]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6730,7 +7299,7 @@ func (x *GetPlanResponse) String() string {
 func (*GetPlanResponse) ProtoMessage() {}
 
 func (x *GetPlanResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[109]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[115]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6743,7 +7312,7 @@ func (x *GetPlanResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPlanResponse.ProtoReflect.Descriptor instead.
 func (*GetPlanResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{109}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{115}
 }
 
 func (x *GetPlanResponse) GetName() string {
@@ -6779,7 +7348,7 @@ type GetMemoryRequest struct {
 
 func (x *GetMemoryRequest) Reset() {
 	*x = GetMemoryRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[110]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[116]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6791,7 +7360,7 @@ func (x *GetMemoryRequest) String() string {
 func (*GetMemoryRequest) ProtoMessage() {}
 
 func (x *GetMemoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[110]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[116]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6804,7 +7373,7 @@ func (x *GetMemoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMemoryRequest.ProtoReflect.Descriptor instead.
 func (*GetMemoryRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{110}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{116}
 }
 
 func (x *GetMemoryRequest) GetProject() string {
@@ -6835,7 +7404,7 @@ type GetMemoryResponse struct {
 
 func (x *GetMemoryResponse) Reset() {
 	*x = GetMemoryResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[111]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[117]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6847,7 +7416,7 @@ func (x *GetMemoryResponse) String() string {
 func (*GetMemoryResponse) ProtoMessage() {}
 
 func (x *GetMemoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[111]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[117]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6860,7 +7429,7 @@ func (x *GetMemoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMemoryResponse.ProtoReflect.Descriptor instead.
 func (*GetMemoryResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{111}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{117}
 }
 
 func (x *GetMemoryResponse) GetContent() string {
@@ -6941,7 +7510,7 @@ type MemoryGroomRun struct {
 
 func (x *MemoryGroomRun) Reset() {
 	*x = MemoryGroomRun{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[112]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[118]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6953,7 +7522,7 @@ func (x *MemoryGroomRun) String() string {
 func (*MemoryGroomRun) ProtoMessage() {}
 
 func (x *MemoryGroomRun) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[112]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[118]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6966,7 +7535,7 @@ func (x *MemoryGroomRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryGroomRun.ProtoReflect.Descriptor instead.
 func (*MemoryGroomRun) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{112}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{118}
 }
 
 func (x *MemoryGroomRun) GetSessionId() string {
@@ -7029,7 +7598,7 @@ type CaptureBacklogItemRequest struct {
 
 func (x *CaptureBacklogItemRequest) Reset() {
 	*x = CaptureBacklogItemRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[113]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[119]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7041,7 +7610,7 @@ func (x *CaptureBacklogItemRequest) String() string {
 func (*CaptureBacklogItemRequest) ProtoMessage() {}
 
 func (x *CaptureBacklogItemRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[113]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[119]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7054,7 +7623,7 @@ func (x *CaptureBacklogItemRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureBacklogItemRequest.ProtoReflect.Descriptor instead.
 func (*CaptureBacklogItemRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{113}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{119}
 }
 
 func (x *CaptureBacklogItemRequest) GetProject() string {
@@ -7102,7 +7671,7 @@ type GetUsageRequest struct {
 
 func (x *GetUsageRequest) Reset() {
 	*x = GetUsageRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[114]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[120]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7114,7 +7683,7 @@ func (x *GetUsageRequest) String() string {
 func (*GetUsageRequest) ProtoMessage() {}
 
 func (x *GetUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[114]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[120]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7127,7 +7696,7 @@ func (x *GetUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUsageRequest.ProtoReflect.Descriptor instead.
 func (*GetUsageRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{114}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{120}
 }
 
 func (x *GetUsageRequest) GetProject() string {
@@ -7185,7 +7754,7 @@ type UsageRow struct {
 
 func (x *UsageRow) Reset() {
 	*x = UsageRow{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[115]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[121]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7197,7 +7766,7 @@ func (x *UsageRow) String() string {
 func (*UsageRow) ProtoMessage() {}
 
 func (x *UsageRow) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[115]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[121]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7210,7 +7779,7 @@ func (x *UsageRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageRow.ProtoReflect.Descriptor instead.
 func (*UsageRow) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{115}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{121}
 }
 
 func (x *UsageRow) GetTask() string {
@@ -7308,7 +7877,7 @@ type GetUsageResponse struct {
 
 func (x *GetUsageResponse) Reset() {
 	*x = GetUsageResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[116]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[122]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7320,7 +7889,7 @@ func (x *GetUsageResponse) String() string {
 func (*GetUsageResponse) ProtoMessage() {}
 
 func (x *GetUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[116]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[122]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7333,7 +7902,7 @@ func (x *GetUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUsageResponse.ProtoReflect.Descriptor instead.
 func (*GetUsageResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{116}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{122}
 }
 
 func (x *GetUsageResponse) GetRows() []*UsageRow {
@@ -7368,7 +7937,7 @@ type BeginAnthropicLoginRequest struct {
 
 func (x *BeginAnthropicLoginRequest) Reset() {
 	*x = BeginAnthropicLoginRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[117]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[123]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7380,7 +7949,7 @@ func (x *BeginAnthropicLoginRequest) String() string {
 func (*BeginAnthropicLoginRequest) ProtoMessage() {}
 
 func (x *BeginAnthropicLoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[117]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[123]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7393,7 +7962,7 @@ func (x *BeginAnthropicLoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginAnthropicLoginRequest.ProtoReflect.Descriptor instead.
 func (*BeginAnthropicLoginRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{117}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{123}
 }
 
 type BeginAnthropicLoginResponse struct {
@@ -7407,7 +7976,7 @@ type BeginAnthropicLoginResponse struct {
 
 func (x *BeginAnthropicLoginResponse) Reset() {
 	*x = BeginAnthropicLoginResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[118]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[124]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7419,7 +7988,7 @@ func (x *BeginAnthropicLoginResponse) String() string {
 func (*BeginAnthropicLoginResponse) ProtoMessage() {}
 
 func (x *BeginAnthropicLoginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[118]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[124]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7432,7 +8001,7 @@ func (x *BeginAnthropicLoginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginAnthropicLoginResponse.ProtoReflect.Descriptor instead.
 func (*BeginAnthropicLoginResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{118}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{124}
 }
 
 func (x *BeginAnthropicLoginResponse) GetAttemptId() string {
@@ -7466,7 +8035,7 @@ type CompleteAnthropicLoginRequest struct {
 
 func (x *CompleteAnthropicLoginRequest) Reset() {
 	*x = CompleteAnthropicLoginRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[119]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[125]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7478,7 +8047,7 @@ func (x *CompleteAnthropicLoginRequest) String() string {
 func (*CompleteAnthropicLoginRequest) ProtoMessage() {}
 
 func (x *CompleteAnthropicLoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[119]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[125]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7491,7 +8060,7 @@ func (x *CompleteAnthropicLoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteAnthropicLoginRequest.ProtoReflect.Descriptor instead.
 func (*CompleteAnthropicLoginRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{119}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{125}
 }
 
 func (x *CompleteAnthropicLoginRequest) GetAttemptId() string {
@@ -7517,7 +8086,7 @@ type CompleteAnthropicLoginResponse struct {
 
 func (x *CompleteAnthropicLoginResponse) Reset() {
 	*x = CompleteAnthropicLoginResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[120]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[126]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7529,7 +8098,7 @@ func (x *CompleteAnthropicLoginResponse) String() string {
 func (*CompleteAnthropicLoginResponse) ProtoMessage() {}
 
 func (x *CompleteAnthropicLoginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[120]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[126]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7542,7 +8111,7 @@ func (x *CompleteAnthropicLoginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteAnthropicLoginResponse.ProtoReflect.Descriptor instead.
 func (*CompleteAnthropicLoginResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{120}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{126}
 }
 
 type CancelAnthropicLoginRequest struct {
@@ -7554,7 +8123,7 @@ type CancelAnthropicLoginRequest struct {
 
 func (x *CancelAnthropicLoginRequest) Reset() {
 	*x = CancelAnthropicLoginRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[121]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[127]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7566,7 +8135,7 @@ func (x *CancelAnthropicLoginRequest) String() string {
 func (*CancelAnthropicLoginRequest) ProtoMessage() {}
 
 func (x *CancelAnthropicLoginRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[121]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[127]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7579,7 +8148,7 @@ func (x *CancelAnthropicLoginRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelAnthropicLoginRequest.ProtoReflect.Descriptor instead.
 func (*CancelAnthropicLoginRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{121}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{127}
 }
 
 func (x *CancelAnthropicLoginRequest) GetAttemptId() string {
@@ -7597,7 +8166,7 @@ type CancelAnthropicLoginResponse struct {
 
 func (x *CancelAnthropicLoginResponse) Reset() {
 	*x = CancelAnthropicLoginResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[122]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[128]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7609,7 +8178,7 @@ func (x *CancelAnthropicLoginResponse) String() string {
 func (*CancelAnthropicLoginResponse) ProtoMessage() {}
 
 func (x *CancelAnthropicLoginResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[122]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[128]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7622,7 +8191,7 @@ func (x *CancelAnthropicLoginResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelAnthropicLoginResponse.ProtoReflect.Descriptor instead.
 func (*CancelAnthropicLoginResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{122}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{128}
 }
 
 // Provider-side subscription allowance. This is intentionally
@@ -7637,7 +8206,7 @@ type GetSubscriptionUsageRequest struct {
 
 func (x *GetSubscriptionUsageRequest) Reset() {
 	*x = GetSubscriptionUsageRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[123]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[129]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7649,7 +8218,7 @@ func (x *GetSubscriptionUsageRequest) String() string {
 func (*GetSubscriptionUsageRequest) ProtoMessage() {}
 
 func (x *GetSubscriptionUsageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[123]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[129]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7662,7 +8231,7 @@ func (x *GetSubscriptionUsageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSubscriptionUsageRequest.ProtoReflect.Descriptor instead.
 func (*GetSubscriptionUsageRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{123}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *GetSubscriptionUsageRequest) GetRefresh() bool {
@@ -7685,7 +8254,7 @@ type SubscriptionUsageWindow struct {
 
 func (x *SubscriptionUsageWindow) Reset() {
 	*x = SubscriptionUsageWindow{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[124]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7697,7 +8266,7 @@ func (x *SubscriptionUsageWindow) String() string {
 func (*SubscriptionUsageWindow) ProtoMessage() {}
 
 func (x *SubscriptionUsageWindow) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[124]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7710,7 +8279,7 @@ func (x *SubscriptionUsageWindow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscriptionUsageWindow.ProtoReflect.Descriptor instead.
 func (*SubscriptionUsageWindow) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{124}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{130}
 }
 
 func (x *SubscriptionUsageWindow) GetId() string {
@@ -7763,7 +8332,7 @@ type SubscriptionUsageAccount struct {
 
 func (x *SubscriptionUsageAccount) Reset() {
 	*x = SubscriptionUsageAccount{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[125]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7775,7 +8344,7 @@ func (x *SubscriptionUsageAccount) String() string {
 func (*SubscriptionUsageAccount) ProtoMessage() {}
 
 func (x *SubscriptionUsageAccount) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[125]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7788,7 +8357,7 @@ func (x *SubscriptionUsageAccount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscriptionUsageAccount.ProtoReflect.Descriptor instead.
 func (*SubscriptionUsageAccount) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{125}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *SubscriptionUsageAccount) GetProvider() string {
@@ -7849,7 +8418,7 @@ type GetSubscriptionUsageResponse struct {
 
 func (x *GetSubscriptionUsageResponse) Reset() {
 	*x = GetSubscriptionUsageResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[126]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7861,7 +8430,7 @@ func (x *GetSubscriptionUsageResponse) String() string {
 func (*GetSubscriptionUsageResponse) ProtoMessage() {}
 
 func (x *GetSubscriptionUsageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[126]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7874,7 +8443,7 @@ func (x *GetSubscriptionUsageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSubscriptionUsageResponse.ProtoReflect.Descriptor instead.
 func (*GetSubscriptionUsageResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{126}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *GetSubscriptionUsageResponse) GetAccounts() []*SubscriptionUsageAccount {
@@ -7897,7 +8466,7 @@ type GetBudgetRequest struct {
 
 func (x *GetBudgetRequest) Reset() {
 	*x = GetBudgetRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[127]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7909,7 +8478,7 @@ func (x *GetBudgetRequest) String() string {
 func (*GetBudgetRequest) ProtoMessage() {}
 
 func (x *GetBudgetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[127]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7922,7 +8491,7 @@ func (x *GetBudgetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBudgetRequest.ProtoReflect.Descriptor instead.
 func (*GetBudgetRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{127}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{133}
 }
 
 type GetBudgetResponse struct {
@@ -7937,7 +8506,7 @@ type GetBudgetResponse struct {
 
 func (x *GetBudgetResponse) Reset() {
 	*x = GetBudgetResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[128]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7949,7 +8518,7 @@ func (x *GetBudgetResponse) String() string {
 func (*GetBudgetResponse) ProtoMessage() {}
 
 func (x *GetBudgetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[128]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7962,7 +8531,7 @@ func (x *GetBudgetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBudgetResponse.ProtoReflect.Descriptor instead.
 func (*GetBudgetResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{128}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *GetBudgetResponse) GetSessionCost() float64 {
@@ -8010,7 +8579,7 @@ type NotifyRequest struct {
 
 func (x *NotifyRequest) Reset() {
 	*x = NotifyRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[129]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8022,7 +8591,7 @@ func (x *NotifyRequest) String() string {
 func (*NotifyRequest) ProtoMessage() {}
 
 func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[129]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8035,7 +8604,7 @@ func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyRequest.ProtoReflect.Descriptor instead.
 func (*NotifyRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{129}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *NotifyRequest) GetKind() string {
@@ -8075,7 +8644,7 @@ type NotifyResponse struct {
 
 func (x *NotifyResponse) Reset() {
 	*x = NotifyResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[130]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8087,7 +8656,7 @@ func (x *NotifyResponse) String() string {
 func (*NotifyResponse) ProtoMessage() {}
 
 func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[130]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8100,7 +8669,7 @@ func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyResponse.ProtoReflect.Descriptor instead.
 func (*NotifyResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{130}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{136}
 }
 
 func (x *NotifyResponse) GetDelivered() bool {
@@ -8128,7 +8697,7 @@ type UiEvent struct {
 
 func (x *UiEvent) Reset() {
 	*x = UiEvent{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[131]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8140,7 +8709,7 @@ func (x *UiEvent) String() string {
 func (*UiEvent) ProtoMessage() {}
 
 func (x *UiEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[131]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8153,7 +8722,7 @@ func (x *UiEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UiEvent.ProtoReflect.Descriptor instead.
 func (*UiEvent) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{131}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *UiEvent) GetTimeMs() int64 {
@@ -8218,7 +8787,7 @@ type UiCatalogEntry struct {
 
 func (x *UiCatalogEntry) Reset() {
 	*x = UiCatalogEntry{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[132]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8230,7 +8799,7 @@ func (x *UiCatalogEntry) String() string {
 func (*UiCatalogEntry) ProtoMessage() {}
 
 func (x *UiCatalogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[132]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8243,7 +8812,7 @@ func (x *UiCatalogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UiCatalogEntry.ProtoReflect.Descriptor instead.
 func (*UiCatalogEntry) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{132}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *UiCatalogEntry) GetKind() string {
@@ -8281,7 +8850,7 @@ type RecordUiEventsRequest struct {
 
 func (x *RecordUiEventsRequest) Reset() {
 	*x = RecordUiEventsRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[133]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[139]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8293,7 +8862,7 @@ func (x *RecordUiEventsRequest) String() string {
 func (*RecordUiEventsRequest) ProtoMessage() {}
 
 func (x *RecordUiEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[133]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[139]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8306,7 +8875,7 @@ func (x *RecordUiEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordUiEventsRequest.ProtoReflect.Descriptor instead.
 func (*RecordUiEventsRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{133}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{139}
 }
 
 func (x *RecordUiEventsRequest) GetClient() string {
@@ -8355,7 +8924,7 @@ type RecordUiEventsResponse struct {
 
 func (x *RecordUiEventsResponse) Reset() {
 	*x = RecordUiEventsResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[134]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[140]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8367,7 +8936,7 @@ func (x *RecordUiEventsResponse) String() string {
 func (*RecordUiEventsResponse) ProtoMessage() {}
 
 func (x *RecordUiEventsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[134]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[140]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8380,7 +8949,7 @@ func (x *RecordUiEventsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecordUiEventsResponse.ProtoReflect.Descriptor instead.
 func (*RecordUiEventsResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{134}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{140}
 }
 
 func (x *RecordUiEventsResponse) GetAccepted() int32 {
@@ -8414,7 +8983,7 @@ type GetUiAnalyticsRequest struct {
 
 func (x *GetUiAnalyticsRequest) Reset() {
 	*x = GetUiAnalyticsRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[135]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[141]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8426,7 +8995,7 @@ func (x *GetUiAnalyticsRequest) String() string {
 func (*GetUiAnalyticsRequest) ProtoMessage() {}
 
 func (x *GetUiAnalyticsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[135]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[141]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8439,7 +9008,7 @@ func (x *GetUiAnalyticsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUiAnalyticsRequest.ProtoReflect.Descriptor instead.
 func (*GetUiAnalyticsRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{135}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *GetUiAnalyticsRequest) GetDays() int32 {
@@ -8472,7 +9041,7 @@ type UiClientSummary struct {
 
 func (x *UiClientSummary) Reset() {
 	*x = UiClientSummary{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[136]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[142]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8484,7 +9053,7 @@ func (x *UiClientSummary) String() string {
 func (*UiClientSummary) ProtoMessage() {}
 
 func (x *UiClientSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[136]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[142]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8497,7 +9066,7 @@ func (x *UiClientSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UiClientSummary.ProtoReflect.Descriptor instead.
 func (*UiClientSummary) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{136}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{142}
 }
 
 func (x *UiClientSummary) GetClient() string {
@@ -8577,7 +9146,7 @@ type UiAnalyticsRow struct {
 
 func (x *UiAnalyticsRow) Reset() {
 	*x = UiAnalyticsRow{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[137]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[143]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8589,7 +9158,7 @@ func (x *UiAnalyticsRow) String() string {
 func (*UiAnalyticsRow) ProtoMessage() {}
 
 func (x *UiAnalyticsRow) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[137]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[143]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8602,7 +9171,7 @@ func (x *UiAnalyticsRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UiAnalyticsRow.ProtoReflect.Descriptor instead.
 func (*UiAnalyticsRow) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{137}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *UiAnalyticsRow) GetClient() string {
@@ -8689,7 +9258,7 @@ type UiFlow struct {
 
 func (x *UiFlow) Reset() {
 	*x = UiFlow{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[138]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[144]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8701,7 +9270,7 @@ func (x *UiFlow) String() string {
 func (*UiFlow) ProtoMessage() {}
 
 func (x *UiFlow) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[138]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[144]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8714,7 +9283,7 @@ func (x *UiFlow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UiFlow.ProtoReflect.Descriptor instead.
 func (*UiFlow) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{138}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *UiFlow) GetClient() string {
@@ -8768,7 +9337,7 @@ type UiCatalogGap struct {
 
 func (x *UiCatalogGap) Reset() {
 	*x = UiCatalogGap{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[139]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[145]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8780,7 +9349,7 @@ func (x *UiCatalogGap) String() string {
 func (*UiCatalogGap) ProtoMessage() {}
 
 func (x *UiCatalogGap) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[139]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[145]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8793,7 +9362,7 @@ func (x *UiCatalogGap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UiCatalogGap.ProtoReflect.Descriptor instead.
 func (*UiCatalogGap) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{139}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *UiCatalogGap) GetClient() string {
@@ -8853,7 +9422,7 @@ type GetUiAnalyticsResponse struct {
 
 func (x *GetUiAnalyticsResponse) Reset() {
 	*x = GetUiAnalyticsResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[140]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[146]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8865,7 +9434,7 @@ func (x *GetUiAnalyticsResponse) String() string {
 func (*GetUiAnalyticsResponse) ProtoMessage() {}
 
 func (x *GetUiAnalyticsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[140]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[146]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8878,7 +9447,7 @@ func (x *GetUiAnalyticsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUiAnalyticsResponse.ProtoReflect.Descriptor instead.
 func (*GetUiAnalyticsResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{140}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *GetUiAnalyticsResponse) GetEnabled() bool {
@@ -8953,7 +9522,7 @@ type WorkLoopDigestTask struct {
 
 func (x *WorkLoopDigestTask) Reset() {
 	*x = WorkLoopDigestTask{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[141]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[147]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -8965,7 +9534,7 @@ func (x *WorkLoopDigestTask) String() string {
 func (*WorkLoopDigestTask) ProtoMessage() {}
 
 func (x *WorkLoopDigestTask) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[141]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[147]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8978,7 +9547,7 @@ func (x *WorkLoopDigestTask) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkLoopDigestTask.ProtoReflect.Descriptor instead.
 func (*WorkLoopDigestTask) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{141}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{147}
 }
 
 func (x *WorkLoopDigestTask) GetId() string {
@@ -9093,7 +9662,7 @@ type WorkLoopSession struct {
 
 func (x *WorkLoopSession) Reset() {
 	*x = WorkLoopSession{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[142]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[148]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9105,7 +9674,7 @@ func (x *WorkLoopSession) String() string {
 func (*WorkLoopSession) ProtoMessage() {}
 
 func (x *WorkLoopSession) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[142]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[148]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9118,7 +9687,7 @@ func (x *WorkLoopSession) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkLoopSession.ProtoReflect.Descriptor instead.
 func (*WorkLoopSession) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{142}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *WorkLoopSession) GetSessionId() string {
@@ -9236,7 +9805,7 @@ type WorkLoopInfo struct {
 
 func (x *WorkLoopInfo) Reset() {
 	*x = WorkLoopInfo{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[143]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[149]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9248,7 +9817,7 @@ func (x *WorkLoopInfo) String() string {
 func (*WorkLoopInfo) ProtoMessage() {}
 
 func (x *WorkLoopInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[143]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[149]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9261,7 +9830,7 @@ func (x *WorkLoopInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkLoopInfo.ProtoReflect.Descriptor instead.
 func (*WorkLoopInfo) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{143}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *WorkLoopInfo) GetLoopId() string {
@@ -9464,7 +10033,7 @@ type StartWorkLoopRequest struct {
 
 func (x *StartWorkLoopRequest) Reset() {
 	*x = StartWorkLoopRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[144]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[150]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9476,7 +10045,7 @@ func (x *StartWorkLoopRequest) String() string {
 func (*StartWorkLoopRequest) ProtoMessage() {}
 
 func (x *StartWorkLoopRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[144]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[150]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9489,7 +10058,7 @@ func (x *StartWorkLoopRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartWorkLoopRequest.ProtoReflect.Descriptor instead.
 func (*StartWorkLoopRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{144}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{150}
 }
 
 func (x *StartWorkLoopRequest) GetProject() string {
@@ -9508,7 +10077,7 @@ type StartWorkLoopResponse struct {
 
 func (x *StartWorkLoopResponse) Reset() {
 	*x = StartWorkLoopResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[145]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[151]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9520,7 +10089,7 @@ func (x *StartWorkLoopResponse) String() string {
 func (*StartWorkLoopResponse) ProtoMessage() {}
 
 func (x *StartWorkLoopResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[145]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[151]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9533,7 +10102,7 @@ func (x *StartWorkLoopResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartWorkLoopResponse.ProtoReflect.Descriptor instead.
 func (*StartWorkLoopResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{145}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{151}
 }
 
 func (x *StartWorkLoopResponse) GetLoop() *WorkLoopInfo {
@@ -9555,7 +10124,7 @@ type StopWorkLoopRequest struct {
 
 func (x *StopWorkLoopRequest) Reset() {
 	*x = StopWorkLoopRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[146]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[152]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9567,7 +10136,7 @@ func (x *StopWorkLoopRequest) String() string {
 func (*StopWorkLoopRequest) ProtoMessage() {}
 
 func (x *StopWorkLoopRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[146]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[152]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9580,7 +10149,7 @@ func (x *StopWorkLoopRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopWorkLoopRequest.ProtoReflect.Descriptor instead.
 func (*StopWorkLoopRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{146}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{152}
 }
 
 func (x *StopWorkLoopRequest) GetProject() string {
@@ -9599,7 +10168,7 @@ type StopWorkLoopResponse struct {
 
 func (x *StopWorkLoopResponse) Reset() {
 	*x = StopWorkLoopResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[147]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[153]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9611,7 +10180,7 @@ func (x *StopWorkLoopResponse) String() string {
 func (*StopWorkLoopResponse) ProtoMessage() {}
 
 func (x *StopWorkLoopResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[147]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[153]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9624,7 +10193,7 @@ func (x *StopWorkLoopResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopWorkLoopResponse.ProtoReflect.Descriptor instead.
 func (*StopWorkLoopResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{147}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{153}
 }
 
 func (x *StopWorkLoopResponse) GetLoop() *WorkLoopInfo {
@@ -9646,7 +10215,7 @@ type GetWorkLoopRequest struct {
 
 func (x *GetWorkLoopRequest) Reset() {
 	*x = GetWorkLoopRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[148]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[154]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9658,7 +10227,7 @@ func (x *GetWorkLoopRequest) String() string {
 func (*GetWorkLoopRequest) ProtoMessage() {}
 
 func (x *GetWorkLoopRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[148]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[154]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9671,7 +10240,7 @@ func (x *GetWorkLoopRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkLoopRequest.ProtoReflect.Descriptor instead.
 func (*GetWorkLoopRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{148}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *GetWorkLoopRequest) GetProject() string {
@@ -9690,7 +10259,7 @@ type GetWorkLoopResponse struct {
 
 func (x *GetWorkLoopResponse) Reset() {
 	*x = GetWorkLoopResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[149]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[155]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9702,7 +10271,7 @@ func (x *GetWorkLoopResponse) String() string {
 func (*GetWorkLoopResponse) ProtoMessage() {}
 
 func (x *GetWorkLoopResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[149]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[155]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9715,7 +10284,7 @@ func (x *GetWorkLoopResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkLoopResponse.ProtoReflect.Descriptor instead.
 func (*GetWorkLoopResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{149}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *GetWorkLoopResponse) GetLoop() *WorkLoopInfo {
@@ -9752,7 +10321,7 @@ type WorkstreamInfo struct {
 
 func (x *WorkstreamInfo) Reset() {
 	*x = WorkstreamInfo{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[150]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[156]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9764,7 +10333,7 @@ func (x *WorkstreamInfo) String() string {
 func (*WorkstreamInfo) ProtoMessage() {}
 
 func (x *WorkstreamInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[150]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[156]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9777,7 +10346,7 @@ func (x *WorkstreamInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkstreamInfo.ProtoReflect.Descriptor instead.
 func (*WorkstreamInfo) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{150}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *WorkstreamInfo) GetId() string {
@@ -9907,7 +10476,7 @@ type SpawnWorkstreamRequest struct {
 
 func (x *SpawnWorkstreamRequest) Reset() {
 	*x = SpawnWorkstreamRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[151]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[157]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9919,7 +10488,7 @@ func (x *SpawnWorkstreamRequest) String() string {
 func (*SpawnWorkstreamRequest) ProtoMessage() {}
 
 func (x *SpawnWorkstreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[151]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[157]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9932,7 +10501,7 @@ func (x *SpawnWorkstreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnWorkstreamRequest.ProtoReflect.Descriptor instead.
 func (*SpawnWorkstreamRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{151}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{157}
 }
 
 func (x *SpawnWorkstreamRequest) GetProject() string {
@@ -9972,7 +10541,7 @@ type SpawnWorkstreamResponse struct {
 
 func (x *SpawnWorkstreamResponse) Reset() {
 	*x = SpawnWorkstreamResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[152]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[158]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -9984,7 +10553,7 @@ func (x *SpawnWorkstreamResponse) String() string {
 func (*SpawnWorkstreamResponse) ProtoMessage() {}
 
 func (x *SpawnWorkstreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[152]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[158]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -9997,7 +10566,7 @@ func (x *SpawnWorkstreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpawnWorkstreamResponse.ProtoReflect.Descriptor instead.
 func (*SpawnWorkstreamResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{152}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *SpawnWorkstreamResponse) GetWorkstream() *WorkstreamInfo {
@@ -10017,7 +10586,7 @@ type ListWorkstreamsRequest struct {
 
 func (x *ListWorkstreamsRequest) Reset() {
 	*x = ListWorkstreamsRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[153]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[159]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10029,7 +10598,7 @@ func (x *ListWorkstreamsRequest) String() string {
 func (*ListWorkstreamsRequest) ProtoMessage() {}
 
 func (x *ListWorkstreamsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[153]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[159]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10042,7 +10611,7 @@ func (x *ListWorkstreamsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkstreamsRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkstreamsRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{153}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{159}
 }
 
 func (x *ListWorkstreamsRequest) GetProject() string {
@@ -10061,7 +10630,7 @@ type ListWorkstreamsResponse struct {
 
 func (x *ListWorkstreamsResponse) Reset() {
 	*x = ListWorkstreamsResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[154]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[160]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10073,7 +10642,7 @@ func (x *ListWorkstreamsResponse) String() string {
 func (*ListWorkstreamsResponse) ProtoMessage() {}
 
 func (x *ListWorkstreamsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[154]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[160]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10086,7 +10655,7 @@ func (x *ListWorkstreamsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkstreamsResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkstreamsResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{154}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{160}
 }
 
 func (x *ListWorkstreamsResponse) GetWorkstreams() []*WorkstreamInfo {
@@ -10109,7 +10678,7 @@ type PreviewMergeRequest struct {
 
 func (x *PreviewMergeRequest) Reset() {
 	*x = PreviewMergeRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[155]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[161]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10121,7 +10690,7 @@ func (x *PreviewMergeRequest) String() string {
 func (*PreviewMergeRequest) ProtoMessage() {}
 
 func (x *PreviewMergeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[155]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[161]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10134,7 +10703,7 @@ func (x *PreviewMergeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewMergeRequest.ProtoReflect.Descriptor instead.
 func (*PreviewMergeRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{155}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{161}
 }
 
 func (x *PreviewMergeRequest) GetWorkstreamId() string {
@@ -10155,7 +10724,7 @@ type PreviewMergeResponse struct {
 
 func (x *PreviewMergeResponse) Reset() {
 	*x = PreviewMergeResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[156]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[162]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10167,7 +10736,7 @@ func (x *PreviewMergeResponse) String() string {
 func (*PreviewMergeResponse) ProtoMessage() {}
 
 func (x *PreviewMergeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[156]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[162]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10180,7 +10749,7 @@ func (x *PreviewMergeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreviewMergeResponse.ProtoReflect.Descriptor instead.
 func (*PreviewMergeResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{156}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{162}
 }
 
 func (x *PreviewMergeResponse) GetClean() bool {
@@ -10218,7 +10787,7 @@ type MergeWorkstreamRequest struct {
 
 func (x *MergeWorkstreamRequest) Reset() {
 	*x = MergeWorkstreamRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[157]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[163]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10230,7 +10799,7 @@ func (x *MergeWorkstreamRequest) String() string {
 func (*MergeWorkstreamRequest) ProtoMessage() {}
 
 func (x *MergeWorkstreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[157]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[163]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10243,7 +10812,7 @@ func (x *MergeWorkstreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeWorkstreamRequest.ProtoReflect.Descriptor instead.
 func (*MergeWorkstreamRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{157}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{163}
 }
 
 func (x *MergeWorkstreamRequest) GetWorkstreamId() string {
@@ -10273,7 +10842,7 @@ type MergeWorkstreamResponse struct {
 
 func (x *MergeWorkstreamResponse) Reset() {
 	*x = MergeWorkstreamResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[158]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[164]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10285,7 +10854,7 @@ func (x *MergeWorkstreamResponse) String() string {
 func (*MergeWorkstreamResponse) ProtoMessage() {}
 
 func (x *MergeWorkstreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[158]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[164]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10298,7 +10867,7 @@ func (x *MergeWorkstreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MergeWorkstreamResponse.ProtoReflect.Descriptor instead.
 func (*MergeWorkstreamResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{158}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{164}
 }
 
 func (x *MergeWorkstreamResponse) GetMerged() bool {
@@ -10347,7 +10916,7 @@ type DiscardWorkstreamRequest struct {
 
 func (x *DiscardWorkstreamRequest) Reset() {
 	*x = DiscardWorkstreamRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[159]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[165]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10359,7 +10928,7 @@ func (x *DiscardWorkstreamRequest) String() string {
 func (*DiscardWorkstreamRequest) ProtoMessage() {}
 
 func (x *DiscardWorkstreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[159]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[165]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10372,7 +10941,7 @@ func (x *DiscardWorkstreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscardWorkstreamRequest.ProtoReflect.Descriptor instead.
 func (*DiscardWorkstreamRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{159}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{165}
 }
 
 func (x *DiscardWorkstreamRequest) GetWorkstreamId() string {
@@ -10390,7 +10959,7 @@ type DiscardWorkstreamResponse struct {
 
 func (x *DiscardWorkstreamResponse) Reset() {
 	*x = DiscardWorkstreamResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[160]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[166]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10402,7 +10971,7 @@ func (x *DiscardWorkstreamResponse) String() string {
 func (*DiscardWorkstreamResponse) ProtoMessage() {}
 
 func (x *DiscardWorkstreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[160]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[166]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10415,7 +10984,7 @@ func (x *DiscardWorkstreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscardWorkstreamResponse.ProtoReflect.Descriptor instead.
 func (*DiscardWorkstreamResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{160}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{166}
 }
 
 // RetryIntegration re-queues a ready or needs-attention workstream for automatic
@@ -10430,7 +10999,7 @@ type RetryIntegrationRequest struct {
 
 func (x *RetryIntegrationRequest) Reset() {
 	*x = RetryIntegrationRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[161]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[167]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10442,7 +11011,7 @@ func (x *RetryIntegrationRequest) String() string {
 func (*RetryIntegrationRequest) ProtoMessage() {}
 
 func (x *RetryIntegrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[161]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[167]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10455,7 +11024,7 @@ func (x *RetryIntegrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryIntegrationRequest.ProtoReflect.Descriptor instead.
 func (*RetryIntegrationRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{161}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{167}
 }
 
 func (x *RetryIntegrationRequest) GetWorkstreamId() string {
@@ -10474,7 +11043,7 @@ type RetryIntegrationResponse struct {
 
 func (x *RetryIntegrationResponse) Reset() {
 	*x = RetryIntegrationResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[162]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[168]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10486,7 +11055,7 @@ func (x *RetryIntegrationResponse) String() string {
 func (*RetryIntegrationResponse) ProtoMessage() {}
 
 func (x *RetryIntegrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[162]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[168]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10499,7 +11068,7 @@ func (x *RetryIntegrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryIntegrationResponse.ProtoReflect.Descriptor instead.
 func (*RetryIntegrationResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{162}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{168}
 }
 
 func (x *RetryIntegrationResponse) GetWorkstream() *WorkstreamInfo {
@@ -10521,7 +11090,7 @@ type SessionModelUsage struct {
 
 func (x *SessionModelUsage) Reset() {
 	*x = SessionModelUsage{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[163]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[169]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10533,7 +11102,7 @@ func (x *SessionModelUsage) String() string {
 func (*SessionModelUsage) ProtoMessage() {}
 
 func (x *SessionModelUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[163]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[169]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10546,7 +11115,7 @@ func (x *SessionModelUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionModelUsage.ProtoReflect.Descriptor instead.
 func (*SessionModelUsage) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{163}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{169}
 }
 
 func (x *SessionModelUsage) GetModel() string {
@@ -10576,7 +11145,7 @@ type TestModelRequest struct {
 
 func (x *TestModelRequest) Reset() {
 	*x = TestModelRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[164]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[170]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10588,7 +11157,7 @@ func (x *TestModelRequest) String() string {
 func (*TestModelRequest) ProtoMessage() {}
 
 func (x *TestModelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[164]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[170]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10601,7 +11170,7 @@ func (x *TestModelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestModelRequest.ProtoReflect.Descriptor instead.
 func (*TestModelRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{164}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{170}
 }
 
 func (x *TestModelRequest) GetModel() *ModelConfig {
@@ -10624,7 +11193,7 @@ type TestModelResponse struct {
 
 func (x *TestModelResponse) Reset() {
 	*x = TestModelResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[165]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[171]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10636,7 +11205,7 @@ func (x *TestModelResponse) String() string {
 func (*TestModelResponse) ProtoMessage() {}
 
 func (x *TestModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[165]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[171]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10649,7 +11218,7 @@ func (x *TestModelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestModelResponse.ProtoReflect.Descriptor instead.
 func (*TestModelResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{165}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{171}
 }
 
 func (x *TestModelResponse) GetSuccess() bool {
@@ -10700,7 +11269,7 @@ type GetWorkingChangesRequest struct {
 
 func (x *GetWorkingChangesRequest) Reset() {
 	*x = GetWorkingChangesRequest{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[166]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[172]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10712,7 +11281,7 @@ func (x *GetWorkingChangesRequest) String() string {
 func (*GetWorkingChangesRequest) ProtoMessage() {}
 
 func (x *GetWorkingChangesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[166]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[172]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10725,7 +11294,7 @@ func (x *GetWorkingChangesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkingChangesRequest.ProtoReflect.Descriptor instead.
 func (*GetWorkingChangesRequest) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{166}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{172}
 }
 
 func (x *GetWorkingChangesRequest) GetProject() string {
@@ -10779,7 +11348,7 @@ type GetWorkingChangesResponse struct {
 
 func (x *GetWorkingChangesResponse) Reset() {
 	*x = GetWorkingChangesResponse{}
-	mi := &file_ycc_v1_ycc_proto_msgTypes[167]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[173]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -10791,7 +11360,7 @@ func (x *GetWorkingChangesResponse) String() string {
 func (*GetWorkingChangesResponse) ProtoMessage() {}
 
 func (x *GetWorkingChangesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ycc_v1_ycc_proto_msgTypes[167]
+	mi := &file_ycc_v1_ycc_proto_msgTypes[173]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -10804,7 +11373,7 @@ func (x *GetWorkingChangesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetWorkingChangesResponse.ProtoReflect.Descriptor instead.
 func (*GetWorkingChangesResponse) Descriptor() ([]byte, []int) {
-	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{167}
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{173}
 }
 
 func (x *GetWorkingChangesResponse) GetSnapshotId() string {
@@ -11208,7 +11777,64 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05state\x18\x02 \x01(\v2\x18.ycc.v1.SessionViewStateR\x05state\x12C\n" +
 	"\rupserted_rows\x18\x03 \x03(\v2\x1e.ycc.v1.SessionPresentationRowR\fupsertedRows\x12&\n" +
 	"\x0fdeleted_row_ids\x18\x04 \x03(\tR\rdeletedRowIds\x126\n" +
-	"\x0ftransient_event\x18\x05 \x01(\v2\r.ycc.v1.EventR\x0etransientEvent\"{\n" +
+	"\x0ftransient_event\x18\x05 \x01(\v2\r.ycc.v1.EventR\x0etransientEvent\"\xb6\x01\n" +
+	"\fActivitySpan\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x14\n" +
+	"\x05round\x18\x02 \x01(\x05R\x05round\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12!\n" +
+	"\fcontext_mode\x18\x04 \x01(\tR\vcontextMode\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x05 \x01(\tR\tstartedAt\x12\x1f\n" +
+	"\vfinished_at\x18\x06 \x01(\tR\n" +
+	"finishedAt\"\x8f\x04\n" +
+	"\fActivityNode\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
+	"\tparent_id\x18\x02 \x01(\tR\bparentId\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x14\n" +
+	"\x05label\x18\x04 \x01(\tR\x05label\x12\x14\n" +
+	"\x05actor\x18\x05 \x01(\tR\x05actor\x12\x14\n" +
+	"\x05model\x18\x06 \x01(\tR\x05model\x12\x16\n" +
+	"\x06status\x18\a \x01(\tR\x06status\x12\x18\n" +
+	"\amutates\x18\b \x01(\bR\amutates\x12\x15\n" +
+	"\x06job_id\x18\t \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06result\x18\n" +
+	" \x01(\tR\x06result\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\v \x01(\tR\tstartedAt\x12\x1f\n" +
+	"\vfinished_at\x18\f \x01(\tR\n" +
+	"finishedAt\x12*\n" +
+	"\x05spans\x18\r \x03(\v2\x14.ycc.v1.ActivitySpanR\x05spans\x12!\n" +
+	"\fcurrent_tool\x18\x0e \x01(\tR\vcurrentTool\x12\x14\n" +
+	"\x05turns\x18\x0f \x01(\x05R\x05turns\x12!\n" +
+	"\ftotal_tokens\x18\x10 \x01(\x03R\vtotalTokens\x12(\n" +
+	"\x10last_activity_at\x18\x11 \x01(\tR\x0elastActivityAt\x12)\n" +
+	"\x10output_available\x18\x12 \x01(\bR\x0foutputAvailable\"T\n" +
+	"\x19GetSessionActivityRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x8c\x01\n" +
+	"\x1aGetSessionActivityResponse\x12*\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x14.ycc.v1.ActivityNodeR\x05nodes\x12\x12\n" +
+	"\x04live\x18\x02 \x01(\bR\x04live\x12.\n" +
+	"\x13indexed_through_seq\x18\x03 \x01(\x03R\x11indexedThroughSeq\"\xb2\x01\n" +
+	"\x13GetJobOutputRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x15\n" +
+	"\x06job_id\x18\x03 \x01(\tR\x05jobId\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x14\n" +
+	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x1d\n" +
+	"\n" +
+	"tail_lines\x18\x06 \x01(\x05R\ttailLines\"\x81\x02\n" +
+	"\x14GetJobOutputResponse\x12\x1c\n" +
+	"\tavailable\x18\x01 \x01(\bR\tavailable\x12-\n" +
+	"\x12unavailable_reason\x18\x02 \x01(\tR\x11unavailableReason\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x14\n" +
+	"\x05start\x18\x04 \x01(\x03R\x05start\x12\x10\n" +
+	"\x03end\x18\x05 \x01(\x03R\x03end\x12%\n" +
+	"\x0eretained_start\x18\x06 \x01(\x03R\rretainedStart\x12!\n" +
+	"\fretained_end\x18\a \x01(\x03R\vretainedEnd\x12\x16\n" +
+	"\x06status\x18\b \x01(\tR\x06status\"{\n" +
 	"\x1bGetSessionAttachmentRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +
@@ -11785,7 +12411,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"diffSha256\x12\x1c\n" +
 	"\ttruncated\x18\r \x01(\bR\ttruncated\x12\x14\n" +
 	"\x05scope\x18\x0e \x01(\tR\x05scope\x12.\n" +
-	"\x13changed_since_known\x18\x0f \x01(\bR\x11changedSinceKnown2\xfe(\n" +
+	"\x13changed_since_known\x18\x0f \x01(\bR\x11changedSinceKnown2\xa6*\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -11796,7 +12422,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x0eGetSessionView\x12\x1d.ycc.v1.GetSessionViewRequest\x1a\x1e.ycc.v1.GetSessionViewResponse\x12[\n" +
 	"\x12GetSessionViewPage\x12!.ycc.v1.GetSessionViewPageRequest\x1a\".ycc.v1.GetSessionViewPageResponse\x12a\n" +
 	"\x14GetSessionViewDetail\x12#.ycc.v1.GetSessionViewDetailRequest\x1a$.ycc.v1.GetSessionViewDetailResponse\x12X\n" +
-	"\x14SubscribeSessionView\x12#.ycc.v1.SubscribeSessionViewRequest\x1a\x19.ycc.v1.SessionViewUpdate0\x01\x12a\n" +
+	"\x14SubscribeSessionView\x12#.ycc.v1.SubscribeSessionViewRequest\x1a\x19.ycc.v1.SessionViewUpdate0\x01\x12[\n" +
+	"\x12GetSessionActivity\x12!.ycc.v1.GetSessionActivityRequest\x1a\".ycc.v1.GetSessionActivityResponse\x12I\n" +
+	"\fGetJobOutput\x12\x1b.ycc.v1.GetJobOutputRequest\x1a\x1c.ycc.v1.GetJobOutputResponse\x12a\n" +
 	"\x14GetSessionAttachment\x12#.ycc.v1.GetSessionAttachmentRequest\x1a$.ycc.v1.GetSessionAttachmentResponse\x12L\n" +
 	"\rGetCommitDiff\x12\x1c.ycc.v1.GetCommitDiffRequest\x1a\x1d.ycc.v1.GetCommitDiffResponse\x12X\n" +
 	"\x11GetWorkingChanges\x12 .ycc.v1.GetWorkingChangesRequest\x1a!.ycc.v1.GetWorkingChangesResponse\x126\n" +
@@ -11871,7 +12499,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 172)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 178)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                          // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),            // 1: ycc.v1.StartSessionRequest
@@ -11936,115 +12564,121 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*GetSessionViewDetailResponse)(nil),   // 60: ycc.v1.GetSessionViewDetailResponse
 	(*SubscribeSessionViewRequest)(nil),    // 61: ycc.v1.SubscribeSessionViewRequest
 	(*SessionViewUpdate)(nil),              // 62: ycc.v1.SessionViewUpdate
-	(*GetSessionAttachmentRequest)(nil),    // 63: ycc.v1.GetSessionAttachmentRequest
-	(*GetSessionAttachmentResponse)(nil),   // 64: ycc.v1.GetSessionAttachmentResponse
-	(*GetCommitDiffRequest)(nil),           // 65: ycc.v1.GetCommitDiffRequest
-	(*GetCommitDiffResponse)(nil),          // 66: ycc.v1.GetCommitDiffResponse
-	(*ListModelsRequest)(nil),              // 67: ycc.v1.ListModelsRequest
-	(*ModelInfo)(nil),                      // 68: ycc.v1.ModelInfo
-	(*ListModelsResponse)(nil),             // 69: ycc.v1.ListModelsResponse
-	(*ModelConfig)(nil),                    // 70: ycc.v1.ModelConfig
-	(*UpsertModelRequest)(nil),             // 71: ycc.v1.UpsertModelRequest
-	(*UpsertModelResponse)(nil),            // 72: ycc.v1.UpsertModelResponse
-	(*RemoveModelRequest)(nil),             // 73: ycc.v1.RemoveModelRequest
-	(*RemoveModelResponse)(nil),            // 74: ycc.v1.RemoveModelResponse
-	(*GetModelConfigRequest)(nil),          // 75: ycc.v1.GetModelConfigRequest
-	(*GetModelConfigResponse)(nil),         // 76: ycc.v1.GetModelConfigResponse
-	(*DiscoverModelsRequest)(nil),          // 77: ycc.v1.DiscoverModelsRequest
-	(*DiscoverModelsResponse)(nil),         // 78: ycc.v1.DiscoverModelsResponse
-	(*SetRoleConfigRequest)(nil),           // 79: ycc.v1.SetRoleConfigRequest
-	(*SetRoleConfigResponse)(nil),          // 80: ycc.v1.SetRoleConfigResponse
-	(*SetThinkingRequest)(nil),             // 81: ycc.v1.SetThinkingRequest
-	(*SetThinkingResponse)(nil),            // 82: ycc.v1.SetThinkingResponse
-	(*SetWorkImplementationRequest)(nil),   // 83: ycc.v1.SetWorkImplementationRequest
-	(*SetWorkImplementationResponse)(nil),  // 84: ycc.v1.SetWorkImplementationResponse
-	(*ReviewerSlot)(nil),                   // 85: ycc.v1.ReviewerSlot
-	(*ReviewTierInfo)(nil),                 // 86: ycc.v1.ReviewTierInfo
-	(*ListReviewTiersRequest)(nil),         // 87: ycc.v1.ListReviewTiersRequest
-	(*ListReviewTiersResponse)(nil),        // 88: ycc.v1.ListReviewTiersResponse
-	(*UpsertReviewTierRequest)(nil),        // 89: ycc.v1.UpsertReviewTierRequest
-	(*UpsertReviewTierResponse)(nil),       // 90: ycc.v1.UpsertReviewTierResponse
-	(*RemoveReviewTierRequest)(nil),        // 91: ycc.v1.RemoveReviewTierRequest
-	(*RemoveReviewTierResponse)(nil),       // 92: ycc.v1.RemoveReviewTierResponse
-	(*SetReviewDefaultRequest)(nil),        // 93: ycc.v1.SetReviewDefaultRequest
-	(*SetReviewDefaultResponse)(nil),       // 94: ycc.v1.SetReviewDefaultResponse
-	(*ListBacklogRequest)(nil),             // 95: ycc.v1.ListBacklogRequest
-	(*BacklogTaskSummary)(nil),             // 96: ycc.v1.BacklogTaskSummary
-	(*ListBacklogResponse)(nil),            // 97: ycc.v1.ListBacklogResponse
-	(*GetTaskRequest)(nil),                 // 98: ycc.v1.GetTaskRequest
-	(*TaskDetail)(nil),                     // 99: ycc.v1.TaskDetail
-	(*GetTaskResponse)(nil),                // 100: ycc.v1.GetTaskResponse
-	(*UpdateTaskRequest)(nil),              // 101: ycc.v1.UpdateTaskRequest
-	(*UpdateTaskResponse)(nil),             // 102: ycc.v1.UpdateTaskResponse
-	(*CreateTaskRequest)(nil),              // 103: ycc.v1.CreateTaskRequest
-	(*CreateTaskResponse)(nil),             // 104: ycc.v1.CreateTaskResponse
-	(*ListPlansRequest)(nil),               // 105: ycc.v1.ListPlansRequest
-	(*PlanSummary)(nil),                    // 106: ycc.v1.PlanSummary
-	(*ListPlansResponse)(nil),              // 107: ycc.v1.ListPlansResponse
-	(*GetPlanRequest)(nil),                 // 108: ycc.v1.GetPlanRequest
-	(*GetPlanResponse)(nil),                // 109: ycc.v1.GetPlanResponse
-	(*GetMemoryRequest)(nil),               // 110: ycc.v1.GetMemoryRequest
-	(*GetMemoryResponse)(nil),              // 111: ycc.v1.GetMemoryResponse
-	(*MemoryGroomRun)(nil),                 // 112: ycc.v1.MemoryGroomRun
-	(*CaptureBacklogItemRequest)(nil),      // 113: ycc.v1.CaptureBacklogItemRequest
-	(*GetUsageRequest)(nil),                // 114: ycc.v1.GetUsageRequest
-	(*UsageRow)(nil),                       // 115: ycc.v1.UsageRow
-	(*GetUsageResponse)(nil),               // 116: ycc.v1.GetUsageResponse
-	(*BeginAnthropicLoginRequest)(nil),     // 117: ycc.v1.BeginAnthropicLoginRequest
-	(*BeginAnthropicLoginResponse)(nil),    // 118: ycc.v1.BeginAnthropicLoginResponse
-	(*CompleteAnthropicLoginRequest)(nil),  // 119: ycc.v1.CompleteAnthropicLoginRequest
-	(*CompleteAnthropicLoginResponse)(nil), // 120: ycc.v1.CompleteAnthropicLoginResponse
-	(*CancelAnthropicLoginRequest)(nil),    // 121: ycc.v1.CancelAnthropicLoginRequest
-	(*CancelAnthropicLoginResponse)(nil),   // 122: ycc.v1.CancelAnthropicLoginResponse
-	(*GetSubscriptionUsageRequest)(nil),    // 123: ycc.v1.GetSubscriptionUsageRequest
-	(*SubscriptionUsageWindow)(nil),        // 124: ycc.v1.SubscriptionUsageWindow
-	(*SubscriptionUsageAccount)(nil),       // 125: ycc.v1.SubscriptionUsageAccount
-	(*GetSubscriptionUsageResponse)(nil),   // 126: ycc.v1.GetSubscriptionUsageResponse
-	(*GetBudgetRequest)(nil),               // 127: ycc.v1.GetBudgetRequest
-	(*GetBudgetResponse)(nil),              // 128: ycc.v1.GetBudgetResponse
-	(*NotifyRequest)(nil),                  // 129: ycc.v1.NotifyRequest
-	(*NotifyResponse)(nil),                 // 130: ycc.v1.NotifyResponse
-	(*UiEvent)(nil),                        // 131: ycc.v1.UiEvent
-	(*UiCatalogEntry)(nil),                 // 132: ycc.v1.UiCatalogEntry
-	(*RecordUiEventsRequest)(nil),          // 133: ycc.v1.RecordUiEventsRequest
-	(*RecordUiEventsResponse)(nil),         // 134: ycc.v1.RecordUiEventsResponse
-	(*GetUiAnalyticsRequest)(nil),          // 135: ycc.v1.GetUiAnalyticsRequest
-	(*UiClientSummary)(nil),                // 136: ycc.v1.UiClientSummary
-	(*UiAnalyticsRow)(nil),                 // 137: ycc.v1.UiAnalyticsRow
-	(*UiFlow)(nil),                         // 138: ycc.v1.UiFlow
-	(*UiCatalogGap)(nil),                   // 139: ycc.v1.UiCatalogGap
-	(*GetUiAnalyticsResponse)(nil),         // 140: ycc.v1.GetUiAnalyticsResponse
-	(*WorkLoopDigestTask)(nil),             // 141: ycc.v1.WorkLoopDigestTask
-	(*WorkLoopSession)(nil),                // 142: ycc.v1.WorkLoopSession
-	(*WorkLoopInfo)(nil),                   // 143: ycc.v1.WorkLoopInfo
-	(*StartWorkLoopRequest)(nil),           // 144: ycc.v1.StartWorkLoopRequest
-	(*StartWorkLoopResponse)(nil),          // 145: ycc.v1.StartWorkLoopResponse
-	(*StopWorkLoopRequest)(nil),            // 146: ycc.v1.StopWorkLoopRequest
-	(*StopWorkLoopResponse)(nil),           // 147: ycc.v1.StopWorkLoopResponse
-	(*GetWorkLoopRequest)(nil),             // 148: ycc.v1.GetWorkLoopRequest
-	(*GetWorkLoopResponse)(nil),            // 149: ycc.v1.GetWorkLoopResponse
-	(*WorkstreamInfo)(nil),                 // 150: ycc.v1.WorkstreamInfo
-	(*SpawnWorkstreamRequest)(nil),         // 151: ycc.v1.SpawnWorkstreamRequest
-	(*SpawnWorkstreamResponse)(nil),        // 152: ycc.v1.SpawnWorkstreamResponse
-	(*ListWorkstreamsRequest)(nil),         // 153: ycc.v1.ListWorkstreamsRequest
-	(*ListWorkstreamsResponse)(nil),        // 154: ycc.v1.ListWorkstreamsResponse
-	(*PreviewMergeRequest)(nil),            // 155: ycc.v1.PreviewMergeRequest
-	(*PreviewMergeResponse)(nil),           // 156: ycc.v1.PreviewMergeResponse
-	(*MergeWorkstreamRequest)(nil),         // 157: ycc.v1.MergeWorkstreamRequest
-	(*MergeWorkstreamResponse)(nil),        // 158: ycc.v1.MergeWorkstreamResponse
-	(*DiscardWorkstreamRequest)(nil),       // 159: ycc.v1.DiscardWorkstreamRequest
-	(*DiscardWorkstreamResponse)(nil),      // 160: ycc.v1.DiscardWorkstreamResponse
-	(*RetryIntegrationRequest)(nil),        // 161: ycc.v1.RetryIntegrationRequest
-	(*RetryIntegrationResponse)(nil),       // 162: ycc.v1.RetryIntegrationResponse
-	(*SessionModelUsage)(nil),              // 163: ycc.v1.SessionModelUsage
-	(*TestModelRequest)(nil),               // 164: ycc.v1.TestModelRequest
-	(*TestModelResponse)(nil),              // 165: ycc.v1.TestModelResponse
-	(*GetWorkingChangesRequest)(nil),       // 166: ycc.v1.GetWorkingChangesRequest
-	(*GetWorkingChangesResponse)(nil),      // 167: ycc.v1.GetWorkingChangesResponse
-	nil,                                    // 168: ycc.v1.UiEvent.AttrsEntry
-	nil,                                    // 169: ycc.v1.UiClientSummary.VisitAttrsEntry
-	nil,                                    // 170: ycc.v1.UiAnalyticsRow.BreakdownEntry
-	nil,                                    // 171: ycc.v1.UiAnalyticsRow.ContextsEntry
+	(*ActivitySpan)(nil),                   // 63: ycc.v1.ActivitySpan
+	(*ActivityNode)(nil),                   // 64: ycc.v1.ActivityNode
+	(*GetSessionActivityRequest)(nil),      // 65: ycc.v1.GetSessionActivityRequest
+	(*GetSessionActivityResponse)(nil),     // 66: ycc.v1.GetSessionActivityResponse
+	(*GetJobOutputRequest)(nil),            // 67: ycc.v1.GetJobOutputRequest
+	(*GetJobOutputResponse)(nil),           // 68: ycc.v1.GetJobOutputResponse
+	(*GetSessionAttachmentRequest)(nil),    // 69: ycc.v1.GetSessionAttachmentRequest
+	(*GetSessionAttachmentResponse)(nil),   // 70: ycc.v1.GetSessionAttachmentResponse
+	(*GetCommitDiffRequest)(nil),           // 71: ycc.v1.GetCommitDiffRequest
+	(*GetCommitDiffResponse)(nil),          // 72: ycc.v1.GetCommitDiffResponse
+	(*ListModelsRequest)(nil),              // 73: ycc.v1.ListModelsRequest
+	(*ModelInfo)(nil),                      // 74: ycc.v1.ModelInfo
+	(*ListModelsResponse)(nil),             // 75: ycc.v1.ListModelsResponse
+	(*ModelConfig)(nil),                    // 76: ycc.v1.ModelConfig
+	(*UpsertModelRequest)(nil),             // 77: ycc.v1.UpsertModelRequest
+	(*UpsertModelResponse)(nil),            // 78: ycc.v1.UpsertModelResponse
+	(*RemoveModelRequest)(nil),             // 79: ycc.v1.RemoveModelRequest
+	(*RemoveModelResponse)(nil),            // 80: ycc.v1.RemoveModelResponse
+	(*GetModelConfigRequest)(nil),          // 81: ycc.v1.GetModelConfigRequest
+	(*GetModelConfigResponse)(nil),         // 82: ycc.v1.GetModelConfigResponse
+	(*DiscoverModelsRequest)(nil),          // 83: ycc.v1.DiscoverModelsRequest
+	(*DiscoverModelsResponse)(nil),         // 84: ycc.v1.DiscoverModelsResponse
+	(*SetRoleConfigRequest)(nil),           // 85: ycc.v1.SetRoleConfigRequest
+	(*SetRoleConfigResponse)(nil),          // 86: ycc.v1.SetRoleConfigResponse
+	(*SetThinkingRequest)(nil),             // 87: ycc.v1.SetThinkingRequest
+	(*SetThinkingResponse)(nil),            // 88: ycc.v1.SetThinkingResponse
+	(*SetWorkImplementationRequest)(nil),   // 89: ycc.v1.SetWorkImplementationRequest
+	(*SetWorkImplementationResponse)(nil),  // 90: ycc.v1.SetWorkImplementationResponse
+	(*ReviewerSlot)(nil),                   // 91: ycc.v1.ReviewerSlot
+	(*ReviewTierInfo)(nil),                 // 92: ycc.v1.ReviewTierInfo
+	(*ListReviewTiersRequest)(nil),         // 93: ycc.v1.ListReviewTiersRequest
+	(*ListReviewTiersResponse)(nil),        // 94: ycc.v1.ListReviewTiersResponse
+	(*UpsertReviewTierRequest)(nil),        // 95: ycc.v1.UpsertReviewTierRequest
+	(*UpsertReviewTierResponse)(nil),       // 96: ycc.v1.UpsertReviewTierResponse
+	(*RemoveReviewTierRequest)(nil),        // 97: ycc.v1.RemoveReviewTierRequest
+	(*RemoveReviewTierResponse)(nil),       // 98: ycc.v1.RemoveReviewTierResponse
+	(*SetReviewDefaultRequest)(nil),        // 99: ycc.v1.SetReviewDefaultRequest
+	(*SetReviewDefaultResponse)(nil),       // 100: ycc.v1.SetReviewDefaultResponse
+	(*ListBacklogRequest)(nil),             // 101: ycc.v1.ListBacklogRequest
+	(*BacklogTaskSummary)(nil),             // 102: ycc.v1.BacklogTaskSummary
+	(*ListBacklogResponse)(nil),            // 103: ycc.v1.ListBacklogResponse
+	(*GetTaskRequest)(nil),                 // 104: ycc.v1.GetTaskRequest
+	(*TaskDetail)(nil),                     // 105: ycc.v1.TaskDetail
+	(*GetTaskResponse)(nil),                // 106: ycc.v1.GetTaskResponse
+	(*UpdateTaskRequest)(nil),              // 107: ycc.v1.UpdateTaskRequest
+	(*UpdateTaskResponse)(nil),             // 108: ycc.v1.UpdateTaskResponse
+	(*CreateTaskRequest)(nil),              // 109: ycc.v1.CreateTaskRequest
+	(*CreateTaskResponse)(nil),             // 110: ycc.v1.CreateTaskResponse
+	(*ListPlansRequest)(nil),               // 111: ycc.v1.ListPlansRequest
+	(*PlanSummary)(nil),                    // 112: ycc.v1.PlanSummary
+	(*ListPlansResponse)(nil),              // 113: ycc.v1.ListPlansResponse
+	(*GetPlanRequest)(nil),                 // 114: ycc.v1.GetPlanRequest
+	(*GetPlanResponse)(nil),                // 115: ycc.v1.GetPlanResponse
+	(*GetMemoryRequest)(nil),               // 116: ycc.v1.GetMemoryRequest
+	(*GetMemoryResponse)(nil),              // 117: ycc.v1.GetMemoryResponse
+	(*MemoryGroomRun)(nil),                 // 118: ycc.v1.MemoryGroomRun
+	(*CaptureBacklogItemRequest)(nil),      // 119: ycc.v1.CaptureBacklogItemRequest
+	(*GetUsageRequest)(nil),                // 120: ycc.v1.GetUsageRequest
+	(*UsageRow)(nil),                       // 121: ycc.v1.UsageRow
+	(*GetUsageResponse)(nil),               // 122: ycc.v1.GetUsageResponse
+	(*BeginAnthropicLoginRequest)(nil),     // 123: ycc.v1.BeginAnthropicLoginRequest
+	(*BeginAnthropicLoginResponse)(nil),    // 124: ycc.v1.BeginAnthropicLoginResponse
+	(*CompleteAnthropicLoginRequest)(nil),  // 125: ycc.v1.CompleteAnthropicLoginRequest
+	(*CompleteAnthropicLoginResponse)(nil), // 126: ycc.v1.CompleteAnthropicLoginResponse
+	(*CancelAnthropicLoginRequest)(nil),    // 127: ycc.v1.CancelAnthropicLoginRequest
+	(*CancelAnthropicLoginResponse)(nil),   // 128: ycc.v1.CancelAnthropicLoginResponse
+	(*GetSubscriptionUsageRequest)(nil),    // 129: ycc.v1.GetSubscriptionUsageRequest
+	(*SubscriptionUsageWindow)(nil),        // 130: ycc.v1.SubscriptionUsageWindow
+	(*SubscriptionUsageAccount)(nil),       // 131: ycc.v1.SubscriptionUsageAccount
+	(*GetSubscriptionUsageResponse)(nil),   // 132: ycc.v1.GetSubscriptionUsageResponse
+	(*GetBudgetRequest)(nil),               // 133: ycc.v1.GetBudgetRequest
+	(*GetBudgetResponse)(nil),              // 134: ycc.v1.GetBudgetResponse
+	(*NotifyRequest)(nil),                  // 135: ycc.v1.NotifyRequest
+	(*NotifyResponse)(nil),                 // 136: ycc.v1.NotifyResponse
+	(*UiEvent)(nil),                        // 137: ycc.v1.UiEvent
+	(*UiCatalogEntry)(nil),                 // 138: ycc.v1.UiCatalogEntry
+	(*RecordUiEventsRequest)(nil),          // 139: ycc.v1.RecordUiEventsRequest
+	(*RecordUiEventsResponse)(nil),         // 140: ycc.v1.RecordUiEventsResponse
+	(*GetUiAnalyticsRequest)(nil),          // 141: ycc.v1.GetUiAnalyticsRequest
+	(*UiClientSummary)(nil),                // 142: ycc.v1.UiClientSummary
+	(*UiAnalyticsRow)(nil),                 // 143: ycc.v1.UiAnalyticsRow
+	(*UiFlow)(nil),                         // 144: ycc.v1.UiFlow
+	(*UiCatalogGap)(nil),                   // 145: ycc.v1.UiCatalogGap
+	(*GetUiAnalyticsResponse)(nil),         // 146: ycc.v1.GetUiAnalyticsResponse
+	(*WorkLoopDigestTask)(nil),             // 147: ycc.v1.WorkLoopDigestTask
+	(*WorkLoopSession)(nil),                // 148: ycc.v1.WorkLoopSession
+	(*WorkLoopInfo)(nil),                   // 149: ycc.v1.WorkLoopInfo
+	(*StartWorkLoopRequest)(nil),           // 150: ycc.v1.StartWorkLoopRequest
+	(*StartWorkLoopResponse)(nil),          // 151: ycc.v1.StartWorkLoopResponse
+	(*StopWorkLoopRequest)(nil),            // 152: ycc.v1.StopWorkLoopRequest
+	(*StopWorkLoopResponse)(nil),           // 153: ycc.v1.StopWorkLoopResponse
+	(*GetWorkLoopRequest)(nil),             // 154: ycc.v1.GetWorkLoopRequest
+	(*GetWorkLoopResponse)(nil),            // 155: ycc.v1.GetWorkLoopResponse
+	(*WorkstreamInfo)(nil),                 // 156: ycc.v1.WorkstreamInfo
+	(*SpawnWorkstreamRequest)(nil),         // 157: ycc.v1.SpawnWorkstreamRequest
+	(*SpawnWorkstreamResponse)(nil),        // 158: ycc.v1.SpawnWorkstreamResponse
+	(*ListWorkstreamsRequest)(nil),         // 159: ycc.v1.ListWorkstreamsRequest
+	(*ListWorkstreamsResponse)(nil),        // 160: ycc.v1.ListWorkstreamsResponse
+	(*PreviewMergeRequest)(nil),            // 161: ycc.v1.PreviewMergeRequest
+	(*PreviewMergeResponse)(nil),           // 162: ycc.v1.PreviewMergeResponse
+	(*MergeWorkstreamRequest)(nil),         // 163: ycc.v1.MergeWorkstreamRequest
+	(*MergeWorkstreamResponse)(nil),        // 164: ycc.v1.MergeWorkstreamResponse
+	(*DiscardWorkstreamRequest)(nil),       // 165: ycc.v1.DiscardWorkstreamRequest
+	(*DiscardWorkstreamResponse)(nil),      // 166: ycc.v1.DiscardWorkstreamResponse
+	(*RetryIntegrationRequest)(nil),        // 167: ycc.v1.RetryIntegrationRequest
+	(*RetryIntegrationResponse)(nil),       // 168: ycc.v1.RetryIntegrationResponse
+	(*SessionModelUsage)(nil),              // 169: ycc.v1.SessionModelUsage
+	(*TestModelRequest)(nil),               // 170: ycc.v1.TestModelRequest
+	(*TestModelResponse)(nil),              // 171: ycc.v1.TestModelResponse
+	(*GetWorkingChangesRequest)(nil),       // 172: ycc.v1.GetWorkingChangesRequest
+	(*GetWorkingChangesResponse)(nil),      // 173: ycc.v1.GetWorkingChangesResponse
+	nil,                                    // 174: ycc.v1.UiEvent.AttrsEntry
+	nil,                                    // 175: ycc.v1.UiClientSummary.VisitAttrsEntry
+	nil,                                    // 176: ycc.v1.UiAnalyticsRow.BreakdownEntry
+	nil,                                    // 177: ycc.v1.UiAnalyticsRow.ContextsEntry
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	22,  // 0: ycc.v1.StartSessionRequest.images:type_name -> ycc.v1.ImageAttachment
@@ -12059,7 +12693,7 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	39,  // 9: ycc.v1.ListModesResponse.modes:type_name -> ycc.v1.Mode
 	40,  // 10: ycc.v1.ListModesResponse.presets:type_name -> ycc.v1.Preset
 	43,  // 11: ycc.v1.ListSessionsResponse.sessions:type_name -> ycc.v1.SessionInfo
-	163, // 12: ycc.v1.SessionSummary.model_usage:type_name -> ycc.v1.SessionModelUsage
+	169, // 12: ycc.v1.SessionSummary.model_usage:type_name -> ycc.v1.SessionModelUsage
 	46,  // 13: ycc.v1.ListSessionHistoryResponse.sessions:type_name -> ycc.v1.SessionSummary
 	46,  // 14: ycc.v1.ListSessionHistoryResponse.pinned:type_name -> ycc.v1.SessionSummary
 	0,   // 15: ycc.v1.GetSessionTranscriptResponse.events:type_name -> ycc.v1.Event
@@ -12072,184 +12706,190 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	54,  // 22: ycc.v1.SessionViewUpdate.state:type_name -> ycc.v1.SessionViewState
 	52,  // 23: ycc.v1.SessionViewUpdate.upserted_rows:type_name -> ycc.v1.SessionPresentationRow
 	0,   // 24: ycc.v1.SessionViewUpdate.transient_event:type_name -> ycc.v1.Event
-	68,  // 25: ycc.v1.ListModelsResponse.models:type_name -> ycc.v1.ModelInfo
-	70,  // 26: ycc.v1.UpsertModelRequest.model:type_name -> ycc.v1.ModelConfig
-	70,  // 27: ycc.v1.GetModelConfigResponse.model:type_name -> ycc.v1.ModelConfig
-	85,  // 28: ycc.v1.ReviewTierInfo.reviewers:type_name -> ycc.v1.ReviewerSlot
-	86,  // 29: ycc.v1.ListReviewTiersResponse.tiers:type_name -> ycc.v1.ReviewTierInfo
-	86,  // 30: ycc.v1.UpsertReviewTierRequest.tier:type_name -> ycc.v1.ReviewTierInfo
-	96,  // 31: ycc.v1.ListBacklogResponse.tasks:type_name -> ycc.v1.BacklogTaskSummary
-	99,  // 32: ycc.v1.GetTaskResponse.task:type_name -> ycc.v1.TaskDetail
-	99,  // 33: ycc.v1.UpdateTaskResponse.task:type_name -> ycc.v1.TaskDetail
-	99,  // 34: ycc.v1.CreateTaskResponse.task:type_name -> ycc.v1.TaskDetail
-	106, // 35: ycc.v1.ListPlansResponse.plans:type_name -> ycc.v1.PlanSummary
-	112, // 36: ycc.v1.GetMemoryResponse.last_groom:type_name -> ycc.v1.MemoryGroomRun
-	115, // 37: ycc.v1.GetUsageResponse.rows:type_name -> ycc.v1.UsageRow
-	115, // 38: ycc.v1.GetUsageResponse.total:type_name -> ycc.v1.UsageRow
-	124, // 39: ycc.v1.SubscriptionUsageAccount.windows:type_name -> ycc.v1.SubscriptionUsageWindow
-	125, // 40: ycc.v1.GetSubscriptionUsageResponse.accounts:type_name -> ycc.v1.SubscriptionUsageAccount
-	168, // 41: ycc.v1.UiEvent.attrs:type_name -> ycc.v1.UiEvent.AttrsEntry
-	131, // 42: ycc.v1.RecordUiEventsRequest.events:type_name -> ycc.v1.UiEvent
-	132, // 43: ycc.v1.RecordUiEventsRequest.catalog:type_name -> ycc.v1.UiCatalogEntry
-	169, // 44: ycc.v1.UiClientSummary.visit_attrs:type_name -> ycc.v1.UiClientSummary.VisitAttrsEntry
-	170, // 45: ycc.v1.UiAnalyticsRow.breakdown:type_name -> ycc.v1.UiAnalyticsRow.BreakdownEntry
-	171, // 46: ycc.v1.UiAnalyticsRow.contexts:type_name -> ycc.v1.UiAnalyticsRow.ContextsEntry
-	136, // 47: ycc.v1.GetUiAnalyticsResponse.clients:type_name -> ycc.v1.UiClientSummary
-	137, // 48: ycc.v1.GetUiAnalyticsResponse.rows:type_name -> ycc.v1.UiAnalyticsRow
-	138, // 49: ycc.v1.GetUiAnalyticsResponse.flows:type_name -> ycc.v1.UiFlow
-	139, // 50: ycc.v1.GetUiAnalyticsResponse.gaps:type_name -> ycc.v1.UiCatalogGap
-	142, // 51: ycc.v1.WorkLoopInfo.sessions:type_name -> ycc.v1.WorkLoopSession
-	141, // 52: ycc.v1.WorkLoopInfo.completed:type_name -> ycc.v1.WorkLoopDigestTask
-	141, // 53: ycc.v1.WorkLoopInfo.blocked:type_name -> ycc.v1.WorkLoopDigestTask
-	141, // 54: ycc.v1.WorkLoopInfo.in_review:type_name -> ycc.v1.WorkLoopDigestTask
-	141, // 55: ycc.v1.WorkLoopInfo.created:type_name -> ycc.v1.WorkLoopDigestTask
-	141, // 56: ycc.v1.WorkLoopInfo.unfinished:type_name -> ycc.v1.WorkLoopDigestTask
-	143, // 57: ycc.v1.StartWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
-	143, // 58: ycc.v1.StopWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
-	143, // 59: ycc.v1.GetWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
-	150, // 60: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
-	150, // 61: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
-	150, // 62: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
-	70,  // 63: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
-	38,  // 64: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,   // 65: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	42,  // 66: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	45,  // 67: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
-	48,  // 68: ycc.v1.SessionService.SetSessionFollowUp:input_type -> ycc.v1.SetSessionFollowUpRequest
-	50,  // 69: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
-	55,  // 70: ycc.v1.SessionService.GetSessionView:input_type -> ycc.v1.GetSessionViewRequest
-	57,  // 71: ycc.v1.SessionService.GetSessionViewPage:input_type -> ycc.v1.GetSessionViewPageRequest
-	59,  // 72: ycc.v1.SessionService.GetSessionViewDetail:input_type -> ycc.v1.GetSessionViewDetailRequest
-	61,  // 73: ycc.v1.SessionService.SubscribeSessionView:input_type -> ycc.v1.SubscribeSessionViewRequest
-	63,  // 74: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
-	65,  // 75: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
-	166, // 76: ycc.v1.SessionService.GetWorkingChanges:input_type -> ycc.v1.GetWorkingChangesRequest
-	21,  // 77: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	23,  // 78: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	25,  // 79: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	28,  // 80: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
-	30,  // 81: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
-	32,  // 82: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
-	34,  // 83: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
-	36,  // 84: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
-	5,   // 85: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	7,   // 86: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	9,   // 87: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	11,  // 88: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
-	14,  // 89: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
-	17,  // 90: ycc.v1.SessionService.ListFiles:input_type -> ycc.v1.ListFilesRequest
-	19,  // 91: ycc.v1.SessionService.ReadFile:input_type -> ycc.v1.ReadFileRequest
-	67,  // 92: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	79,  // 93: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	81,  // 94: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	83,  // 95: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
-	71,  // 96: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
-	73,  // 97: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
-	75,  // 98: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
-	77,  // 99: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
-	164, // 100: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
-	87,  // 101: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
-	89,  // 102: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
-	91,  // 103: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
-	93,  // 104: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
-	95,  // 105: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
-	98,  // 106: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	101, // 107: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
-	103, // 108: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
-	105, // 109: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
-	108, // 110: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
-	110, // 111: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
-	113, // 112: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
-	114, // 113: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	117, // 114: ycc.v1.SessionService.BeginAnthropicLogin:input_type -> ycc.v1.BeginAnthropicLoginRequest
-	119, // 115: ycc.v1.SessionService.CompleteAnthropicLogin:input_type -> ycc.v1.CompleteAnthropicLoginRequest
-	121, // 116: ycc.v1.SessionService.CancelAnthropicLogin:input_type -> ycc.v1.CancelAnthropicLoginRequest
-	123, // 117: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
-	127, // 118: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	129, // 119: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
-	133, // 120: ycc.v1.SessionService.RecordUiEvents:input_type -> ycc.v1.RecordUiEventsRequest
-	135, // 121: ycc.v1.SessionService.GetUiAnalytics:input_type -> ycc.v1.GetUiAnalyticsRequest
-	144, // 122: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
-	146, // 123: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
-	148, // 124: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
-	151, // 125: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	153, // 126: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	155, // 127: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	157, // 128: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	159, // 129: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	161, // 130: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
-	41,  // 131: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,   // 132: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	44,  // 133: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	47,  // 134: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	49,  // 135: ycc.v1.SessionService.SetSessionFollowUp:output_type -> ycc.v1.SetSessionFollowUpResponse
-	51,  // 136: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	56,  // 137: ycc.v1.SessionService.GetSessionView:output_type -> ycc.v1.GetSessionViewResponse
-	58,  // 138: ycc.v1.SessionService.GetSessionViewPage:output_type -> ycc.v1.GetSessionViewPageResponse
-	60,  // 139: ycc.v1.SessionService.GetSessionViewDetail:output_type -> ycc.v1.GetSessionViewDetailResponse
-	62,  // 140: ycc.v1.SessionService.SubscribeSessionView:output_type -> ycc.v1.SessionViewUpdate
-	64,  // 141: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
-	66,  // 142: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	167, // 143: ycc.v1.SessionService.GetWorkingChanges:output_type -> ycc.v1.GetWorkingChangesResponse
-	0,   // 144: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	24,  // 145: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	26,  // 146: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	29,  // 147: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	31,  // 148: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	33,  // 149: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	35,  // 150: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	37,  // 151: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	6,   // 152: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	8,   // 153: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	10,  // 154: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	12,  // 155: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
-	15,  // 156: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
-	18,  // 157: ycc.v1.SessionService.ListFiles:output_type -> ycc.v1.ListFilesResponse
-	20,  // 158: ycc.v1.SessionService.ReadFile:output_type -> ycc.v1.ReadFileResponse
-	69,  // 159: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	80,  // 160: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	82,  // 161: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	84,  // 162: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
-	72,  // 163: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	74,  // 164: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	76,  // 165: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	78,  // 166: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	165, // 167: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
-	88,  // 168: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
-	90,  // 169: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
-	92,  // 170: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
-	94,  // 171: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
-	97,  // 172: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	100, // 173: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	102, // 174: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	104, // 175: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	107, // 176: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	109, // 177: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	111, // 178: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
-	0,   // 179: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	116, // 180: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	118, // 181: ycc.v1.SessionService.BeginAnthropicLogin:output_type -> ycc.v1.BeginAnthropicLoginResponse
-	120, // 182: ycc.v1.SessionService.CompleteAnthropicLogin:output_type -> ycc.v1.CompleteAnthropicLoginResponse
-	122, // 183: ycc.v1.SessionService.CancelAnthropicLogin:output_type -> ycc.v1.CancelAnthropicLoginResponse
-	126, // 184: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
-	128, // 185: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	130, // 186: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
-	134, // 187: ycc.v1.SessionService.RecordUiEvents:output_type -> ycc.v1.RecordUiEventsResponse
-	140, // 188: ycc.v1.SessionService.GetUiAnalytics:output_type -> ycc.v1.GetUiAnalyticsResponse
-	145, // 189: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
-	147, // 190: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
-	149, // 191: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
-	152, // 192: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	154, // 193: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	156, // 194: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	158, // 195: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	160, // 196: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	162, // 197: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
-	131, // [131:198] is the sub-list for method output_type
-	64,  // [64:131] is the sub-list for method input_type
-	64,  // [64:64] is the sub-list for extension type_name
-	64,  // [64:64] is the sub-list for extension extendee
-	0,   // [0:64] is the sub-list for field type_name
+	63,  // 25: ycc.v1.ActivityNode.spans:type_name -> ycc.v1.ActivitySpan
+	64,  // 26: ycc.v1.GetSessionActivityResponse.nodes:type_name -> ycc.v1.ActivityNode
+	74,  // 27: ycc.v1.ListModelsResponse.models:type_name -> ycc.v1.ModelInfo
+	76,  // 28: ycc.v1.UpsertModelRequest.model:type_name -> ycc.v1.ModelConfig
+	76,  // 29: ycc.v1.GetModelConfigResponse.model:type_name -> ycc.v1.ModelConfig
+	91,  // 30: ycc.v1.ReviewTierInfo.reviewers:type_name -> ycc.v1.ReviewerSlot
+	92,  // 31: ycc.v1.ListReviewTiersResponse.tiers:type_name -> ycc.v1.ReviewTierInfo
+	92,  // 32: ycc.v1.UpsertReviewTierRequest.tier:type_name -> ycc.v1.ReviewTierInfo
+	102, // 33: ycc.v1.ListBacklogResponse.tasks:type_name -> ycc.v1.BacklogTaskSummary
+	105, // 34: ycc.v1.GetTaskResponse.task:type_name -> ycc.v1.TaskDetail
+	105, // 35: ycc.v1.UpdateTaskResponse.task:type_name -> ycc.v1.TaskDetail
+	105, // 36: ycc.v1.CreateTaskResponse.task:type_name -> ycc.v1.TaskDetail
+	112, // 37: ycc.v1.ListPlansResponse.plans:type_name -> ycc.v1.PlanSummary
+	118, // 38: ycc.v1.GetMemoryResponse.last_groom:type_name -> ycc.v1.MemoryGroomRun
+	121, // 39: ycc.v1.GetUsageResponse.rows:type_name -> ycc.v1.UsageRow
+	121, // 40: ycc.v1.GetUsageResponse.total:type_name -> ycc.v1.UsageRow
+	130, // 41: ycc.v1.SubscriptionUsageAccount.windows:type_name -> ycc.v1.SubscriptionUsageWindow
+	131, // 42: ycc.v1.GetSubscriptionUsageResponse.accounts:type_name -> ycc.v1.SubscriptionUsageAccount
+	174, // 43: ycc.v1.UiEvent.attrs:type_name -> ycc.v1.UiEvent.AttrsEntry
+	137, // 44: ycc.v1.RecordUiEventsRequest.events:type_name -> ycc.v1.UiEvent
+	138, // 45: ycc.v1.RecordUiEventsRequest.catalog:type_name -> ycc.v1.UiCatalogEntry
+	175, // 46: ycc.v1.UiClientSummary.visit_attrs:type_name -> ycc.v1.UiClientSummary.VisitAttrsEntry
+	176, // 47: ycc.v1.UiAnalyticsRow.breakdown:type_name -> ycc.v1.UiAnalyticsRow.BreakdownEntry
+	177, // 48: ycc.v1.UiAnalyticsRow.contexts:type_name -> ycc.v1.UiAnalyticsRow.ContextsEntry
+	142, // 49: ycc.v1.GetUiAnalyticsResponse.clients:type_name -> ycc.v1.UiClientSummary
+	143, // 50: ycc.v1.GetUiAnalyticsResponse.rows:type_name -> ycc.v1.UiAnalyticsRow
+	144, // 51: ycc.v1.GetUiAnalyticsResponse.flows:type_name -> ycc.v1.UiFlow
+	145, // 52: ycc.v1.GetUiAnalyticsResponse.gaps:type_name -> ycc.v1.UiCatalogGap
+	148, // 53: ycc.v1.WorkLoopInfo.sessions:type_name -> ycc.v1.WorkLoopSession
+	147, // 54: ycc.v1.WorkLoopInfo.completed:type_name -> ycc.v1.WorkLoopDigestTask
+	147, // 55: ycc.v1.WorkLoopInfo.blocked:type_name -> ycc.v1.WorkLoopDigestTask
+	147, // 56: ycc.v1.WorkLoopInfo.in_review:type_name -> ycc.v1.WorkLoopDigestTask
+	147, // 57: ycc.v1.WorkLoopInfo.created:type_name -> ycc.v1.WorkLoopDigestTask
+	147, // 58: ycc.v1.WorkLoopInfo.unfinished:type_name -> ycc.v1.WorkLoopDigestTask
+	149, // 59: ycc.v1.StartWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
+	149, // 60: ycc.v1.StopWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
+	149, // 61: ycc.v1.GetWorkLoopResponse.loop:type_name -> ycc.v1.WorkLoopInfo
+	156, // 62: ycc.v1.SpawnWorkstreamResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
+	156, // 63: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
+	156, // 64: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
+	76,  // 65: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
+	38,  // 66: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,   // 67: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	42,  // 68: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	45,  // 69: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
+	48,  // 70: ycc.v1.SessionService.SetSessionFollowUp:input_type -> ycc.v1.SetSessionFollowUpRequest
+	50,  // 71: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
+	55,  // 72: ycc.v1.SessionService.GetSessionView:input_type -> ycc.v1.GetSessionViewRequest
+	57,  // 73: ycc.v1.SessionService.GetSessionViewPage:input_type -> ycc.v1.GetSessionViewPageRequest
+	59,  // 74: ycc.v1.SessionService.GetSessionViewDetail:input_type -> ycc.v1.GetSessionViewDetailRequest
+	61,  // 75: ycc.v1.SessionService.SubscribeSessionView:input_type -> ycc.v1.SubscribeSessionViewRequest
+	65,  // 76: ycc.v1.SessionService.GetSessionActivity:input_type -> ycc.v1.GetSessionActivityRequest
+	67,  // 77: ycc.v1.SessionService.GetJobOutput:input_type -> ycc.v1.GetJobOutputRequest
+	69,  // 78: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
+	71,  // 79: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
+	172, // 80: ycc.v1.SessionService.GetWorkingChanges:input_type -> ycc.v1.GetWorkingChangesRequest
+	21,  // 81: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	23,  // 82: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	25,  // 83: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	28,  // 84: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
+	30,  // 85: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
+	32,  // 86: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
+	34,  // 87: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
+	36,  // 88: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
+	5,   // 89: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	7,   // 90: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	9,   // 91: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	11,  // 92: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
+	14,  // 93: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
+	17,  // 94: ycc.v1.SessionService.ListFiles:input_type -> ycc.v1.ListFilesRequest
+	19,  // 95: ycc.v1.SessionService.ReadFile:input_type -> ycc.v1.ReadFileRequest
+	73,  // 96: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	85,  // 97: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	87,  // 98: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	89,  // 99: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
+	77,  // 100: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
+	79,  // 101: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
+	81,  // 102: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
+	83,  // 103: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
+	170, // 104: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
+	93,  // 105: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
+	95,  // 106: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
+	97,  // 107: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
+	99,  // 108: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
+	101, // 109: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	104, // 110: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	107, // 111: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
+	109, // 112: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
+	111, // 113: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
+	114, // 114: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
+	116, // 115: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
+	119, // 116: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	120, // 117: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	123, // 118: ycc.v1.SessionService.BeginAnthropicLogin:input_type -> ycc.v1.BeginAnthropicLoginRequest
+	125, // 119: ycc.v1.SessionService.CompleteAnthropicLogin:input_type -> ycc.v1.CompleteAnthropicLoginRequest
+	127, // 120: ycc.v1.SessionService.CancelAnthropicLogin:input_type -> ycc.v1.CancelAnthropicLoginRequest
+	129, // 121: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
+	133, // 122: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
+	135, // 123: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	139, // 124: ycc.v1.SessionService.RecordUiEvents:input_type -> ycc.v1.RecordUiEventsRequest
+	141, // 125: ycc.v1.SessionService.GetUiAnalytics:input_type -> ycc.v1.GetUiAnalyticsRequest
+	150, // 126: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
+	152, // 127: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
+	154, // 128: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
+	157, // 129: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	159, // 130: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	161, // 131: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	163, // 132: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	165, // 133: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	167, // 134: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
+	41,  // 135: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,   // 136: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	44,  // 137: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	47,  // 138: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	49,  // 139: ycc.v1.SessionService.SetSessionFollowUp:output_type -> ycc.v1.SetSessionFollowUpResponse
+	51,  // 140: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	56,  // 141: ycc.v1.SessionService.GetSessionView:output_type -> ycc.v1.GetSessionViewResponse
+	58,  // 142: ycc.v1.SessionService.GetSessionViewPage:output_type -> ycc.v1.GetSessionViewPageResponse
+	60,  // 143: ycc.v1.SessionService.GetSessionViewDetail:output_type -> ycc.v1.GetSessionViewDetailResponse
+	62,  // 144: ycc.v1.SessionService.SubscribeSessionView:output_type -> ycc.v1.SessionViewUpdate
+	66,  // 145: ycc.v1.SessionService.GetSessionActivity:output_type -> ycc.v1.GetSessionActivityResponse
+	68,  // 146: ycc.v1.SessionService.GetJobOutput:output_type -> ycc.v1.GetJobOutputResponse
+	70,  // 147: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
+	72,  // 148: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	173, // 149: ycc.v1.SessionService.GetWorkingChanges:output_type -> ycc.v1.GetWorkingChangesResponse
+	0,   // 150: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	24,  // 151: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	26,  // 152: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	29,  // 153: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	31,  // 154: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	33,  // 155: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	35,  // 156: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	37,  // 157: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	6,   // 158: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	8,   // 159: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	10,  // 160: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	12,  // 161: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
+	15,  // 162: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
+	18,  // 163: ycc.v1.SessionService.ListFiles:output_type -> ycc.v1.ListFilesResponse
+	20,  // 164: ycc.v1.SessionService.ReadFile:output_type -> ycc.v1.ReadFileResponse
+	75,  // 165: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	86,  // 166: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	88,  // 167: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	90,  // 168: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
+	78,  // 169: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	80,  // 170: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	82,  // 171: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	84,  // 172: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	171, // 173: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
+	94,  // 174: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
+	96,  // 175: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
+	98,  // 176: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
+	100, // 177: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
+	103, // 178: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	106, // 179: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	108, // 180: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	110, // 181: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	113, // 182: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	115, // 183: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	117, // 184: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
+	0,   // 185: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	122, // 186: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	124, // 187: ycc.v1.SessionService.BeginAnthropicLogin:output_type -> ycc.v1.BeginAnthropicLoginResponse
+	126, // 188: ycc.v1.SessionService.CompleteAnthropicLogin:output_type -> ycc.v1.CompleteAnthropicLoginResponse
+	128, // 189: ycc.v1.SessionService.CancelAnthropicLogin:output_type -> ycc.v1.CancelAnthropicLoginResponse
+	132, // 190: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
+	134, // 191: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	136, // 192: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	140, // 193: ycc.v1.SessionService.RecordUiEvents:output_type -> ycc.v1.RecordUiEventsResponse
+	146, // 194: ycc.v1.SessionService.GetUiAnalytics:output_type -> ycc.v1.GetUiAnalyticsResponse
+	151, // 195: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
+	153, // 196: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
+	155, // 197: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
+	158, // 198: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	160, // 199: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	162, // 200: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	164, // 201: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	166, // 202: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	168, // 203: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
+	135, // [135:204] is the sub-list for method output_type
+	66,  // [66:135] is the sub-list for method input_type
+	66,  // [66:66] is the sub-list for extension type_name
+	66,  // [66:66] is the sub-list for extension extendee
+	0,   // [0:66] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -12258,16 +12898,16 @@ func file_ycc_v1_ycc_proto_init() {
 		return
 	}
 	file_ycc_v1_ycc_proto_msgTypes[3].OneofWrappers = []any{}
-	file_ycc_v1_ycc_proto_msgTypes[68].OneofWrappers = []any{}
-	file_ycc_v1_ycc_proto_msgTypes[70].OneofWrappers = []any{}
-	file_ycc_v1_ycc_proto_msgTypes[101].OneofWrappers = []any{}
+	file_ycc_v1_ycc_proto_msgTypes[74].OneofWrappers = []any{}
+	file_ycc_v1_ycc_proto_msgTypes[76].OneofWrappers = []any{}
+	file_ycc_v1_ycc_proto_msgTypes[107].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   172,
+			NumMessages:   178,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

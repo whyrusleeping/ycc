@@ -63,6 +63,12 @@ const (
 	// SessionServiceSubscribeSessionViewProcedure is the fully-qualified name of the SessionService's
 	// SubscribeSessionView RPC.
 	SessionServiceSubscribeSessionViewProcedure = "/ycc.v1.SessionService/SubscribeSessionView"
+	// SessionServiceGetSessionActivityProcedure is the fully-qualified name of the SessionService's
+	// GetSessionActivity RPC.
+	SessionServiceGetSessionActivityProcedure = "/ycc.v1.SessionService/GetSessionActivity"
+	// SessionServiceGetJobOutputProcedure is the fully-qualified name of the SessionService's
+	// GetJobOutput RPC.
+	SessionServiceGetJobOutputProcedure = "/ycc.v1.SessionService/GetJobOutput"
 	// SessionServiceGetSessionAttachmentProcedure is the fully-qualified name of the SessionService's
 	// GetSessionAttachment RPC.
 	SessionServiceGetSessionAttachmentProcedure = "/ycc.v1.SessionService/GetSessionAttachment"
@@ -247,6 +253,10 @@ type SessionServiceClient interface {
 	GetSessionViewPage(context.Context, *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error)
 	GetSessionViewDetail(context.Context, *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error)
 	SubscribeSessionView(context.Context, *connect.Request[v1.SubscribeSessionViewRequest]) (*connect.ServerStreamForClient[v1.SessionViewUpdate], error)
+	// GetSessionActivity returns the session's agent/subagent/job graph with live
+	// progress overlaid; GetJobOutput reads a live job's retained output.
+	GetSessionActivity(context.Context, *connect.Request[v1.GetSessionActivityRequest]) (*connect.Response[v1.GetSessionActivityResponse], error)
+	GetJobOutput(context.Context, *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error)
 	// GetSessionAttachment returns a retained picture referenced by a user_input
 	// event, without putting binary payloads in the event log.
 	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
@@ -438,6 +448,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceSubscribeSessionViewProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("SubscribeSessionView")),
+			connect.WithClientOptions(opts...),
+		),
+		getSessionActivity: connect.NewClient[v1.GetSessionActivityRequest, v1.GetSessionActivityResponse](
+			httpClient,
+			baseURL+SessionServiceGetSessionActivityProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSessionActivity")),
+			connect.WithClientOptions(opts...),
+		),
+		getJobOutput: connect.NewClient[v1.GetJobOutputRequest, v1.GetJobOutputResponse](
+			httpClient,
+			baseURL+SessionServiceGetJobOutputProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetJobOutput")),
 			connect.WithClientOptions(opts...),
 		),
 		getSessionAttachment: connect.NewClient[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse](
@@ -797,6 +819,8 @@ type sessionServiceClient struct {
 	getSessionViewPage     *connect.Client[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse]
 	getSessionViewDetail   *connect.Client[v1.GetSessionViewDetailRequest, v1.GetSessionViewDetailResponse]
 	subscribeSessionView   *connect.Client[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate]
+	getSessionActivity     *connect.Client[v1.GetSessionActivityRequest, v1.GetSessionActivityResponse]
+	getJobOutput           *connect.Client[v1.GetJobOutputRequest, v1.GetJobOutputResponse]
 	getSessionAttachment   *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
 	getCommitDiff          *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
 	getWorkingChanges      *connect.Client[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse]
@@ -904,6 +928,16 @@ func (c *sessionServiceClient) GetSessionViewDetail(ctx context.Context, req *co
 // SubscribeSessionView calls ycc.v1.SessionService.SubscribeSessionView.
 func (c *sessionServiceClient) SubscribeSessionView(ctx context.Context, req *connect.Request[v1.SubscribeSessionViewRequest]) (*connect.ServerStreamForClient[v1.SessionViewUpdate], error) {
 	return c.subscribeSessionView.CallServerStream(ctx, req)
+}
+
+// GetSessionActivity calls ycc.v1.SessionService.GetSessionActivity.
+func (c *sessionServiceClient) GetSessionActivity(ctx context.Context, req *connect.Request[v1.GetSessionActivityRequest]) (*connect.Response[v1.GetSessionActivityResponse], error) {
+	return c.getSessionActivity.CallUnary(ctx, req)
+}
+
+// GetJobOutput calls ycc.v1.SessionService.GetJobOutput.
+func (c *sessionServiceClient) GetJobOutput(ctx context.Context, req *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error) {
+	return c.getJobOutput.CallUnary(ctx, req)
 }
 
 // GetSessionAttachment calls ycc.v1.SessionService.GetSessionAttachment.
@@ -1209,6 +1243,10 @@ type SessionServiceHandler interface {
 	GetSessionViewPage(context.Context, *connect.Request[v1.GetSessionViewPageRequest]) (*connect.Response[v1.GetSessionViewPageResponse], error)
 	GetSessionViewDetail(context.Context, *connect.Request[v1.GetSessionViewDetailRequest]) (*connect.Response[v1.GetSessionViewDetailResponse], error)
 	SubscribeSessionView(context.Context, *connect.Request[v1.SubscribeSessionViewRequest], *connect.ServerStream[v1.SessionViewUpdate]) error
+	// GetSessionActivity returns the session's agent/subagent/job graph with live
+	// progress overlaid; GetJobOutput reads a live job's retained output.
+	GetSessionActivity(context.Context, *connect.Request[v1.GetSessionActivityRequest]) (*connect.Response[v1.GetSessionActivityResponse], error)
+	GetJobOutput(context.Context, *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error)
 	// GetSessionAttachment returns a retained picture referenced by a user_input
 	// event, without putting binary payloads in the event log.
 	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
@@ -1396,6 +1434,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceSubscribeSessionViewProcedure,
 		svc.SubscribeSessionView,
 		connect.WithSchema(sessionServiceMethods.ByName("SubscribeSessionView")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetSessionActivityHandler := connect.NewUnaryHandler(
+		SessionServiceGetSessionActivityProcedure,
+		svc.GetSessionActivity,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSessionActivity")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetJobOutputHandler := connect.NewUnaryHandler(
+		SessionServiceGetJobOutputProcedure,
+		svc.GetJobOutput,
+		connect.WithSchema(sessionServiceMethods.ByName("GetJobOutput")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetSessionAttachmentHandler := connect.NewUnaryHandler(
@@ -1762,6 +1812,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetSessionViewDetailHandler.ServeHTTP(w, r)
 		case SessionServiceSubscribeSessionViewProcedure:
 			sessionServiceSubscribeSessionViewHandler.ServeHTTP(w, r)
+		case SessionServiceGetSessionActivityProcedure:
+			sessionServiceGetSessionActivityHandler.ServeHTTP(w, r)
+		case SessionServiceGetJobOutputProcedure:
+			sessionServiceGetJobOutputHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionAttachmentProcedure:
 			sessionServiceGetSessionAttachmentHandler.ServeHTTP(w, r)
 		case SessionServiceGetCommitDiffProcedure:
@@ -1923,6 +1977,14 @@ func (UnimplementedSessionServiceHandler) GetSessionViewDetail(context.Context, 
 
 func (UnimplementedSessionServiceHandler) SubscribeSessionView(context.Context, *connect.Request[v1.SubscribeSessionViewRequest], *connect.ServerStream[v1.SessionViewUpdate]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SubscribeSessionView is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSessionActivity(context.Context, *connect.Request[v1.GetSessionActivityRequest]) (*connect.Response[v1.GetSessionActivityResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetSessionActivity is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetJobOutput(context.Context, *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetJobOutput is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error) {

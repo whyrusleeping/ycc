@@ -311,7 +311,7 @@ export function Transcript({
 }
 
 /** The summary line of a folded run of tool/reasoning steps. */
-function ActivityHead({
+export function ActivityHead({
   summary,
   hidden,
   open,

@@ -260,6 +260,8 @@ export function SessionView({
     inspector.item.project === project &&
     inspector.item.sessionId === sessionId &&
     !inspector.item.taskId;
+  const activityOpen =
+    inspector.item?.kind === "activity" && inspector.item.project === project && inspector.item.sessionId === sessionId;
 
   let placeholder = "Message the agent… (Enter to send, Shift+Enter for a newline)";
   // A persisted log's last phase says nothing about the next turn: keep the default.
@@ -328,6 +330,18 @@ export function SessionView({
           >
             <Icon name="diff" />
             <span className="btn-label">Changes</span>
+          </button>
+          <button
+            type="button"
+            className={`btn ghost${activityOpen ? " active" : ""}`}
+            title="Activity: this session’s agents and background jobs, with a timeline and their output"
+            aria-label="Activity"
+            aria-pressed={activityOpen}
+            data-track="session.activity"
+            onClick={() => (activityOpen ? inspector.close() : inspector.open({ kind: "activity", project, sessionId }))}
+          >
+            <Icon name="activity" />
+            <span className="btn-label">Activity</span>
           </button>
           <Link
             className="btn ghost"
@@ -496,6 +510,19 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
         group: g,
         keywords: "diff git",
         run: () => inspector.open({ kind: "workingChanges", project, sessionId }),
+      }),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [inspector.open, project, sessionId],
+    ),
+  );
+  useAction(
+    useMemo(
+      () => ({
+        id: "session.activity",
+        title: "Show this session’s agents and background jobs",
+        group: g,
+        keywords: "activity subagents jobs timeline output",
+        run: () => inspector.open({ kind: "activity", project, sessionId }),
       }),
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [inspector.open, project, sessionId],

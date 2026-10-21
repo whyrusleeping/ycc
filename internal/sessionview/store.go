@@ -28,7 +28,8 @@ import (
 // Rebuild older indexes so durable pause requests appear in their state snapshots.
 // 5: state gained awaiting_jobs (idle with delegated work still running).
 // 6: review_submitted summaries keep verdict, reviewer, and reviewed snapshot.
-const schemaVersion = 6
+// 7: activity lifecycle and subagent progress rows are indexed for the activity graph.
+const schemaVersion = 7
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -132,7 +133,7 @@ func (s *Store) init() error {
 		return err
 	}
 	if version != 0 && version != schemaVersion {
-		if _, err := s.db.Exec(`DROP TABLE IF EXISTS updates; DROP TABLE IF EXISTS rows; DROP TABLE IF EXISTS sessions;`); err != nil {
+		if _, err := s.db.Exec(`DROP TABLE IF EXISTS updates; DROP TABLE IF EXISTS rows; DROP TABLE IF EXISTS activity; DROP TABLE IF EXISTS activity_progress; DROP TABLE IF EXISTS sessions;`); err != nil {
 			return err
 		}
 	}
@@ -153,6 +154,15 @@ CREATE TABLE IF NOT EXISTS updates (
  session_id TEXT NOT NULL, seq INTEGER NOT NULL, row_id TEXT NOT NULL, deleted INTEGER NOT NULL,
  PRIMARY KEY(session_id,seq,row_id)
 );
+CREATE TABLE IF NOT EXISTS activity (
+ session_id TEXT NOT NULL, seq INTEGER NOT NULL, event_json BLOB NOT NULL,
+ PRIMARY KEY(session_id,seq)
+);
+CREATE TABLE IF NOT EXISTS activity_progress (
+ session_id TEXT NOT NULL, seq INTEGER NOT NULL, actor TEXT NOT NULL, type TEXT NOT NULL,
+ name TEXT NOT NULL, tokens INTEGER NOT NULL, ts_unix_ns INTEGER NOT NULL, PRIMARY KEY(session_id,seq)
+);
+CREATE INDEX IF NOT EXISTS activity_progress_actor ON activity_progress(session_id,actor,seq);
 ` + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion))
 	return err
 }
@@ -235,7 +245,7 @@ func (s *Store) catchUpLocked(ctx context.Context, sessionID, logPath string, ma
 		if !allowRebuild {
 			return State{}, errors.New("session view index source changed during rebuild")
 		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM updates WHERE session_id=?; DELETE FROM rows WHERE session_id=?; DELETE FROM sessions WHERE session_id=?`, sessionID, sessionID, sessionID); err != nil {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM updates WHERE session_id=?; DELETE FROM rows WHERE session_id=?; DELETE FROM activity WHERE session_id=?; DELETE FROM activity_progress WHERE session_id=?; DELETE FROM sessions WHERE session_id=?`, sessionID, sessionID, sessionID, sessionID, sessionID); err != nil {
 			return State{}, err
 		}
 		return s.catchUpLocked(ctx, sessionID, logPath, maxSeq, maxOffset, false)
@@ -282,6 +292,9 @@ func (s *Store) catchUpLocked(ctx context.Context, sessionID, logPath string, ma
 			return State{}, fmt.Errorf("session view sequence discontinuity: got %d after %d", ev.Seq, seq)
 		}
 		if err := applyEvent(ctx, tx, sessionID, &state, ev); err != nil {
+			return State{}, err
+		}
+		if err := recordActivityEvent(ctx, tx, sessionID, ev); err != nil {
 			return State{}, err
 		}
 		consumed += lineBytes + 1

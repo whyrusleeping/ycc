@@ -1,6 +1,7 @@
 // Inspector pane contents for each InspectorItem kind.
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
+import { useParams } from "react-router";
 import { formatReference, type FileReference } from "../files/fileReference";
 import { client, errorMessage } from "../../api/client";
 import { useSessionController, useSessionSnapshot } from "../session/useSession";
@@ -17,9 +18,19 @@ import { reportPresentation } from "../session/report";
 import { SessionSettingsPanel } from "../session/SessionSettings";
 import { TaskDetailView } from "../backlog/TaskDetail";
 import { MergePanel } from "../workstreams/MergePanel";
+import { ActivityPanel } from "../activity/ActivityPanel";
 
 export function InspectorPane() {
-  const { item, close, back, canGoBack } = useInspector();
+  const { item, open, close, back, canGoBack } = useInspector();
+  // Activity is a live, polling view of one session: it follows the routed
+  // session, and closes when the route leaves sessions.
+  const { project: routeProject = "", sessionId: routeSession = "" } = useParams();
+  const staleActivity = item?.kind === "activity" && item.sessionId !== routeSession;
+  useEffect(() => {
+    if (!staleActivity) return;
+    if (routeSession) open({ kind: "activity", project: routeProject, sessionId: routeSession });
+    else close();
+  }, [staleActivity, routeProject, routeSession, open, close]);
   if (!item) return null;
   return (
     <aside className="inspector" aria-label="Inspector">
@@ -38,7 +49,10 @@ export function InspectorPane() {
             ×
           </button>
         </header>
-        <div className="inspector-body">
+        <div className={`inspector-body${item.kind === "activity" ? " flush" : ""}`}>
+          {item.kind === "activity" && !staleActivity && (
+            <ActivityPanel key={`${item.project}\u0000${item.sessionId}`} project={item.project} sessionId={item.sessionId} />
+          )}
           {item.kind === "row" && <RowInspector item={item} />}
           {item.kind === "workingChanges" && <WorkingChanges item={item} />}
           {item.kind === "commit" && <CommitDiff item={item} />}
@@ -75,6 +89,8 @@ function inspectorTitle(item: InspectorItem): string {
       return item.filename || "Picture";
     case "sessionSettings":
       return "Session settings";
+    case "activity":
+      return "Activity";
     case "task":
       return `Task ${item.taskId}`;
     case "merge":

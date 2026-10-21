@@ -1,7 +1,7 @@
 // The inspector: a closable, resizable right-hand pane for contextual detail
 // (expanded transcript rows, working-tree and commit diffs) so detail opens
 // beside the transcript instead of replacing it: also full-size transcript
-// pictures, the per-session settings panel, and backlog task detail (opened
+// pictures, the per-session settings and activity panels, and backlog task detail (opened
 // from a session's focus-task chips), a workstream's merge preview, and file
 // contents (opened from file references). Opening something from inside the
 // inspector (`push`) keeps a back stack; opening from elsewhere replaces it.
@@ -31,6 +31,8 @@ export type InspectorItem =
       mediaType: string;
     }
   | { kind: "sessionSettings"; project: string; sessionId: string }
+  /** A session's agents, subagents, and background jobs (tree, timeline, detail). */
+  | { kind: "activity"; project: string; sessionId: string }
   | { kind: "task"; project: string; taskId: string }
   /** A workstream's merge preview and accept gate. */
   | { kind: "merge"; project: string; workstreamId: string; branch: string }
@@ -135,6 +137,13 @@ export function useInspector(): InspectorState {
   const v = useContext(Ctx);
   if (!v) throw new Error("useInspector outside InspectorProvider");
   return v;
+}
+
+/** For content shown inside the inspector: `open` stacks (Back returns here) instead of replacing. */
+export function InspectorStackScope({ children }: { children: ReactNode }) {
+  const v = useInspector();
+  const value = useMemo(() => ({ ...v, open: v.push }), [v]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 /** Drag handle on the inspector's left edge. */

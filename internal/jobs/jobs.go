@@ -72,6 +72,7 @@ type Info struct {
 	Mutates                bool
 	Started, Finished      time.Time
 	Activity               Activity
+	Restored               bool // reconstructed from the log; no process or output survived the restart
 }
 
 // Output is a repeatable absolute-byte view over a job's retained output.
@@ -123,6 +124,7 @@ type Job struct {
 	executionDone chan struct{} // tracked process/agent has actually stopped
 	executionOnce sync.Once
 	tracked       bool
+	restored      bool
 
 	mu              sync.Mutex
 	status          Status
@@ -260,7 +262,7 @@ func (j *Job) Info() Info {
 	defer j.mu.Unlock()
 	return Info{ID: j.id, Kind: j.kind, Label: j.label, Owner: j.owner,
 		Purpose: j.purpose, Delivery: j.delivery, Status: j.status, Mutates: j.mutates,
-		Started: j.started, Finished: j.finished, Activity: j.activity}
+		Started: j.started, Finished: j.finished, Activity: j.activity, Restored: j.restored}
 }
 
 // Tail returns the last n lines of the buffered output.
@@ -516,7 +518,7 @@ func NewRestored(entries []Restored) *Registry {
 			purpose: e.Purpose, delivery: e.Delivery, mutates: e.Mutates,
 			ctx: ctx, cancel: cancel, done: make(chan struct{}),
 			status: e.Status, result: e.Result, notified: e.Notified,
-			started: started, finished: finished}
+			started: started, finished: finished, restored: true}
 		if e.Kind == "agent" {
 			j.activity.Last = finished
 		}

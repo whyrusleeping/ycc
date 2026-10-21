@@ -286,6 +286,7 @@ JSON="Content-Type: application/json"
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
 | [`GetSessionView`](#indexed-session-view) / `GetSessionViewPage` / `GetSessionViewDetail` | bounded indexed presentation pages and detail |
 | [`SubscribeSessionView`](#indexed-session-view) | sequence-safe presentation row/state updates |
+| [`GetSessionActivity` / `GetJobOutput`](#session-activity) | agent/subagent/job graph with live progress / a live job's output |
 | [`GetSessionAttachment`](#getsessionattachment) | fetch a retained user-picture payload |
 | [`StartSession`](#startsession) | start a new session |
 | [`Subscribe`](#subscribe) | stream a session's events (replay + live) |
@@ -628,6 +629,46 @@ repeat the snapshot/subscription handoff; the durable log subscription replays s
 snapshot, so there is no replay/live gap. Live indexing is capped by the log's post-fsync
 sequence/byte boundary and never consumes an unterminated tail. The SQLite index is versioned and
 rebuildable from JSONL; legacy transcript/export/model-replay APIs are unchanged.
+
+### Session activity
+
+`GetSessionActivity` returns the session's agent graph as a flat `nodes` list. The coordinator
+root comes first, then the other nodes in start order, linked by `parentId`. There are three kinds
+of node:
+
+- The coordinator root.
+- One node per subagent actor (`agent:<id>`, `implementer`, `reviewer:<model>`). Each spawn→finish
+  round is one entry in `spans`.
+- One node per background non-agent job (`kind` `bash`), under the actor that started it.
+
+An agent's own background job is shown through that agent's rounds rather than as a separate node.
+
+A node's `actor` names the events in the session view that belong to it, so a client can filter
+the transcript to one agent. Statuses are `running`, `done`, `failed`, `blocked`, `killed`, or
+`lost`; the root reports the session phase, and its `lastActivityAt` is the session's last event.
+
+An agent node also carries progress metadata for its latest round, derived from its indexed
+turn and tool events: `currentTool` (only while running), `turns`, `totalTokens`, and
+`lastActivityAt`. This is never model text, and it works for both foreground and background
+rounds. While the session is live (`live: true`), open work is checked against the job registry.
+Work that was in flight when the session stopped, or before a reopen, reports `lost`, finished at
+the session's last event (or the reopen).
+Clients poll this RPC while an activity view is open. Polling is cheap because the daemon builds
+the graph from compact lifecycle rows in the session-view index.
+
+`GetJobOutput` reads a job's retained output (`outputAvailable` nodes) by absolute byte `offset`
+and `limit` (64 KiB default, 256 KiB maximum), or the newest `tailLines`. `data` is raw bytes
+(base64 in JSON) for `[start, end)`. Advance `offset` to `end` to follow a running job. A
+`retainedStart` above your cursor means older bytes were dropped from the bounded buffer. Output
+lives only in the running daemon's session. Otherwise the response has `available: false` and an
+`unavailableReason`, and the client should show the node's bounded `result` instead.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work","sessionId":"s_doc"}' \
+  $B/ycc.v1.SessionService/GetSessionActivity
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"work","sessionId":"s_doc","jobId":"job_3","tailLines":50}' \
+  $B/ycc.v1.SessionService/GetJobOutput
+```
 
 ### GetSessionAttachment
 
