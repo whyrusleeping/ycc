@@ -289,13 +289,14 @@ func remember(d *Deps) *gollama.Tool {
 		Name: "remember",
 		Description: "Record a concise operational learning in memory.md. Classify actual user guidance, observations, " +
 			"inferences, and proposals honestly; memory is advisory, never design or authorization. Provenance is " +
-			"attached automatically, not invented in the note. Use supersedes to correct/merge notes (audit retained), " +
-			"or forget to retire without replacement.",
+			"attached automatically, not invented in the note. To correct/merge notes, list their ids in supersedes: " +
+			"they leave prompts immediately (audit retained), so do not also forget them. Use forget only to retire " +
+			"notes without replacement.",
 		Params: tools.Obj(map[string]any{
 			"note":       tools.StrProp("the learning to record, as a single concise sentence without a source citation"),
 			"category":   map[string]any{"type": "string", "enum": []string{"environment", "gotcha", "preference", "lesson"}, "description": "category (default 'lesson'): environment, gotcha, preference, or lesson"},
 			"kind":       map[string]any{"type": "string", "enum": []string{"user_guidance", "observation", "inference", "proposed_policy"}, "description": "claim kind (default inference): classify authority, not topic"},
-			"supersedes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "existing memory IDs contradicted by this correction"},
+			"supersedes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "existing memory IDs this note corrects or merges; they are retired by this call"},
 		}, "note"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			note, _ := tools.GetString(params, "note")
@@ -328,6 +329,12 @@ func remember(d *Deps) *gollama.Tool {
 				category = "lesson"
 			}
 			msg := fmt.Sprintf("recorded %s %s in memory.md under %s", res.ID, res.Kind, category)
+			if len(res.Superseded) > 0 {
+				msg += "; superseded " + strings.Join(res.Superseded, ", ") + " (now inactive; no forget needed)"
+			}
+			if len(res.AlreadyInactive) > 0 {
+				msg += "; already inactive: " + strings.Join(res.AlreadyInactive, ", ")
+			}
 			budget := res.BudgetAdvice
 			if res.OverSoft && d.MemoryPressure != nil {
 				if status := d.MemoryPressure(res.Active); status != "" {
@@ -355,7 +362,8 @@ func forget(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "forget",
 		Description: "Retire obsolete memory notes by id (m-…/legacy-…) without replacement; audit records remain. " +
-			"Allowed even over budget. For corrections/merges use remember with supersedes.",
+			"Allowed even over budget. For corrections/merges use remember with supersedes instead; ids it supersedes " +
+			"are already retired and need no forget.",
 		Params: tools.Obj(map[string]any{
 			"ids":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "memory ids to retire"},
 			"reason": tools.StrProp("short audit reason, e.g. 'fixed in 0405', 'moved to spec §6.3', 'duplicate of m-…'"),

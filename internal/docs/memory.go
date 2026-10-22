@@ -184,6 +184,11 @@ type MemoryWrite struct {
 	Notes []string
 	// BudgetAdvice describes the active size against the budgets, or "".
 	BudgetAdvice string
+	// Superseded lists the requested supersedes ids this write took out of
+	// active memory; AlreadyInactive lists those that were already superseded
+	// or retired. Either way no follow-up forget is needed.
+	Superseded      []string
+	AlreadyInactive []string
 }
 
 // MemoryNoteSize identifies one active note and its rendered prompt cost.
@@ -265,9 +270,16 @@ func (s *Store) AppendMemoryEntry(in MemoryEntry) (MemoryWrite, error) {
 
 	parsed := parseMemory(string(existing))
 	supersedes := uniqueStrings(in.Supersedes)
+	activeIDs := parsed.activeIDs()
+	var nowSuperseded, alreadyInactive []string
 	for _, id := range supersedes {
 		if _, found := parsed.ids[id]; !found {
 			return MemoryWrite{}, fmt.Errorf("cannot supersede unknown memory id %q", id)
+		}
+		if _, active := activeIDs[id]; active {
+			nowSuperseded = append(nowSuperseded, id)
+		} else {
+			alreadyInactive = append(alreadyInactive, id)
 		}
 	}
 
@@ -312,6 +324,7 @@ func (s *Store) AppendMemoryEntry(in MemoryEntry) (MemoryWrite, error) {
 		Size: len(body), Advice: joinNonEmpty(advice, "; "), ID: id, Kind: in.Kind,
 		Active: activeAfter, OverSoft: activeAfter >= MemorySoftBudget,
 		Notes: notes, BudgetAdvice: budget,
+		Superseded: nowSuperseded, AlreadyInactive: alreadyInactive,
 	}, nil
 }
 
@@ -343,10 +356,7 @@ func (s *Store) RetireMemory(ids []string, reason string, prov MemoryProvenance)
 		return MemoryRetire{}, err
 	}
 	parsed := parseMemory(string(existing))
-	activeIDs := make(map[string]struct{})
-	for _, e := range parsed.active() {
-		activeIDs[e.id] = struct{}{}
-	}
+	activeIDs := parsed.activeIDs()
 	var retired, inactive []string
 	for _, id := range ids {
 		if _, found := parsed.ids[id]; !found {
@@ -359,7 +369,7 @@ func (s *Store) RetireMemory(ids []string, reason string, prov MemoryProvenance)
 		}
 	}
 	if len(retired) == 0 {
-		return MemoryRetire{}, fmt.Errorf("nothing to retire: %s already inactive (superseded or retired)", strings.Join(inactive, ", "))
+		return MemoryRetire{}, fmt.Errorf("nothing to retire: %s already inactive (superseded or retired), so no action is needed", strings.Join(inactive, ", "))
 	}
 	reason = strings.TrimSpace(strings.ReplaceAll(reason, "\n", " "))
 	if reason == "" {
@@ -450,6 +460,14 @@ func (p parsedMemory) active() []parsedMemoryEntry {
 		out = append(out, entry)
 	}
 	return out
+}
+
+func (p parsedMemory) activeIDs() map[string]struct{} {
+	ids := make(map[string]struct{})
+	for _, e := range p.active() {
+		ids[e.id] = struct{}{}
+	}
+	return ids
 }
 
 const memoryMetaMarker = " <!-- ycc-memory "

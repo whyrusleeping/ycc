@@ -715,6 +715,11 @@ func TestFreshSessionPromptOmitsSupersededPolicy(t *testing.T) {
 	if err != nil || res.IsError {
 		t.Fatalf("record correction: %v %+v", err, res)
 	}
+	// The result must say the superseded note is already retired, so the agent
+	// does not follow up with a forget that would fail as a no-op.
+	if want := "superseded " + invented.ID + " (now inactive; no forget needed)"; !strings.Contains(res.Content, want) {
+		t.Fatalf("remember result missing %q: %s", want, res.Content)
+	}
 
 	// assemble models a new session: it reads memory.md from disk rather than
 	// retaining any state from the writing session.

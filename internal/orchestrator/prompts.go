@@ -218,7 +218,8 @@ Finish with what changed and any pending approvals.`
 const memoryGroomSteps = `Use the active PROJECT MEMORY set; read memory.md only for its audit trail. Verify important
 claims against current code and candidate source events (.ycc/sessions/<id>/events.jsonl), not type labels.
 Forget obsolete, disproven, duplicated, fixed, or already-promoted notes. Merge/tighten with remember
-and supersedes only when shorter. Use these tools, not hand edits; preserve the audit trail.
+and supersedes only when shorter; superseded ids are retired by that call, so never forget them too.
+Use these tools, not hand edits; preserve the audit trail.
 Keep user guidance, observations, inferences, and proposals distinct. Preserve user guidance unless
 obsolete or promoted; never infer destructive authorization.`
 
