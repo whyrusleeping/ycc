@@ -1780,7 +1780,7 @@ public final class SessionViewModel {
         }
         // A pending question whose row fell outside the recent page needs its
         // full detail; `loadDetail` de-duplicates in-flight requests.
-        for rowID in truncatedPendingRowIDs {
+        for rowID in Set(truncatedPendingRowIDs) where projection.needsIndexedPendingDetail(rowID: rowID) {
             Task { [weak self] in await self?.loadDetail(rowID: rowID) }
         }
     }

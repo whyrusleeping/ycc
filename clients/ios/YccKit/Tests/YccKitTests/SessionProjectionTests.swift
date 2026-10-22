@@ -1270,6 +1270,17 @@ final class SessionProjectionTests: XCTestCase {
         projection.installIndexedDetail(detail)
         XCTAssertEqual(projection.pendingQuestion?.questions.map(\.prompt), ["first", "second"])
         XCTAssertTrue(projection.durableRows.isEmpty, "pending detail must not insert an out-of-page row")
+
+        // Later state updates for the same still-open gate (e.g. subagent work
+        // while the question waits) must keep the expanded question rather than
+        // clearing it and refetching, which flickered the answer sheet.
+        var later = indexedState(5)
+        later.pendingRowID = "seq-4"
+        later.pendingQuestionsTruncated = true
+        later.pendingQuestions = [first]
+        projection.applyIndexed(state: later, upserts: [], deletedIDs: [])
+        XCTAssertEqual(projection.pendingQuestion?.questions.map(\.prompt), ["first", "second"])
+        XCTAssertFalse(projection.needsIndexedPendingDetail(rowID: "seq-4"))
     }
 
     func testIndexedDetailRacingAcceptedAnswerDoesNotReopenQuestion() {

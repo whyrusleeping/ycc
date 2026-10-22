@@ -1010,7 +1010,16 @@ public struct SessionProjection: Sendable, Equatable {
         }
         awaitingJobs = phase == .idle && state.awaitingJobs
         openQuestions = []
-        if state.pendingQuestionsTruncated, !state.pendingRowID.isEmpty {
+        if state.pendingQuestionsTruncated, !state.pendingRowID.isEmpty,
+           let held = pendingQuestion, held.rowID == state.pendingRowID {
+            // Already expanded (from detail or the live event) and a question is
+            // immutable once asked. Keep it: every state update while the gate
+            // waits (e.g. each subagent event) used to clear it and refetch,
+            // dismissing and re-presenting the answer sheet over and over.
+            openQuestions = held.questions
+            openQuestionRowID = held.rowID
+            indexedPendingDetailRowID = nil
+        } else if state.pendingQuestionsTruncated, !state.pendingRowID.isEmpty {
             // Do not expose an incomplete batch to AnswerQuestions. The view model
             // fetches this row's full detail, which restores all controls below.
             pendingQuestion = nil
