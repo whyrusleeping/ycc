@@ -91,6 +91,8 @@ private struct ActivitySnapshot {
     let marksRevision: Int
     let byProject: [String: ProjectActivity]
     let total: ProjectActivity
+    /// Each project's newest loaded session recency (``SessionListModel/recencyDate(_:)``).
+    let latestByProject: [String: Date]
 }
 
 /// The canonical status of a session, parsed from the daemon's free-form
@@ -368,6 +370,7 @@ public final class SessionListModel {
             return cached
         }
         var counts: [String: ProjectActivity] = [:]
+        var latest: [String: Date] = [:]
         var total = ProjectActivity()
         for project in loadedProjects { counts[project] = ProjectActivity() }
         for session in allSessions {
@@ -378,6 +381,9 @@ public final class SessionListModel {
             total.needsAnswer += own.needsAnswer
             total.unread += own.unread
             guard let project = sessionProjects[session.sessionID] else { continue }
+            if let date = Self.recencyDate(session), date > (latest[project] ?? .distantPast) {
+                latest[project] = date
+            }
             var activity = counts[project] ?? ProjectActivity()
             activity.active += own.active
             activity.needsAnswer += own.needsAnswer
@@ -385,9 +391,23 @@ public final class SessionListModel {
             counts[project] = activity
         }
         let value = ActivitySnapshot(
-            revision: revision, marksRevision: marksRevision, byProject: counts, total: total)
+            revision: revision, marksRevision: marksRevision, byProject: counts, total: total,
+            latestByProject: latest)
         activityCache = value
         return value
+    }
+
+    /// Registered projects, most recently active first (by their newest loaded
+    /// session), for the home screen's scope chips. Projects with no loaded
+    /// sessions keep registry order after the active ones.
+    public var projectsByRecency: [Ycc_V1_ProjectInfo] {
+        let latest = activitySnapshot.latestByProject
+        return projects.enumerated().sorted { a, b in
+            let dateA = latest[a.element.name] ?? .distantPast
+            let dateB = latest[b.element.name] ?? .distantPast
+            if dateA != dateB { return dateA > dateB }
+            return a.offset < b.offset
+        }.map(\.element)
     }
 
     /// Project names that produced a successful history load, so a project with

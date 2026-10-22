@@ -351,6 +351,15 @@ struct LandingView: View {
                     ProgressView()
                 }
             }
+            .topBar {
+                if let model, model.showsProjectFilter {
+                    ScopeChipBar(model: model) { project, position in
+                        Analytics.action("scope.select", attrs: ["pos": String(position)])
+                        // Client-side filter over the aggregate load: instant.
+                        model.selectedProject = project
+                    }
+                }
+            }
             .navigationTitle(model?.selectedProject ?? "Recent")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

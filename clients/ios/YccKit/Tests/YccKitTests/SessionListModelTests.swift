@@ -1223,6 +1223,22 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertFalse(model.totalActivity.isEmpty)
     }
 
+    func testProjectsByRecencyOrdersByNewestSessionThenRegistryOrder() async {
+        let source = MockListSource()
+        source.projects = [project("alpha"), project("beta"), project("gamma"), project("delta")]
+        source.sessionsByProject = [
+            "alpha": [session(id: "a", lastActivity: "2026-10-01T00:00:00Z")],
+            "gamma": [
+                session(id: "g1", lastActivity: "2026-10-03T00:00:00Z"),
+                session(id: "g2", startedAt: "2026-10-05T00:00:00Z"),
+            ],
+        ]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        XCTAssertEqual(model.projectsByRecency.map(\.name), ["gamma", "alpha", "beta", "delta"])
+    }
+
     func testIdleAndStoppedLiveSessionsAreNotCountedActive() async {
         let source = MockListSource()
         source.projects = [project("one")]

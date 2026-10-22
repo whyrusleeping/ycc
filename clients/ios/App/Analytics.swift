@@ -66,6 +66,7 @@ enum Analytics {
         "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter",
         "drawer.open", "drawer.select_project", "drawer.rename_project", "drawer.remove_project",
         "drawer.disconnect",
+        "scope.select",
         "backlog.move", "task.status", "task.start_work",
         "loop.start", "loop.stop",
         "workstreams.preview", "workstreams.merge", "workstreams.retry", "workstreams.discard",
