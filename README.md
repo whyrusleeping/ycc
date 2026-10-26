@@ -1,386 +1,256 @@
 # ycc
 
-**ycc is a docs-driven coding harness.** You keep a design spec and a backlog in your
-repository; ycc's agents turn backlog tasks into reviewed, committed code and keep the
-documents up to date as they go. A long-running daemon does the work and you watch and steer it
-from a browser, your phone, or the command line. You can close the laptop and the work keeps
-going.
+**ycc is a docs-driven coding harness.** Each repository keeps a design spec and a backlog,
+and ycc's agents turn backlog tasks into reviewed, committed code while keeping those documents
+up to date. One long-running daemon on an always-on machine does the work for all of your
+projects. You talk to it from a web app at your desk and an iPhone app everywhere else, and
+closing either one doesn't stop anything.
 
-```
-            you ──── plan & accept ───▶ backlog/  spec.md  docs/
-                                            │
-                                            ▼
-      ycc daemon ── work session: implement → review → update task → git commit
-            │
-            └── event log ──▶  web UI · iOS app · CLI   (watch, answer, steer)
-```
+![The web app's inbox: a question waiting for an answer, recent sessions across three projects, and two work loops running](docs/images/web/inbox.png)
 
+- [How I use it](#how-i-use-it)
+- [Setting it up this way](#setting-it-up-this-way)
 - [How ycc works](#how-ycc-works)
-- [Getting started](#getting-started)
-- [Day-to-day use](#day-to-day-use)
-- [Clients](#clients)
-- [Always-on and remote use](#always-on-and-remote-use)
 - [Configuration](#configuration)
 - [Credentials and secrets](#credentials-and-secrets)
 - [Development](#development)
+
+## How I use it
+
+ycc is built around how I work, so this section describes that rather than every option.
+
+**A single daemon runs all my projects.** `ycc daemon --web` runs in a tmux session on a Linux box at home
+and only restarts when I deploy a new build. About ten projects are registered with it,
+including ycc itself, a game, a storage engine, and assorted side projects. Every session,
+work loop, and open question for all of them shows up in one place.
+
+**The phone is where most of it happens.** Most check-ins are on the iOS app: what's running,
+what finished, and what's waiting on me. When I notice a bug while using one of my projects, I
+open a chat in that project and describe it the way I'd tell a coworker. The agent finds the
+cause, fixes it, runs the tests, and I reply "commit it". Questions ("where are we at?", "what's
+blocked on me?") work the same way.
+
+**The web app is for longer reading at a desk:** long transcripts and diffs, the backlog,
+starting work loops, settings, and usage.
+
+**Chats for small things, the backlog for big things.** A bug or a small feature gets done in
+the chat that reported it. Anything bigger becomes backlog tasks. I describe what I want, the
+agent asks the questions that change the behavior, and then it writes tasks with acceptance
+criteria and updates the spec.
+
+**Work loops do most of the building.** Starting a loop on a project tells the daemon to take
+the next ready task, implement it in a fresh session, have a different model review it, commit,
+and repeat until nothing is ready. Loops run for hours without me; one busy project landed about
+fifty reviewed commits in a day. A task that needs a human decision is marked blocked rather
+than guessed at, and I unblock it from the phone.
+
+**Different models for different jobs.** Claude Opus coordinates and writes most of the code,
+GPT reviews it, and large or risky changes get reviewed by both. Both run on subscriptions
+(`ycc login`) rather than API keys.
+
+**ycc builds ycc.** This repository has its own [`spec.md`](spec.md), [`backlog/`](backlog), and
+[`memory.md`](memory.md), and almost all of its recent changes went through the workflow
+described here.
+
+### On the phone
+
+These screenshots come from a demo daemon with three small projects. Everything in them,
+including the code, the questions, and the commits, was produced by a real model.
+
+<table>
+<tr>
+<td width="33%" valign="top"><img src="docs/images/ios/home.png" alt="Recent sessions across three projects: two work loops running, a chat waiting for an answer, and an unread finished session"><br><b>Everything at a glance.</b> Two loops running, a chat waiting on an answer, and finished work marked unread, across all projects.</td>
+<td width="33%" valign="top"><img src="docs/images/ios/bug-report.png" alt="New chat in the pixelpad project describing an undo bug"><br><b>Report a bug.</b> Start a chat in the project and describe what went wrong.</td>
+<td width="33%" valign="top"><img src="docs/images/ios/bug-fixed.png" alt="The agent's reply explaining the bug, the fix, and the new regression tests"><br><b>It gets fixed.</b> The agent explains the cause, makes the fix, and adds a regression test.</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/images/ios/commit-it.png" alt="The user replies 'Nice, commit it' and the agent commits"><br><b>"Nice, commit it."</b></td>
+<td valign="top"><img src="docs/images/ios/questions.png" alt="Answer questions sheet with an option chosen for each question"><br><b>Bigger asks start with questions.</b> They open as a sheet; pick an option or type your own.</td>
+<td valign="top"><img src="docs/images/ios/diff.png" alt="Commit diff with removed and added lines"><br><b>Read what landed.</b> Every commit in a transcript opens its diff.</td>
+</tr>
+</table>
+
+### At the desk
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/web/question.png" alt="Web session view with the agent's multiple-choice questions"><br>The same question on the web, answerable from the keyboard.</td>
+<td width="50%" valign="top"><img src="docs/images/web/work-loop.png" alt="Work loop page listing the sessions the loop has run and their commits"><br>A finished work loop. Each task got its own session, review, and commit, and the loop skipped a task that a live chat was already handling.</td>
+</tr>
+</table>
+
+## Setting it up this way
+
+### 1. Install and log in
+
+```sh
+go install github.com/whyrusleeping/ycc/cmd/ycc@latest   # or: go build -o ycc ./cmd/ycc
+ycc login anthropic   # Claude Pro/Max; opens a browser login and adds a model to your config
+ycc login openai      # ChatGPT Plus/Pro
+```
+
+`ycc` is a single binary containing the daemon, the CLI, and the web app. Building it only needs
+Go. To use API keys instead of subscriptions, see [Credentials](#credentials-and-secrets). Then
+pick which model does what in [`ycc.toml`](#configuration). `ycc doctor` checks the setup and
+says how to fix anything it finds.
+
+### 2. Run the daemon somewhere that stays on
+
+```sh
+export YCC_TOKEN=$(openssl rand -hex 32)       # every client authenticates with this
+ycc daemon --web --addr 100.64.0.1:8787        # e.g. the machine's Tailscale address
+```
+
+Run it under tmux, screen, or a service manager so it outlives your shell. The daemon refuses
+to listen on a non-loopback address without a token. Treat the token like an SSH key: anyone who
+has it can run commands in your projects. Keep the daemon on a private network such as Tailscale
+or WireGuard. If a device can't join one, put a TLS-terminating tunnel in front of the daemon
+(I use ngrok for the phone) or pass `--tls-cert`/`--tls-key`.
+
+### 3. Add your projects
+
+Each project is a git repository on the daemon's machine. Add them from the web app or the iOS
+drawer (**Add project…**), or with `ycc project add ~/code/myproject`. For a new project, start
+a **Project manager** session with the **Onboard** preset. In an empty repository it works out
+the project's purpose with you, writes an initial `spec.md`, and creates a starter backlog. In
+an existing codebase it asks what you want to change next and documents only that part.
+
+### 4. Connect the clients
+
+- **Web:** open `http://<daemon-address>:8787` and paste the token.
+- **iOS:** build [`clients/ios`](clients/ios) onto your phone: run `cd clients/ios && xcodegen
+  generate`, open `Ycc.xcodeproj` in Xcode, choose your signing team, and run it. Then enter
+  the daemon URL and token. The token is kept in the Keychain.
 
 ## How ycc works
 
 ### The repository is the memory
 
-Agent sessions are disposable, but project state is not. Everything an agent needs to
-continue the work lives in plain, committed files that both you and the agents edit:
+Agent sessions are disposable, but project state is not. Everything an agent needs to continue
+the work lives in plain, committed files that both you and the agents edit:
 
 | File | What it holds |
 |------|---------------|
 | `spec.md` (+ any `docs/` design set) | How the system is meant to work: behavior, architecture, interfaces, invariants. |
 | `backlog/NNNN-*.md` | One Markdown file per task: intent, acceptance criteria, status, dependencies, and a work log. |
-| `plans/` | Repeatable procedures that automation can't replace, such as release smoke tests. |
 | `memory.md` | Short, advisory notes about *working on* the project (gotchas, environment quirks). |
 | git history | The record of code changes. ycc works with your git history and doesn't replace it. |
 
-Each work session starts with fresh context and rebuilds what it needs from these files. As a
-result you can review, edit, or revert the project's state with an editor and `git`, and
-any client or model can pick up where the last one stopped.
+Each session starts with fresh context and rebuilds what it needs from these files. You can
+review, edit, or revert any of it with an editor and `git`, and any client or model can pick up
+where the last one stopped.
 
 ### The spec and the code change together
 
-The spec is maintained alongside the code, and **a contradiction between them is a bug**. Work
-sessions update the design docs in the same commit as the code they describe. `ycc spec-check`
-deterministically flags paths, packages, and symbols that the docs mention but that no longer
-exist. The `spec-doctor` preset goes further and compares each spec section against the code.
+A contradiction between the spec and the code is a bug. Sessions update the design docs in the
+same commit as the code they describe, and `ycc spec-check` flags paths, packages, and symbols
+that the docs mention but that no longer exist.
 
 ### You decide what gets done; agents decide how
 
-Backlog statuses separate ideas from accepted work:
-
-- **`proposed`**: an agent (or you) captured an idea, but nobody has agreed to do it yet.
-  Proposed tasks never run.
-- **`todo`**: accepted work. Promoting a task from `proposed` to `todo` is how you approve it.
-- **`in_progress` → `done`**: a work session is carrying it out, and then it lands as a single
-  commit.
-- **`blocked`**: the task needs something only a human can provide, and the reason is recorded
-  in the task.
-
-Agents add the adjacent work they discover as *proposed* follow-ups. They don't quietly expand
-the task they were given.
+Tasks you create are accepted work (`todo`). Tasks an agent comes up with on its own start as
+`proposed`, and they never run until you promote them. Agents record the adjacent work they
+discover as proposed follow-ups instead of quietly expanding the task they were given. A task
+that needs something only a human can provide is marked `blocked`, with the reason in the task.
 
 ### Effort proportional to risk
 
-Tests, plans, documentation, and review all have a maintenance cost, so they are used where
-they help and not added by default. A tiny change gets a self-review. Ordinary work gets one
-focused reviewer. Large, risky, or hard-to-reverse changes are reviewed by several models in
-parallel. Reviews judge the change against the task and real failure modes, not personal taste.
-[`CONTRIBUTING.md`](CONTRIBUTING.md) is the written version of this policy. ycc follows it for
-its own development, and its agents apply it to your project.
+Tests, docs, and review all have a maintenance cost, so they're used where they help and not by
+default. A tiny change gets a self-review, ordinary work gets one reviewer, and large or
+hard-to-reverse changes are reviewed by several models in parallel. Reviews judge the change
+against the task and real failure modes, not personal taste. [`CONTRIBUTING.md`](CONTRIBUTING.md)
+is the written version of this policy.
+
+### Session modes
+
+| Mode | What it's for |
+|------|---------------|
+| **Chat** | Talking to the coordinator with full file and shell access and no fixed workflow: questions, bug fixes, small features, "commit it". |
+| **Work on backlog** | One task from start to finish: read the task and spec, implement, review in proportion to risk, update the task, and commit. Work loops run these back to back. |
+| **Project manager** | Planning: discuss design, edit the spec, and create and groom tasks, without writing code. |
+
+While a session runs you can send it a message at any time; it's delivered at the next safe
+point. **Interrupt** pauses it at a checkpoint so you can steer, and any finished session
+continues when you send it another message.
 
 ### The daemon owns the work; clients are just views
 
 The daemon runs the models, edits files, makes commits, and writes an append-only event log for
-every session. The web UI, the iOS app, and the CLI all use the same API to subscribe to that
-log and send commands. A client can disconnect, crash, or go to sleep without stopping
-a session. When it reconnects, it replays the log from where it stopped.
-
-### Humans are optional but always welcome
-
-In an *attended* session, the agent asks a question when it needs your input, and you can
-answer it from any client. *Unattended* sessions (such as the work loop) never wait for an
-answer: they choose a reversible assumption or mark the task blocked and move on. Operations
-with a large impact always require explicit approval, even in unattended runs. Examples are
-handing a plan off to implementation and merging a parallel workstream (unless you configured
-automatic merging).
-
-### Many models, each in its own role
-
-A config file maps logical model names to providers (Anthropic, OpenAI, any OpenAI-compatible
-endpoint, or Ollama). Roles assign those models to the **coordinator**, the **implementer**,
-and the **reviewers**. You can use an API key or an existing Claude or ChatGPT subscription,
-and mix them freely. For example, one model can plan, another can write the code, and a third
-can review it.
+every session. The web app, the iOS app, and the CLI all subscribe to that log through the same
+API, so a client can disconnect, crash, or go to sleep without affecting a session, and you can
+start something on one and finish it on another. Sessions you start are *attended*: the agent
+can ask you questions. Work loop sessions are *unattended*: they never wait for an answer, and
+either make a reversible assumption or mark the task blocked.
 
 The full design is in [`spec.md`](spec.md). The reasoning behind individual decisions is in
 [`docs/design/`](docs/design/).
 
-## Getting started
-
-### 1. Install
-
-```sh
-go install github.com/whyrusleeping/ycc/cmd/ycc@latest   # or: go build -o ycc ./cmd/ycc
-```
-
-`ycc` is a single binary that contains the daemon, the CLI, and the embedded web client. Building it needs only Go. You don't need Node.
-
-### 2. Connect a model
-
-To use a subscription, run one of these commands. Each one opens a browser login and adds a
-matching model to your config:
-
-```sh
-ycc login anthropic   # Claude Pro/Max
-ycc login openai      # ChatGPT Plus/Pro
-```
-
-To use an API key instead, store the key in ycc's local secrets store and refer to it by name
-from [`ycc.toml`](#configuration):
-
-```sh
-ycc token set ANTHROPIC_API_KEY
-```
-
-`ycc doctor` checks the setup: config discovery, key resolution, git state, the docs entry
-point, and more. Each problem it finds comes with a fix.
-
-### 3. Run the daemon and open the web UI
-
-```sh
-cd ~/code/myproject
-ycc daemon --web
-```
-
-Open <http://127.0.0.1:8787>. The page asks for the daemon token. On loopback, the daemon
-creates one for you at `~/.local/state/ycc/daemon-token`, or you can set `YCC_TOKEN` to choose
-your own. The directory you start the daemon in becomes the first project, and you can add
-more from the UI or with `ycc project add <path>`.
-
-### 4. Onboard the project
-
-Start a **pm** session using the **Onboard** preset. In an empty repository, it works with you
-on the project's purpose, writes an initial `spec.md`, and creates a starter backlog. In an
-existing codebase, it asks what you want to change next and documents only that part. It
-doesn't inventory the whole repository before you can get anything done.
-
-## Day-to-day use
-
-ycc has three session **modes**:
-
-| Mode | Use it for |
-|------|------------|
-| **pm** | Thinking and planning. It discusses design, edits the spec, investigates the code, and creates and grooms tasks, but it doesn't write code. Presets: *Onboard*, *Spec doctor*, *Groom project memory*. |
-| **work** | Doing one accepted task from start to finish: read the task and spec, implement it (directly or through an implementer subagent), review in proportion to risk, update the task, and commit. |
-| **chat** | Free-form help with direct file and shell tools and no fixed workflow. Use it for quick questions, exploration, and one-off changes. |
-
-A typical loop looks like this:
-
-1. **Capture** ideas whenever they come up. Use quick-capture in the web or iOS app, ask an
-   agent, or run `ycc task add "title" -d "details"`.
-2. **Plan** in a pm session. It sharpens the task's acceptance criteria and updates the spec,
-   and you promote the task to `todo` when you agree with it.
-3. **Work** a task. Start a work session on it, or let the coordinator choose the next ready
-   task. The session ends with one commit that contains the code, the spec changes, and the
-   updated task.
-4. **Run the work loop** to keep going without supervision. The daemon starts a fresh work
-   session for each ready task until none remain. It respects dependencies and budgets,
-   survives client disconnects, and sends a digest when it finishes.
-5. **Parallelize** with **workstreams**. Each workstream is a separate git worktree and branch
-   with its own work session. When it finishes, ycc rebases it, runs your `verify` command, and
-   fast-forwards the base branch. If no verify command is configured, or if you choose the gate
-   mode, it waits for your approval of the merged diff instead. If the rebase conflicts or
-   verification fails, ycc can send an agent to fix it first. The base branch is never left in
-   a conflicted state.
-
-While a session runs you can send input at any time. It is delivered at the next safe point.
-You can also **interrupt** a session, which pauses it at a checkpoint so you can steer it; sending
-the correction continues it. **Stop** ends a session immediately. Any earlier session, finished or
-stopped, can be opened later with its full history; sending it a message continues it.
-
-Usage and cost are calculated from the event logs. You can break them down by project, task,
-model, or actor in the Usage view, or from the command line with
-`ycc cost --by task --since 2026-06-01`. Optional token and dollar budgets (see
-[Configuration](#configuration)) cap sessions and work-loop runs.
-
-### The loop on your phone
-
-Here is that loop in the iOS app, on a small Go project where one model does the planning,
-implementation, and review:
-
-<table>
-<tr>
-<td width="25%" valign="top"><img src="docs/images/ios/1-capture.png" alt="Capture task sheet with a title, priority, and description"><br><b>1. Capture.</b> Jot a task from the backlog's <b>+</b> button. Tasks you write yourself are already accepted, so it lands in <code>todo</code>.</td>
-<td width="25%" valign="top"><img src="docs/images/ios/2-plan.png" alt="New session sheet in Project manager mode with a planning prompt"><br><b>2. Plan.</b> Start a <b>Project manager</b> session and ask it to pin the task down.</td>
-<td width="25%" valign="top"><img src="docs/images/ios/3-questions.png" alt="Answer questions sheet with multiple-choice options selected"><br><b>3. Answer.</b> The agent's questions open as a sheet. It then tightens the task's acceptance criteria, records its dependency, and updates the spec.</td>
-<td width="25%" valign="top"><img src="docs/images/ios/4-start-work.png" alt="Task detail screen with a Start work on this task button"><br><b>4. Start work.</b> Open a ready task and tap <b>Start work on this task</b>.</td>
-</tr>
-<tr>
-<td valign="top"><img src="docs/images/ios/5-work-review.png" alt="Live work session transcript showing tool calls and a reviewer subagent"><br><b>5. Watch.</b> The transcript streams live: reads, edits, test runs, and then an independent reviewer. You can send input or interrupt at any point.</td>
-<td valign="top"><img src="docs/images/ios/6-diff.png" alt="Commit diff view with removed and added lines"><br><b>6. Review.</b> The session ends with one commit. Tap it to read the diff.</td>
-<td valign="top"><img src="docs/images/ios/7-work-loop.png" alt="Confirmation popover for starting the unattended work loop"><br><b>7. Keep going.</b> Start the work loop and put the phone away. The daemon works through every ready task.</td>
-<td valign="top"><img src="docs/images/ios/8-results.png" alt="Session list showing a running loop session and a finished, unread one"><br><b>8. Catch up.</b> Finished sessions show as unread, and the loop's current session as running.</td>
-</tr>
-</table>
-
-## Clients
-
-All clients use the same daemon API, so you can start something on one and pick it up on
-another.
-
-- **Web** (`ycc daemon --web`). A desktop browser client for the full workflow: sessions with
-  live transcripts and diffs, the backlog, the work loop, workstreams, files, memory and plans,
-  usage, and model, role, and review-tier settings. It includes a command palette (shortcut
-  help is under `?`), image paste and drag-and-drop, and browser notifications. The source is
-  in [`clients/web`](clients/web).
-- **iOS** ([`clients/ios`](clients/ios)). A native iPhone app for checking in, answering
-  questions, steering, capturing tasks, and starting work while you're away from your desk.
-  Combined with [push notifications](#notifications), a tap on a notification opens the session
-  that needs you. [The loop on your phone](#the-loop-on-your-phone) walks through it in
-  screenshots. To build it, run `cd clients/ios && xcodegen generate`, open
-  `Ycc.xcodeproj` in Xcode, choose your signing team, and run the app on your device. Then
-  enter the daemon URL and token.
-- **CLI**. Scriptable commands for streaming and controlling sessions and backlogs:
-
-  ```sh
-  ycc start --mode chat "why is TestFoo flaky?"   # start a session and stream it; type to steer
-  ycc attach s_abc123 --from 0                    # replay a session, then follow it live
-  ycc list                                        # sessions
-  ycc task list                                   # backlog with readiness
-  ycc export s_abc123 > session.md                # shareable Markdown transcript
-  ycc spec-check                                  # CI gate for stale design references
-  ```
-
-  Every command documents itself with `ycc <command> --help`. The full reference is in
-  [`docs/cli.md`](docs/cli.md). Shell completion is available through
-  `source <(ycc completion bash)` (zsh and fish are also supported).
-
-## Always-on and remote use
-
-ycc is designed to run on a machine that stays on, such as a dev box or a home server, and to
-be reached from anywhere.
-
-| Command | Daemon lifetime |
-|---------|-----------------|
-| `ycc daemon [--web]` | A persistent daemon for multiple projects, running in the foreground. This is the usual setup. |
-| `ycc start …` | Attaches to a local persistent daemon if one is running. Otherwise it uses a temporary in-process daemon that stops when the command exits. |
-| `ycc --addr URL …` | Attaches any CLI command to a remote daemon. |
-
-To serve the daemon beyond loopback, give it a token. The daemon refuses to bind a
-non-loopback address without one:
-
-```sh
-export YCC_TOKEN=$(openssl rand -hex 32)
-ycc daemon --web --addr 100.64.0.1:8787                 # e.g. a Tailscale address
-YCC_TOKEN=… ycc --addr http://100.64.0.1:8787 list      # from another machine
-```
-
-The recommended setup is a private network such as Tailscale or WireGuard, which encrypts the
-traffic. Without that, use `--tls-cert`/`--tls-key` or a TLS-terminating tunnel. Treat the
-token like an SSH key: anyone who has it can run commands in your workspaces.
-[`docs/remote-api.md`](docs/remote-api.md) documents the HTTP/JSON API for writing your own
-clients.
-
-### Notifications
-
-The daemon can send push notifications to an [ntfy](https://ntfy.sh)-compatible webhook when a
-session asks a question, finishes, errors, or gets blocked, and when the work loop finishes.
-Each notification links to `ycc://session/<id>`, so tapping it on a phone with the app
-installed opens the session.
-
-```toml
-[notify]
-url = "https://ntfy.sh/my-private-topic"
-auth_env = "NTFY_AUTH"      # optional: env var holding the Authorization header, e.g. "Bearer tk_…"
-# events = ["question", "blocked", "digest"]   # optional filter; default is all kinds
-```
-
 ## Configuration
 
-### Models and roles: `ycc.toml`
-
 ycc uses the first config file it finds: `./ycc.toml` in the workspace, then
-`~/.config/ycc/ycc.toml`. You can also pass one with `--config`. The files are not merged.
-`ycc login` adds models to the config.
-Most settings can also be changed live from the web or iOS settings screens, and those changes
-are written back to the file.
+`~/.config/ycc/ycc.toml`, or the one passed with `--config`. `ycc login` adds models to it, and
+most settings can be changed from the web or iOS settings screens, which write back to the
+file. This is roughly my configuration:
 
 ```toml
 [models.opus]                      # a logical name you choose
 backend = "anthropic"
-model   = "claude-opus-4-8"
-auth    = "oauth"                  # use the `ycc login anthropic` subscription
+model   = "claude-opus-5-5"
+auth    = "oauth"                  # the `ycc login anthropic` subscription
 
-[models.gpt]
+[models.sol]
 backend = "openai"
-model   = "gpt-5.5"
-auth    = "oauth"                  # use the `ycc login openai` ChatGPT subscription
-
-[models.glm]
-backend  = "openai-compatible"
-base_url = "https://api.fireworks.ai/inference/v1"
-model    = "accounts/fireworks/models/glm-5p3"
-key_env  = "FIREWORKS_API_KEY"     # the NAME of an env var / `ycc token` entry, never the key itself
+model   = "gpt-6.1-sol"
+auth    = "oauth"                  # the `ycc login openai` subscription
 
 [roles]
-coordinator = "opus"               # plans, delegates, reviews, commits
-implementer = "gpt"                # writes the code in work mode
-reviewers   = ["gpt", "opus"]      # used by review tiers
+coordinator = "opus"               # runs sessions, writes code, commits
+implementer = "sol"                # used when the coordinator hands code off to a subagent
+reviewers   = ["sol"]
 
-[reviews]
-default = "standard"               # built-in tiers: self-review | standard | comprehensive
+[reviews.tiers.standard]           # one reviewer for ordinary changes
+models = ["sol"]
 
-[work]
-implementation = "direct"          # default; "delegate" uses a separate implementer
-
-[integration]                      # how finished workstreams land
-mode   = "auto"                    # auto | gate | manual
-verify = "go test ./..."
-
-[budget]                           # all optional; 0 = unlimited
-session_cost = 20.0
-loop_cost    = 100.0
+[[reviews.tiers.comprehensive.reviewers]]   # large or risky changes: both models in parallel
+model = "opus"
+[[reviews.tiers.comprehensive.reviewers]]
+model  = "sol"
+prompt = "Focus on correctness and code cleanliness."
 ```
 
-Models can also set reasoning (`thinking`, `effort`), pricing (`price_input`, `price_output`,
-… per million tokens), and `context_window`. You can disable a model without deleting it.
-Other sections cover retries, transport timeouts, session garbage collection, memory grooming,
-extra writable roots (`write_roots`), and worktree bootstrap steps (`[worktree]` `copy`,
-`link`, `setup`). [`spec.md` §13](spec.md#13-models-credentials-and-review-tiers) describes the
-behavior in detail.
+Other backends are `openai-compatible` (any OpenAI-style endpoint, with `base_url` and
+`key_env`) and `ollama`. Optional `[budget]` caps (`session_cost`, `loop_cost`) stop sessions and
+work loops at a dollar or token limit. [`spec.md` §13](spec.md#13-models-credentials-and-review-tiers)
+covers every setting.
 
-### Project docs layout: `.ycc/config.toml`
-
-If your design documents are spread across more files than `spec.md`, declare them in a
-committed `.ycc/config.toml`:
+If a project's design docs span more than `spec.md`, list them in a committed
+`.ycc/config.toml`, and keep the rest of `.ycc/` (session logs and runtime state) out of git
+with the ignore rules `.ycc/*` and `!.ycc/config.toml`:
 
 ```toml
 spec_path = "spec.md"
 doc_globs = ["docs/*.md", "docs/design/*.md"]
 ```
 
-Keep the rest of `.ycc/` (session logs and runtime state) out of git with the ignore rules
-`.ycc/*` and `!.ycc/config.toml`. Keep the globs narrow so they match only normative design
-docs, not `memory.md`, the backlog, generated files, or reports. `ycc spec-check` scans every
-file they match.
-
 ## Credentials and secrets
 
-- **Subscriptions**: run `ycc login anthropic|openai`. To reconnect Anthropic from the iOS app,
-  go to **Settings → Provider accounts**. Tokens stay on the daemon host and refresh
-  automatically.
-- **API keys**: `ycc token set NAME` stores a key in the machine-local secrets store. Input is
-  read without echo or from stdin, and the key is never accepted as a command-line argument.
-  Config files refer to keys only by name. Keys are looked up in the daemon's environment
-  first and then in the store. Stored values are never passed to tool processes.
-- **Agent shells** start with known credential variables removed from their environment
-  (`YCC_TOKEN`, provider keys, every configured `key_env`). This is a safety net, not a
-  sandbox. A shell running as your user can still read your files.
-- **Web tools**: `web_search`/`fetch_page` use [Exa](https://exa.ai). They read `EXA_API_KEY`
-  from the daemon's environment first, then from the secrets store (`ycc token set EXA_API_KEY`).
-  The key is only sent to Exa, and tool output is scrubbed of it.
+- **Subscriptions:** `ycc login anthropic|openai`. Tokens stay on the daemon's machine and
+  refresh automatically. Anthropic can also be reconnected from the iOS app under
+  **Settings → Provider accounts**.
+- **API keys:** `ycc token set NAME` stores a key in the machine-local secrets store, and
+  configs refer to it only by name (`key_env = "NAME"`). Keys are never passed to tool processes,
+  and agent shells start with known credential variables removed. That is a safety net, not a
+  sandbox: a shell running as your user can still read your files.
+- **Web search:** the `web_search`/`fetch_page` tools use [Exa](https://exa.ai) with
+  `EXA_API_KEY`.
 
 **Never paste a credential into a prompt or an answer to an agent's question.** Session logs
-are durable model history. ycc refuses input that is obviously credential-shaped and redacts
-known values in exports, but those checks can't catch everything. If a secret ends up in a
-session, rotate it at the provider first. Then decide whether to keep or delete that session's
-`.ycc/sessions/<id>` directory. ycc never rewrites logs.
-
-| Variable | Used for |
-|----------|----------|
-| `ANTHROPIC_API_KEY` | the default key name for Anthropic API-key models |
-| `EXA_API_KEY` | the `web_search` / `fetch_page` tools |
-| `YCC_TOKEN` | the daemon's bearer token (server and clients) |
+are durable model history. ycc refuses input that is obviously credential-shaped, but it can't
+catch everything. If a secret ends up in a session, rotate it at the provider first.
 
 ## Development
 
-ycc is developed with ycc, and this repository uses the same layout it asks of other projects:
+ycc is developed with ycc, and this repository uses the layout it asks of other projects:
 [`spec.md`](spec.md), [`backlog/`](backlog), [`plans/`](plans), [`memory.md`](memory.md), and
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -389,10 +259,14 @@ ycc is developed with ycc, and this repository uses the same layout it asks of o
 | `cmd/ycc` | the binary: CLI commands, daemon startup |
 | `internal/` | engine (agent loop), orchestrator (modes, work and review flow), server (Connect RPC), session/event log, tools, providers, workstreams, embedded web bundle |
 | `proto/ycc/v1` | `ycc.proto`, the wire schema shared by every client |
-| `clients/web` | the desktop web client (TypeScript, React, Vite); the bundle is committed to `internal/web/dist` |
+| `clients/web` | the web app (TypeScript, React, Vite); the bundle is committed to `internal/web/dist` |
 | `clients/ios` | the iPhone app (SwiftUI shell + `YccKit` Swift package) |
 
-CI runs Go 1.26.8 on Linux and Xcode 16.4 on macOS. Before submitting a change, run the
+The CLI (`ycc start`, `ycc list`, `ycc task …`, `ycc export`, and more) is documented in
+[`docs/cli.md`](docs/cli.md), and [`docs/remote-api.md`](docs/remote-api.md) documents the API
+for writing other clients.
+
+CI runs Go 1.26.10 on Linux and Xcode 16.4 on macOS. Before submitting a change, run the
 matching local checks. The Swift checks require macOS, and none of the checks need provider
 API keys.
 
