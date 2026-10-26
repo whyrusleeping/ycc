@@ -3,7 +3,8 @@
 **ycc is a docs-driven coding harness.** You keep a design spec and a backlog in your
 repository; ycc's agents turn backlog tasks into reviewed, committed code and keep the
 documents up to date as they go. A long-running daemon does the work and you watch and steer it
-from a browser, your phone, or a terminal. You can close the laptop and the work keeps going.
+from a browser, your phone, or the command line. You can close the laptop and the work keeps
+going.
 
 ```
             you ──── plan & accept ───▶ backlog/  spec.md  docs/
@@ -11,7 +12,7 @@ from a browser, your phone, or a terminal. You can close the laptop and the work
                                             ▼
       ycc daemon ── work session: implement → review → update task → git commit
             │
-            └── event log ──▶  web UI · iOS app · CLI · TUI   (watch, answer, steer)
+            └── event log ──▶  web UI · iOS app · CLI   (watch, answer, steer)
 ```
 
 - [How ycc works](#how-ycc-works)
@@ -76,8 +77,8 @@ its own development, and its agents apply it to your project.
 ### The daemon owns the work; clients are just views
 
 The daemon runs the models, edits files, makes commits, and writes an append-only event log for
-every session. The web UI, the iOS app, the CLI, and the TUI all use the same API to subscribe
-to that log and send commands. A client can disconnect, crash, or go to sleep without stopping
+every session. The web UI, the iOS app, and the CLI all use the same API to subscribe to that
+log and send commands. A client can disconnect, crash, or go to sleep without stopping
 a session. When it reconnects, it replays the log from where it stopped.
 
 ### Humans are optional but always welcome
@@ -108,8 +109,7 @@ The full design is in [`spec.md`](spec.md). The reasoning behind individual deci
 go install github.com/whyrusleeping/ycc/cmd/ycc@latest   # or: go build -o ycc ./cmd/ycc
 ```
 
-`ycc` is a single binary that contains the daemon, the CLI, the TUI, and the embedded web
-client. Building it needs only Go. You don't need Node.
+`ycc` is a single binary that contains the daemon, the CLI, and the embedded web client. Building it needs only Go. You don't need Node.
 
 ### 2. Connect a model
 
@@ -189,6 +189,26 @@ model, or actor in the Usage view, or from the command line with
 `ycc cost --by task --since 2026-06-01`. Optional token and dollar budgets (see
 [Configuration](#configuration)) cap sessions and work-loop runs.
 
+### The loop on your phone
+
+Here is that loop in the iOS app, on a small Go project where one model does the planning,
+implementation, and review:
+
+<table>
+<tr>
+<td width="25%" valign="top"><img src="docs/images/ios/1-capture.png" alt="Capture task sheet with a title, priority, and description"><br><b>1. Capture.</b> Jot a task from the backlog's <b>+</b> button. Tasks you write yourself are already accepted, so it lands in <code>todo</code>.</td>
+<td width="25%" valign="top"><img src="docs/images/ios/2-plan.png" alt="New session sheet in Project manager mode with a planning prompt"><br><b>2. Plan.</b> Start a <b>Project manager</b> session and ask it to pin the task down.</td>
+<td width="25%" valign="top"><img src="docs/images/ios/3-questions.png" alt="Answer questions sheet with multiple-choice options selected"><br><b>3. Answer.</b> The agent's questions open as a sheet. It then tightens the task's acceptance criteria, records its dependency, and updates the spec.</td>
+<td width="25%" valign="top"><img src="docs/images/ios/4-start-work.png" alt="Task detail screen with a Start work on this task button"><br><b>4. Start work.</b> Open a ready task and tap <b>Start work on this task</b>.</td>
+</tr>
+<tr>
+<td valign="top"><img src="docs/images/ios/5-work-review.png" alt="Live work session transcript showing tool calls and a reviewer subagent"><br><b>5. Watch.</b> The transcript streams live: reads, edits, test runs, and then an independent reviewer. You can send input or interrupt at any point.</td>
+<td valign="top"><img src="docs/images/ios/6-diff.png" alt="Commit diff view with removed and added lines"><br><b>6. Review.</b> The session ends with one commit. Tap it to read the diff.</td>
+<td valign="top"><img src="docs/images/ios/7-work-loop.png" alt="Confirmation popover for starting the unattended work loop"><br><b>7. Keep going.</b> Start the work loop and put the phone away. The daemon works through every ready task.</td>
+<td valign="top"><img src="docs/images/ios/8-results.png" alt="Session list showing a running loop session and a finished, unread one"><br><b>8. Catch up.</b> Finished sessions show as unread, and the loop's current session as running.</td>
+</tr>
+</table>
+
 ## Clients
 
 All clients use the same daemon API, so you can start something on one and pick it up on
@@ -202,7 +222,8 @@ another.
 - **iOS** ([`clients/ios`](clients/ios)). A native iPhone app for checking in, answering
   questions, steering, capturing tasks, and starting work while you're away from your desk.
   Combined with [push notifications](#notifications), a tap on a notification opens the session
-  that needs you. To build it, run `cd clients/ios && xcodegen generate`, open
+  that needs you. [The loop on your phone](#the-loop-on-your-phone) walks through it in
+  screenshots. To build it, run `cd clients/ios && xcodegen generate`, open
   `Ycc.xcodeproj` in Xcode, choose your signing team, and run the app on your device. Then
   enter the daemon URL and token.
 - **CLI**. Scriptable commands for streaming and controlling sessions and backlogs:
@@ -219,10 +240,6 @@ another.
   Every command documents itself with `ycc <command> --help`. The full reference is in
   [`docs/cli.md`](docs/cli.md). Shell completion is available through
   `source <(ycc completion bash)` (zsh and fish are also supported).
-- **TUI** ([screenshot](docs/tui.png)). Running `ycc` with no arguments opens a terminal home
-  menu. If a persistent daemon is running, the TUI attaches to it. Otherwise it starts a
-  temporary in-process daemon that shuts down when you exit. It's handy for quick local
-  sessions, but use `ycc daemon` for anything you want to keep running.
 
 ## Always-on and remote use
 
@@ -232,9 +249,8 @@ be reached from anywhere.
 | Command | Daemon lifetime |
 |---------|-----------------|
 | `ycc daemon [--web]` | A persistent daemon for multiple projects, running in the foreground. This is the usual setup. |
-| `ycc --background` | Starts a detached persistent daemon and attaches the TUI to it. |
-| `ycc` / `ycc start …` | Attaches to a local persistent daemon if one is running. Otherwise it uses a temporary in-process daemon that stops when the command exits. |
-| `ycc --addr URL …` | Attaches any CLI or TUI command to a remote daemon. |
+| `ycc start …` | Attaches to a local persistent daemon if one is running. Otherwise it uses a temporary in-process daemon that stops when the command exits. |
+| `ycc --addr URL …` | Attaches any CLI command to a remote daemon. |
 
 To serve the daemon beyond loopback, give it a token. The daemon refuses to bind a
 non-loopback address without one:
@@ -270,8 +286,8 @@ auth_env = "NTFY_AUTH"      # optional: env var holding the Authorization header
 ### Models and roles: `ycc.toml`
 
 ycc uses the first config file it finds: `./ycc.toml` in the workspace, then
-`~/.config/ycc/ycc.toml`. You can also pass one with `--config`. The files are not merged. If
-no usable config exists, the TUI's first-run wizard writes one, and `ycc login` adds models.
+`~/.config/ycc/ycc.toml`. You can also pass one with `--config`. The files are not merged.
+`ycc login` adds models to the config.
 Most settings can also be changed live from the web or iOS settings screens, and those changes
 are written back to the file.
 
@@ -371,7 +387,7 @@ ycc is developed with ycc, and this repository uses the same layout it asks of o
 | Path | Contents |
 |------|----------|
 | `cmd/ycc` | the binary: CLI commands, daemon startup |
-| `internal/` | engine (agent loop), orchestrator (modes, work and review flow), server (Connect RPC), session/event log, tools, providers, workstreams, TUI, embedded web bundle |
+| `internal/` | engine (agent loop), orchestrator (modes, work and review flow), server (Connect RPC), session/event log, tools, providers, workstreams, embedded web bundle |
 | `proto/ycc/v1` | `ycc.proto`, the wire schema shared by every client |
 | `clients/web` | the desktop web client (TypeScript, React, Vite); the bundle is committed to `internal/web/dist` |
 | `clients/ios` | the iPhone app (SwiftUI shell + `YccKit` Swift package) |
@@ -381,7 +397,7 @@ matching local checks. The Swift checks require macOS, and none of the checks ne
 API keys.
 
 ```sh
-# Go: formatting, vet, tests (uncached), PTY end-to-end tests, race detector, docs drift
+# Go: formatting, vet, tests (uncached), end-to-end tests, race detector, docs drift
 test -z "$(git ls-files '*.go' | xargs gofmt -l)"
 go vet ./...
 go test -count=1 ./...
