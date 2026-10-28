@@ -908,9 +908,11 @@ a.nav-item:hover {
   border-bottom: 1px solid var(--border);
 }
 
-/* Running sessions glow like a neon tube: a crisp 1px border with layered
- * diffuse halos (outside and in) that swell and fade on a 3s cycle. No fill.
- * Every keyframe lists the same shadows in the same order so they interpolate. */
+/* Running sessions glow like a neon tube with no drawn line: stacked soft
+ * shadows (outside and inset) all centred on the row edge, so the light is
+ * densest where a border would be and fades both ways. They swell and fade on
+ * a 3s cycle. Every keyframe lists the same shadows in the same order so they
+ * interpolate. */
 .session-list.variant-page .session-row.running {
   z-index: 1;
   margin-block: 6px;
@@ -924,20 +926,24 @@ a.nav-item:hover {
   0%,
   100% {
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 40%, transparent),
-      0 0 4px 0 color-mix(in srgb, var(--ok) 8%, transparent),
-      0 0 12px 1px color-mix(in srgb, var(--ok) 0%, transparent),
-      0 0 28px 4px color-mix(in srgb, var(--ok) 0%, transparent),
-      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 0%, transparent);
+      0 0 5px 0 color-mix(in srgb, var(--ok) 16%, transparent),
+      0 0 10px 0 color-mix(in srgb, var(--ok) 8%, transparent),
+      0 0 18px 0 color-mix(in srgb, var(--ok) 0%, transparent),
+      0 0 32px 0 color-mix(in srgb, var(--ok) 0%, transparent),
+      inset 0 0 5px 0 color-mix(in srgb, var(--ok) 12%, transparent),
+      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 5%, transparent),
+      inset 0 0 18px 0 color-mix(in srgb, var(--ok) 0%, transparent);
   }
 
   50% {
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 100%, transparent),
-      0 0 4px 0 color-mix(in srgb, var(--ok) 90%, transparent),
-      0 0 12px 1px color-mix(in srgb, var(--ok) 55%, transparent),
-      0 0 28px 4px color-mix(in srgb, var(--ok) 28%, transparent),
-      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 22%, transparent);
+      0 0 5px 0 color-mix(in srgb, var(--ok) 55%, transparent),
+      0 0 10px 0 color-mix(in srgb, var(--ok) 40%, transparent),
+      0 0 18px 0 color-mix(in srgb, var(--ok) 26%, transparent),
+      0 0 32px 0 color-mix(in srgb, var(--ok) 14%, transparent),
+      inset 0 0 5px 0 color-mix(in srgb, var(--ok) 42%, transparent),
+      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 26%, transparent),
+      inset 0 0 18px 0 color-mix(in srgb, var(--ok) 12%, transparent);
   }
 }
 
@@ -945,11 +951,13 @@ a.nav-item:hover {
   .session-list.variant-page .session-row.running {
     animation: none;
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 80%, transparent),
-      0 0 4px 0 color-mix(in srgb, var(--ok) 55%, transparent),
-      0 0 12px 1px color-mix(in srgb, var(--ok) 30%, transparent),
-      0 0 28px 4px color-mix(in srgb, var(--ok) 12%, transparent),
-      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 10%, transparent);
+      0 0 5px 0 color-mix(in srgb, var(--ok) 38%, transparent),
+      0 0 10px 0 color-mix(in srgb, var(--ok) 26%, transparent),
+      0 0 18px 0 color-mix(in srgb, var(--ok) 15%, transparent),
+      0 0 32px 0 color-mix(in srgb, var(--ok) 8%, transparent),
+      inset 0 0 5px 0 color-mix(in srgb, var(--ok) 28%, transparent),
+      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 16%, transparent),
+      inset 0 0 18px 0 color-mix(in srgb, var(--ok) 7%, transparent);
   }
 }
 

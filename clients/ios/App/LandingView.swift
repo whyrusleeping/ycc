@@ -838,31 +838,34 @@ private struct NewSessionRequest: Identifiable {
 /// tasks) and *when*; the footer is one quiet mono line of routine metadata. A
 /// row with nothing to put in the header (a plain chat in a project-scoped list)
 /// moves the timestamp onto the title line instead of spending a line on it.
-/// The list-row background of a running session: a neon-tube outline — a
-/// crisp border over two blurred copies (tight and wide halos) in the live
-/// colour, no fill — that swells and fades on a 3s cycle. Inset so the cell
-/// does not clip the halo. TimelineView drives the phase so the pulse survives
-/// List cell reuse; Reduce Motion holds a steady glow.
+/// The list-row background of a running session: a neon glow with no drawn
+/// line — blurred strokes of increasing width, centred on the outline path, so
+/// the light is densest where a border would be and fades both ways. No fill.
+/// It swells and fades on a 3s cycle. Inset so the cell clips little of the
+/// outer halo. TimelineView drives the phase so the pulse survives List cell
+/// reuse; Reduce Motion holds a steady glow.
 private struct RunningRowBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
             let phase = reduceMotion
-                ? 0.65
+                ? 0.6
                 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 3) + 1) / 2
             // Radius tracks the inset-grouped section's corners (iOS 26+), so a
-            // first or last row's outline is not clipped.
-            let tube = RoundedRectangle(cornerRadius: 20, style: .continuous).inset(by: 6)
+            // first or last row's glow is not clipped at the corners.
+            let path = RoundedRectangle(cornerRadius: 20, style: .continuous).inset(by: 8)
             ZStack {
                 Color(.secondarySystemGroupedBackground)
-                tube.strokeBorder(Theme.live, lineWidth: 4)
-                    .blur(radius: 7)
-                    .opacity(0.05 + 0.75 * phase)
-                tube.strokeBorder(Theme.live, lineWidth: 2)
-                    .blur(radius: 2.5)
-                    .opacity(0.1 + 0.9 * phase)
-                tube.strokeBorder(Theme.live.opacity(0.45 + 0.55 * phase), lineWidth: 1)
+                path.stroke(Theme.live, lineWidth: 8)
+                    .blur(radius: 10)
+                    .opacity(0.04 + 0.5 * phase)
+                path.stroke(Theme.live, lineWidth: 4)
+                    .blur(radius: 5)
+                    .opacity(0.08 + 0.62 * phase)
+                path.stroke(Theme.live, lineWidth: 2)
+                    .blur(radius: 2)
+                    .opacity(0.15 + 0.6 * phase)
             }
         }
         .accessibilityHidden(true)

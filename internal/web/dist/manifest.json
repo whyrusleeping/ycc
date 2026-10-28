@@ -1,6 +1,6 @@
 {
   "algorithm": "sha256-v1",
-  "inputs_hash": "4c564e77288f93ef43e06cbf44d028d3e7b4e7ab8f3be2bd0ff6f9e50ca06e22",
+  "inputs_hash": "c7c159810e399359c9313f1ce53d2560c07348f2a9b144a4e1c5854e806bfdd0",
   "input_files": [
     ".nvmrc",
     "index.html",
