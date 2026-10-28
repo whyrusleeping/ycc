@@ -1,13 +1,20 @@
 import SwiftUI
 import UIKit
 
-/// The app's small semantic palette, shared with the desktop web client's
-/// visual language: an olive / acid-chartreuse accent (AccentColor asset) and
-/// a handful of state colours. Everything else stays on system backgrounds
-/// and labels so the app keeps reading as native.
+/// The app's small semantic palette, mirroring the desktop web client's tokens
+/// (clients/web/src/styles.css; roles in docs/design/web-client.md). Each
+/// colour has one job:
 ///
-/// Use these instead of ad-hoc `.orange` / `.green` / `.blue` for *state*.
-/// System destructive roles may keep the system red.
+/// - accent (AccentColor asset; `accentFill` for fills): actions, the current
+///   location, links. Never a state.
+/// - `live`: running work and success. `liveGlow` is its fill-only LED form.
+/// - finished work: `.secondary` — history is quiet.
+/// - `attention`: only what needs the user (questions, follow-ups, proposals).
+/// - `danger`: errors and stuck work.
+/// - `info`: in review / queued / blocked-by-deps, and the "other" category.
+///
+/// Everything else stays on system backgrounds and labels so the app keeps
+/// reading as native. Don't use ad-hoc system colours (`.orange`, `.blue`, …).
 enum Theme {
     /// Chartreuse used as a *fill* (prominent buttons, selected chips). It is
     /// the same in both appearances; always pair it with `onAccentFill` for
@@ -26,6 +33,10 @@ enum Theme {
     static let danger = Color(light: 0xC42A20, dark: 0xFF5D52)
     /// In review / queued / secondary state.
     static let info = Color(light: 0x2C6B80, dark: 0x7CC3D6)
+
+    /// Two-way categories (activity breakdowns): model turns vs tool calls.
+    static let categoryModel = info
+    static let categoryTool = Color.accentColor
 
     /// The user's own message bubble: a muted cool green (the LED-green family,
     /// not the yellow chartreuse) with primary text, so it never needs a white

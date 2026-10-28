@@ -1773,10 +1773,10 @@ struct TranscriptRowView: View, Equatable {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.live.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
         .overlay {
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Theme.live.opacity(0.3), lineWidth: 1)
+                .stroke(Theme.live.opacity(0.4), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session finished")

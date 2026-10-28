@@ -89,7 +89,7 @@ struct AddProjectView: View {
                 if let message = model.errorMessage {
                     Section {
                         Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.danger)
                     }
                 }
             }

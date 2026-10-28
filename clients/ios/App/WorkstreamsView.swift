@@ -414,8 +414,7 @@ private struct WorkstreamRow: View {
                 Button(action: onRetry) {
                     Label("Retry integration", systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .buttonStyle(.accent)
                 .disabled(isBusy)
             }
             if WorkstreamsModel.integrateSessionID(for: workstream) != nil {

@@ -24,7 +24,7 @@ struct GlobalSettingsView: View {
             if let message = model.errorMessage {
                 Section {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Theme.danger)
                         .font(.callout)
                 }
             }
@@ -293,7 +293,7 @@ private struct ModelEditorView: View {
             if let message = settings.errorMessage {
                 Section {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Theme.danger)
                 }
             }
             Section("Availability") {

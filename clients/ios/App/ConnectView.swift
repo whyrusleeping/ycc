@@ -76,7 +76,7 @@ struct ConnectView: View {
                 if let errorMessage {
                     Section {
                         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.danger)
                             .font(.callout)
                     }
                 }

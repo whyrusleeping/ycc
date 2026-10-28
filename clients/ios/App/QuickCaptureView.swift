@@ -38,7 +38,7 @@ struct QuickCaptureView: View {
                 if let createError = model.createError {
                     Section {
                         Label(createError, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.danger)
                             .font(.callout)
                     }
                 }

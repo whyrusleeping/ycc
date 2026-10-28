@@ -39,12 +39,25 @@ tab is in the background.
 The look is terminal-leaning and quiet, shared with the iOS client: neutral near-black or
 off-white grounds, 1px rules instead of card shadows, 2px corners, and IBM Plex Mono (bundled,
 OFL) for chrome — navigation, labels, metadata, buttons, tool rows — with the system sans for
-prose and titles. One acid-chartreuse accent marks the primary action, the current location, and
-live work; signal orange is reserved for state that needs the user. Status is a coloured mono word
-or a small square marker, not a filled pill, and each row carries one attention signal. Lists show
-what a row is and when it last moved; model, context, and turn counts belong to the session header,
-and raw ids appear only where they are copied. Tokens live at the top of `src/styles.css`
-(palette, a seven-step type scale, radii).
+prose and titles. Status is a coloured mono word or a small square marker, not a filled pill, and
+each row carries one attention signal. Lists show what a row is and when it last moved; model,
+context, and turn counts belong to the session header, and raw ids appear only where they are
+copied. Tokens live at the top of `src/styles.css` (palette, a seven-step type scale, radii); the
+iOS `Theme` mirrors the palette.
+
+Each colour has one role, on both clients:
+
+| Token (web / iOS) | Role |
+| --- | --- |
+| `--accent`, `--accent-strong` / AccentColor, `accentFill` | Actions, the current location, links, search hits. Never a state. |
+| `--ok`, `--live-glow` / `live`, `liveGlow` | Running work and success; the LED glow on running sessions. |
+| `--fg-muted` / `.secondary` | Finished work (done, merged, finished loops). |
+| `--warn` / `attention` | Only what needs the user: questions, follow-ups, proposals, warnings. |
+| `--error` / `danger` | Errors and stuck (blocked) work. |
+| `--info` / `info` | In review, queued, blocked-by-dependencies, and secondary categories. |
+| `--selected` | Selected rows and cards: a neutral step above hover, never tinted. |
+
+Neutrals carry no hue cast. Two-way categories (model turns vs tool calls) use info and accent.
 
 ### Source, toolchain, and embedding
 

@@ -105,7 +105,7 @@ struct TaskDetailView: View {
             if let errorMessage = model.errorMessage {
                 Section {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Theme.danger)
                         .font(.callout)
                 }
             }
@@ -371,7 +371,7 @@ private struct TaskEditorView: View {
                 if let message = model.draftValidationMessage ?? model.errorMessage {
                     Section {
                         Label(message, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.danger)
                     }
                 }
             }
@@ -418,8 +418,9 @@ struct TaskStatusPill: View {
         case .inProgress: return Theme.live
         case .inReview: return Theme.info
         case .todo: return .primary
-        case .blocked: return Theme.attention
-        case .proposed: return .secondary
+        // Blocked is stuck (danger); proposed waits on the user's acceptance.
+        case .blocked: return Theme.danger
+        case .proposed: return Theme.attention
         case .done: return .secondary
         case .unknown: return .secondary
         }

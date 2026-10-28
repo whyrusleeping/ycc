@@ -171,7 +171,7 @@ struct NewSessionView: View {
         if let errorMessage = pictureError ?? model.errorMessage {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.danger)
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -180,7 +180,7 @@ struct NewSessionView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.red.opacity(0.08))
+            .background(Theme.danger.opacity(0.08))
         }
     }
 

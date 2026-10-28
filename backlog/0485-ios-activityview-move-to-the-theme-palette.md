@@ -1,7 +1,7 @@
 ---
 id: "0485"
 title: 'iOS ActivityView: move to the Theme palette'
-status: todo
+status: done
 priority: 3
 created: "2026-10-28"
 updated: "2026-10-28"

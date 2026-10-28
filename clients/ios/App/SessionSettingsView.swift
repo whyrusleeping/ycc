@@ -29,7 +29,7 @@ struct SessionSettingsView: View {
                 if let message = model.errorMessage {
                     Section {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Theme.danger)
                             .font(.callout)
                     }
                 }

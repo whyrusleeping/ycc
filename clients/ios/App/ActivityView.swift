@@ -115,11 +115,14 @@ struct SessionActivitySheet: View {
 private enum ActivityStyle {
     static func color(_ status: ActivityStatus) -> Color {
         switch status {
-        case .running: return .blue
-        case .done: return .green
-        case .failed, .error: return .red
-        case .blocked, .paused: return .orange
-        case .idle: return .teal
+        // Same roles as the web Activity panel: live work is green, finished
+        // work is quiet, orange only for what needs the user.
+        case .running: return Theme.live
+        case .done: return .secondary
+        case .failed, .error: return Theme.danger
+        case .paused: return Theme.attention
+        case .blocked: return Theme.info
+        case .idle: return .secondary
         case .killed, .stopped, .lost, .other: return .gray
         }
     }
@@ -269,7 +272,7 @@ private struct ActivityTreeRowView: View {
             }
         }
         .font(.caption)
-        .foregroundStyle(.blue)
+        .foregroundStyle(Theme.live)
     }
 }
 
@@ -364,7 +367,7 @@ private struct ActivityTimelineChart: View {
         .overlay(alignment: .topLeading) {
             if ActivityGraph.hasRunningWork(nodes) {
                 Rectangle()
-                    .fill(Color.blue.opacity(0.5))
+                    .fill(Theme.live.opacity(0.5))
                     .frame(width: 1)
                     .offset(x: min(width, CGFloat(now.timeIntervalSince(timeline.origin)) * scale))
             }
@@ -835,8 +838,8 @@ private struct ActivityStepsView: View {
     @ViewBuilder
     private func summary(_ breakdown: ActivityBreakdown) -> some View {
         let parts: [(String, TimeInterval, Color)] = [
-            ("Model", breakdown.model, .purple),
-            ("Tools", breakdown.tools, .orange),
+            ("Model", breakdown.model, Theme.categoryModel),
+            ("Tools", breakdown.tools, Theme.categoryTool),
             ("Other", breakdown.other, .gray),
         ]
         let whole = max(breakdown.wall, breakdown.model + breakdown.tools, 0.001)
@@ -861,8 +864,8 @@ private struct ActivityStepsView: View {
             .frame(height: 8)
             .accessibilityHidden(true)
         }
-        breakdownRow("Model", breakdown.model, count: breakdown.modelCount, noun: "turn", color: .purple)
-        breakdownRow("Tools", breakdown.tools, count: breakdown.toolCount, noun: "call", color: .orange)
+        breakdownRow("Model", breakdown.model, count: breakdown.modelCount, noun: "turn", color: Theme.categoryModel)
+        breakdownRow("Tools", breakdown.tools, count: breakdown.toolCount, noun: "call", color: Theme.categoryTool)
         breakdownRow("Other", breakdown.other, count: nil, noun: "", color: .gray)
     }
 
@@ -888,10 +891,10 @@ private enum StepStyle {
 
     static func color(_ item: ActivityStepItem) -> Color {
         switch item.status {
-        case "error": return .red
+        case "error": return Theme.danger
         case "lost": return .gray
-        case "running": return .blue
-        default: return item.isModel ? .purple : .orange
+        case "running": return Theme.live
+        default: return item.isModel ? Theme.categoryModel : Theme.categoryTool
         }
     }
 
@@ -910,7 +913,7 @@ private struct TotalRow: View {
             HStack(spacing: 8) {
                 Image(systemName: StepStyle.icon(total.kind, name: total.name))
                     .font(.caption)
-                    .foregroundStyle(total.kind == "model" ? .purple : .orange)
+                    .foregroundStyle(total.kind == "model" ? Theme.categoryModel : Theme.categoryTool)
                     .frame(width: 18)
                 Text(total.name)
                     .font(.subheadline.monospaced())
@@ -920,7 +923,7 @@ private struct TotalRow: View {
                 Text(StepStyle.duration(total.duration)).font(.callout.monospacedDigit())
             }
             ProgressView(value: wall > 0 ? min(1, total.duration / wall) : 0)
-                .tint(total.kind == "model" ? .purple : .orange)
+                .tint(total.kind == "model" ? Theme.categoryModel : Theme.categoryTool)
         }
         .accessibilityElement(children: .combine)
     }
