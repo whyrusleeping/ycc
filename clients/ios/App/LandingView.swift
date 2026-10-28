@@ -838,29 +838,31 @@ private struct NewSessionRequest: Identifiable {
 /// tasks) and *when*; the footer is one quiet mono line of routine metadata. A
 /// row with nothing to put in the header (a plain chat in a project-scoped list)
 /// moves the timestamp onto the title line instead of spending a line on it.
-/// The list-row background of a running session: a slowly pulsing outline with
-/// a soft glow in the live colour, inset so the cell does not clip it.
-/// TimelineView drives the phase so the pulse survives List cell reuse;
-/// Reduce Motion holds it at a steady mid glow.
+/// The list-row background of a running session: a neon-tube outline — a
+/// crisp border over two blurred copies (tight and wide halos) in the live
+/// colour, no fill — that swells and fades on a 3s cycle. Inset so the cell
+/// does not clip the halo. TimelineView drives the phase so the pulse survives
+/// List cell reuse; Reduce Motion holds a steady glow.
 private struct RunningRowBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
             let phase = reduceMotion
-                ? 0.6
-                : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 3.2) + 1) / 2
+                ? 0.65
+                : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 3) + 1) / 2
+            // Radius tracks the inset-grouped section's corners (iOS 26+), so a
+            // first or last row's outline is not clipped.
+            let tube = RoundedRectangle(cornerRadius: 20, style: .continuous).inset(by: 6)
             ZStack {
                 Color(.secondarySystemGroupedBackground)
-                // Radius tracks the inset-grouped section's corners (iOS 26+),
-                // so a first or last row's outline is not clipped.
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .inset(by: 4)
-                    .fill(Theme.live.opacity(0.03 + 0.05 * phase))
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .inset(by: 4)
-                    .strokeBorder(Theme.live.opacity(0.3 + 0.45 * phase), lineWidth: 1)
-                    .shadow(color: Theme.live.opacity(0.15 + 0.45 * phase), radius: 2 + 6 * phase)
+                tube.strokeBorder(Theme.live, lineWidth: 4)
+                    .blur(radius: 7)
+                    .opacity(0.05 + 0.75 * phase)
+                tube.strokeBorder(Theme.live, lineWidth: 2)
+                    .blur(radius: 2.5)
+                    .opacity(0.1 + 0.9 * phase)
+                tube.strokeBorder(Theme.live.opacity(0.45 + 0.55 * phase), lineWidth: 1)
             }
         }
         .accessibilityHidden(true)

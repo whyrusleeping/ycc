@@ -908,29 +908,36 @@ a.nav-item:hover {
   border-bottom: 1px solid var(--border);
 }
 
-/* Running sessions breathe: a slow pulsing outline with a soft glow. */
+/* Running sessions glow like a neon tube: a crisp 1px border with layered
+ * diffuse halos (outside and in) that swell and fade on a 3s cycle. No fill.
+ * Every keyframe lists the same shadows in the same order so they interpolate. */
 .session-list.variant-page .session-row.running {
   z-index: 1;
-  margin-block: 4px;
+  margin-block: 6px;
   border-bottom-color: transparent;
   border-radius: var(--radius);
-  animation: running-glow 3.2s ease-in-out infinite;
+  background: none;
+  animation: running-glow 3s ease-in-out infinite;
 }
 
 @keyframes running-glow {
   0%,
   100% {
-    background: color-mix(in srgb, var(--ok) 2%, transparent);
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 28%, transparent),
-      0 0 6px 0 color-mix(in srgb, var(--ok) 8%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--ok) 40%, transparent),
+      0 0 4px 0 color-mix(in srgb, var(--ok) 8%, transparent),
+      0 0 12px 1px color-mix(in srgb, var(--ok) 0%, transparent),
+      0 0 28px 4px color-mix(in srgb, var(--ok) 0%, transparent),
+      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 0%, transparent);
   }
 
   50% {
-    background: color-mix(in srgb, var(--ok) 5%, transparent);
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 75%, transparent),
-      0 0 22px 3px color-mix(in srgb, var(--ok) 34%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--ok) 100%, transparent),
+      0 0 4px 0 color-mix(in srgb, var(--ok) 90%, transparent),
+      0 0 12px 1px color-mix(in srgb, var(--ok) 55%, transparent),
+      0 0 28px 4px color-mix(in srgb, var(--ok) 28%, transparent),
+      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 22%, transparent);
   }
 }
 
@@ -938,13 +945,16 @@ a.nav-item:hover {
   .session-list.variant-page .session-row.running {
     animation: none;
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 55%, transparent),
-      0 0 10px 0 color-mix(in srgb, var(--ok) 16%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--ok) 80%, transparent),
+      0 0 4px 0 color-mix(in srgb, var(--ok) 55%, transparent),
+      0 0 12px 1px color-mix(in srgb, var(--ok) 30%, transparent),
+      0 0 28px 4px color-mix(in srgb, var(--ok) 12%, transparent),
+      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 10%, transparent);
   }
 }
 
-.session-list.variant-page .session-row:hover,
-.session-list.variant-page .session-row.active {
+.session-list.variant-page .session-row:not(.running):hover,
+.session-list.variant-page .session-row:not(.running).active {
   background: none;
   box-shadow: none;
 }
