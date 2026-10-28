@@ -27,9 +27,10 @@ enum Theme {
     /// In review / queued / secondary state.
     static let info = Color(light: 0x2C6B80, dark: 0x7CC3D6)
 
-    /// The user's own message bubble: a soft olive wash (the web's
-    /// --accent-soft) with primary text, so it never needs a white label.
-    static let userBubble = Color(light: 0xE7F2C4, dark: 0x242B14)
+    /// The user's own message bubble: a muted cool green (the LED-green family,
+    /// not the yellow chartreuse) with primary text, so it never needs a white
+    /// label and stays distinct from the grey agent cards.
+    static let userBubble = Color(light: 0xDCEBDE, dark: 0x1E2D22)
 }
 
 extension Color {
