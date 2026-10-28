@@ -94,8 +94,8 @@ function ProjectSwitcher() {
   const { projects } = useSessionFeed(scope);
   const { feed: all } = useSessionFeed(null);
   const isUnread = useRowUnread();
-  const loopIds = useLoopSessionIds();
-  const activity = projectActivity((all?.rows ?? []).filter((r) => isInboxSession(r.session, loopIds.has(r.session.sessionId))), isUnread);
+  // Every row: automatic work (loops, grooms) counts as active; isUnread already applies the inbox rule.
+  const activity = projectActivity(all?.rows ?? [], isUnread);
   const navigate = useNavigate();
   const location = useLocation();
   const names = (projects ?? []).map((p) => p.name);
@@ -176,9 +176,6 @@ function Sidebar() {
     <nav className="sidebar" aria-label="Sidebar">
       <div className="sidebar-top">
         <Link to={paths.home()} className="brand" data-track="sidebar.home">
-          <span className="brand-mark" aria-hidden="true">
-            y
-          </span>
           ycc
         </Link>
         <span className="sidebar-top-actions">

@@ -1328,16 +1328,16 @@ public final class SessionListModel {
         }
     }
 
-    /// Routine non-project metadata, kept testable outside SwiftUI. Missing
-    /// values vanish cleanly and loop provenance is deliberately plain text.
+    /// Routine non-project metadata, kept testable outside SwiftUI. Rows stay
+    /// quiet (matching the web list): only a non-default mode and loop
+    /// provenance. The default "chat" mode, model names and context fill are
+    /// per-session detail and live in the session view, not on every row.
     public static func metadataItems(
         for session: Ycc_V1_SessionSummary, isLoopOwned: Bool
     ) -> [String] {
         var items: [String] = []
         let mode = session.mode.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !mode.isEmpty { items.append(mode) }
-        if let model = modelSummary(for: session) { items.append(model) }
-        if let context = contextSummary(for: session) { items.append(context) }
+        if !mode.isEmpty && mode.lowercased() != "chat" { items.append(mode) }
         if isLoopOwned { items.append("via loop") }
         return items
     }

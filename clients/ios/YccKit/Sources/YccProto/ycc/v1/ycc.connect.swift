@@ -55,6 +55,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getJobOutput`(request: Ycc_V1_GetJobOutputRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetJobOutputResponse>
 
+    /// GetActivitySteps lists one actor's timed model turns and tool calls.
+    @available(iOS 13, *)
+    func `getActivitySteps`(request: Ycc_V1_GetActivityStepsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetActivityStepsResponse>
+
     /// GetSessionAttachment returns a retained picture referenced by a user_input
     /// event, without putting binary payloads in the event log.
     @available(iOS 13, *)
@@ -359,6 +363,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getActivitySteps`(request: Ycc_V1_GetActivityStepsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetActivityStepsResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetActivitySteps", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `getSessionAttachment`(request: Ycc_V1_GetSessionAttachmentRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSessionAttachmentResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetSessionAttachment", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -657,6 +666,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let subscribeSessionView = Connect.MethodSpec(name: "SubscribeSessionView", service: "ycc.v1.SessionService", type: .serverStream)
             public static let getSessionActivity = Connect.MethodSpec(name: "GetSessionActivity", service: "ycc.v1.SessionService", type: .unary)
             public static let getJobOutput = Connect.MethodSpec(name: "GetJobOutput", service: "ycc.v1.SessionService", type: .unary)
+            public static let getActivitySteps = Connect.MethodSpec(name: "GetActivitySteps", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionAttachment = Connect.MethodSpec(name: "GetSessionAttachment", service: "ycc.v1.SessionService", type: .unary)
             public static let getCommitDiff = Connect.MethodSpec(name: "GetCommitDiff", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkingChanges = Connect.MethodSpec(name: "GetWorkingChanges", service: "ycc.v1.SessionService", type: .unary)

@@ -229,7 +229,7 @@ private struct CodeBlock: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .foregroundStyle(copied ? Theme.live : .secondary)
                 .accessibilityLabel(copied ? "Copied" : "Copy code")
             }
             .padding(.horizontal, 10)

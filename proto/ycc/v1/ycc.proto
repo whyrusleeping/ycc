@@ -1252,6 +1252,40 @@ message GetWorkingChangesResponse {
   bool changed_since_known = 15; // meaningful when known_snapshot_id is set
 }
 
+// One timed action of an actor: a model request or a tool call. Timestamps
+// are RFC 3339.
+message ActivityStep {
+  string kind = 1;        // model | tool
+  string name = 2;        // tool name; model steps: the model name
+  string summary = 3;     // bounded one-line hint: a tool's main argument, a model turn's outcome
+  string status = 4;      // running | ok | error | lost (a call unanswered when its range closed)
+  string started_at = 5;
+  string finished_at = 6; // empty while running
+  int64 duration_ms = 7;  // measured duration; 0 while running
+  int64 output_tokens = 8; // model steps
+  string row_id = 9;      // session-view row for GetSessionViewDetail; empty when none
+}
+// Count and summed duration of one kind+name over the whole requested range.
+message ActivityStepTotal {
+  string kind = 1;
+  string name = 2;
+  int32 count = 3;
+  int64 duration_ms = 4;
+}
+message GetActivityStepsRequest {
+  string project = 1;
+  string session_id = 2;
+  string actor = 3; // an activity node's actor ("coordinator" for the root)
+  string since = 4; // RFC 3339, inclusive; empty = from the start
+  string until = 5; // RFC 3339, inclusive; empty = through the latest event
+  int32 limit = 6;  // newest steps returned; zero uses 500, clamped to 2000
+}
+message GetActivityStepsResponse {
+  repeated ActivityStep steps = 1;       // chronological
+  int32 omitted_earlier = 2;             // steps in range before the returned ones
+  repeated ActivityStepTotal totals = 3; // whole range, longest first
+}
+
 service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
@@ -1273,6 +1307,8 @@ service SessionService {
   // progress overlaid; GetJobOutput reads a live job's retained output.
   rpc GetSessionActivity(GetSessionActivityRequest) returns (GetSessionActivityResponse);
   rpc GetJobOutput(GetJobOutputRequest) returns (GetJobOutputResponse);
+  // GetActivitySteps lists one actor's timed model turns and tool calls.
+  rpc GetActivitySteps(GetActivityStepsRequest) returns (GetActivityStepsResponse);
   // GetSessionAttachment returns a retained picture referenced by a user_input
   // event, without putting binary payloads in the event log.
   rpc GetSessionAttachment(GetSessionAttachmentRequest) returns (GetSessionAttachmentResponse);

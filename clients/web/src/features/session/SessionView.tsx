@@ -30,7 +30,8 @@ import { MenuButton } from "../../ui/Menu";
 import { CAPTURE_SHORTCUT_LABEL, openCapture } from "../backlog/CaptureDialog";
 import { NewTaskDialog } from "../backlog/NewTaskDialog";
 
-export function statusText(snap: SessionSnapshot): { text: string; tone: string } {
+/** Header status; null when the session is simply idle (nothing worth saying). */
+export function statusText(snap: SessionSnapshot): { text: string; tone: string } | null {
   switch (snap.conn) {
     case "loading":
       return { text: "Loading…", tone: "muted" };
@@ -40,7 +41,7 @@ export function statusText(snap: SessionSnapshot): { text: string; tone: string 
       return { text: snap.failure ?? "Failed", tone: "error" };
     case "finished":
       if (snap.mode === "persisted") {
-        return snap.reopening ? { text: "Starting…", tone: "warn" } : { text: "Ready for your message", tone: "muted" };
+        return snap.reopening ? { text: "Starting…", tone: "warn" } : null;
       }
   }
   if (snap.pauseRequested) return { text: "Pausing at next checkpoint…", tone: "warn" };
@@ -53,7 +54,7 @@ export function statusText(snap: SessionSnapshot): { text: string; tone: string 
     case "paused":
       return { text: "Paused", tone: "warn" };
     case "idle":
-      return snap.awaitingJobs ? { text: "Waiting on background jobs", tone: "ok" } : { text: "Ready for your message", tone: "muted" };
+      return snap.awaitingJobs ? { text: "Waiting on background jobs", tone: "ok" } : null;
     case "error":
       return { text: `Error${snap.phase.message ? `: ${snap.phase.message}` : ""}`, tone: "error" };
     case "stopped":
@@ -277,7 +278,7 @@ export function SessionView({
         <div className="session-title">
           <h1 title={title}>{title}</h1>
           <div className="session-meta">
-            <span className={`status status-${status.tone}`}>{status.text}</span>
+            {status && <span className={`status status-${status.tone}`}>{status.text}</span>}
             {project && <span>{project}</span>}
             {focusTasks.map((id) => {
               const open = inspector.item?.kind === "task" && inspector.item.taskId === id && inspector.item.project === project;

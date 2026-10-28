@@ -152,7 +152,7 @@ struct TaskDetailView: View {
                     Text("Ready")
                 }
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(Theme.live)
                 .accessibilityElement(children: .combine)
             }
             Spacer(minLength: 0)
@@ -172,7 +172,7 @@ struct TaskDetailView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.attention)
                     .accessibilityHint("Opens task \(blockerID)")
                 }
             }
@@ -403,28 +403,25 @@ private struct TaskEditorView: View {
     }
 }
 
-/// A coloured status pill for a task's lifecycle status.
+/// A coloured mono status word for a task's lifecycle status.
 struct TaskStatusPill: View {
     let status: TaskStatus
 
     var body: some View {
-        Text(status.title)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
+        StatusWord(text: status.title, color: color, live: status == .inProgress)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(status.title)
     }
 
     private var color: Color {
         switch status {
-        case .inProgress: return .green
-        case .inReview: return .teal
-        case .todo: return .blue
-        case .blocked: return .orange
-        case .proposed: return .purple
-        case .done: return .gray
-        case .unknown: return .gray
+        case .inProgress: return Theme.live
+        case .inReview: return Theme.info
+        case .todo: return .primary
+        case .blocked: return Theme.attention
+        case .proposed: return .secondary
+        case .done: return .secondary
+        case .unknown: return .secondary
         }
     }
 }

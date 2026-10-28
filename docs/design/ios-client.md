@@ -88,7 +88,11 @@ transient live tails for concurrent agents, no scroll jumps while reading histor
 question sheets, graceful interrupt/steer/resume, and confirmed hard stop. Within a session, each
 subagent receives a stable plant emoji from a fixed palette; every actor-owned durable or live row
 keeps the emoji alongside the textual actor identity, while coordinator/user/system rows remain
-unadorned. User-message picture metadata carries opaque
+unadorned. Like the web client, a run of eight or more consecutive tool, reasoning, and routine
+job/subagent lifecycle rows folds behind one summary header (step count, per-tool counts, elapsed
+time) that keeps the newest three steps visible; failed tools/jobs break a run so they stay
+prominent. Expanding a run opens its steps under the header and releases follow-latest, as paging
+does. User-message picture metadata carries opaque
 session attachment ids; the app lazily fetches retained bytes through the authenticated daemon API
 and renders thumbnails, degrading to a labelled placeholder for legacy or reclaimed payloads.
 Outgoing pictures reach the composer draft two ways — the Photos picker and pasting an image

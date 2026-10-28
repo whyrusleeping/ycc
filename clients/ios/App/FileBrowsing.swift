@@ -350,7 +350,7 @@ struct FileViewerView: View {
                         "Large file: showing the first part (\(FileViewerModel.formattedSize(model.size)) total).",
                         systemImage: "scissors")
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.attention)
                 }
             }
             .padding(.horizontal)
@@ -772,7 +772,8 @@ private struct CodeTextView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 0.5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isTarget ? Color.yellow.opacity(colorScheme == .dark ? 0.22 : 0.3) : Color.clear)
+        // Chartreuse wash for the deep-linked target line.
+        .background(isTarget ? Theme.accentFill.opacity(colorScheme == .dark ? 0.18 : 0.35) : Color.clear)
     }
 
     private func attributed(_ index: Int) -> AttributedString {

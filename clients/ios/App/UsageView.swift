@@ -108,8 +108,8 @@ struct UsageView: View {
                             Spacer()
                             if account.state != "fresh" {
                                 Text(account.state)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(account.state == "stale" ? Color.orange : Color.secondary)
+                                    .font(.caption2.monospaced().weight(.medium))
+                                    .foregroundStyle(account.state == "stale" ? Theme.attention : Color.secondary)
                             }
                         }
                         if !account.models.isEmpty {
@@ -147,7 +147,7 @@ struct UsageView: View {
             }
             .font(.caption)
             ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
-                .tint(window.usedPercent >= 90 ? .orange : .accentColor)
+                .tint(window.usedPercent >= 90 ? Theme.attention : .accentColor)
             if window.resetsAtUnix > 0 {
                 Text("Resets \(Date(timeIntervalSince1970: TimeInterval(window.resetsAtUnix)), style: .relative)")
                     .font(.caption2)
@@ -261,12 +261,8 @@ struct UsageRowView: View {
                     .font(isTotal ? .subheadline.weight(.semibold) : .subheadline)
                     .lineLimit(1)
                 if let badge = status.badge {
-                    Text(badge)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(badgeColor.opacity(0.18), in: Capsule())
-                        .foregroundStyle(badgeColor)
+                    StatusWord(text: badge, color: badgeColor)
+                        .accessibilityLabel(badge)
                 }
                 Spacer(minLength: 4)
                 Text(UsageModel.formatCost(row))
@@ -300,6 +296,6 @@ struct UsageRowView: View {
     }
 
     private var badgeColor: Color {
-        status == .unpriced ? .gray : .orange
+        status == .unpriced ? .secondary : Theme.attention
     }
 }

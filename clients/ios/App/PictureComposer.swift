@@ -200,7 +200,7 @@ struct PicturePickerButton: View {
                 ? "photo.on.rectangle"
                 : "photo.badge.checkmark")
                 .font(.title3)
-                .foregroundStyle(pictures.isEmpty ? Color.accentColor : Color.green)
+                .foregroundStyle(pictures.isEmpty ? .accentColor : Theme.live)
                 .opacity(isLoading ? 0 : 1)
                 .overlay {
                     if isLoading {

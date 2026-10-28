@@ -47,6 +47,16 @@ struct SessionActivitySheet: View {
                         session: session, model: model, nodeID: nodeID)
                 }
             }
+            .navigationDestination(for: ActivityStepsRoute.self) { route in
+                if let model {
+                    ActivityStepsView(
+                        client: client, project: project, sessionID: sessionID,
+                        activity: model, route: route)
+                }
+            }
+            .navigationDestination(for: ActivityStepRowRoute.self) { route in
+                ActivityStepRowView(client: client, project: project, sessionID: sessionID, route: route)
+            }
         }
         .task(id: pollGeneration) {
             if model == nil {
@@ -273,6 +283,7 @@ private struct ActivityTimelineChart: View {
     private static let laneHeight: CGFloat = 30
     private static let axisHeight: CGFloat = 22
     private static let minBarWidth: CGFloat = 4
+    private static let minHitWidth: CGFloat = 24
 
     var body: some View {
         if let timeline = ActivityGraph.timeline(nodes: nodes, now: now) {
@@ -331,11 +342,20 @@ private struct ActivityTimelineChart: View {
                         .fill(Color.secondary.opacity(0.08))
                         .frame(width: width, height: 1)
                     ForEach(Array(lane.bars.enumerated()), id: \.offset) { _, bar in
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(ActivityStyle.color(bar.status).opacity(bar.status.isActive ? 0.9 : 0.7))
-                            .frame(width: max(Self.minBarWidth, CGFloat(bar.end - bar.start) * scale), height: 14)
-                            .offset(x: CGFloat(bar.start) * scale)
-                            .accessibilityLabel("\(lane.label) \(bar.label) \(bar.status.label)")
+                        let barWidth = max(Self.minBarWidth, CGFloat(bar.end - bar.start) * scale)
+                        // Tiny bars get a wider invisible hit area.
+                        let hitWidth = max(barWidth, Self.minHitWidth)
+                        barLink(lane, bar) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(ActivityStyle.color(bar.status).opacity(bar.status.isActive ? 0.9 : 0.7))
+                                .frame(width: barWidth, height: 14)
+                                .frame(width: hitWidth, height: Self.laneHeight)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .offset(x: CGFloat(bar.start) * scale - (hitWidth - barWidth) / 2)
+                        .accessibilityLabel("\(lane.label) \(bar.label) \(bar.status.label)")
+                        .accessibilityHint(lane.kind == "bash" ? "Shows the job's output" : "Shows what took the time")
                     }
                 }
                 .frame(width: width, height: Self.laneHeight, alignment: .leading)
@@ -348,6 +368,19 @@ private struct ActivityTimelineChart: View {
                     .frame(width: 1)
                     .offset(x: min(width, CGFloat(now.timeIntervalSince(timeline.origin)) * scale))
             }
+        }
+    }
+
+    /// A job bar opens its output; an agent round (or the coordinator's bar)
+    /// opens its time breakdown.
+    @ViewBuilder
+    private func barLink<Label: View>(
+        _ lane: ActivityTimelineLane, _ bar: ActivityTimelineBar, @ViewBuilder label: () -> Label
+    ) -> some View {
+        if lane.kind == "bash" {
+            NavigationLink(value: lane.id, label: label)
+        } else {
+            NavigationLink(value: ActivityStepsRoute(nodeID: lane.id, round: bar.round), label: label)
         }
     }
 
@@ -447,26 +480,37 @@ private struct AgentDetailView: View {
                         LabeledContent("Progress", value: "\(node.turns) turns · \(ActivityGraph.formatTokens(node.totalTokens)) tokens")
                     }
                     if node.mutates { LabeledContent("Mutates", value: "yes") }
+                    if node.spans.isEmpty {
+                        NavigationLink(value: ActivityStepsRoute(nodeID: node.id, round: nil)) {
+                            Label("Time breakdown", systemImage: "chart.bar.xaxis")
+                        }
+                    }
                 } header: {
                     Text(ActivityStyle.kindLabel(node))
                 }
                 if !node.spans.isEmpty {
-                    Section("Rounds") {
+                    Section {
                         ForEach(node.spans, id: \.round) { span in
                             let spanStatus = ActivityStatus(span.status)
-                            HStack(spacing: 8) {
-                                StatusDot(status: spanStatus)
-                                Text("Round \(span.round)")
-                                if !span.contextMode.isEmpty {
-                                    Text(span.contextMode).font(.caption).foregroundStyle(.secondary)
+                            NavigationLink(value: ActivityStepsRoute(nodeID: node.id, round: span.round)) {
+                                HStack(spacing: 8) {
+                                    StatusDot(status: spanStatus)
+                                    Text("Round \(span.round)")
+                                    if !span.contextMode.isEmpty {
+                                        Text(span.contextMode).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(spanStatus.label).font(.caption).foregroundStyle(.secondary)
+                                    Text(ActivityGraph.elapsed(start: span.startedAt, end: span.finishedAt, status: spanStatus, now: context.date))
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                Text(spanStatus.label).font(.caption).foregroundStyle(.secondary)
-                                Text(ActivityGraph.elapsed(start: span.startedAt, end: span.finishedAt, status: spanStatus, now: context.date))
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
                             }
                         }
+                    } header: {
+                        Text("Rounds")
+                    } footer: {
+                        Text("Tap a round to see what took the time.")
                     }
                 }
                 if !node.result.isEmpty {
@@ -622,6 +666,399 @@ private struct JobOutputView: View {
             ContentUnavailableView("No output recorded", systemImage: "terminal")
         } else {
             MonospaceLog(text: node.result, follow: false)
+        }
+    }
+}
+
+// MARK: - Time breakdown
+
+/// A pushed time breakdown: one agent round, or (`round` nil) a node's whole
+/// lifetime, which is how the coordinator is shown.
+struct ActivityStepsRoute: Hashable {
+    let nodeID: String
+    let round: Int32?
+}
+
+/// A step's transcript row, fetched on its own.
+struct ActivityStepRowRoute: Hashable {
+    let rowID: String
+    let title: String
+}
+
+/// Where one round's time went: a wall/model/tools/other summary, per-tool
+/// totals, and every model turn and tool call with its duration, in order or
+/// slowest first. Refreshes while the round runs.
+private struct ActivityStepsView: View {
+    @Environment(AppModel.self) private var app
+
+    let client: YccClient
+    let project: String
+    let sessionID: String
+    let activity: SessionActivityModel
+    let route: ActivityStepsRoute
+
+    @State private var model: ActivityStepsModel?
+    @State private var order: ActivityStepOrder = .time
+
+    private struct Range: Equatable {
+        var since = ""
+        var until = ""
+        var running = false
+        var open = false
+    }
+
+    private var node: Ycc_V1_ActivityNode? { activity.node(id: route.nodeID) }
+    private var span: Ycc_V1_ActivitySpan? {
+        guard let round = route.round else { return nil }
+        return node?.spans.first { $0.round == round }
+    }
+    private var actor: String {
+        guard let node else { return route.nodeID }
+        if node.kind == "coordinator" { return "coordinator" }
+        return node.actor.isEmpty ? node.id : node.actor
+    }
+
+    private var range: Range {
+        if let span {
+            let running = ActivityStatus(span.status).isActive
+            return Range(since: span.startedAt, until: span.finishedAt, running: running,
+                         open: span.finishedAt.isEmpty && activity.live)
+        }
+        let running = ActivityStatus(node?.status ?? "").isActive
+        return Range(since: "", until: "", running: running, open: activity.live)
+    }
+
+    private var title: String {
+        guard let node else { return "Time breakdown" }
+        let name = ActivityGraph.displayName(node)
+        return route.round.map { "\(name) · round \($0)" } ?? name
+    }
+
+    var body: some View {
+        Group {
+            if let model, model.hasLoaded {
+                if let error = model.errorMessage, model.steps.isEmpty {
+                    ContentUnavailableView("Steps unavailable", systemImage: "exclamationmark.triangle",
+                                           description: Text(error))
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        content(model, now: context.date)
+                    }
+                }
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: range) {
+            if model == nil {
+                model = ActivityStepsModel(source: client, project: project, sessionID: sessionID, actor: actor)
+            }
+            let range = range
+            await model?.poll(since: range.since, until: range.until, open: range.open)
+        }
+        .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+    }
+
+    private func wall(now: Date) -> TimeInterval {
+        let start = ActivityGraph.parseTime(span?.startedAt ?? node?.startedAt ?? "")
+        let recordedEnd = ActivityGraph.parseTime(span?.finishedAt ?? node?.finishedAt ?? "")
+        let end = recordedEnd ?? (range.running ? now : ActivityGraph.parseTime(node?.lastActivityAt ?? "") ?? now)
+        guard let start else { return 0 }
+        return max(0, end.timeIntervalSince(start))
+    }
+
+    @ViewBuilder
+    private func content(_ model: ActivityStepsModel, now: Date) -> some View {
+        let rangeStart = ActivityGraph.parseTime(span?.startedAt ?? node?.startedAt ?? "")
+        let items = ActivitySteps.items(
+            steps: model.steps, rangeStart: rangeStart, running: range.running,
+            model: node?.model ?? "", now: now)
+        let breakdown = ActivitySteps.breakdown(
+            items: items, totals: model.totals, complete: model.omittedEarlier == 0, wall: wall(now: now))
+        let slowest = items.map(\.duration).max() ?? 0
+        List {
+            Section {
+                summary(breakdown)
+            }
+            if !breakdown.totals.isEmpty {
+                Section("Where the time went") {
+                    ForEach(breakdown.totals.prefix(8)) { total in
+                        TotalRow(total: total, wall: max(breakdown.wall, breakdown.model + breakdown.tools))
+                    }
+                }
+            }
+            Section {
+                Picker("Order", selection: $order) {
+                    ForEach(ActivityStepOrder.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .listRowSeparator(.hidden)
+                if items.isEmpty {
+                    Text("No model turns or tool calls recorded for this range.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(ActivitySteps.ordered(items, by: order)) { item in
+                    stepLink(item) {
+                        StepRow(item: item, rangeStart: rangeStart, slowest: slowest)
+                    }
+                }
+            } header: {
+                Text("Steps")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    if model.omittedEarlier > 0 {
+                        Text("\(model.omittedEarlier) earlier steps are not listed; the totals above include them.")
+                    }
+                    if let error = model.errorMessage {
+                        Label("\(error) — retrying…", systemImage: "wifi.exclamationmark")
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    @ViewBuilder
+    private func stepLink<Label: View>(_ item: ActivityStepItem, @ViewBuilder label: () -> Label) -> some View {
+        if item.rowID.isEmpty {
+            label()
+        } else {
+            NavigationLink(value: ActivityStepRowRoute(rowID: item.rowID, title: item.name), label: label)
+        }
+    }
+
+    @ViewBuilder
+    private func summary(_ breakdown: ActivityBreakdown) -> some View {
+        let parts: [(String, TimeInterval, Color)] = [
+            ("Model", breakdown.model, .purple),
+            ("Tools", breakdown.tools, .orange),
+            ("Other", breakdown.other, .gray),
+        ]
+        let whole = max(breakdown.wall, breakdown.model + breakdown.tools, 0.001)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Wall time")
+                Spacer()
+                Text(ActivityGraph.formatDuration(breakdown.wall))
+                    .font(.title3.monospacedDigit().weight(.semibold))
+            }
+            GeometryReader { geo in
+                HStack(spacing: 1) {
+                    ForEach(parts, id: \.0) { _, value, color in
+                        if value > 0 {
+                            Rectangle().fill(color.opacity(0.8))
+                                .frame(width: geo.size.width * CGFloat(value / whole))
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+            .frame(height: 8)
+            .accessibilityHidden(true)
+        }
+        breakdownRow("Model", breakdown.model, count: breakdown.modelCount, noun: "turn", color: .purple)
+        breakdownRow("Tools", breakdown.tools, count: breakdown.toolCount, noun: "call", color: .orange)
+        breakdownRow("Other", breakdown.other, count: nil, noun: "", color: .gray)
+    }
+
+    private func breakdownRow(_ title: String, _ value: TimeInterval, count: Int?, noun: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            RoundedRectangle(cornerRadius: 2).fill(color.opacity(0.8)).frame(width: 10, height: 10)
+            Text(title)
+            if let count {
+                Text("\(count) \(noun)\(count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("waiting, idle, overhead").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(StepStyle.duration(value)).font(.callout.monospacedDigit())
+        }
+    }
+}
+
+private enum StepStyle {
+    static func icon(_ kind: String, name: String) -> String {
+        kind == "model" ? "sparkles" : ToolPreview.symbol(for: name)
+    }
+
+    static func color(_ item: ActivityStepItem) -> Color {
+        switch item.status {
+        case "error": return .red
+        case "lost": return .gray
+        case "running": return .blue
+        default: return item.isModel ? .purple : .orange
+        }
+    }
+
+    /// "850ms" below a second, else the shared elapsed format.
+    static func duration(_ seconds: TimeInterval) -> String {
+        seconds < 1 ? "\(Int((seconds * 1000).rounded()))ms" : ActivityGraph.formatDuration(seconds)
+    }
+}
+
+private struct TotalRow: View {
+    let total: ActivityStepTotalItem
+    let wall: TimeInterval
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: StepStyle.icon(total.kind, name: total.name))
+                    .font(.caption)
+                    .foregroundStyle(total.kind == "model" ? .purple : .orange)
+                    .frame(width: 18)
+                Text(total.name)
+                    .font(.subheadline.monospaced())
+                    .lineLimit(1)
+                Text("×\(total.count)").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text(StepStyle.duration(total.duration)).font(.callout.monospacedDigit())
+            }
+            ProgressView(value: wall > 0 ? min(1, total.duration / wall) : 0)
+                .tint(total.kind == "model" ? .purple : .orange)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct StepRow: View {
+    let item: ActivityStepItem
+    let rangeStart: Date?
+    /// The longest step's duration, which fills the row's bar.
+    let slowest: TimeInterval
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Group {
+                switch item.status {
+                case "error": Image(systemName: "exclamationmark.triangle.fill")
+                case "lost": Image(systemName: "questionmark.circle")
+                default: Image(systemName: StepStyle.icon(item.kind, name: item.name))
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(StepStyle.color(item))
+            .symbolEffect(.pulse, options: .repeating, isActive: item.isRunning)
+            .frame(width: 18)
+            .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(item.name)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(StepStyle.duration(item.duration))
+                        .font(.callout.monospacedDigit().weight(isSlow ? .semibold : .regular))
+                        .foregroundStyle(isSlow ? .primary : .secondary)
+                }
+                if !item.summary.isEmpty {
+                    Text(item.summary)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                if !meta.isEmpty {
+                    Text(meta).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                }
+                ProgressView(value: slowest > 0 ? min(1, item.duration / slowest) : 0)
+                    .tint(StepStyle.color(item))
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A step that took at least a quarter of the slowest one stands out.
+    private var isSlow: Bool { slowest > 0 && item.duration >= slowest / 4 && item.duration >= 1 }
+
+    private var meta: String {
+        var parts: [String] = []
+        if let start = item.start, let rangeStart {
+            parts.append("at +\(ActivityGraph.formatDuration(start.timeIntervalSince(rangeStart)))")
+        }
+        if item.outputTokens > 0 { parts.append("\(ActivityGraph.formatTokens(item.outputTokens)) tok out") }
+        if item.isRunning { parts.append("running") }
+        if item.status == "lost" { parts.append("no result recorded") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// One step's transcript row: a tool call's full arguments and output, or a
+/// model turn's text.
+private struct ActivityStepRowView: View {
+    let client: YccClient
+    let project: String
+    let sessionID: String
+    let route: ActivityStepRowRoute
+
+    @State private var row: TranscriptRow?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let row {
+                ScrollView {
+                    content(row)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            } else if let errorMessage {
+                ContentUnavailableView("Row unavailable", systemImage: "exclamationmark.triangle",
+                                       description: Text(errorMessage))
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationTitle(route.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            do {
+                let encoded = try await client.getSessionViewDetail(
+                    project: project, sessionId: sessionID, rowId: route.rowID)
+                row = SessionProjection.transcriptRow(encoded)
+                if row == nil { errorMessage = "This row has no displayable content." }
+            } catch {
+                errorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func content(_ row: TranscriptRow) -> some View {
+        switch row.kind {
+        case .tool(_, _, let args, let output):
+            VStack(alignment: .leading, spacing: 16) {
+                block("Arguments", args.isEmpty ? "(none)" : args)
+                block("Output", output.isEmpty ? "(no output yet)" : output)
+            }
+        case .modelMessage(let text):
+            MarkdownText(text: text)
+        default:
+            TranscriptRowView(row: row)
+        }
+    }
+
+    /// One `Text` stops drawing past a few thousand lines, so very long
+    /// arguments or output are cut here.
+    private static let maxBlockCharacters = 40_000
+
+    private func block(_ title: String, _ text: String) -> some View {
+        let shown = text.count > Self.maxBlockCharacters
+            ? String(text.prefix(Self.maxBlockCharacters)) + "\n… (cut; see the full transcript)"
+            : text
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(shown)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

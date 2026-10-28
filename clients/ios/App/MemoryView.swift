@@ -104,7 +104,7 @@ struct MemoryView: View {
                 Text("\(Self.kb(status.activeBytes)) of \(Self.kb(status.softBudget))")
             }
             .gaugeStyle(.linearCapacity)
-            .tint(over ? Color.orange : Color.accentColor)
+            .tint(over ? Theme.attention : .accentColor)
 
             LabeledContent("Active notes", value: "\(status.activeNotes)")
 

@@ -69,7 +69,7 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
 9. Drop the network or sleep the machine briefly while the second client produces output. On
    return the view reconnects and shows every durable row once, with no stale live tail.
 10. Open the persisted (or stopped) session: its transcript loads with no live controls or
-    reconnect churn, and the status reads "Ready for your message". Sending a message continues
+    reconnect churn, and the header shows no status label. Sending a message continues
     it in place (history stays, a "Session reopened" row appears, controls return, and the reply
     streams) with no separate resume step.
 11. From the unscoped Recent feed, New session asks "Which project?" with the last-viewed project

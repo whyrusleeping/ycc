@@ -412,6 +412,26 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// One actor's timed model turns and tool calls (`GetActivitySteps`)
+    /// between two RFC 3339 instants (empty = open), plus totals per kind+name.
+    public func getActivitySteps(
+        project: String = "", sessionId: String, actor: String,
+        since: String, until: String, limit: Int32
+    ) async throws -> Ycc_V1_GetActivityStepsResponse {
+        var request = Ycc_V1_GetActivityStepsRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.actor = actor
+        request.since = since
+        request.until = until
+        request.limit = limit
+        let response = await generated.getActivitySteps(request: request)
+        switch response.result {
+        case .success(let message): return message
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
     public func subscribeSessionView(
         sessionId: String, fromSeq: Int64
     ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {

@@ -242,7 +242,7 @@ export function lifecycleLabel(s: SessionSummary): string | null {
     case "stopped":
       return "Stopped";
     default:
-      return s.live ? "Ready for your message" : null;
+      return null;
   }
 }
 
@@ -265,25 +265,11 @@ export function compactTokenCount(tokens: number): string | null {
   return dec(tokens / 1_000_000_000) + "B";
 }
 
-export function modelSummary(s: SessionSummary): string | null {
-  const models = s.modelUsage
-    .filter((m) => m.model.trim() && m.tokens > 0n)
-    .sort((a, b) => (a.tokens !== b.tokens ? (b.tokens > a.tokens ? 1 : -1) : a.model < b.model ? -1 : 1));
-  if (!models.length) return null;
-  const name = models[0].model.trim();
-  return models.length === 1 ? name : `${name} +${models.length - 1}`;
-}
-
 export function metadataItems(s: SessionSummary): string[] {
-  const items: string[] = [];
-  if (s.mode.trim()) items.push(s.mode.trim());
-  const model = modelSummary(s);
-  if (model) items.push(model);
-  const ctx = compactTokenCount(Number(s.contextTokens));
-  if (ctx) items.push(`${ctx} ctx`);
-  const turns = Number(s.turns);
-  items.push(`${turns} ${turns === 1 ? "turn" : "turns"}`);
-  return items;
+  // Chat is the default and goes unsaid; model, context and turn counts live
+  // in the session header, not on every row.
+  const mode = s.mode.trim();
+  return mode && mode !== "chat" ? [mode] : [];
 }
 
 /** Display name for a row's project, falling back to the workspace folder. */

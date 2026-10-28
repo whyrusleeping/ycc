@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -90,21 +93,44 @@ func tailUTF8(value string, limit int) string {
 }
 
 // recordActivityEvent indexes lifecycle events compactly, and reduces each
-// subagent turn/tool event to a progress row (tool name, token total) so polls
-// aggregate progress in SQL instead of decoding every turn.
+// turn/tool event to a progress row (tool name, tokens, timing, a bounded
+// argument hint) so polls aggregate progress in SQL and step timelines never
+// decode turns.
 func recordActivityEvent(ctx context.Context, tx *sql.Tx, sid string, ev event.Event) error {
 	switch ev.Type {
 	case event.ModelTurn, event.ToolCall, event.ToolResult:
-		if !isSubagent(ev.Actor) {
+		actor := ev.Actor
+		if actor == "" {
+			actor = "coordinator"
+		}
+		if actor != "coordinator" && !isSubagent(actor) {
 			return nil
 		}
-		name, _ := ev.Data["name"].(string)
-		var tokens int64
+		str := func(k string) string { v, _ := ev.Data[k].(string); return v }
+		name, callID, summary, rowID := str("name"), str("id"), "", ""
+		var tokens, outputTokens int64
 		if usage, ok := ev.Data["usage"].(map[string]any); ok {
 			tokens, _ = number(usage["total"])
+			outputTokens, _ = number(usage["output"])
 		}
-		_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO activity_progress(session_id,seq,actor,type,name,tokens,ts_unix_ns) VALUES(?,?,?,?,?,?,?)`,
-			sid, ev.Seq, ev.Actor, string(ev.Type), truncateUTF8(name, 128), tokens, ev.TS.UnixNano())
+		durationMS, _ := number(ev.Data["duration_ms"])
+		isError, _ := ev.Data["error"].(bool)
+		switch ev.Type {
+		case event.ModelTurn:
+			name = firstNonempty(str("model_name"), str("model_id"))
+			summary = modelTurnSummary(ev.Data)
+			if str("text") != "" {
+				rowID = fmt.Sprintf("seq-%d", ev.Seq)
+			}
+		case event.ToolCall:
+			summary = toolArgSummary(str("args"))
+		}
+		if callID != "" && ev.Type != event.ModelTurn {
+			rowID = "tool-" + callID
+		}
+		_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO activity_progress(session_id,seq,actor,type,name,tokens,ts_unix_ns,call_id,duration_ms,output_tokens,summary,is_error,row_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			sid, ev.Seq, actor, string(ev.Type), truncateUTF8(name, 128), tokens, ev.TS.UnixNano(),
+			truncateUTF8(callID, 256), durationMS, outputTokens, summary, isError, rowID)
 		return err
 	}
 	if !isActivityLifecycle(ev.Type) {
@@ -388,4 +414,143 @@ func BuildActivity(events []event.Event, progress map[string]ActorProgress) []Ac
 		out[i] = *n
 	}
 	return out
+}
+
+const maxStepSummary = 160
+
+// toolArgSummary picks a tool call's most telling argument (the path,
+// command, query, …) as a bounded single line, or falls back to the raw
+// arguments.
+func toolArgSummary(args string) string {
+	var fields map[string]any
+	if json.Unmarshal([]byte(args), &fields) == nil {
+		for _, k := range []string{"file_path", "path", "command", "pattern", "query", "url", "task_id", "agent_id", "job_id", "question", "prompt"} {
+			if v, ok := fields[k].(string); ok && strings.TrimSpace(v) != "" {
+				return oneLine(v)
+			}
+		}
+	}
+	return oneLine(args)
+}
+
+func modelTurnSummary(data map[string]any) string {
+	if t, _ := data["truncated"].(bool); t {
+		return "truncated"
+	}
+	switch n, _ := number(data["tool_calls"]); n {
+	case 0:
+		return "reply"
+	case 1:
+		return "1 tool call"
+	default:
+		return fmt.Sprintf("%d tool calls", n)
+	}
+}
+
+func oneLine(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > maxStepSummary {
+		return truncateUTF8(s, maxStepSummary-3) + "…"
+	}
+	return s
+}
+
+// ActivityStep is one timed model turn or tool call of an actor.
+type ActivityStep struct {
+	Kind              string // model | tool
+	Name              string
+	Summary           string
+	Status            string // running | ok | error | lost
+	Started, Finished time.Time
+	DurationMS        int64
+	OutputTokens      int64
+	RowID             string
+}
+
+type progressRow struct {
+	seq                  int64
+	typ, name            string
+	ts                   time.Time
+	callID, summary      string
+	durationMS, outputTk int64
+	isError              bool
+	rowID                string
+}
+
+// ActivitySteps catches up and returns actor's model turns and tool calls
+// whose events fall within [since, until] (zero bounds are open), in order.
+// A call with no result is running when open is set, otherwise lost.
+func (s *Store) ActivitySteps(ctx context.Context, sid, logPath string, maxSeq, maxOffset int64, actor string, since, until time.Time, open bool) ([]ActivityStep, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, err := s.catchUpLocked(ctx, sid, logPath, maxSeq, maxOffset, true)
+	if err != nil {
+		return nil, err
+	}
+	lo, hi := int64(math.MinInt64), int64(math.MaxInt64)
+	if !since.IsZero() {
+		lo = since.UnixNano()
+	}
+	if !until.IsZero() {
+		hi = until.UnixNano()
+	}
+	rs, err := s.db.QueryContext(ctx, `SELECT seq,type,name,ts_unix_ns,call_id,summary,duration_ms,output_tokens,is_error,row_id FROM activity_progress
+WHERE session_id=? AND actor=? AND seq<=? AND ts_unix_ns>=? AND ts_unix_ns<=? ORDER BY seq`, sid, actor, st.IndexedThrough, lo, hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	var rows []progressRow
+	for rs.Next() {
+		var r progressRow
+		var ts int64
+		if err := rs.Scan(&r.seq, &r.typ, &r.name, &ts, &r.callID, &r.summary, &r.durationMS, &r.outputTk, &r.isError, &r.rowID); err != nil {
+			return nil, err
+		}
+		r.ts = time.Unix(0, ts).UTC()
+		rows = append(rows, r)
+	}
+	if err := rs.Err(); err != nil {
+		return nil, err
+	}
+	return buildSteps(rows, open), nil
+}
+
+func buildSteps(rows []progressRow, open bool) []ActivityStep {
+	var steps []ActivityStep
+	pending := make(map[string]int) // call id → index of its running step
+	for _, r := range rows {
+		ms := time.Duration(r.durationMS) * time.Millisecond
+		switch event.Type(r.typ) {
+		case event.ModelTurn:
+			steps = append(steps, ActivityStep{Kind: "model", Name: r.name, Summary: r.summary, Status: "ok",
+				Started: r.ts.Add(-ms), Finished: r.ts, DurationMS: r.durationMS, OutputTokens: r.outputTk, RowID: r.rowID})
+		case event.ToolCall:
+			steps = append(steps, ActivityStep{Kind: "tool", Name: r.name, Summary: r.summary, Status: "running",
+				Started: r.ts, RowID: r.rowID})
+			if r.callID != "" {
+				pending[r.callID] = len(steps) - 1
+			}
+		case event.ToolResult:
+			status := "ok"
+			if r.isError {
+				status = "error"
+			}
+			i, ok := pending[r.callID]
+			if !ok || r.callID == "" {
+				// The call fell before the range: the result's own timing still places it.
+				steps = append(steps, ActivityStep{Kind: "tool", Name: r.name, Started: r.ts.Add(-ms), RowID: r.rowID})
+				i = len(steps) - 1
+			}
+			delete(pending, r.callID)
+			st := &steps[i]
+			st.Status, st.Finished, st.DurationMS = status, r.ts, r.durationMS
+		}
+	}
+	if !open {
+		for _, i := range pending {
+			steps[i].Status = "lost"
+		}
+	}
+	return steps
 }

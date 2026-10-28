@@ -72,11 +72,15 @@ public struct ActivityTimelineBar: Equatable, Sendable {
     public var end: TimeInterval
     public var status: ActivityStatus
     public var label: String
+    /// The agent round this bar draws; nil for a job or the coordinator.
+    public var round: Int32? = nil
 }
 
 public struct ActivityTimelineLane: Identifiable, Equatable, Sendable {
     public var id: String
     public var label: String
+    /// The node's kind (`coordinator`, an agent role, or a job kind like `bash`).
+    public var kind: String
     public var depth: Int
     public var bars: [ActivityTimelineBar]
 }
@@ -145,14 +149,14 @@ public enum ActivityGraph {
         for row in rows {
             let node = row.node
             var bars: [ActivityTimelineBar] = []
-            func add(start: String, end: String, status: String, label: String) {
+            func add(start: String, end: String, status: String, label: String, round: Int32? = nil) {
                 guard let s = parseTime(start) else { return }
                 let st = ActivityStatus(status)
                 let e = parseTime(end) ?? (st.isActive ? now : (parseTime(node.finishedAt) ?? settledEnd))
                 let bar = ActivityTimelineBar(
                     start: max(0, s.timeIntervalSince(origin)),
                     end: max(0, e.timeIntervalSince(origin)),
-                    status: st, label: label)
+                    status: st, label: label, round: round)
                 bars.append(bar)
                 latest = max(latest, bar.end)
             }
@@ -161,11 +165,11 @@ public enum ActivityGraph {
             } else {
                 for span in node.spans {
                     add(start: span.startedAt, end: span.finishedAt, status: span.status,
-                        label: "round \(span.round)")
+                        label: "round \(span.round)", round: span.round)
                 }
             }
             lanes.append(ActivityTimelineLane(
-                id: node.id, label: laneLabel(node), depth: row.depth, bars: bars))
+                id: node.id, label: laneLabel(node), kind: node.kind, depth: row.depth, bars: bars))
         }
         return ActivityTimeline(origin: origin, duration: max(latest, 1), lanes: lanes)
     }

@@ -33,6 +33,8 @@ struct SessionView: View {
     /// not re-enable follow until a fresh drag or Jump to latest.
     @State private var isBrowsingEarlier = false
     @State private var historyAnchor: String?
+    /// Keys of folded activity runs the reader has expanded (``TranscriptBlocks``).
+    @State private var expandedActivityRuns: Set<String> = []
     @State private var didRunInitialPin = false
     /// This device's read mark as of opening the session, captured before
     /// leaving can advance it. The initial pin uses it to open an unread
@@ -214,7 +216,7 @@ struct SessionView: View {
                 await Task.yield()
                 guard !Task.isCancelled, isBrowsingEarlier,
                       historyAnchor == anchor else { return }
-                proxy.scrollTo(anchor, anchor: .top)
+                proxy.scrollTo(displayedAnchor(anchor), anchor: .top)
             }
             // A fetched (not prefetched) earlier page lands after the anchor
             // restoration above already ran; restore it again once the rows
@@ -225,7 +227,7 @@ struct SessionView: View {
                 Task { @MainActor in
                     await Task.yield()
                     guard isBrowsingEarlier, historyAnchor == anchor else { return }
-                    proxy.scrollTo(anchor, anchor: .top)
+                    proxy.scrollTo(displayedAnchor(anchor), anchor: .top)
                 }
             }
         }
@@ -458,7 +460,7 @@ struct SessionView: View {
             banner(
                 "A question is waiting",
                 systemImage: "questionmark.bubble.fill",
-                tint: .orange,
+                tint: Theme.attention,
                 action: ("Answer", { showQuestionSheet = true })
             )
         }
@@ -476,7 +478,7 @@ struct SessionView: View {
             banner(
                 "Pausing at next safe checkpoint…",
                 systemImage: "pause.circle",
-                tint: .orange,
+                tint: Theme.attention,
                 action: ("Cancel pause", {
                     Analytics.action("session.resume", attrs: ["pending": "pause"])
                     Task { await model.resumeSession() }
@@ -489,7 +491,7 @@ struct SessionView: View {
                 banner(
                     "Paused — send a message to steer and continue",
                     systemImage: "pause.circle.fill",
-                    tint: .orange,
+                    tint: Theme.attention,
                     action: ("Continue", {
                         Analytics.action("session.resume")
                         Task { await model.resumeSession() }
@@ -498,7 +500,7 @@ struct SessionView: View {
                 )
             case .idle where model.displayAwaitingJobs:
                 banner("Waiting on background jobs — resumes when they finish",
-                       systemImage: "hourglass", tint: .blue)
+                       systemImage: "hourglass", tint: Theme.info)
             case .idle:
                 banner("Session idle", systemImage: "moon.zzz.fill", tint: .secondary)
             case .error(let message, let retryable):
@@ -510,7 +512,7 @@ struct SessionView: View {
                 banner(
                     message.isEmpty ? "Session error" : "Error: \(message)",
                     systemImage: "exclamationmark.triangle.fill",
-                    tint: .red,
+                    tint: Theme.danger,
                     action: retryAction,
                     actionDisabled: model.isControlInFlight
                 )
@@ -679,6 +681,8 @@ struct SessionView: View {
                 TranscriptLoadingIndicator(model: model)
                 DurableTranscriptRows(
                     model: model,
+                    expandedRuns: expandedActivityRuns,
+                    onToggleRun: { run in toggleActivityRun(run) },
                     onLoadEarlier: {
                         Analytics.action("transcript.load_earlier")
                         loadEarlierRows()
@@ -904,6 +908,34 @@ struct SessionView: View {
         }
     }
 
+    /// Expand or fold an activity run. Expanding is reading: the steps open
+    /// below the header the reader tapped, so stop following the live edge
+    /// (which would otherwise scroll the header away) until a drag or the
+    /// Jump to latest pill hands control back — the same contract as paging.
+    private func toggleActivityRun(_ run: TranscriptBlocks.Run) {
+        Analytics.action(run.isExpanded ? "transcript.fold_activity" : "transcript.expand_activity")
+        if !run.isExpanded {
+            stopFollowingLatest()
+            isBrowsingEarlier = true
+            dragActivity.sawLiveEdge = false
+        }
+        withAnimation(.snappy) {
+            if run.isExpanded {
+                expandedActivityRuns.remove(run.key)
+            } else {
+                expandedActivityRuns.insert(run.key)
+            }
+        }
+    }
+
+    /// The displayed view standing for `rowID`: the row, or the header of a
+    /// folded run hiding it — a paging anchor can land inside a fold.
+    private func displayedAnchor(_ rowID: String) -> String {
+        let rows = model.visibleDurableRows
+        let items = TranscriptBlocks.items(rows, expanded: expandedActivityRuns)
+        return TranscriptBlocks.displayedID(of: rowID, in: items, rows: rows) ?? rowID
+    }
+
     private func stopFollowingLatest() {
         guard isFollowingLatest else { return }
         isFollowingLatest = false
@@ -1086,7 +1118,7 @@ struct SessionView: View {
         switch model.state {
         case .streaming:
             HStack(spacing: 3) {
-                Circle().fill(Color.green).frame(width: 5, height: 5)
+                Rectangle().fill(Theme.live).frame(width: 5, height: 5)
                 Text("live")
             }
         case .reconnecting:
@@ -1098,7 +1130,7 @@ struct SessionView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                 Text("offline")
             }
-            .foregroundStyle(.orange)
+            .foregroundStyle(Theme.attention)
         case .idle, .finished:
             EmptyView()
         }
@@ -1278,9 +1310,13 @@ private struct TranscriptLoadingIndicator: View {
 /// "Load earlier", the durable transcript rows, and this client's unechoed
 /// messages. Observes durable-row state only, so streaming live tails never
 /// re-diff this ForEach (each row is also `.equatable()`, so a real change
-/// re-renders only the rows that changed).
+/// re-renders only the rows that changed). Long runs of tool/reasoning steps
+/// fold behind an ``ActivityRunHeader`` (``TranscriptBlocks``).
 private struct DurableTranscriptRows: View {
     let model: SessionViewModel
+    /// Keys of activity runs the reader has expanded.
+    let expandedRuns: Set<String>
+    let onToggleRun: (TranscriptBlocks.Run) -> Void
     let onLoadEarlier: () -> Void
     let onOpenCommit: (String) -> Void
     let onOpenReview: (String, String) -> Void
@@ -1301,18 +1337,26 @@ private struct DurableTranscriptRows: View {
             .buttonStyle(.bordered)
         }
         let rows = model.visibleDurableRows
-        ForEach(Array(zip(rows.indices, rows)), id: \.1.id) { index, row in
-            TranscriptRowView(
-                row: row,
-                showsActorHeading: row.startsActorRun(
-                    after: index > rows.startIndex ? rows[index - 1] : nil),
-                onOpenCommit: onOpenCommit,
-                onOpenReview: onOpenReview,
-                loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
-                loadPicture: loadPicture
-            )
-            .equatable()
-            .id(row.id)
+        // One flat list of rows and run headers, so a row keeps its identity
+        // (and disclosure state) when its run grows long enough to fold.
+        ForEach(TranscriptBlocks.items(rows, expanded: expandedRuns)) { item in
+            switch item {
+            case .row(let index, _, let showsActorHeading, let inRun):
+                TranscriptRowView(
+                    row: rows[index],
+                    showsActorHeading: showsActorHeading,
+                    onOpenCommit: onOpenCommit,
+                    onOpenReview: onOpenReview,
+                    loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
+                    loadPicture: loadPicture
+                )
+                .equatable()
+                .modifier(ActivityRunRail(isInRun: inRun))
+                .id(item.id)
+            case .runHeader(let run):
+                ActivityRunHeader(run: run) { onToggleRun(run) }
+                    .id(item.id)
+            }
         }
         // Messages sent from this client that the log has not echoed
         // yet: shown at once, retired by the durable user_input row.
@@ -1329,6 +1373,93 @@ private struct DurableTranscriptRows: View {
                 })
                 .id(message.id)
         }
+    }
+}
+
+/// The summary line of a folded run of agent steps: how many, which tools,
+/// how long. Tapping shows (or folds back) the steps above the newest few.
+private struct ActivityRunHeader: View {
+    let run: TranscriptBlocks.Run
+    let onToggle: () -> Void
+
+    /// Named tools shown before the rest collapse into "+N".
+    private static let shownTools = 3
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 8) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if !breakdown.isEmpty {
+                        Text(breakdown)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                Spacer(minLength: 4)
+                Text(run.isExpanded ? "Fold" : "Show \(run.hiddenCount) more")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.tint)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(run.isExpanded ? 180 : 0))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(breakdown.isEmpty ? title : "\(title). \(breakdown)")
+        .accessibilityHint(run.isExpanded
+            ? "Folds the earlier steps"
+            : "Shows \(run.hiddenCount) earlier steps")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var title: String {
+        let steps = run.summary.steps == 1 ? "1 step" : "\(run.summary.steps) steps"
+        guard let duration = ActivitySummary.compactDuration(run.summary.duration) else { return steps }
+        return "\(steps) · \(duration)"
+    }
+
+    /// "Bash 5 · Read 4 · Edit 2 · +3 · thinking 3".
+    private var breakdown: String {
+        let tools = run.summary.tools
+        var parts = tools.prefix(Self.shownTools).map { "\($0.name) \($0.count)" }
+        let others = tools.dropFirst(Self.shownTools).reduce(0) { $0 + $1.count }
+        if others > 0 { parts.append("+\(others)") }
+        if run.summary.reasoning > 0 { parts.append("thinking \(run.summary.reasoning)") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// Indents the steps of a folded run behind a thin leading rail so they read
+/// as one group under its header. Always applied (zero when outside a run) so
+/// a row joining a run keeps its view identity.
+private struct ActivityRunRail: ViewModifier {
+    let isInRun: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, isInRun ? 14 : 0)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.25))
+                    .frame(width: 2)
+                    .padding(.leading, 7)
+                    .opacity(isInRun ? 1 : 0)
+            }
     }
 }
 
@@ -1500,7 +1631,7 @@ struct TranscriptRowView: View, Equatable {
             ExpandableRow(
                 title: "Thinking",
                 systemImage: "brain",
-                tint: .purple,
+                tint: .secondary,
                 preview: ToolPreview.oneLine(text, limit: 70),
                 detail: text,
                 detailIsAside: true,
@@ -1581,8 +1712,8 @@ struct TranscriptRowView: View, Equatable {
                         .textSelection(.enabled)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.85), in: RoundedRectangle(cornerRadius: 14))
-                        .foregroundStyle(.white)
+                        .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(Color.primary)
                 }
                 if let status {
                     Label(
@@ -1619,10 +1750,10 @@ struct TranscriptRowView: View, Equatable {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
-                    isUser ? Color.accentColor.opacity(0.85) : Color(.secondarySystemBackground),
+                    isUser ? Theme.userBubble : Color(.secondarySystemBackground),
                     in: RoundedRectangle(cornerRadius: 14)
                 )
-                .foregroundStyle(isUser ? .white : .primary)
+                .foregroundStyle(Color.primary)
             }
             if !isUser { Spacer(minLength: 40) }
         }
@@ -1635,17 +1766,17 @@ struct TranscriptRowView: View, Equatable {
         VStack(alignment: .leading, spacing: 10) {
             Label("Finished", systemImage: "checkmark.circle.fill")
                 .font(.headline)
-                .foregroundStyle(.green)
+                .foregroundStyle(Theme.live)
             MarkdownText(text: text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.green.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+        .background(Theme.live.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
         .overlay {
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.green.opacity(0.28), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Theme.live.opacity(0.3), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session finished")
@@ -1674,7 +1805,7 @@ struct TranscriptRowView: View, Equatable {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.triangle.branch")
                         .font(.caption2)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.secondary)
                     Text(text)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1965,7 +2096,7 @@ private struct ToolRowView: View {
                 HStack(spacing: 6) {
                     Image(systemName: ToolPreview.symbol(for: name))
                         .font(.caption)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.secondary)
                         .frame(width: 16)
                     Text(name)
                         .font(.caption.monospaced())
@@ -2003,9 +2134,9 @@ private struct ToolRowView: View {
             case .running:
                 ProgressView().scaleEffect(0.6)
             case .ok:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.live)
             case .error:
-                Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.danger)
             }
         }
         .font(.caption2)
@@ -2031,13 +2162,13 @@ private struct QuestionRowView: View {
     let answer: String?
 
     var body: some View {
-        // Orange is "needs you"; once answered the card goes neutral so an old
-        // question doesn't keep reading as an open gate.
-        let tint: Color = answer == nil ? .orange : .secondary
+        // Attention is "needs you"; once answered the card goes neutral so an
+        // old question doesn't keep reading as an open gate.
+        let tint: Color = answer == nil ? Theme.attention : .secondary
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: answer == nil ? "questionmark.bubble" : "checkmark.bubble")
-                    .foregroundStyle(answer == nil ? Color.orange : Color.green)
+                    .foregroundStyle(answer == nil ? Theme.attention : Theme.live)
                 Text(prompt).font(.callout.weight(.medium))
             }
             if !options.isEmpty {
@@ -2051,11 +2182,11 @@ private struct QuestionRowView: View {
                 // telling the user to answer a question they answered.
                 Text(answer.isEmpty ? "Answered" : "Answered: \(answer)")
                     .font(.caption)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Theme.live)
             } else {
-                Text("Waiting for an answer")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
+                Text("waiting for an answer")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(Theme.attention)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2157,9 +2288,10 @@ private struct QuestionSheet: View {
                             // a properly rounded card of answers.
                             VStack(alignment: .leading, spacing: 4) {
                                 if pending.isBatch {
-                                    Text("Question \(index + 1) of \(pending.questions.count)")
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.secondary)
+                                    Text("\(index + 1)/\(pending.questions.count)")
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(Color.secondary)
+                                        .accessibilityLabel("Question \(index + 1) of \(pending.questions.count)")
                                 }
                                 MarkdownText(text: question.prompt)
                                     .font(.callout)
@@ -2192,22 +2324,18 @@ private struct QuestionSheet: View {
                             }
                         }
                         .id(Self.submitAnchor)
-                        .listRowBackground(allAnswered ? Color.accentColor : Color(.tertiarySystemFill))
-                        .foregroundStyle(allAnswered ? Color.white : Color.secondary)
+                        .listRowBackground(allAnswered ? Theme.accentFill : Color(.tertiarySystemFill))
+                        .foregroundStyle(allAnswered ? Theme.onAccentFill : Color.secondary)
                     }
                 }
             }
-            .navigationTitle(pending.isBatch ? "Answer questions" : "The agent is asking")
+            .navigationTitle(pending.isBatch ? "Answer questions" : "Question")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Batches submit from the bottom section only (it is also the
+                // auto-scroll target after the last answer).
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                }
-                if pending.isBatch {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Submit") { submitBatch() }
-                            .disabled(!allAnswered)
-                    }
                 }
             }
         }
@@ -2236,7 +2364,9 @@ private struct QuestionSheet: View {
                     ? "largecircle.fill.circle" : "circle")
                     .foregroundStyle(selectedValue(at: index) == optIdx ? Color.accentColor : .secondary)
                 Text(option)
-                    .foregroundStyle(.primary)
+                    // Color.primary, not `.primary`: inside a Form button the
+                    // hierarchical style resolves to the tint (accent).
+                    .foregroundStyle(Color.primary)
                     .multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
             }
@@ -2363,9 +2493,9 @@ private struct PendingUserMessageRow: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(
-                            Color.accentColor.opacity(message.isFailed ? 0.35 : 0.6),
+                            Theme.userBubble.opacity(message.isFailed ? 0.5 : 0.8),
                             in: RoundedRectangle(cornerRadius: 14))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                 }
                 statusLine
             }
@@ -2387,13 +2517,13 @@ private struct PendingUserMessageRow: View {
             VStack(alignment: .trailing, spacing: 4) {
                 Label("Not sent: \(reason)", systemImage: "exclamationmark.circle")
                     .font(.caption2)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.danger)
                     .multilineTextAlignment(.trailing)
                 HStack(spacing: 8) {
                     Button("Edit", action: onEdit)
                         .buttonStyle(.bordered)
                     Button("Retry", action: onRetry)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.accent)
                 }
                 .font(.caption.weight(.semibold))
                 .controlSize(.small)

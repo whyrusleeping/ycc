@@ -451,9 +451,17 @@ final class SessionListModelTests: XCTestCase {
         // The metadata line reports how full the active context is, not the
         // session's cumulative token spend.
         XCTAssertEqual(SessionListModel.contextSummary(for: multi), "1.2M ctx")
+        // Rows only carry a non-chat mode and loop provenance; model and
+        // context summaries stay off the list.
         XCTAssertEqual(
             SessionListModel.metadataItems(for: multi, isLoopOwned: true),
-            ["pm", "claude +2", "1.2M ctx", "via loop"]
+            ["pm", "via loop"]
+        )
+        XCTAssertEqual(
+            SessionListModel.metadataItems(
+                for: session(id: "chat", mode: "chat", modelUsage: [("claude", 42)], contextTokens: 12_000),
+                isLoopOwned: false),
+            []
         )
 
         XCTAssertEqual(

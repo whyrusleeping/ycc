@@ -89,13 +89,17 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
     /// The indexed page abbreviated a large payload; expansion can fetch the
     /// complete independently-reducible row bundle on demand.
     public var detailAvailable: Bool
+    /// A routine lifecycle notice (subagent spawned/finished, background job
+    /// started/done) that belongs with the surrounding agent work, so it does
+    /// not break a foldable activity run (``TranscriptBlocks``).
+    public var isRoutineActivity: Bool
 
     public init(
         id: String, kind: Kind, seq: Int64, actor: String, ts: String,
         updatedSeq: Int64? = nil,
         userInputStatus: UserInputStatus? = nil, actorEmoji: String = "",
         liveAppend: String? = nil, liveAppendBaseUTF8: Int? = nil,
-        detailAvailable: Bool = false
+        detailAvailable: Bool = false, isRoutineActivity: Bool = false
     ) {
         self.id = id
         self.kind = kind
@@ -108,6 +112,7 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         self.liveAppend = liveAppend
         self.liveAppendBaseUTF8 = liveAppendBaseUTF8
         self.detailAvailable = detailAvailable
+        self.isRoutineActivity = isRoutineActivity
     }
 
     /// Whether this row opens a run of consecutive rows from one subagent and
@@ -380,7 +385,9 @@ public struct SessionProjection: Sendable, Equatable {
                         reviewedSnapshot: (data["reviewed_snapshot_id"] as? String) ?? ""),
                         actor: relatedActor)
                 } else {
-                    appendDurable(event, .system(text: text), actor: relatedActor)
+                    let failed = !Self.stringField(data, "error").isEmpty
+                    appendDurable(event, .system(text: text), actor: relatedActor,
+                                  isRoutineActivity: !failed)
                 }
             }
 
@@ -434,7 +441,10 @@ public struct SessionProjection: Sendable, Equatable {
             // Lifecycle + everything else (incl. unknown future types) → a
             // compact system row. Never crash on an unrecognized type.
             if let text = Self.systemSummary(type: event.type, data: data) {
-                appendDurable(event, .system(text: text))
+                let done = (data["status"] as? String) == "done"
+                let routineJob = event.type == "job_started"
+                    || ((event.type == "job_finished" || event.type == "job_claimed") && done)
+                appendDurable(event, .system(text: text), isRoutineActivity: routineJob)
             }
         }
     }
@@ -1052,6 +1062,12 @@ public struct SessionProjection: Sendable, Equatable {
         return decoded ?? Self.decodeIndexedRow(encoded)
     }
 
+    /// Decode one indexed row bundle on its own, such as a
+    /// `GetSessionViewDetail` response opened outside the transcript.
+    public static func transcriptRow(_ encoded: Ycc_V1_SessionPresentationRow) -> TranscriptRow? {
+        decodeIndexedRow(encoded)
+    }
+
     private static func decodeIndexedRow(_ encoded: Ycc_V1_SessionPresentationRow) -> TranscriptRow? {
         var projection = SessionProjection()
         projection.apply(encoded.events)
@@ -1063,7 +1079,8 @@ public struct SessionProjection: Sendable, Equatable {
             id: encoded.id, kind: row.kind, seq: encoded.positionSeq,
             actor: row.actor, ts: row.ts, updatedSeq: encoded.updatedSeq,
             userInputStatus: row.userInputStatus,
-            actorEmoji: stableActorEmoji(row.actor), detailAvailable: encoded.hasDetail_p)
+            actorEmoji: stableActorEmoji(row.actor), detailAvailable: encoded.hasDetail_p,
+            isRoutineActivity: row.isRoutineActivity)
         return row
     }
 
@@ -1081,7 +1098,8 @@ public struct SessionProjection: Sendable, Equatable {
         _ kind: TranscriptRow.Kind,
         id: String? = nil,
         actor actorOverride: String? = nil,
-        userInputStatus: TranscriptRow.UserInputStatus? = nil
+        userInputStatus: TranscriptRow.UserInputStatus? = nil,
+        isRoutineActivity: Bool = false
     ) {
         let actor = actorOverride ?? event.actor
         durableRows.append(
@@ -1092,7 +1110,8 @@ public struct SessionProjection: Sendable, Equatable {
                 actor: actor,
                 ts: event.ts,
                 userInputStatus: userInputStatus,
-                actorEmoji: subagentEmoji(for: actor)
+                actorEmoji: subagentEmoji(for: actor),
+                isRoutineActivity: isRoutineActivity
             )
         )
     }

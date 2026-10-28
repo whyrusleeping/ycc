@@ -376,7 +376,7 @@ struct LandingView: View {
                         // another project is visible without opening anything.
                         if (model?.totalActivity.needsAnswer ?? 0) > 0 {
                             Circle()
-                                .fill(Color.orange)
+                                .fill(Theme.attention)
                                 .frame(width: 8, height: 8)
                                 .offset(x: 3, y: -2)
                         } else if (model?.totalActivity.unread ?? 0) > 0 {
@@ -566,7 +566,7 @@ struct LandingView: View {
                 } actions: {
                     if model.partialWarning == nil {
                         Button("New chat") { beginNewSession() }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.accent)
                     }
                 }
             }
@@ -600,7 +600,7 @@ struct LandingView: View {
             if let warning = model.partialWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.attention)
                     .accessibilityLabel("Partial results. \(warning)")
             }
             ForEach(model.sections) { section in
@@ -619,8 +619,8 @@ struct LandingView: View {
                                 isLoopOwned: model.isLoopSession(session),
                                 isUnread: model.isUnread(session))
                         }
-                        .listRowBackground(section.kind == .needsAnswer
-                            ? Color.orange.opacity(0.12) : nil)
+                        // No row tint for needs-answer: the section header and
+                        // the gutter bell already carry the one attention cue.
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 setFollowUp(session, model: model, via: .swipe)
@@ -628,7 +628,7 @@ struct LandingView: View {
                                 Label(session.followUp ? "Unflag" : "Follow up",
                                     systemImage: session.followUp ? "flag.slash" : "flag")
                             }
-                            .tint(.orange)
+                            .tint(Theme.attention)
                             .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
                         }
                         // Acknowledging new agent output without reading it is a
@@ -666,16 +666,18 @@ struct LandingView: View {
                 } header: {
                     if let title = section.title {
                         Label {
-                            Text(title)
+                            Text(title.lowercased())
+                                .font(.caption.monospaced())
                         } icon: {
                             if section.kind == .needsAnswer {
                                 Image(systemName: "bell.badge.fill")
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(Theme.attention)
                             } else if section.kind == .followUp {
                                 Image(systemName: "flag.fill")
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(Theme.attention)
                             }
                         }
+                        .textCase(nil)
                     }
                 }
             }
@@ -822,16 +824,16 @@ private struct NewSessionRequest: Identifiable {
 
 /// A single session row, laid out like a mail inbox entry so it scans fast:
 ///
-///     ●  project · 0431                          13m
+///     ▪  project  0431                           13m
 ///        Title of the session, wrapping to at
 ///        most two lines
-///        [running] work · sol +1 · 87K ctx · via loop
+///        ▪ running · work · via loop
 ///
 /// The leading gutter carries the loudest attention signal (needs-answer bell,
-/// else the unread dot) without shifting the text column; unread also bolds
+/// else the unread square) without shifting the text column; unread also bolds
 /// the title. The header says *where* (project in the unscoped feed, focus
-/// tasks) and *when*; the footer is one quiet line of routine metadata. A row
-/// with nothing to put in the header (a plain chat in a project-scoped list)
+/// tasks) and *when*; the footer is one quiet mono line of routine metadata. A
+/// row with nothing to put in the header (a plain chat in a project-scoped list)
 /// moves the timestamp onto the title line instead of spending a line on it.
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
@@ -855,7 +857,7 @@ private struct SessionRow: View {
                         title
                         Spacer(minLength: 4)
                         trailingStatus
-                            .font(.subheadline)
+                            .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -869,11 +871,12 @@ private struct SessionRow: View {
     private var indicator: some View {
         if session.live && session.waitingInput {
             Image(systemName: "bell.badge.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.attention)
                 .accessibilityLabel("needs answer")
         } else if isUnread {
-            Image(systemName: "circle.fill")
-                .foregroundStyle(Color.accentColor)
+            Rectangle()
+                .fill(Color.accentColor)
+                .frame(width: 7, height: 7)
                 .accessibilityLabel("unread")
         } else {
             // Zero height so it sits on the baseline without growing the row.
@@ -897,13 +900,12 @@ private struct SessionRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if let visibleProject {
                 Text(visibleProject)
-                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary.opacity(0.8))
                     .lineLimit(1)
                     .accessibilityLabel("project \(visibleProject)")
             }
             if !taskLabels.isEmpty {
                 Text(taskLabels.joined(separator: " "))
-                    .monospacedDigit()
                     .lineLimit(1)
                     .layoutPriority(-1)
                     .accessibilityLabel(taskLabels.map(taskAccessibilityLabel).joined(separator: ", "))
@@ -911,7 +913,7 @@ private struct SessionRow: View {
             Spacer(minLength: 4)
             trailingStatus
         }
-        .font(.subheadline)
+        .font(.caption.monospaced())
         .foregroundStyle(.secondary)
     }
 
@@ -930,7 +932,7 @@ private struct SessionRow: View {
         if session.followUp {
             Image(systemName: "flag.fill")
                 .imageScale(.small)
-                .foregroundStyle(.orange)
+                .foregroundStyle(Theme.attention)
                 .accessibilityLabel("flagged for follow-up")
         }
         if let date = SessionListModel.recencyDate(session) {
@@ -944,7 +946,9 @@ private struct SessionRow: View {
 
     @ViewBuilder
     private var footer: some View {
+        // The gutter bell already says "waiting"; don't repeat it in words.
         let lifecycle = SessionListModel.lifecycleLabel(for: session)
+            .flatMap { $0 == "waiting" ? nil : $0 }
         let items = SessionListModel.metadataItems(for: session, isLoopOwned: isLoopOwned)
         if lifecycle != nil || !items.isEmpty {
             HStack(spacing: 6) {
@@ -959,7 +963,7 @@ private struct SessionRow: View {
                             .joined(separator: ", "))
                 }
             }
-            .font(.caption)
+            .font(.caption2.monospaced())
             .foregroundStyle(.secondary)
         }
     }
@@ -972,29 +976,22 @@ private struct SessionRow: View {
     }
 }
 
-/// A compact lifecycle pill. Routine `idle` and unknown legacy values are
+/// A compact lifecycle word. Routine `idle` and unknown legacy values are
 /// filtered by SessionListModel before this view is created.
 private struct StatusBadge: View {
     let label: String
 
     var body: some View {
-        Text(label)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .fixedSize()
+        StatusWord(text: label, color: color, live: label == "running" || label == "background")
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("session status \(label)")
     }
 
     private var color: Color {
         switch label {
-        case "running", "background": return .green
-        case "waiting", "paused": return .orange
-        case "error": return .red
-        case "stopped": return .gray
+        case "running", "background": return Theme.live
+        case "waiting", "paused": return Theme.attention
+        case "error": return Theme.danger
         default: return .secondary
         }
     }

@@ -296,7 +296,7 @@ struct NewSessionView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color(.secondarySystemBackground), in: Capsule())
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .foregroundStyle(.primary)
     }
 

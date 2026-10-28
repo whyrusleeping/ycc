@@ -20,7 +20,7 @@ struct ScopeChipBar: View {
         let projects = model.projectsByRecency
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     ScopeChip(
                         title: "Recent",
                         systemImage: "clock.arrow.circlepath",
@@ -50,9 +50,10 @@ struct ScopeChipBar: View {
     }
 }
 
-/// A capsule scope chip. Selected uses the drawer's tinted pill; the trailing
-/// cue shows the loudest state only (question > unread > active) so a chip stays
-/// compact.
+/// A squared scope chip. Selected is inverted (primary fill, background-
+/// coloured label); unselected is a hairline outline. The trailing cue shows
+/// the loudest state only (question > unread > active) as a plain mono count
+/// or a small live square, so a chip stays compact.
 private struct ScopeChip: View {
     let title: String
     var systemImage: String?
@@ -60,56 +61,55 @@ private struct ScopeChip: View {
     let activity: ProjectActivity
     let action: () -> Void
 
+    private let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.caption)
                 }
                 Text(title)
-                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .font(.subheadline.monospaced())
                     .lineLimit(1)
                 cue
             }
-            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                Capsule().fill(isSelected
-                    ? Color.accentColor.opacity(0.16)
-                    : Color(.secondarySystemGroupedBackground)))
-            .overlay(
-                Capsule().strokeBorder(isSelected ? Color.accentColor.opacity(0.5) : Color(.separator).opacity(0.5),
-                    lineWidth: 0.5))
-            .contentShape(Capsule())
+            .foregroundStyle(isSelected ? Color(.systemBackground) : Color.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(shape.fill(isSelected ? Color.primary : Color.clear))
+            .overlay(shape.strokeBorder(isSelected ? Color.clear : Color(.separator), lineWidth: 1))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    /// On the inverted (selected) chip the state colours would fight the fill,
+    /// so the cue takes the label colour there.
+    private func cueColor(_ color: Color) -> Color {
+        isSelected ? Color(.systemBackground) : color
+    }
+
     @ViewBuilder
     private var cue: some View {
         if activity.needsAnswer > 0 {
-            countBadge(activity.needsAnswer, color: .orange)
+            count(activity.needsAnswer, color: cueColor(Theme.attention))
         } else if activity.unread > 0 {
-            countBadge(activity.unread, color: .accentColor)
+            count(activity.unread, color: cueColor(.accentColor))
         } else if activity.active > 0 {
-            Circle()
-                .fill(Color.green)
-                .frame(width: 6, height: 6)
+            Rectangle()
+                .fill(cueColor(Theme.live))
+                .frame(width: 5, height: 5)
         }
     }
 
-    private func countBadge(_ count: Int, color: Color) -> some View {
+    private func count(_ count: Int, color: Color) -> some View {
         Text("\(count)")
-            .font(.caption2.weight(.bold))
-            .monospacedDigit()
-            .foregroundStyle(.white)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(color, in: Capsule())
+            .font(.caption.monospaced().weight(.semibold))
+            .foregroundStyle(color)
     }
 
     private var accessibilityLabel: String {

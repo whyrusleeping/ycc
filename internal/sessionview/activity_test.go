@@ -100,3 +100,69 @@ func TestBuildActivityTree(t *testing.T) {
 		t.Fatalf("watch = %+v", watch)
 	}
 }
+
+func TestActivityStepsTiming(t *testing.T) {
+	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	seq := 0
+	ev := func(actor string, at time.Duration, typ event.Type, data map[string]any) event.Event {
+		seq++
+		return event.Event{Seq: seq, TS: base.Add(at), Actor: actor, Type: typ, Data: data}
+	}
+	events := []event.Event{
+		// The coordinator's legacy empty actor normalizes to "coordinator".
+		ev("", 2*time.Second, event.ModelTurn, map[string]any{"model_name": "opus", "duration_ms": 2000.0, "tool_calls": 1.0,
+			"text": "looking", "usage": map[string]any{"total": 10.0, "output": 7.0}}),
+		ev("", 2*time.Second, event.ToolCall, map[string]any{"id": "c1", "name": "Bash", "args": `{"command":"go  test\n./..."}`}),
+		ev("agent:a", 3*time.Second, event.ToolCall, map[string]any{"id": "c0", "name": "Read", "args": `{"file_path":"x.go"}`}),
+		ev("agent:a", 4*time.Second, event.ToolResult, map[string]any{"id": "c0", "name": "Read", "duration_ms": 1000.0}),
+		ev("", 32*time.Second, event.ToolResult, map[string]any{"id": "c1", "name": "Bash", "duration_ms": 30000.0, "error": true}),
+		ev("coordinator", 33*time.Second, event.ToolCall, map[string]any{"id": "c2", "name": "wait", "args": `{}`}),
+	}
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+	var raw []byte
+	for _, e := range events {
+		line, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw = append(append(raw, line...), '\n')
+	}
+	if err := os.WriteFile(logPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	steps, err := store.ActivitySteps(ctx, "s", logPath, -1, -1, "coordinator", time.Time{}, time.Time{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 3 {
+		t.Fatalf("steps = %+v", steps)
+	}
+	model, bash, wait := steps[0], steps[1], steps[2]
+	if model.Kind != "model" || model.Name != "opus" || model.Summary != "1 tool call" || model.OutputTokens != 7 ||
+		!model.Started.Equal(base) || model.DurationMS != 2000 || model.RowID != "seq-1" {
+		t.Fatalf("model = %+v", model)
+	}
+	if bash.Kind != "tool" || bash.Status != "error" || bash.Summary != "go test ./..." || bash.DurationMS != 30000 ||
+		!bash.Started.Equal(base.Add(2*time.Second)) || !bash.Finished.Equal(base.Add(32*time.Second)) || bash.RowID != "tool-c1" {
+		t.Fatalf("bash = %+v", bash)
+	}
+	if wait.Status != "running" || !wait.Finished.IsZero() {
+		t.Fatalf("wait = %+v", wait)
+	}
+	// A range that starts after a call still times its result; a closed range
+	// reports an unanswered call as lost rather than running.
+	steps, err = store.ActivitySteps(ctx, "s", logPath, -1, -1, "coordinator", base.Add(10*time.Second), base.Add(40*time.Second), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 || steps[0].Name != "Bash" || !steps[0].Started.Equal(base.Add(2*time.Second)) || steps[1].Status != "lost" {
+		t.Fatalf("ranged steps = %+v", steps)
+	}
+}

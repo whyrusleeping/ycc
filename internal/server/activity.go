@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -104,6 +107,91 @@ func activityNodeProto(n sessionview.ActivityNode) *v1.ActivityNode {
 			ContextMode: sp.ContextMode, StartedAt: rfc3339(sp.Started), FinishedAt: rfc3339(sp.Finished)})
 	}
 	return out
+}
+
+const (
+	defaultActivitySteps = 500
+	maxActivitySteps     = 2000
+)
+
+// GetActivitySteps lists one actor's timed model turns and tool calls within
+// a time range (an agent round, or the whole session for the coordinator),
+// with per kind+name totals over the whole range so a truncated list still
+// answers what took the time.
+func (s *Server) GetActivitySteps(ctx context.Context, req *connect.Request[v1.GetActivityStepsRequest]) (*connect.Response[v1.GetActivityStepsResponse], error) {
+	actor := strings.TrimSpace(req.Msg.Actor)
+	if actor == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("actor is required"))
+	}
+	var since, until time.Time
+	for _, b := range []struct {
+		raw string
+		dst *time.Time
+	}{{req.Msg.Since, &since}, {req.Msg.Until, &until}} {
+		if b.raw == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, b.raw)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("bad time %q: %w", b.raw, err))
+		}
+		*b.dst = t
+	}
+	if !until.IsZero() {
+		until = until.Add(time.Millisecond) // timestamps are serialized at millisecond precision
+	}
+	store, logPath, durableSeq, durableOffset, err := s.sessionViewStore(req.Msg.Project, req.Msg.SessionId)
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	_, live := s.mgr.Get(req.Msg.SessionId)
+	steps, err := store.ActivitySteps(ctx, req.Msg.SessionId, logPath, durableSeq, durableOffset, actor, since, until, live && until.IsZero())
+	if err != nil {
+		return nil, sessionViewError(err)
+	}
+	now := time.Now()
+	type key struct{ kind, name string }
+	totals := make(map[key]*v1.ActivityStepTotal)
+	for _, st := range steps {
+		k := key{st.Kind, st.Name}
+		t := totals[k]
+		if t == nil {
+			t = &v1.ActivityStepTotal{Kind: st.Kind, Name: st.Name}
+			totals[k] = t
+		}
+		t.Count++
+		if st.Status == "running" {
+			t.DurationMs += max(0, now.Sub(st.Started).Milliseconds())
+		} else {
+			t.DurationMs += st.DurationMS
+		}
+	}
+	out := &v1.GetActivityStepsResponse{}
+	for _, t := range totals {
+		out.Totals = append(out.Totals, t)
+	}
+	sort.Slice(out.Totals, func(i, j int) bool {
+		a, b := out.Totals[i], out.Totals[j]
+		if a.DurationMs != b.DurationMs {
+			return a.DurationMs > b.DurationMs
+		}
+		return a.Kind+a.Name < b.Kind+b.Name
+	})
+	limit := int(req.Msg.Limit)
+	if limit <= 0 {
+		limit = defaultActivitySteps
+	}
+	limit = min(limit, maxActivitySteps)
+	if len(steps) > limit {
+		out.OmittedEarlier = int32(len(steps) - limit)
+		steps = steps[len(steps)-limit:]
+	}
+	for _, st := range steps {
+		out.Steps = append(out.Steps, &v1.ActivityStep{Kind: st.Kind, Name: st.Name, Summary: st.Summary, Status: st.Status,
+			StartedAt: rfc3339(st.Started), FinishedAt: rfc3339(st.Finished), DurationMs: st.DurationMS,
+			OutputTokens: st.OutputTokens, RowId: st.RowID})
+	}
+	return connect.NewResponse(out), nil
 }
 
 // GetJobOutput reads a live session's retained job output by absolute byte

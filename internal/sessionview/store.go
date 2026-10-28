@@ -29,7 +29,7 @@ import (
 // 5: state gained awaiting_jobs (idle with delegated work still running).
 // 6: review_submitted summaries keep verdict, reviewer, and reviewed snapshot.
 // 7: activity lifecycle and subagent progress rows are indexed for the activity graph.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -160,7 +160,9 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 CREATE TABLE IF NOT EXISTS activity_progress (
  session_id TEXT NOT NULL, seq INTEGER NOT NULL, actor TEXT NOT NULL, type TEXT NOT NULL,
- name TEXT NOT NULL, tokens INTEGER NOT NULL, ts_unix_ns INTEGER NOT NULL, PRIMARY KEY(session_id,seq)
+ name TEXT NOT NULL, tokens INTEGER NOT NULL, ts_unix_ns INTEGER NOT NULL,
+ call_id TEXT NOT NULL, duration_ms INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+ summary TEXT NOT NULL, is_error INTEGER NOT NULL, row_id TEXT NOT NULL, PRIMARY KEY(session_id,seq)
 );
 CREATE INDEX IF NOT EXISTS activity_progress_actor ON activity_progress(session_id,actor,seq);
 ` + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion))

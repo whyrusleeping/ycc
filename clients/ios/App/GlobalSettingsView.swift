@@ -207,7 +207,7 @@ struct GlobalSettingsView: View {
                     } label: {
                         Label("Duplicate", systemImage: "plus.square.on.square")
                     }
-                    .tint(.blue)
+                    .tint(Theme.info)
                 }
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) { pendingRemoval = info.name } label: {
@@ -401,7 +401,8 @@ private struct ModelEditorView: View {
                     } icon: {
                         Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.octagon.fill")
                     }
-                    .foregroundStyle(result.success ? Color.green : Color.red)
+                    .foregroundStyle(result.success ? Theme.live : Theme.danger)
+                    .symbolRenderingMode(.monochrome)
                 }
             } header: {
                 Text("Connection test")

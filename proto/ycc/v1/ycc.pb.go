@@ -11481,6 +11481,329 @@ func (x *GetWorkingChangesResponse) GetChangedSinceKnown() bool {
 	return false
 }
 
+// One timed action of an actor: a model request or a tool call. Timestamps
+// are RFC 3339.
+type ActivityStep struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`       // model | tool
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`       // tool name; model steps: the model name
+	Summary       string                 `protobuf:"bytes,3,opt,name=summary,proto3" json:"summary,omitempty"` // bounded one-line hint: a tool's main argument, a model turn's outcome
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`   // running | ok | error | lost (a call unanswered when its range closed)
+	StartedAt     string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt    string                 `protobuf:"bytes,6,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`        // empty while running
+	DurationMs    int64                  `protobuf:"varint,7,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`       // measured duration; 0 while running
+	OutputTokens  int64                  `protobuf:"varint,8,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"` // model steps
+	RowId         string                 `protobuf:"bytes,9,opt,name=row_id,json=rowId,proto3" json:"row_id,omitempty"`                       // session-view row for GetSessionViewDetail; empty when none
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActivityStep) Reset() {
+	*x = ActivityStep{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[174]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivityStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivityStep) ProtoMessage() {}
+
+func (x *ActivityStep) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[174]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivityStep.ProtoReflect.Descriptor instead.
+func (*ActivityStep) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{174}
+}
+
+func (x *ActivityStep) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ActivityStep) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ActivityStep) GetSummary() string {
+	if x != nil {
+		return x.Summary
+	}
+	return ""
+}
+
+func (x *ActivityStep) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ActivityStep) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *ActivityStep) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
+}
+
+func (x *ActivityStep) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *ActivityStep) GetOutputTokens() int64 {
+	if x != nil {
+		return x.OutputTokens
+	}
+	return 0
+}
+
+func (x *ActivityStep) GetRowId() string {
+	if x != nil {
+		return x.RowId
+	}
+	return ""
+}
+
+// Count and summed duration of one kind+name over the whole requested range.
+type ActivityStepTotal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Count         int32                  `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	DurationMs    int64                  `protobuf:"varint,4,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActivityStepTotal) Reset() {
+	*x = ActivityStepTotal{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[175]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivityStepTotal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivityStepTotal) ProtoMessage() {}
+
+func (x *ActivityStepTotal) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[175]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivityStepTotal.ProtoReflect.Descriptor instead.
+func (*ActivityStepTotal) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{175}
+}
+
+func (x *ActivityStepTotal) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ActivityStepTotal) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ActivityStepTotal) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *ActivityStepTotal) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+type GetActivityStepsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Actor         string                 `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`  // an activity node's actor ("coordinator" for the root)
+	Since         string                 `protobuf:"bytes,4,opt,name=since,proto3" json:"since,omitempty"`  // RFC 3339, inclusive; empty = from the start
+	Until         string                 `protobuf:"bytes,5,opt,name=until,proto3" json:"until,omitempty"`  // RFC 3339, inclusive; empty = through the latest event
+	Limit         int32                  `protobuf:"varint,6,opt,name=limit,proto3" json:"limit,omitempty"` // newest steps returned; zero uses 500, clamped to 2000
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetActivityStepsRequest) Reset() {
+	*x = GetActivityStepsRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[176]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetActivityStepsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetActivityStepsRequest) ProtoMessage() {}
+
+func (x *GetActivityStepsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[176]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetActivityStepsRequest.ProtoReflect.Descriptor instead.
+func (*GetActivityStepsRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{176}
+}
+
+func (x *GetActivityStepsRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *GetActivityStepsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *GetActivityStepsRequest) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *GetActivityStepsRequest) GetSince() string {
+	if x != nil {
+		return x.Since
+	}
+	return ""
+}
+
+func (x *GetActivityStepsRequest) GetUntil() string {
+	if x != nil {
+		return x.Until
+	}
+	return ""
+}
+
+func (x *GetActivityStepsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type GetActivityStepsResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Steps          []*ActivityStep        `protobuf:"bytes,1,rep,name=steps,proto3" json:"steps,omitempty"`                                          // chronological
+	OmittedEarlier int32                  `protobuf:"varint,2,opt,name=omitted_earlier,json=omittedEarlier,proto3" json:"omitted_earlier,omitempty"` // steps in range before the returned ones
+	Totals         []*ActivityStepTotal   `protobuf:"bytes,3,rep,name=totals,proto3" json:"totals,omitempty"`                                        // whole range, longest first
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetActivityStepsResponse) Reset() {
+	*x = GetActivityStepsResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[177]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetActivityStepsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetActivityStepsResponse) ProtoMessage() {}
+
+func (x *GetActivityStepsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[177]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetActivityStepsResponse.ProtoReflect.Descriptor instead.
+func (*GetActivityStepsResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{177}
+}
+
+func (x *GetActivityStepsResponse) GetSteps() []*ActivityStep {
+	if x != nil {
+		return x.Steps
+	}
+	return nil
+}
+
+func (x *GetActivityStepsResponse) GetOmittedEarlier() int32 {
+	if x != nil {
+		return x.OmittedEarlier
+	}
+	return 0
+}
+
+func (x *GetActivityStepsResponse) GetTotals() []*ActivityStepTotal {
+	if x != nil {
+		return x.Totals
+	}
+	return nil
+}
+
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
@@ -12411,7 +12734,38 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"diffSha256\x12\x1c\n" +
 	"\ttruncated\x18\r \x01(\bR\ttruncated\x12\x14\n" +
 	"\x05scope\x18\x0e \x01(\tR\x05scope\x12.\n" +
-	"\x13changed_since_known\x18\x0f \x01(\bR\x11changedSinceKnown2\xa6*\n" +
+	"\x13changed_since_known\x18\x0f \x01(\bR\x11changedSinceKnown\"\x85\x02\n" +
+	"\fActivityStep\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\asummary\x18\x03 \x01(\tR\asummary\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x05 \x01(\tR\tstartedAt\x12\x1f\n" +
+	"\vfinished_at\x18\x06 \x01(\tR\n" +
+	"finishedAt\x12\x1f\n" +
+	"\vduration_ms\x18\a \x01(\x03R\n" +
+	"durationMs\x12#\n" +
+	"\routput_tokens\x18\b \x01(\x03R\foutputTokens\x12\x15\n" +
+	"\x06row_id\x18\t \x01(\tR\x05rowId\"r\n" +
+	"\x11ActivityStepTotal\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\x05R\x05count\x12\x1f\n" +
+	"\vduration_ms\x18\x04 \x01(\x03R\n" +
+	"durationMs\"\xaa\x01\n" +
+	"\x17GetActivityStepsRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x14\n" +
+	"\x05since\x18\x04 \x01(\tR\x05since\x12\x14\n" +
+	"\x05until\x18\x05 \x01(\tR\x05until\x12\x14\n" +
+	"\x05limit\x18\x06 \x01(\x05R\x05limit\"\xa2\x01\n" +
+	"\x18GetActivityStepsResponse\x12*\n" +
+	"\x05steps\x18\x01 \x03(\v2\x14.ycc.v1.ActivityStepR\x05steps\x12'\n" +
+	"\x0fomitted_earlier\x18\x02 \x01(\x05R\x0eomittedEarlier\x121\n" +
+	"\x06totals\x18\x03 \x03(\v2\x19.ycc.v1.ActivityStepTotalR\x06totals2\xfd*\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -12424,7 +12778,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x14GetSessionViewDetail\x12#.ycc.v1.GetSessionViewDetailRequest\x1a$.ycc.v1.GetSessionViewDetailResponse\x12X\n" +
 	"\x14SubscribeSessionView\x12#.ycc.v1.SubscribeSessionViewRequest\x1a\x19.ycc.v1.SessionViewUpdate0\x01\x12[\n" +
 	"\x12GetSessionActivity\x12!.ycc.v1.GetSessionActivityRequest\x1a\".ycc.v1.GetSessionActivityResponse\x12I\n" +
-	"\fGetJobOutput\x12\x1b.ycc.v1.GetJobOutputRequest\x1a\x1c.ycc.v1.GetJobOutputResponse\x12a\n" +
+	"\fGetJobOutput\x12\x1b.ycc.v1.GetJobOutputRequest\x1a\x1c.ycc.v1.GetJobOutputResponse\x12U\n" +
+	"\x10GetActivitySteps\x12\x1f.ycc.v1.GetActivityStepsRequest\x1a .ycc.v1.GetActivityStepsResponse\x12a\n" +
 	"\x14GetSessionAttachment\x12#.ycc.v1.GetSessionAttachmentRequest\x1a$.ycc.v1.GetSessionAttachmentResponse\x12L\n" +
 	"\rGetCommitDiff\x12\x1c.ycc.v1.GetCommitDiffRequest\x1a\x1d.ycc.v1.GetCommitDiffResponse\x12X\n" +
 	"\x11GetWorkingChanges\x12 .ycc.v1.GetWorkingChangesRequest\x1a!.ycc.v1.GetWorkingChangesResponse\x126\n" +
@@ -12499,7 +12854,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 178)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 182)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                          // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),            // 1: ycc.v1.StartSessionRequest
@@ -12675,10 +13030,14 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*TestModelResponse)(nil),              // 171: ycc.v1.TestModelResponse
 	(*GetWorkingChangesRequest)(nil),       // 172: ycc.v1.GetWorkingChangesRequest
 	(*GetWorkingChangesResponse)(nil),      // 173: ycc.v1.GetWorkingChangesResponse
-	nil,                                    // 174: ycc.v1.UiEvent.AttrsEntry
-	nil,                                    // 175: ycc.v1.UiClientSummary.VisitAttrsEntry
-	nil,                                    // 176: ycc.v1.UiAnalyticsRow.BreakdownEntry
-	nil,                                    // 177: ycc.v1.UiAnalyticsRow.ContextsEntry
+	(*ActivityStep)(nil),                   // 174: ycc.v1.ActivityStep
+	(*ActivityStepTotal)(nil),              // 175: ycc.v1.ActivityStepTotal
+	(*GetActivityStepsRequest)(nil),        // 176: ycc.v1.GetActivityStepsRequest
+	(*GetActivityStepsResponse)(nil),       // 177: ycc.v1.GetActivityStepsResponse
+	nil,                                    // 178: ycc.v1.UiEvent.AttrsEntry
+	nil,                                    // 179: ycc.v1.UiClientSummary.VisitAttrsEntry
+	nil,                                    // 180: ycc.v1.UiAnalyticsRow.BreakdownEntry
+	nil,                                    // 181: ycc.v1.UiAnalyticsRow.ContextsEntry
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	22,  // 0: ycc.v1.StartSessionRequest.images:type_name -> ycc.v1.ImageAttachment
@@ -12724,12 +13083,12 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	121, // 40: ycc.v1.GetUsageResponse.total:type_name -> ycc.v1.UsageRow
 	130, // 41: ycc.v1.SubscriptionUsageAccount.windows:type_name -> ycc.v1.SubscriptionUsageWindow
 	131, // 42: ycc.v1.GetSubscriptionUsageResponse.accounts:type_name -> ycc.v1.SubscriptionUsageAccount
-	174, // 43: ycc.v1.UiEvent.attrs:type_name -> ycc.v1.UiEvent.AttrsEntry
+	178, // 43: ycc.v1.UiEvent.attrs:type_name -> ycc.v1.UiEvent.AttrsEntry
 	137, // 44: ycc.v1.RecordUiEventsRequest.events:type_name -> ycc.v1.UiEvent
 	138, // 45: ycc.v1.RecordUiEventsRequest.catalog:type_name -> ycc.v1.UiCatalogEntry
-	175, // 46: ycc.v1.UiClientSummary.visit_attrs:type_name -> ycc.v1.UiClientSummary.VisitAttrsEntry
-	176, // 47: ycc.v1.UiAnalyticsRow.breakdown:type_name -> ycc.v1.UiAnalyticsRow.BreakdownEntry
-	177, // 48: ycc.v1.UiAnalyticsRow.contexts:type_name -> ycc.v1.UiAnalyticsRow.ContextsEntry
+	179, // 46: ycc.v1.UiClientSummary.visit_attrs:type_name -> ycc.v1.UiClientSummary.VisitAttrsEntry
+	180, // 47: ycc.v1.UiAnalyticsRow.breakdown:type_name -> ycc.v1.UiAnalyticsRow.BreakdownEntry
+	181, // 48: ycc.v1.UiAnalyticsRow.contexts:type_name -> ycc.v1.UiAnalyticsRow.ContextsEntry
 	142, // 49: ycc.v1.GetUiAnalyticsResponse.clients:type_name -> ycc.v1.UiClientSummary
 	143, // 50: ycc.v1.GetUiAnalyticsResponse.rows:type_name -> ycc.v1.UiAnalyticsRow
 	144, // 51: ycc.v1.GetUiAnalyticsResponse.flows:type_name -> ycc.v1.UiFlow
@@ -12747,149 +13106,153 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	156, // 63: ycc.v1.ListWorkstreamsResponse.workstreams:type_name -> ycc.v1.WorkstreamInfo
 	156, // 64: ycc.v1.RetryIntegrationResponse.workstream:type_name -> ycc.v1.WorkstreamInfo
 	76,  // 65: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
-	38,  // 66: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,   // 67: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	42,  // 68: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	45,  // 69: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
-	48,  // 70: ycc.v1.SessionService.SetSessionFollowUp:input_type -> ycc.v1.SetSessionFollowUpRequest
-	50,  // 71: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
-	55,  // 72: ycc.v1.SessionService.GetSessionView:input_type -> ycc.v1.GetSessionViewRequest
-	57,  // 73: ycc.v1.SessionService.GetSessionViewPage:input_type -> ycc.v1.GetSessionViewPageRequest
-	59,  // 74: ycc.v1.SessionService.GetSessionViewDetail:input_type -> ycc.v1.GetSessionViewDetailRequest
-	61,  // 75: ycc.v1.SessionService.SubscribeSessionView:input_type -> ycc.v1.SubscribeSessionViewRequest
-	65,  // 76: ycc.v1.SessionService.GetSessionActivity:input_type -> ycc.v1.GetSessionActivityRequest
-	67,  // 77: ycc.v1.SessionService.GetJobOutput:input_type -> ycc.v1.GetJobOutputRequest
-	69,  // 78: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
-	71,  // 79: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
-	172, // 80: ycc.v1.SessionService.GetWorkingChanges:input_type -> ycc.v1.GetWorkingChangesRequest
-	21,  // 81: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	23,  // 82: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	25,  // 83: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	28,  // 84: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
-	30,  // 85: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
-	32,  // 86: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
-	34,  // 87: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
-	36,  // 88: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
-	5,   // 89: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	7,   // 90: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	9,   // 91: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	11,  // 92: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
-	14,  // 93: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
-	17,  // 94: ycc.v1.SessionService.ListFiles:input_type -> ycc.v1.ListFilesRequest
-	19,  // 95: ycc.v1.SessionService.ReadFile:input_type -> ycc.v1.ReadFileRequest
-	73,  // 96: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	85,  // 97: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	87,  // 98: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	89,  // 99: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
-	77,  // 100: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
-	79,  // 101: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
-	81,  // 102: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
-	83,  // 103: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
-	170, // 104: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
-	93,  // 105: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
-	95,  // 106: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
-	97,  // 107: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
-	99,  // 108: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
-	101, // 109: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
-	104, // 110: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	107, // 111: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
-	109, // 112: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
-	111, // 113: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
-	114, // 114: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
-	116, // 115: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
-	119, // 116: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
-	120, // 117: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	123, // 118: ycc.v1.SessionService.BeginAnthropicLogin:input_type -> ycc.v1.BeginAnthropicLoginRequest
-	125, // 119: ycc.v1.SessionService.CompleteAnthropicLogin:input_type -> ycc.v1.CompleteAnthropicLoginRequest
-	127, // 120: ycc.v1.SessionService.CancelAnthropicLogin:input_type -> ycc.v1.CancelAnthropicLoginRequest
-	129, // 121: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
-	133, // 122: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	135, // 123: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
-	139, // 124: ycc.v1.SessionService.RecordUiEvents:input_type -> ycc.v1.RecordUiEventsRequest
-	141, // 125: ycc.v1.SessionService.GetUiAnalytics:input_type -> ycc.v1.GetUiAnalyticsRequest
-	150, // 126: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
-	152, // 127: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
-	154, // 128: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
-	157, // 129: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	159, // 130: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	161, // 131: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	163, // 132: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	165, // 133: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	167, // 134: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
-	41,  // 135: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,   // 136: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	44,  // 137: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	47,  // 138: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	49,  // 139: ycc.v1.SessionService.SetSessionFollowUp:output_type -> ycc.v1.SetSessionFollowUpResponse
-	51,  // 140: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	56,  // 141: ycc.v1.SessionService.GetSessionView:output_type -> ycc.v1.GetSessionViewResponse
-	58,  // 142: ycc.v1.SessionService.GetSessionViewPage:output_type -> ycc.v1.GetSessionViewPageResponse
-	60,  // 143: ycc.v1.SessionService.GetSessionViewDetail:output_type -> ycc.v1.GetSessionViewDetailResponse
-	62,  // 144: ycc.v1.SessionService.SubscribeSessionView:output_type -> ycc.v1.SessionViewUpdate
-	66,  // 145: ycc.v1.SessionService.GetSessionActivity:output_type -> ycc.v1.GetSessionActivityResponse
-	68,  // 146: ycc.v1.SessionService.GetJobOutput:output_type -> ycc.v1.GetJobOutputResponse
-	70,  // 147: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
-	72,  // 148: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	173, // 149: ycc.v1.SessionService.GetWorkingChanges:output_type -> ycc.v1.GetWorkingChangesResponse
-	0,   // 150: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	24,  // 151: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	26,  // 152: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	29,  // 153: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	31,  // 154: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	33,  // 155: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	35,  // 156: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	37,  // 157: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	6,   // 158: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	8,   // 159: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	10,  // 160: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	12,  // 161: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
-	15,  // 162: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
-	18,  // 163: ycc.v1.SessionService.ListFiles:output_type -> ycc.v1.ListFilesResponse
-	20,  // 164: ycc.v1.SessionService.ReadFile:output_type -> ycc.v1.ReadFileResponse
-	75,  // 165: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	86,  // 166: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	88,  // 167: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	90,  // 168: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
-	78,  // 169: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	80,  // 170: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	82,  // 171: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	84,  // 172: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	171, // 173: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
-	94,  // 174: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
-	96,  // 175: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
-	98,  // 176: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
-	100, // 177: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
-	103, // 178: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	106, // 179: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	108, // 180: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	110, // 181: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	113, // 182: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	115, // 183: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	117, // 184: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
-	0,   // 185: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	122, // 186: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	124, // 187: ycc.v1.SessionService.BeginAnthropicLogin:output_type -> ycc.v1.BeginAnthropicLoginResponse
-	126, // 188: ycc.v1.SessionService.CompleteAnthropicLogin:output_type -> ycc.v1.CompleteAnthropicLoginResponse
-	128, // 189: ycc.v1.SessionService.CancelAnthropicLogin:output_type -> ycc.v1.CancelAnthropicLoginResponse
-	132, // 190: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
-	134, // 191: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	136, // 192: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
-	140, // 193: ycc.v1.SessionService.RecordUiEvents:output_type -> ycc.v1.RecordUiEventsResponse
-	146, // 194: ycc.v1.SessionService.GetUiAnalytics:output_type -> ycc.v1.GetUiAnalyticsResponse
-	151, // 195: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
-	153, // 196: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
-	155, // 197: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
-	158, // 198: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	160, // 199: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	162, // 200: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	164, // 201: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	166, // 202: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	168, // 203: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
-	135, // [135:204] is the sub-list for method output_type
-	66,  // [66:135] is the sub-list for method input_type
-	66,  // [66:66] is the sub-list for extension type_name
-	66,  // [66:66] is the sub-list for extension extendee
-	0,   // [0:66] is the sub-list for field type_name
+	174, // 66: ycc.v1.GetActivityStepsResponse.steps:type_name -> ycc.v1.ActivityStep
+	175, // 67: ycc.v1.GetActivityStepsResponse.totals:type_name -> ycc.v1.ActivityStepTotal
+	38,  // 68: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,   // 69: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	42,  // 70: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	45,  // 71: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
+	48,  // 72: ycc.v1.SessionService.SetSessionFollowUp:input_type -> ycc.v1.SetSessionFollowUpRequest
+	50,  // 73: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
+	55,  // 74: ycc.v1.SessionService.GetSessionView:input_type -> ycc.v1.GetSessionViewRequest
+	57,  // 75: ycc.v1.SessionService.GetSessionViewPage:input_type -> ycc.v1.GetSessionViewPageRequest
+	59,  // 76: ycc.v1.SessionService.GetSessionViewDetail:input_type -> ycc.v1.GetSessionViewDetailRequest
+	61,  // 77: ycc.v1.SessionService.SubscribeSessionView:input_type -> ycc.v1.SubscribeSessionViewRequest
+	65,  // 78: ycc.v1.SessionService.GetSessionActivity:input_type -> ycc.v1.GetSessionActivityRequest
+	67,  // 79: ycc.v1.SessionService.GetJobOutput:input_type -> ycc.v1.GetJobOutputRequest
+	176, // 80: ycc.v1.SessionService.GetActivitySteps:input_type -> ycc.v1.GetActivityStepsRequest
+	69,  // 81: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
+	71,  // 82: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
+	172, // 83: ycc.v1.SessionService.GetWorkingChanges:input_type -> ycc.v1.GetWorkingChangesRequest
+	21,  // 84: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	23,  // 85: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	25,  // 86: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	28,  // 87: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
+	30,  // 88: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
+	32,  // 89: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
+	34,  // 90: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
+	36,  // 91: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
+	5,   // 92: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	7,   // 93: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	9,   // 94: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	11,  // 95: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
+	14,  // 96: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
+	17,  // 97: ycc.v1.SessionService.ListFiles:input_type -> ycc.v1.ListFilesRequest
+	19,  // 98: ycc.v1.SessionService.ReadFile:input_type -> ycc.v1.ReadFileRequest
+	73,  // 99: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	85,  // 100: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	87,  // 101: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	89,  // 102: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
+	77,  // 103: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
+	79,  // 104: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
+	81,  // 105: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
+	83,  // 106: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
+	170, // 107: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
+	93,  // 108: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
+	95,  // 109: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
+	97,  // 110: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
+	99,  // 111: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
+	101, // 112: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	104, // 113: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	107, // 114: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
+	109, // 115: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
+	111, // 116: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
+	114, // 117: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
+	116, // 118: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
+	119, // 119: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	120, // 120: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	123, // 121: ycc.v1.SessionService.BeginAnthropicLogin:input_type -> ycc.v1.BeginAnthropicLoginRequest
+	125, // 122: ycc.v1.SessionService.CompleteAnthropicLogin:input_type -> ycc.v1.CompleteAnthropicLoginRequest
+	127, // 123: ycc.v1.SessionService.CancelAnthropicLogin:input_type -> ycc.v1.CancelAnthropicLoginRequest
+	129, // 124: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
+	133, // 125: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
+	135, // 126: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	139, // 127: ycc.v1.SessionService.RecordUiEvents:input_type -> ycc.v1.RecordUiEventsRequest
+	141, // 128: ycc.v1.SessionService.GetUiAnalytics:input_type -> ycc.v1.GetUiAnalyticsRequest
+	150, // 129: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
+	152, // 130: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
+	154, // 131: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
+	157, // 132: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	159, // 133: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	161, // 134: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	163, // 135: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	165, // 136: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	167, // 137: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
+	41,  // 138: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,   // 139: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	44,  // 140: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	47,  // 141: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	49,  // 142: ycc.v1.SessionService.SetSessionFollowUp:output_type -> ycc.v1.SetSessionFollowUpResponse
+	51,  // 143: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	56,  // 144: ycc.v1.SessionService.GetSessionView:output_type -> ycc.v1.GetSessionViewResponse
+	58,  // 145: ycc.v1.SessionService.GetSessionViewPage:output_type -> ycc.v1.GetSessionViewPageResponse
+	60,  // 146: ycc.v1.SessionService.GetSessionViewDetail:output_type -> ycc.v1.GetSessionViewDetailResponse
+	62,  // 147: ycc.v1.SessionService.SubscribeSessionView:output_type -> ycc.v1.SessionViewUpdate
+	66,  // 148: ycc.v1.SessionService.GetSessionActivity:output_type -> ycc.v1.GetSessionActivityResponse
+	68,  // 149: ycc.v1.SessionService.GetJobOutput:output_type -> ycc.v1.GetJobOutputResponse
+	177, // 150: ycc.v1.SessionService.GetActivitySteps:output_type -> ycc.v1.GetActivityStepsResponse
+	70,  // 151: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
+	72,  // 152: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	173, // 153: ycc.v1.SessionService.GetWorkingChanges:output_type -> ycc.v1.GetWorkingChangesResponse
+	0,   // 154: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	24,  // 155: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	26,  // 156: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	29,  // 157: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	31,  // 158: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	33,  // 159: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	35,  // 160: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	37,  // 161: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	6,   // 162: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	8,   // 163: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	10,  // 164: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	12,  // 165: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
+	15,  // 166: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
+	18,  // 167: ycc.v1.SessionService.ListFiles:output_type -> ycc.v1.ListFilesResponse
+	20,  // 168: ycc.v1.SessionService.ReadFile:output_type -> ycc.v1.ReadFileResponse
+	75,  // 169: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	86,  // 170: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	88,  // 171: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	90,  // 172: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
+	78,  // 173: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	80,  // 174: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	82,  // 175: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	84,  // 176: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	171, // 177: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
+	94,  // 178: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
+	96,  // 179: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
+	98,  // 180: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
+	100, // 181: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
+	103, // 182: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	106, // 183: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	108, // 184: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	110, // 185: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	113, // 186: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	115, // 187: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	117, // 188: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
+	0,   // 189: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	122, // 190: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	124, // 191: ycc.v1.SessionService.BeginAnthropicLogin:output_type -> ycc.v1.BeginAnthropicLoginResponse
+	126, // 192: ycc.v1.SessionService.CompleteAnthropicLogin:output_type -> ycc.v1.CompleteAnthropicLoginResponse
+	128, // 193: ycc.v1.SessionService.CancelAnthropicLogin:output_type -> ycc.v1.CancelAnthropicLoginResponse
+	132, // 194: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
+	134, // 195: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	136, // 196: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	140, // 197: ycc.v1.SessionService.RecordUiEvents:output_type -> ycc.v1.RecordUiEventsResponse
+	146, // 198: ycc.v1.SessionService.GetUiAnalytics:output_type -> ycc.v1.GetUiAnalyticsResponse
+	151, // 199: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
+	153, // 200: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
+	155, // 201: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
+	158, // 202: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	160, // 203: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	162, // 204: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	164, // 205: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	166, // 206: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	168, // 207: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
+	138, // [138:208] is the sub-list for method output_type
+	68,  // [68:138] is the sub-list for method input_type
+	68,  // [68:68] is the sub-list for extension type_name
+	68,  // [68:68] is the sub-list for extension extendee
+	0,   // [0:68] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -12907,7 +13270,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   178,
+			NumMessages:   182,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

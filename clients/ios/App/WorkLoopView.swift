@@ -138,7 +138,7 @@ struct WorkLoopView: View {
                     Text("Start an unattended drain of this project’s ready backlog tasks.")
                 } actions: {
                     Button("Start loop") { showStartConfirmation = true }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.accent)
                         .disabled(!model.canStart)
                 }
             } refresh: {
@@ -271,7 +271,8 @@ struct WorkLoopView: View {
             if model.state == .waiting {
                 Label(WorkLoopModel.waitingLine(for: loop), systemImage: "hourglass")
                     .font(.subheadline)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.info)
+                    .symbolRenderingMode(.monochrome)
             }
             if model.state == .finished && !loop.outcome.isEmpty {
                 Label(loop.outcome, systemImage: "flag.checkered")
@@ -280,7 +281,7 @@ struct WorkLoopView: View {
             if let error = model.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.danger)
             }
         }
         .padding(.vertical, 5)
@@ -320,7 +321,7 @@ struct WorkLoopView: View {
                     : "Failed (\(session.errorKind)): \(session.errorMessage)"
                 Label(detail, systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.danger)
                     .lineLimit(3)
             }
             if !session.evidence.isEmpty {
@@ -358,7 +359,7 @@ struct WorkLoopView: View {
                 .monospacedDigit()
             if blocked && !task.reason.isEmpty {
                 Label(task.reason, systemImage: "exclamationmark.bubble")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.attention)
             }
             if !task.latestEvidence.isEmpty {
                 Text("Latest evidence: \(task.latestEvidence)")
@@ -419,21 +420,18 @@ struct WorkLoopStateBadge: View {
     let state: WorkLoopState
 
     var body: some View {
-        Text(state.title)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.18), in: Capsule())
-            .foregroundStyle(color)
+        StatusWord(text: state.title, color: color, live: state == .running)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(state.title)
     }
 
     private var color: Color {
         switch state {
-        case .running: return .green
-        case .waiting: return .yellow
-        case .stopping: return .orange
-        case .finished: return .blue
-        case .none, .unknown: return .gray
+        case .running: return Theme.live
+        case .waiting: return Theme.info
+        case .stopping: return Theme.attention
+        case .finished: return .secondary
+        case .none, .unknown: return .secondary
         }
     }
 }

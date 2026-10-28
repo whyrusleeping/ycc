@@ -61,6 +61,7 @@ enum Analytics {
         "session.follow_up", "session.unflag",
         "question.answer",
         "transcript.load_earlier", "transcript.load_detail", "transcript.jump_latest",
+        "transcript.expand_activity", "transcript.fold_activity",
         "message.retry", "message.edit",
         "sessions.mark_read", "sessions.mark_all_read",
         "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter",

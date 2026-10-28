@@ -37,12 +37,15 @@ struct ConnectView: View {
                                 tokenFocused = token.isEmpty
                             } label: {
                                 HStack {
+                                    // Color.primary/.secondary, not the
+                                    // hierarchical styles: inside a Form button
+                                    // those resolve to the accent tint.
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(profile.name)
-                                            .foregroundStyle(.primary)
+                                            .foregroundStyle(Color.primary)
                                         Text(profile.baseURL.absoluteString)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .font(.caption.monospaced())
+                                            .foregroundStyle(Color.secondary)
                                             .lineLimit(1)
                                             .truncationMode(.middle)
                                     }
@@ -92,8 +95,8 @@ struct ConnectView: View {
                     }
                     .disabled(isConnecting || !isValidInput)
                 }
-                .listRowBackground(isValidInput && !isConnecting ? Color.accentColor : Color(.tertiarySystemFill))
-                .foregroundStyle(isValidInput && !isConnecting ? Color.white : Color.secondary)
+                .listRowBackground(isValidInput && !isConnecting ? Theme.accentFill : Color(.tertiarySystemFill))
+                .foregroundStyle(isValidInput && !isConnecting ? Theme.onAccentFill : Color.secondary)
             }
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -102,22 +105,9 @@ struct ConnectView: View {
     /// The app's mark and a one-line explanation of what this screen is for.
     private var brandHeader: some View {
         VStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.14))
-                    .frame(width: 76, height: 76)
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 26, weight: .heavy))
-                        .foregroundStyle(Color.accentColor)
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(Color.teal)
-                        .frame(width: 16, height: 5)
-                        .offset(y: 10)
-                }
-            }
+            YccMark(size: 76)
             Text("ycc")
-                .font(.largeTitle.weight(.bold))
+                .font(.largeTitle.monospaced().weight(.bold))
             Text("Watch and steer your coding agents from anywhere.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)

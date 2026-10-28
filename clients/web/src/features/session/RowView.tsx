@@ -223,15 +223,10 @@ export const RowView = memo(function RowView({
         </div>
       );
     case "question":
-      if (answering && k.answer === null) {
-        // The answer panel below shows it in full; don't repeat it here.
-        return (
-          <div className={`row question open answering${searchCls}`} data-row-id={row.id}>
-            <span className="who">Question{actor ? ` · ${actor}` : ""}</span>
-            <span className="question-summary">{k.prompt}</span>
-            <span className="tag warn">answer below ↓</span>
-          </div>
-        );
+      if (answering && k.answer === null && !search) {
+        // The answer panel below shows it in full; keep only a scroll anchor
+        // here (a search hit renders the full row so the match is visible).
+        return <div className="row-anchor" data-row-id={row.id} />;
       }
       return (
         <div className={`row question${k.answer === null ? " open" : ""}${searchCls}`} data-row-id={row.id}>

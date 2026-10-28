@@ -440,8 +440,9 @@ start becomes terminal `lost`, and id allocation continues without collisions.
 Clients see the same structure as an activity graph. It contains the coordinator, one node per
 subagent actor with its spawn→finish rounds, and the background jobs each actor started. The graph
 is projected from indexed lifecycle events and overlaid with the live registry's status and progress
-metadata. Live retained job output is readable by absolute cursor. Neither is model-facing, and
-neither affects notification or delivery state.
+metadata. Clients can also list one actor's timed model turns and tool calls for a round or the
+whole session, from the same index. Live retained job output is readable by absolute cursor. None
+of these is model-facing, and none affects notification or delivery state.
 
 Normal chat can spawn general-purpose subagents with an explicit prompt, any configured logical
 model, and an access level that defaults to read-only inspection but may explicitly allow workspace

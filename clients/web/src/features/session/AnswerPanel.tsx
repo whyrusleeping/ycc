@@ -8,10 +8,7 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import type { PendingQuestion } from "./projection";
 import type { SessionController } from "./controller";
 import { track, type Via } from "../../app/analytics";
-import { IS_MAC } from "../../app/platform";
 import { Markdown } from "../markdown/Markdown";
-
-const MOD = IS_MAC ? "⌘" : "Ctrl+";
 
 export function AnswerPanel({
   controller,
@@ -115,10 +112,7 @@ export function AnswerPanel({
     <section ref={panel} className="answer-panel" aria-label="Answer the agent's question" onKeyDown={onKeyDown}>
       <div className={`answer-card${submitted ? " submitted" : ""}`}>
         <div className="answer-head">
-          <span className="answer-badge" aria-hidden="true">?</span>
-          <span className="answer-title">
-            {batch ? `The agent asks ${qs.length} questions` : "The agent asks"}
-          </span>
+          <span className="answer-title">{batch ? `Question ${current + 1} of ${qs.length}` : "Question"}</span>
           {submitted ? (
             <span className="tag">answer sent — waiting for the session…</span>
           ) : (
@@ -144,11 +138,6 @@ export function AnswerPanel({
         {qs.map((q, qi) => (
           <div key={qi} className="answer-q" data-q={qi} hidden={qi !== current}>
             <div className="answer-scroll">
-              {batch && (
-                <div className="answer-count">
-                  Question {qi + 1} of {qs.length}
-                </div>
-              )}
               <div className="answer-prompt">
                 <Markdown text={q.prompt} />
               </div>
@@ -165,7 +154,7 @@ export function AnswerPanel({
                         aria-pressed={batch ? selected : undefined}
                         onClick={() => pick(qi, oi, "click")}
                       >
-                        {oi < 9 && <kbd aria-hidden="true">{oi + 1}</kbd>}
+                        {oi < 9 && <span className="opt-key" aria-hidden="true">{oi + 1}</span>}
                         <span className="opt-label">{o}</span>
                         {selected && <span className="opt-check" aria-hidden="true">✓</span>}
                       </button>
@@ -189,22 +178,7 @@ export function AnswerPanel({
           </div>
         ))}
         <div className="answer-actions">
-          <span className="answer-hint muted small">
-            {qs[current].options.length > 0 && (
-              <>
-                <kbd>1</kbd>–<kbd>{Math.min(9, qs[current].options.length)}</kbd> pick ·{" "}
-              </>
-            )}
-            {batch ? (
-              <>
-                <kbd>Enter</kbd> next · <kbd>{MOD}Enter</kbd> send
-              </>
-            ) : (
-              <>
-                <kbd>Enter</kbd> send · <kbd>⇧Enter</kbd> new line
-              </>
-            )}
-          </span>
+          <span className="answer-spacer" />
           {batch && current > 0 && (
             <button type="button" className="btn" disabled={submitted} onClick={() => go(current - 1)}>
               Back

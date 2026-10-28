@@ -309,7 +309,7 @@ struct WorkstreamsView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.accent)
             .padding(12)
         }
         .background(.bar)
@@ -393,7 +393,7 @@ private struct WorkstreamRow: View {
                WorkstreamsModel.status(for: workstream) == .needsAttention {
                 Label(reason, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
@@ -448,31 +448,33 @@ private struct WorkstreamStatusBadge: View {
         HStack(spacing: 4) {
             if status == .needsAttention {
                 Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(color)
             } else if integrationState == .integrating {
                 ProgressView().controlSize(.mini)
             }
-            Text(WorkstreamsModel.badgeTitle(for: workstream))
+            StatusWord(
+                text: WorkstreamsModel.badgeTitle(for: workstream),
+                color: color,
+                live: status == .active && integrationState != .queued && integrationState != .integrating)
         }
-        .font(.caption2.weight(.semibold))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(color.opacity(0.18), in: Capsule())
-        .foregroundStyle(color)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(WorkstreamsModel.badgeTitle(for: workstream))
     }
 
     private var color: Color {
         if (status == .active || status == .ready) &&
             (integrationState == .queued || integrationState == .integrating) {
-            return .indigo
+            return Theme.info
         }
         switch status {
-        case .active: return .green
-        case .ready: return .teal
-        case .needsAttention: return .red
-        case .merged: return .blue
-        case .discarded: return .gray
-        case .stale: return .orange
-        case .unknown: return .gray
+        case .active: return Theme.live
+        case .ready: return Theme.info
+        case .needsAttention: return Theme.danger
+        case .merged: return .secondary
+        case .discarded: return .secondary
+        case .stale: return Theme.attention
+        case .unknown: return .secondary
         }
     }
 }
@@ -487,7 +489,7 @@ private struct ConflictList: View {
         List {
             Section {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.attention)
             }
             Section("Conflicted files") {
                 if paths.isEmpty {
@@ -512,9 +514,9 @@ private struct MergedConfirmation: View {
         VStack(spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.largeTitle)
-                .foregroundStyle(.green)
+                .foregroundStyle(Theme.live)
             Text("Merged")
-                .font(.headline)
+                .font(.headline.monospaced())
             if !commit.isEmpty {
                 Text(commit)
                     .font(.caption.monospaced())

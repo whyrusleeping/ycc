@@ -360,7 +360,6 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
       <section className="loop-card" aria-label="Loop status">
         <div className="loop-card-head">
           <LoopStateBadge state={state} />
-          <span className="mono muted small">{loop.loopId}</span>
           {started && (
             <span className="muted small" title={new Date(Date.parse(loop.startedAt)).toLocaleString()}>
               started {started}
@@ -441,9 +440,8 @@ function LoopSessionRow({ project, session: s, index }: { project: string; sessi
   return (
     <li className={`loop-session${failed ? " failed" : ""}`}>
       <div className="loop-session-head">
-        <span className="muted">#{index}</span>
-        <Link to={paths.session(project, s.sessionId)} className="mono" title="Open this session">
-          {s.sessionId}
+        <Link to={paths.session(project, s.sessionId)} className="mono" title={`Open session ${s.sessionId}`}>
+          session #{index}
         </Link>
         {s.focus && <TaskLink project={project} id={s.focus} className="task-chip" />}
         {s.attempt > 1 && <span className="tag">attempt {s.attempt}</span>}

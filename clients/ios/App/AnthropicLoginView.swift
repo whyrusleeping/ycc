@@ -20,7 +20,8 @@ struct AnthropicLoginView: View {
             if model.isConnected {
                 Section {
                     Label("Anthropic connected", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Theme.live)
+                        .symbolRenderingMode(.monochrome)
                     Text("Credentials were saved on the daemon. Existing Anthropic OAuth models will use them on their next request. No model settings were changed and no work loop was restarted.")
                     Text("You can close this screen and start the work loop when you’re ready.")
                 }
@@ -62,7 +63,7 @@ struct AnthropicLoginView: View {
                 if let error = model.errorMessage ?? browserError {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Theme.attention)
                         Text("If completion was interrupted, the daemon may have saved the login. You can try your work again, or start a new login. Never reuse a submitted code.")
                             .font(.caption)
                     }

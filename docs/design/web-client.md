@@ -34,6 +34,18 @@ a command palette, keyboard shortcuts listed in a help overlay, drag-and-drop an
 image attachments, and browser notifications for questions, idle completion, and errors while the
 tab is in the background.
 
+### Visual language
+
+The look is terminal-leaning and quiet, shared with the iOS client: neutral near-black or
+off-white grounds, 1px rules instead of card shadows, 2px corners, and IBM Plex Mono (bundled,
+OFL) for chrome — navigation, labels, metadata, buttons, tool rows — with the system sans for
+prose and titles. One acid-chartreuse accent marks the primary action, the current location, and
+live work; signal orange is reserved for state that needs the user. Status is a coloured mono word
+or a small square marker, not a filled pill, and each row carries one attention signal. Lists show
+what a row is and when it last moved; model, context, and turn counts belong to the session header,
+and raw ids appear only where they are copied. Tokens live at the top of `src/styles.css`
+(palette, a seven-step type scale, radii).
+
 ### Source, toolchain, and embedding
 
 Source lives in `clients/web/` as a TypeScript React application built with Vite, with Node pinned

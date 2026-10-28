@@ -120,7 +120,7 @@ struct ReviewTiersView: View {
             HStack(spacing: 6) {
                 Text(tier.name)
                 if tier.builtin && tier.configured {
-                    badge("overridden", color: .orange)
+                    badge("overridden", color: Theme.attention)
                 } else if tier.builtin {
                     badge("built-in", color: .secondary)
                 }
@@ -133,12 +133,7 @@ struct ReviewTiersView: View {
     }
 
     private func badge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.caption2)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
+        StatusWord(text: text, color: color)
     }
 
     /// One-line reviewer line-up: "readability (claude · high), performance (gpt)"

@@ -286,7 +286,7 @@ JSON="Content-Type: application/json"
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
 | [`GetSessionView`](#indexed-session-view) / `GetSessionViewPage` / `GetSessionViewDetail` | bounded indexed presentation pages and detail |
 | [`SubscribeSessionView`](#indexed-session-view) | sequence-safe presentation row/state updates |
-| [`GetSessionActivity` / `GetJobOutput`](#session-activity) | agent/subagent/job graph with live progress / a live job's output |
+| [`GetSessionActivity` / `GetJobOutput` / `GetActivitySteps`](#session-activity) | agent/subagent/job graph with live progress / a live job's output / one actor's timed turns and tool calls |
 | [`GetSessionAttachment`](#getsessionattachment) | fetch a retained user-picture payload |
 | [`StartSession`](#startsession) | start a new session |
 | [`Subscribe`](#subscribe) | stream a session's events (replay + live) |
@@ -655,6 +655,17 @@ Work that was in flight when the session stopped, or before a reopen, reports `l
 the session's last event (or the reopen).
 Clients poll this RPC while an activity view is open. Polling is cheap because the daemon builds
 the graph from compact lifecycle rows in the session-view index.
+
+`GetActivitySteps` answers what took the time for one `actor` (an agent node's actor, or
+`coordinator`) between optional inclusive RFC 3339 `since`/`until` bounds — pass a span's
+`startedAt`/`finishedAt` for one round. `steps` are chronological model turns and tool calls with
+`startedAt`, `finishedAt`, `durationMs`, `status` (`running`, `ok`, `error`, or `lost` for a call
+left unanswered when its range closed or its session stopped), a bounded one-line `summary` (the
+tool's main argument, or a turn's outcome), the model turn's `outputTokens`, and the session-view
+`rowId` that `GetSessionViewDetail` expands. Only the newest `limit` steps are returned (500
+default, 2000 maximum; `omittedEarlier` counts the rest), while `totals` sums every step in the
+range per kind and name, longest first. Timing comes from the same index, never from rescanning
+the log.
 
 `GetJobOutput` reads a job's retained output (`outputAvailable` nodes) by absolute byte `offset`
 and `limit` (64 KiB default, 256 KiB maximum), or the newest `tailLines`. `data` is raw bytes

@@ -154,20 +154,20 @@ private struct DiffLineView: View {
 
     private var foreground: Color {
         switch line.kind {
-        case .addition: return .green
-        case .deletion: return .red
-        case .hunkHeader: return .cyan
+        case .addition: return Theme.live
+        case .deletion: return Theme.danger
+        case .hunkHeader: return Theme.info
         case .fileHeader: return .secondary
-        case .truncationNotice: return .orange
+        case .truncationNotice: return Theme.attention
         case .context: return .primary
         }
     }
 
     private var background: Color {
         switch line.kind {
-        case .addition: return Color.green.opacity(0.10)
-        case .deletion: return Color.red.opacity(0.10)
-        case .hunkHeader: return Color.cyan.opacity(0.08)
+        case .addition: return Theme.live.opacity(0.10)
+        case .deletion: return Theme.danger.opacity(0.10)
+        case .hunkHeader: return Theme.info.opacity(0.08)
         default: return .clear
         }
     }

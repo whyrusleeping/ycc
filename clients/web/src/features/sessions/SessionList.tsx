@@ -70,11 +70,6 @@ export function SessionRowView({
   return (
     <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}${unread ? " unread" : ""}`}>
       <div className="session-row-title">
-        {needsAnswer(s) && (
-          <span className="needs-marker" title="Needs an answer" aria-label="needs answer">
-            ●
-          </span>
-        )}
         {unread && (
           <button
             type="button"
@@ -190,7 +185,6 @@ export function SessionList({
           </button>
         )}
       </div>
-      {variant === "page" && <p className="muted small session-filter-hint">Automatic work stays out of your inbox; it shows in Active while running and in All history. Questions needing you always appear. Search covers loaded sessions{feed.hasMore ? "; load older sessions to search further" : ""}.</p>}
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
       {variant === "page" && unreadRows.length > 0 && (
         <div className="unread-bar">

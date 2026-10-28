@@ -240,13 +240,12 @@ struct WorkspaceDrawer: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("ycc")
-                .font(.title2.weight(.bold))
-                .kerning(0.5)
+                .font(.title2.monospaced().weight(.bold))
             HStack(spacing: 5) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.caption2)
                 Text(serverName.isEmpty ? "connected" : serverName)
-                    .font(.caption)
+                    .font(.caption.monospaced())
                     .lineLimit(1)
             }
             .foregroundStyle(.secondary)
@@ -274,9 +273,9 @@ struct WorkspaceDrawer: View {
     }
 
     private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.tertiary)
+        Text(title.lowercased())
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .padding(.horizontal, 10)
             .padding(.top, 18)
@@ -286,7 +285,7 @@ struct WorkspaceDrawer: View {
 }
 
 /// One tappable drawer entry: icon, title, optional live-activity badge, and a
-/// tinted pill when it is the current scope.
+/// quiet neutral fill when it is the current scope.
 private struct DrawerRow: View {
     let title: String
     let systemImage: String
@@ -335,9 +334,9 @@ private struct DrawerRow: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear))
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? Color.primary.opacity(0.08) : Color.clear))
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
@@ -360,37 +359,29 @@ private struct ActivityBadge: View {
     let activity: ProjectActivity
 
     var body: some View {
-        HStack(spacing: 5) {
+        // Plain mono numbers in the state colour, no filled pills.
+        HStack(spacing: 8) {
             if activity.needsAnswer > 0 {
                 HStack(spacing: 3) {
                     Image(systemName: "bell.badge.fill")
                         .font(.system(size: 9))
                     Text("\(activity.needsAnswer)")
-                        .font(.caption2.weight(.bold))
-                        .monospacedDigit()
+                        .font(.caption.monospaced().weight(.semibold))
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.orange, in: Capsule())
+                .foregroundStyle(Theme.attention)
             }
             if activity.unread > 0 {
                 Text("\(activity.unread)")
-                    .font(.caption2.weight(.bold))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor, in: Capsule())
+                    .font(.caption.monospaced().weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
             }
             if activity.active > 0 {
                 HStack(spacing: 3) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 6, height: 6)
+                    Rectangle()
+                        .fill(Theme.live)
+                        .frame(width: 5, height: 5)
                     Text("\(activity.active)")
-                        .font(.caption2.weight(.semibold))
-                        .monospacedDigit()
+                        .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
             }

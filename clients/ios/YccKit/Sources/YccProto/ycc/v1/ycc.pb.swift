@@ -4069,6 +4069,108 @@ public nonisolated struct Ycc_V1_GetWorkingChangesResponse: Sendable {
   public init() {}
 }
 
+/// One timed action of an actor: a model request or a tool call. Timestamps
+/// are RFC 3339.
+public nonisolated struct Ycc_V1_ActivityStep: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// model | tool
+  public var kind: String = String()
+
+  /// tool name; model steps: the model name
+  public var name: String = String()
+
+  /// bounded one-line hint: a tool's main argument, a model turn's outcome
+  public var summary: String = String()
+
+  /// running | ok | error | lost (a call unanswered when its range closed)
+  public var status: String = String()
+
+  public var startedAt: String = String()
+
+  /// empty while running
+  public var finishedAt: String = String()
+
+  /// measured duration; 0 while running
+  public var durationMs: Int64 = 0
+
+  /// model steps
+  public var outputTokens: Int64 = 0
+
+  /// session-view row for GetSessionViewDetail; empty when none
+  public var rowID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Count and summed duration of one kind+name over the whole requested range.
+public nonisolated struct Ycc_V1_ActivityStepTotal: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: String = String()
+
+  public var name: String = String()
+
+  public var count: Int32 = 0
+
+  public var durationMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetActivityStepsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  /// an activity node's actor ("coordinator" for the root)
+  public var actor: String = String()
+
+  /// RFC 3339, inclusive; empty = from the start
+  public var since: String = String()
+
+  /// RFC 3339, inclusive; empty = through the latest event
+  public var until: String = String()
+
+  /// newest steps returned; zero uses 500, clamped to 2000
+  public var limit: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetActivityStepsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// chronological
+  public var steps: [Ycc_V1_ActivityStep] = []
+
+  /// steps in range before the returned ones
+  public var omittedEarlier: Int32 = 0
+
+  /// whole range, longest first
+  public var totals: [Ycc_V1_ActivityStepTotal] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "ycc.v1"
@@ -11708,6 +11810,216 @@ nonisolated extension Ycc_V1_GetWorkingChangesResponse: SwiftProtobuf.Message, S
     if lhs.truncated != rhs.truncated {return false}
     if lhs.scope != rhs.scope {return false}
     if lhs.changedSinceKnown != rhs.changedSinceKnown {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ActivityStep: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActivityStep"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}name\0\u{1}summary\0\u{1}status\0\u{3}started_at\0\u{3}finished_at\0\u{3}duration_ms\0\u{3}output_tokens\0\u{3}row_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.summary) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.startedAt) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.finishedAt) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.durationMs) }()
+      case 8: try { try decoder.decodeSingularInt64Field(value: &self.outputTokens) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.rowID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if !self.summary.isEmpty {
+      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 3)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 4)
+    }
+    if !self.startedAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.startedAt, fieldNumber: 5)
+    }
+    if !self.finishedAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.finishedAt, fieldNumber: 6)
+    }
+    if self.durationMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.durationMs, fieldNumber: 7)
+    }
+    if self.outputTokens != 0 {
+      try visitor.visitSingularInt64Field(value: self.outputTokens, fieldNumber: 8)
+    }
+    if !self.rowID.isEmpty {
+      try visitor.visitSingularStringField(value: self.rowID, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ActivityStep, rhs: Ycc_V1_ActivityStep) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.summary != rhs.summary {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.startedAt != rhs.startedAt {return false}
+    if lhs.finishedAt != rhs.finishedAt {return false}
+    if lhs.durationMs != rhs.durationMs {return false}
+    if lhs.outputTokens != rhs.outputTokens {return false}
+    if lhs.rowID != rhs.rowID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ActivityStepTotal: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActivityStepTotal"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}name\0\u{1}count\0\u{3}duration_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.count) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.durationMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if self.count != 0 {
+      try visitor.visitSingularInt32Field(value: self.count, fieldNumber: 3)
+    }
+    if self.durationMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.durationMs, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ActivityStepTotal, rhs: Ycc_V1_ActivityStepTotal) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.count != rhs.count {return false}
+    if lhs.durationMs != rhs.durationMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetActivityStepsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetActivityStepsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{1}actor\0\u{1}since\0\u{1}until\0\u{1}limit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.actor) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.since) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.until) }()
+      case 6: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if !self.actor.isEmpty {
+      try visitor.visitSingularStringField(value: self.actor, fieldNumber: 3)
+    }
+    if !self.since.isEmpty {
+      try visitor.visitSingularStringField(value: self.since, fieldNumber: 4)
+    }
+    if !self.until.isEmpty {
+      try visitor.visitSingularStringField(value: self.until, fieldNumber: 5)
+    }
+    if self.limit != 0 {
+      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetActivityStepsRequest, rhs: Ycc_V1_GetActivityStepsRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.actor != rhs.actor {return false}
+    if lhs.since != rhs.since {return false}
+    if lhs.until != rhs.until {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetActivityStepsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetActivityStepsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}steps\0\u{3}omitted_earlier\0\u{1}totals\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.steps) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.omittedEarlier) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.totals) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.steps.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.steps, fieldNumber: 1)
+    }
+    if self.omittedEarlier != 0 {
+      try visitor.visitSingularInt32Field(value: self.omittedEarlier, fieldNumber: 2)
+    }
+    if !self.totals.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.totals, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetActivityStepsResponse, rhs: Ycc_V1_GetActivityStepsResponse) -> Bool {
+    if lhs.steps != rhs.steps {return false}
+    if lhs.omittedEarlier != rhs.omittedEarlier {return false}
+    if lhs.totals != rhs.totals {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

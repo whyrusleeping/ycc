@@ -31,9 +31,6 @@ export function HomePage() {
     <div className="page">
       <header className="page-head">
         <h1>Sessions</h1>
-        <Link to={paths.newSession(null)} className="btn primary">
-          + New session
-        </Link>
       </header>
       <SessionList scope={null} variant="page" />
     </div>
@@ -50,9 +47,6 @@ export function ProjectPage() {
     <div className="page">
       <header className="page-head">
         <h1>{project}</h1>
-        <Link to={paths.newSession(project)} className="btn primary">
-          + New session
-        </Link>
       </header>
       <SessionList scope={project} variant="page" />
     </div>

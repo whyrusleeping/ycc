@@ -69,6 +69,9 @@ const (
 	// SessionServiceGetJobOutputProcedure is the fully-qualified name of the SessionService's
 	// GetJobOutput RPC.
 	SessionServiceGetJobOutputProcedure = "/ycc.v1.SessionService/GetJobOutput"
+	// SessionServiceGetActivityStepsProcedure is the fully-qualified name of the SessionService's
+	// GetActivitySteps RPC.
+	SessionServiceGetActivityStepsProcedure = "/ycc.v1.SessionService/GetActivitySteps"
 	// SessionServiceGetSessionAttachmentProcedure is the fully-qualified name of the SessionService's
 	// GetSessionAttachment RPC.
 	SessionServiceGetSessionAttachmentProcedure = "/ycc.v1.SessionService/GetSessionAttachment"
@@ -257,6 +260,8 @@ type SessionServiceClient interface {
 	// progress overlaid; GetJobOutput reads a live job's retained output.
 	GetSessionActivity(context.Context, *connect.Request[v1.GetSessionActivityRequest]) (*connect.Response[v1.GetSessionActivityResponse], error)
 	GetJobOutput(context.Context, *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error)
+	// GetActivitySteps lists one actor's timed model turns and tool calls.
+	GetActivitySteps(context.Context, *connect.Request[v1.GetActivityStepsRequest]) (*connect.Response[v1.GetActivityStepsResponse], error)
 	// GetSessionAttachment returns a retained picture referenced by a user_input
 	// event, without putting binary payloads in the event log.
 	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
@@ -460,6 +465,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceGetJobOutputProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("GetJobOutput")),
+			connect.WithClientOptions(opts...),
+		),
+		getActivitySteps: connect.NewClient[v1.GetActivityStepsRequest, v1.GetActivityStepsResponse](
+			httpClient,
+			baseURL+SessionServiceGetActivityStepsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetActivitySteps")),
 			connect.WithClientOptions(opts...),
 		),
 		getSessionAttachment: connect.NewClient[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse](
@@ -821,6 +832,7 @@ type sessionServiceClient struct {
 	subscribeSessionView   *connect.Client[v1.SubscribeSessionViewRequest, v1.SessionViewUpdate]
 	getSessionActivity     *connect.Client[v1.GetSessionActivityRequest, v1.GetSessionActivityResponse]
 	getJobOutput           *connect.Client[v1.GetJobOutputRequest, v1.GetJobOutputResponse]
+	getActivitySteps       *connect.Client[v1.GetActivityStepsRequest, v1.GetActivityStepsResponse]
 	getSessionAttachment   *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
 	getCommitDiff          *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
 	getWorkingChanges      *connect.Client[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse]
@@ -938,6 +950,11 @@ func (c *sessionServiceClient) GetSessionActivity(ctx context.Context, req *conn
 // GetJobOutput calls ycc.v1.SessionService.GetJobOutput.
 func (c *sessionServiceClient) GetJobOutput(ctx context.Context, req *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error) {
 	return c.getJobOutput.CallUnary(ctx, req)
+}
+
+// GetActivitySteps calls ycc.v1.SessionService.GetActivitySteps.
+func (c *sessionServiceClient) GetActivitySteps(ctx context.Context, req *connect.Request[v1.GetActivityStepsRequest]) (*connect.Response[v1.GetActivityStepsResponse], error) {
+	return c.getActivitySteps.CallUnary(ctx, req)
 }
 
 // GetSessionAttachment calls ycc.v1.SessionService.GetSessionAttachment.
@@ -1247,6 +1264,8 @@ type SessionServiceHandler interface {
 	// progress overlaid; GetJobOutput reads a live job's retained output.
 	GetSessionActivity(context.Context, *connect.Request[v1.GetSessionActivityRequest]) (*connect.Response[v1.GetSessionActivityResponse], error)
 	GetJobOutput(context.Context, *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error)
+	// GetActivitySteps lists one actor's timed model turns and tool calls.
+	GetActivitySteps(context.Context, *connect.Request[v1.GetActivityStepsRequest]) (*connect.Response[v1.GetActivityStepsResponse], error)
 	// GetSessionAttachment returns a retained picture referenced by a user_input
 	// event, without putting binary payloads in the event log.
 	GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error)
@@ -1446,6 +1465,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceGetJobOutputProcedure,
 		svc.GetJobOutput,
 		connect.WithSchema(sessionServiceMethods.ByName("GetJobOutput")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetActivityStepsHandler := connect.NewUnaryHandler(
+		SessionServiceGetActivityStepsProcedure,
+		svc.GetActivitySteps,
+		connect.WithSchema(sessionServiceMethods.ByName("GetActivitySteps")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetSessionAttachmentHandler := connect.NewUnaryHandler(
@@ -1816,6 +1841,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetSessionActivityHandler.ServeHTTP(w, r)
 		case SessionServiceGetJobOutputProcedure:
 			sessionServiceGetJobOutputHandler.ServeHTTP(w, r)
+		case SessionServiceGetActivityStepsProcedure:
+			sessionServiceGetActivityStepsHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionAttachmentProcedure:
 			sessionServiceGetSessionAttachmentHandler.ServeHTTP(w, r)
 		case SessionServiceGetCommitDiffProcedure:
@@ -1985,6 +2012,10 @@ func (UnimplementedSessionServiceHandler) GetSessionActivity(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetJobOutput(context.Context, *connect.Request[v1.GetJobOutputRequest]) (*connect.Response[v1.GetJobOutputResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetJobOutput is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetActivitySteps(context.Context, *connect.Request[v1.GetActivityStepsRequest]) (*connect.Response[v1.GetActivityStepsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetActivitySteps is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSessionAttachment(context.Context, *connect.Request[v1.GetSessionAttachmentRequest]) (*connect.Response[v1.GetSessionAttachmentResponse], error) {

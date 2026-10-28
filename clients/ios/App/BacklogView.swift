@@ -355,7 +355,7 @@ struct BacklogView: View {
             } label: {
                 Label("Done", systemImage: "checkmark.circle.fill")
             }
-            .tint(.green)
+            .tint(Theme.live)
         }
         if current != .inProgress, current != .done {
             Button {
@@ -364,7 +364,7 @@ struct BacklogView: View {
             } label: {
                 Label("Start", systemImage: "play.circle.fill")
             }
-            .tint(.blue)
+            .tint(Theme.info)
         }
     }
 
@@ -650,7 +650,7 @@ private struct BacklogCard: View {
                 if let annotation = BacklogModel.blockedAnnotation(for: task) {
                     Label(annotation, systemImage: "lock.fill")
                         .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.attention)
                         .lineLimit(1)
                 } else if task.ready, status == .todo {
                     // `ready` only means "dependencies done"; a proposed,
@@ -658,7 +658,7 @@ private struct BacklogCard: View {
                     // green badge is reserved for todo (work-loop eligible).
                     Label("Ready", systemImage: "checkmark.circle")
                         .font(.caption2)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Theme.live)
                 }
                 Spacer(minLength: 4)
                 moveMenu
@@ -734,7 +734,7 @@ private struct BacklogRow: View {
             if let annotation = BacklogModel.blockedAnnotation(for: task) {
                 Label(annotation, systemImage: "lock.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.attention)
             } else if task.ready, TaskStatus(status: task.status) == .todo {
                 // An HStack, not a Label: list rows give a Label's icon its
                 // own wide leading column.
@@ -743,7 +743,7 @@ private struct BacklogRow: View {
                     Text("Ready")
                 }
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(Theme.live)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -751,28 +751,26 @@ private struct BacklogRow: View {
     }
 }
 
-/// A small "P3" priority pill. Priority is 1..5 (1 = highest); 0 renders nothing.
+/// A small mono "P3" priority label. Priority is 1..5 (1 = highest); 0 renders
+/// nothing. Only the top two priorities get a colour; the rest stay quiet.
 struct PriorityBadge: View {
     let priority: Int32
 
     var body: some View {
         if priority > 0 {
             Text("P\(priority)")
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(color.opacity(0.18), in: Capsule())
+                .font(.caption2.monospaced().weight(.medium))
                 .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize()
         }
     }
 
     private var color: Color {
         switch priority {
-        case 1: return .red
-        case 2: return .orange
-        case 3: return .yellow
-        case 4: return .blue
-        default: return .gray
+        case 1: return Theme.danger
+        case 2: return Theme.attention
+        default: return .secondary
         }
     }
 }

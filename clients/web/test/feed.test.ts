@@ -151,7 +151,7 @@ describe("labels", () => {
     expect(lifecycleLabel(s("x", 1, { live: true, waitingInput: true, status: "running" }))).toBe("Needs your answer");
     expect(lifecycleLabel(s("x", 1, { live: true, awaitingJobs: true }))).toBe("Waiting on background jobs");
     expect(lifecycleLabel(s("x", 1, { status: "idle" }))).toBeNull();
-    expect(lifecycleLabel(s("x", 1, { live: true, status: "idle" }))).toBe("Ready for your message");
+    expect(lifecycleLabel(s("x", 1, { live: true, status: "idle" }))).toBeNull();
     expect(lifecycleLabel(s("x", 1, { status: "error" }))).toBe("Error");
   });
 
