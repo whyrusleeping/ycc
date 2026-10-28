@@ -621,6 +621,9 @@ struct LandingView: View {
                         }
                         // No row tint for needs-answer: the section header and
                         // the gutter bell already carry the one attention cue.
+                        // Running sessions breathe instead (RunningRowBackground).
+                        .listRowBackground(SessionListModel.lifecycleLabel(for: session) == "running"
+                            ? RunningRowBackground() : nil)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 setFollowUp(session, model: model, via: .swipe)
@@ -835,6 +838,35 @@ private struct NewSessionRequest: Identifiable {
 /// tasks) and *when*; the footer is one quiet mono line of routine metadata. A
 /// row with nothing to put in the header (a plain chat in a project-scoped list)
 /// moves the timestamp onto the title line instead of spending a line on it.
+/// The list-row background of a running session: a slowly pulsing outline with
+/// a soft glow in the live colour, inset so the cell does not clip it.
+/// TimelineView drives the phase so the pulse survives List cell reuse;
+/// Reduce Motion holds it at a steady mid glow.
+private struct RunningRowBackground: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+            let phase = reduceMotion
+                ? 0.6
+                : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 3.2) + 1) / 2
+            ZStack {
+                Color(.secondarySystemGroupedBackground)
+                // Radius tracks the inset-grouped section's corners (iOS 26+),
+                // so a first or last row's outline is not clipped.
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .inset(by: 4)
+                    .fill(Theme.live.opacity(0.03 + 0.05 * phase))
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .inset(by: 4)
+                    .strokeBorder(Theme.live.opacity(0.3 + 0.45 * phase), lineWidth: 1)
+                    .shadow(color: Theme.live.opacity(0.15 + 0.45 * phase), radius: 2 + 6 * phase)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
     var project = ""

@@ -68,7 +68,7 @@ export function SessionRowView({
   // The row is one stretched link (its ::after covers the row) so the focus
   // task chips can be links of their own without nesting anchors.
   return (
-    <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}${unread ? " unread" : ""}`}>
+    <div className={`session-row variant-${variant}${active ? " active" : ""}${needsAnswer(s) ? " needs" : ""}${unread ? " unread" : ""}${lifecycleTone(s) === "running" ? " running" : ""}`}>
       <div className="session-row-title">
         {unread && (
           <button
