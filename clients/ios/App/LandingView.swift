@@ -361,6 +361,11 @@ struct LandingView: View {
                 }
             }
             .navigationTitle(model?.selectedProject ?? "Recent")
+            // Inline, not large: a large title expanding back on scroll-to-top
+            // animates behind the pinned chip bar and the bar jumps down, so the
+            // title flickers behind the toolbar buttons. The selected chip
+            // already names the scope.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
