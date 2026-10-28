@@ -623,7 +623,10 @@ struct LandingView: View {
                         // the gutter bell already carry the one attention cue.
                         // Running sessions breathe instead (RunningRowBackground).
                         .listRowBackground(SessionListModel.lifecycleLabel(for: session) == "running"
-                            ? RunningRowBackground() : nil)
+                            ? RunningRowBackground(
+                                isFirst: session.sessionID == section.sessions.first?.sessionID,
+                                isLast: session.sessionID == section.sessions.last?.sessionID)
+                            : nil)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 setFollowUp(session, model: model, via: .swipe)
@@ -845,30 +848,49 @@ private struct NewSessionRequest: Identifiable {
 /// Wider blurred strokes, masked to the inside, carry the glow further in.
 /// No fill. Swells and fades on a 3s cycle; TimelineView drives the phase so
 /// the pulse survives List cell reuse, and Reduce Motion holds a steady glow.
+///
+/// The outline follows the cell's own shape: in an inset-grouped list only a
+/// section's first row has rounded (top) corners and its last row rounded
+/// (bottom) corners, concentric with the section card; other corners are square.
 private struct RunningRowBackground: View {
+    var isFirst: Bool
+    var isLast: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// The inset-grouped section card's corner radius (continuous): fitted to
+    /// the iOS 27 simulator's rendering against UIKit continuous-corner paths.
+    private static let sectionRadius: CGFloat = 26
+    /// How far the glow's outline sits inside the cell.
+    private static let inset: CGFloat = 6
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
             let phase = reduceMotion
                 ? 0.6
                 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / 3) + 1) / 2
-            // Radius tracks the inset-grouped section's corners (iOS 26+).
-            let path = RoundedRectangle(cornerRadius: 20, style: .continuous).inset(by: 6)
+            let r = Self.sectionRadius - Self.inset
+            let outline = UnevenRoundedRectangle(
+                cornerRadii: .init(
+                    topLeading: isFirst ? r : 0, bottomLeading: isLast ? r : 0,
+                    bottomTrailing: isLast ? r : 0, topTrailing: isFirst ? r : 0),
+                style: .continuous)
             ZStack {
                 Color(.secondarySystemGroupedBackground)
                 ZStack {
-                    path.stroke(Theme.liveGlow, lineWidth: 12)
-                        .blur(radius: 12)
-                        .opacity(0.04 + 0.5 * phase)
-                    path.stroke(Theme.liveGlow, lineWidth: 5)
-                        .blur(radius: 5)
-                        .opacity(0.08 + 0.6 * phase)
+                    ZStack {
+                        outline.stroke(Theme.liveGlow, lineWidth: 12)
+                            .blur(radius: 12)
+                            .opacity(0.04 + 0.5 * phase)
+                        outline.stroke(Theme.liveGlow, lineWidth: 5)
+                            .blur(radius: 5)
+                            .opacity(0.08 + 0.6 * phase)
+                    }
+                    .mask(outline)
+                    outline.stroke(Theme.liveGlow, lineWidth: 2)
+                        .blur(radius: 1.5)
+                        .opacity(0.18 + 0.72 * phase)
                 }
-                .mask(path.fill())
-                path.stroke(Theme.liveGlow, lineWidth: 2)
-                    .blur(radius: 1.5)
-                    .opacity(0.18 + 0.72 * phase)
+                .padding(Self.inset)
             }
         }
         .accessibilityHidden(true)
