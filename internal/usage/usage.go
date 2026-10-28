@@ -9,13 +9,17 @@
 package usage
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -149,31 +153,57 @@ type Result struct {
 // entries, attributing each model_turn to the most recent task_focus and to the
 // actor that emitted it (the agent that spent the tokens).
 func ReduceEvents(sessionID string, events []event.Event) []Entry {
-	type key struct{ task, model, agent, day string }
-	buckets := map[key]*Entry{}
-	var order []key
-	focus := ""
+	r := newReducer(sessionID)
+	r.add(events)
+	return r.entries()
+}
+
+// reducer is ReduceEvents' incremental state, so a growing log can be folded
+// in appended chunks without rereading its prefix.
+type reducer struct {
+	session string
+	focus   string
+	buckets map[entryKey]*Entry
+	order   []entryKey
+}
+
+type entryKey struct{ task, model, agent, day string }
+
+func newReducer(sessionID string) *reducer {
+	return &reducer{session: sessionID, buckets: map[entryKey]*Entry{}}
+}
+
+func (r *reducer) add(events []event.Event) {
 	for _, ev := range events {
-		switch ev.Type {
-		case event.TaskFocus:
-			focus = stringField(ev.Data, "task")
-		case event.ModelTurn:
-			u := usageFromData(ev.Data["usage"])
-			model := stringField(ev.Data, "model_name")
-			day := ev.TS.UTC().Format("2006-01-02")
-			k := key{task: focus, model: model, agent: ev.Actor, day: day}
-			e, ok := buckets[k]
-			if !ok {
-				e = &Entry{Session: sessionID, Task: focus, Model: model, Agent: ev.Actor, Day: day}
-				buckets[k] = e
-				order = append(order, k)
-			}
-			e.Tokens.addUsage(u)
-		}
+		r.observe(ev.Type, ev.Actor, ev.TS, ev.Data["task"], ev.Data["model_name"], ev.Data["usage"])
 	}
-	out := make([]Entry, 0, len(order))
-	for _, k := range order {
-		out = append(out, *buckets[k])
+}
+
+// observe folds one event given just the fields usage depends on (data.task,
+// data.model_name and data.usage as decoded into any).
+func (r *reducer) observe(typ event.Type, actor string, ts time.Time, task, modelName, usage any) {
+	switch typ {
+	case event.TaskFocus:
+		r.focus, _ = task.(string)
+	case event.ModelTurn:
+		u := usageFromData(usage)
+		model, _ := modelName.(string)
+		day := ts.UTC().Format("2006-01-02")
+		k := entryKey{task: r.focus, model: model, agent: actor, day: day}
+		e, ok := r.buckets[k]
+		if !ok {
+			e = &Entry{Session: r.session, Task: r.focus, Model: model, Agent: actor, Day: day}
+			r.buckets[k] = e
+			r.order = append(r.order, k)
+		}
+		e.Tokens.addUsage(u)
+	}
+}
+
+func (r *reducer) entries() []Entry {
+	out := make([]Entry, 0, len(r.order))
+	for _, k := range r.order {
+		out = append(out, *r.buckets[k])
 	}
 	return out
 }
@@ -217,44 +247,159 @@ func intField(m map[string]any, k string) int {
 	return 0
 }
 
-func stringField(m map[string]any, k string) string {
-	if m == nil {
-		return ""
-	}
-	if s, ok := m[k].(string); ok {
-		return s
-	}
-	return ""
-}
-
 // Scan reads every session event log under <workspace>/.ycc/sessions/*/events.jsonl
 // and returns the reduced entries (each tagged with its session id). A missing
-// sessions directory yields nil entries (not an error); a corrupt log line is a
-// hard error wrapping the path.
+// sessions directory yields nil entries (not an error); a corrupt usage record
+// is a hard error wrapping the path. Repeated scans should share a Scanner.
 func Scan(workspace string) ([]Entry, error) {
-	glob := filepath.Join(workspace, ".ycc", "sessions", "*", "events.jsonl")
-	paths, err := filepath.Glob(glob)
+	return NewScanner().Scan(workspace)
+}
+
+// Scanner is Scan with a per-log cache. Usage reports are recomputed from the
+// event logs, which run to gigabytes across a long-lived daemon's projects, so
+// re-decoding them on every request made usage views take tens of seconds.
+// Logs are append-only: an unchanged log reuses its reduced state and a
+// grown one folds in only the appended records. Safe for concurrent use;
+// scans are serialized so overlapping requests share the work.
+type Scanner struct {
+	mu   sync.Mutex
+	logs map[string]*scannedLog
+}
+
+type scannedLog struct {
+	info os.FileInfo // identity, size and mtime at the last read
+	end  int64       // committed offset the reducer has consumed
+	r    *reducer
+}
+
+// NewScanner returns an empty Scanner.
+func NewScanner() *Scanner {
+	return &Scanner{logs: map[string]*scannedLog{}}
+}
+
+// maxScanWorkers bounds a scan's decode parallelism (the daemon host may be
+// shared, and a cold scan is a one-off burst).
+const maxScanWorkers = 8
+
+// Scan is the cached equivalent of the package-level Scan. Logs that need
+// reading are decoded in parallel.
+func (s *Scanner) Scan(workspace string) ([]Entry, error) {
+	sessionsDir := filepath.Join(workspace, ".ycc", "sessions")
+	paths, err := filepath.Glob(filepath.Join(sessionsDir, "*", "events.jsonl"))
 	if err != nil {
 		return nil, err
 	}
 	sort.Strings(paths)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Workers own disjoint indexes; the map is only touched on this goroutine.
+	logs := make([]*scannedLog, len(paths))
+	errs := make([]error, len(paths))
+	for i, path := range paths {
+		logs[i] = s.logs[path]
+	}
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), maxScanWorkers, len(paths)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				logs[i], errs[i] = refreshLog(paths[i], logs[i])
+			}
+		}()
+	}
+	for i := range paths {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+
+	seen := make(map[string]bool, len(paths))
 	var out []Entry
-	for _, path := range paths {
-		id := filepath.Base(filepath.Dir(path))
-		evs, err := readEvents(path)
-		if err != nil {
-			return nil, err
+	var firstErr error
+	for i, path := range paths {
+		seen[path] = true
+		if errs[i] != nil || logs[i] == nil {
+			// A failed refresh may have partially folded new records.
+			delete(s.logs, path)
+			if firstErr == nil {
+				firstErr = errs[i]
+			}
+			continue
 		}
-		out = append(out, ReduceEvents(id, evs)...)
+		s.logs[path] = logs[i]
+		out = append(out, logs[i].r.entries()...)
+	}
+	// The glob is the source of truth for removals (e.g. reaped sessions).
+	prefix := sessionsDir + string(os.PathSeparator)
+	for path := range s.logs {
+		if strings.HasPrefix(path, prefix) && !seen[path] {
+			delete(s.logs, path)
+		}
+	}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return out, nil
 }
 
-func readEvents(path string) ([]event.Event, error) {
-	// event.ReadLog shares the log's strict decoder and ignores an unterminated
-	// (never-committed) final record, so one session torn by a failed append
-	// cannot break the whole project's usage scan.
-	return event.ReadLog(path)
+// refreshLog brings the cached state lg (nil when uncached) for one log up to
+// date, rereading from the start only when the log is new, replaced, or shrank.
+// It returns nil state for a log that no longer exists.
+func refreshLog(path string, lg *scannedLog) (*scannedLog, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lg != nil && os.SameFile(lg.info, info) && info.Size() >= lg.end {
+		if info.Size() == lg.info.Size() && info.ModTime().Equal(lg.info.ModTime()) {
+			return lg, nil
+		}
+	} else {
+		lg = &scannedLog{r: newReducer(filepath.Base(filepath.Dir(path)))}
+	}
+	end, err := event.ScanLogFrom(path, lg.end, func(line []byte) error {
+		if !mayAffectUsage(line) {
+			return nil
+		}
+		var rec usageRecord
+		if err := json.Unmarshal(line, &rec); err != nil {
+			return fmt.Errorf("corrupt event log %s: %w", path, err)
+		}
+		lg.r.observe(rec.Type, rec.Actor, rec.TS, rec.Data.Task, rec.Data.ModelName, rec.Data.Usage)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	lg.end = end
+	lg.info = info
+	return lg, nil
+}
+
+// usageRecord decodes only the event fields usage depends on, so large
+// payloads such as model_turn text are skipped instead of materialized.
+type usageRecord struct {
+	TS    time.Time  `json:"ts"`
+	Actor string     `json:"actor"`
+	Type  event.Type `json:"type"`
+	Data  struct {
+		Task      any `json:"task"`
+		ModelName any `json:"model_name"`
+		Usage     any `json:"usage"`
+	} `json:"data"`
+}
+
+// mayAffectUsage cheaply rejects log lines that cannot be a usage-relevant
+// event, so tool output (the bulk of a log) is not decoded. It is a superset
+// filter: the reducer still switches on the decoded type.
+func mayAffectUsage(line []byte) bool {
+	return bytes.Contains(line, []byte(`"model_turn"`)) || bytes.Contains(line, []byte(`"task_focus"`))
 }
 
 // Aggregate groups entries by the selected dimensions (default: task), filters

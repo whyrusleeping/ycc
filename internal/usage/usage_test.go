@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -365,6 +366,86 @@ func TestScan(t *testing.T) {
 	empty, err := Scan(t.TempDir())
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("empty scan = %v, %v", empty, err)
+	}
+}
+
+// TestScannerIncremental covers the cached scanner: appended records (and a
+// torn tail once completed) fold in without double counting, focus carries
+// across appends, a replaced log is reread, and a removed log drops out.
+func TestScannerIncremental(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".ycc", "sessions", "s_aaa", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := func(evs ...event.Event) []byte {
+		var b bytes.Buffer
+		for _, ev := range evs {
+			line, _ := json.Marshal(ev)
+			b.Write(line)
+			b.WriteByte('\n')
+		}
+		return b.Bytes()
+	}
+	appendBytes := func(b []byte) {
+		f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(b); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	totals := func(s *Scanner) map[string]int {
+		t.Helper()
+		entries, err := s.Scan(dir)
+		if err != nil {
+			t.Fatalf("Scan: %v", err)
+		}
+		out := map[string]int{}
+		for _, e := range entries {
+			out[e.Task] += e.Tokens.Total
+		}
+		return out
+	}
+	check := func(s *Scanner, want map[string]int) {
+		t.Helper()
+		if got := totals(s); !reflect.DeepEqual(got, want) {
+			t.Fatalf("totals = %v, want %v", got, want)
+		}
+	}
+
+	s := NewScanner()
+	appendBytes(lines(focus("0001"), turn("2026-06-01", "m", event.Usage{Total: 10})))
+	check(s, map[string]int{"0001": 10})
+	check(s, map[string]int{"0001": 10}) // unchanged log: cached
+
+	// An appended turn inherits the earlier focus; a torn tail is ignored
+	// until its newline lands.
+	next := lines(turn("2026-06-01", "m", event.Usage{Total: 5}), focus("0002"), turn("2026-06-02", "m", event.Usage{Total: 7}))
+	cut := bytes.LastIndexByte(next[:len(next)-1], '\n') + 1
+	appendBytes(next[:cut+10])
+	check(s, map[string]int{"0001": 15})
+	appendBytes(next[cut+10:])
+	check(s, map[string]int{"0001": 15, "0002": 7})
+
+	// A replaced log (new file at the same path) is reread from scratch.
+	tmp := p + ".new"
+	if err := os.WriteFile(tmp, lines(focus("0003"), turn("2026-06-03", "m", event.Usage{Total: 1})), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		t.Fatal(err)
+	}
+	check(s, map[string]int{"0003": 1})
+
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	check(s, map[string]int{})
+	if len(s.logs) != 0 {
+		t.Fatalf("removed log still cached: %v", s.logs)
 	}
 }
 

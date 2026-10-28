@@ -238,37 +238,69 @@ func syncDir(dir string) {
 }
 
 func readEvents(path string) ([]Event, error) {
-	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	var out []Event
+	_, err := ScanLogFrom(path, 0, func(line []byte) error {
+		var ev Event
+		if err := json.Unmarshal(line, &ev); err != nil {
+			return fmt.Errorf("corrupt event log %s: %w", path, err)
+		}
+		out = append(out, ev)
+		return nil
+	})
 	if err != nil {
 		return nil, err
+	}
+	return out, nil
+}
+
+// ScanLogFrom is the raw form of ReadLog for aggregate scans over large logs,
+// letting callers skip or partially decode records. It calls fn with each
+// non-empty committed record line (valid only during the call) starting at
+// byte offset from, which must be a record boundary (normally a previous
+// call's returned end), and returns the committed end offset to resume from.
+// Like ReadLog it ignores an unterminated final record. A missing file yields
+// (0, nil); a file shorter than from is an error, as is any error from fn.
+func ScanLogFrom(path string, from int64, fn func(line []byte) error) (int64, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return 0, err
+	}
+	if info.Size() < from {
+		return 0, fmt.Errorf("event log %s shrank below offset %d", path, from)
 	}
 	committed, err := terminatedLength(f, info.Size())
 	if err != nil {
-		return nil, fmt.Errorf("scan event log %s: %w", path, err)
+		return 0, fmt.Errorf("scan event log %s: %w", path, err)
 	}
-	var out []Event
-	sc := bufio.NewScanner(io.LimitReader(f, committed))
+	if committed <= from {
+		return from, nil
+	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return 0, err
+	}
+	sc := bufio.NewScanner(io.LimitReader(f, committed-from))
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
 			continue
 		}
-		var ev Event
-		if err := json.Unmarshal(line, &ev); err != nil {
-			return nil, fmt.Errorf("corrupt event log %s: %w", path, err)
+		if err := fn(line); err != nil {
+			return 0, err
 		}
-		out = append(out, ev)
 	}
-	return out, sc.Err()
+	if err := sc.Err(); err != nil {
+		return 0, err
+	}
+	return committed, nil
 }
 
 // LastSeq returns the seq of the most recent persisted event, or 0 if empty.

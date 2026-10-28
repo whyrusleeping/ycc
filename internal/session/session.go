@@ -1955,6 +1955,7 @@ type Manager struct {
 	followUpMu        sync.Mutex
 	historyCacheMu    sync.Mutex
 	historyCache      map[string]sessionSummaryCacheEntry
+	usageScans        *usage.Scanner // per-log usage reductions for UsageReport
 	reg               *config.Registry
 	projects          *project.Registry
 	workstreams       *workstream.Registry
@@ -2044,6 +2045,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	m := &Manager{
 		sessions:          map[string]*Session{},
 		historyCache:      map[string]sessionSummaryCacheEntry{},
+		usageScans:        usage.NewScanner(),
 		reg:               reg,
 		projects:          projects,
 		workstreams:       workstream.NewMemory(),
@@ -3821,7 +3823,7 @@ func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result
 				continue
 			}
 			seen[absWS] = struct{}{}
-			projectEntries, err := usage.Scan(absWS)
+			projectEntries, err := m.usageScans.Scan(absWS)
 			if err != nil {
 				return nil, err
 			}
@@ -3839,7 +3841,7 @@ func (m *Manager) UsageReport(project string, opts usage.Options) (*usage.Result
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
-	entries, err := usage.Scan(absWS)
+	entries, err := m.usageScans.Scan(absWS)
 	if err != nil {
 		return nil, err
 	}
