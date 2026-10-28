@@ -18,8 +18,10 @@ enum Theme {
 
     /// Needs the user: waiting for an answer, follow-up flags, warnings.
     static let attention = Color(light: 0xA33F00, dark: 0xFF7A2E)
-    /// Running / ok.
-    static let live = Color(light: 0x3D7414, dark: 0xA6DD4C)
+    /// Running / ok: an "on" LED green (text-safe in both appearances).
+    static let live = Color(light: 0x1A7329, dark: 0x5DFF72)
+    /// The glow around running sessions — a brighter LED green, fill only.
+    static let liveGlow = Color(light: 0x26CF47, dark: 0x4DFF6A)
     /// Errors and failures.
     static let danger = Color(light: 0xC42A20, dark: 0xFF5D52)
     /// In review / queued / secondary state.

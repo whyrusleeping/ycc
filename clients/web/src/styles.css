@@ -47,8 +47,10 @@
   --accent-strong: #c6f432;
   --accent-fg: #10110f;
   --accent-soft: #e7f2c4;
-  --ok: #3d7414;
-  --ok-soft: #e2edd3;
+  --ok: #1a7329;
+  --ok-soft: #dcefd9;
+  /* An "on" LED: the glow around running sessions (fill only, never text). */
+  --live-glow: #26cf47;
   --warn: #a33f00;
   --warn-soft: #fae5d4;
   --error: #c42a20;
@@ -95,8 +97,9 @@
     --accent-strong: #c6f432;
     --accent-fg: #0b0c0b;
     --accent-soft: #1a2010;
-    --ok: #a6dd4c;
-    --ok-soft: #162010;
+    --ok: #5dff72;
+    --ok-soft: #10240f;
+    --live-glow: #4dff6a;
     --warn: #ff7a2e;
     --warn-soft: #2a170c;
     --error: #ff5d52;
@@ -908,11 +911,11 @@ a.nav-item:hover {
   border-bottom: 1px solid var(--border);
 }
 
-/* Running sessions glow like a neon tube with no drawn line: stacked soft
- * shadows (outside and inset) all centred on the row edge, so the light is
- * densest where a border would be and fades both ways. They swell and fade on
- * a 3s cycle. Every keyframe lists the same shadows in the same order so they
- * interpolate. */
+/* Running sessions glow like an "on" LED with no drawn line: soft shadows
+ * centred on the row edge, densest where a border would be. Outside the halo
+ * stays short (it must fade before reaching neighbouring rows); inside it
+ * spreads further. Swells and fades on a 3s cycle. Every keyframe lists the
+ * same shadows in the same order so they interpolate. */
 .session-list.variant-page .session-row.running {
   z-index: 1;
   margin-block: 6px;
@@ -926,24 +929,20 @@ a.nav-item:hover {
   0%,
   100% {
     box-shadow:
-      0 0 5px 0 color-mix(in srgb, var(--ok) 16%, transparent),
-      0 0 10px 0 color-mix(in srgb, var(--ok) 8%, transparent),
-      0 0 18px 0 color-mix(in srgb, var(--ok) 0%, transparent),
-      0 0 32px 0 color-mix(in srgb, var(--ok) 0%, transparent),
-      inset 0 0 5px 0 color-mix(in srgb, var(--ok) 12%, transparent),
-      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 5%, transparent),
-      inset 0 0 18px 0 color-mix(in srgb, var(--ok) 0%, transparent);
+      0 0 3px 0 color-mix(in srgb, var(--live-glow) 20%, transparent),
+      0 0 7px 0 color-mix(in srgb, var(--live-glow) 6%, transparent),
+      inset 0 0 4px 0 color-mix(in srgb, var(--live-glow) 16%, transparent),
+      inset 0 0 12px 0 color-mix(in srgb, var(--live-glow) 6%, transparent),
+      inset 0 0 26px 0 color-mix(in srgb, var(--live-glow) 0%, transparent);
   }
 
   50% {
     box-shadow:
-      0 0 5px 0 color-mix(in srgb, var(--ok) 55%, transparent),
-      0 0 10px 0 color-mix(in srgb, var(--ok) 40%, transparent),
-      0 0 18px 0 color-mix(in srgb, var(--ok) 26%, transparent),
-      0 0 32px 0 color-mix(in srgb, var(--ok) 14%, transparent),
-      inset 0 0 5px 0 color-mix(in srgb, var(--ok) 42%, transparent),
-      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 26%, transparent),
-      inset 0 0 18px 0 color-mix(in srgb, var(--ok) 12%, transparent);
+      0 0 3px 0 color-mix(in srgb, var(--live-glow) 70%, transparent),
+      0 0 7px 0 color-mix(in srgb, var(--live-glow) 32%, transparent),
+      inset 0 0 4px 0 color-mix(in srgb, var(--live-glow) 58%, transparent),
+      inset 0 0 12px 0 color-mix(in srgb, var(--live-glow) 30%, transparent),
+      inset 0 0 26px 0 color-mix(in srgb, var(--live-glow) 14%, transparent);
   }
 }
 
@@ -951,13 +950,11 @@ a.nav-item:hover {
   .session-list.variant-page .session-row.running {
     animation: none;
     box-shadow:
-      0 0 5px 0 color-mix(in srgb, var(--ok) 38%, transparent),
-      0 0 10px 0 color-mix(in srgb, var(--ok) 26%, transparent),
-      0 0 18px 0 color-mix(in srgb, var(--ok) 15%, transparent),
-      0 0 32px 0 color-mix(in srgb, var(--ok) 8%, transparent),
-      inset 0 0 5px 0 color-mix(in srgb, var(--ok) 28%, transparent),
-      inset 0 0 10px 0 color-mix(in srgb, var(--ok) 16%, transparent),
-      inset 0 0 18px 0 color-mix(in srgb, var(--ok) 7%, transparent);
+      0 0 3px 0 color-mix(in srgb, var(--live-glow) 48%, transparent),
+      0 0 7px 0 color-mix(in srgb, var(--live-glow) 20%, transparent),
+      inset 0 0 4px 0 color-mix(in srgb, var(--live-glow) 40%, transparent),
+      inset 0 0 12px 0 color-mix(in srgb, var(--live-glow) 18%, transparent),
+      inset 0 0 26px 0 color-mix(in srgb, var(--live-glow) 8%, transparent);
   }
 }
 
