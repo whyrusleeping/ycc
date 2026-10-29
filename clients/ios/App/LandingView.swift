@@ -56,6 +56,12 @@ struct LandingView: View {
     /// A rename failure (collision, unknown name) surfaced as its own alert.
     @State private var projectRenameError: String?
     @State private var followUpError: String?
+    /// Bumped whenever the list comes back into view (popping back to it,
+    /// returning to the foreground) to rebuild running rows' backgrounds. On
+    /// device, a running row's background was seen to come back fully blank
+    /// after the list sat hidden under a session view; rebuilding it on
+    /// reappearance redraws it. Not reproduced in the simulator.
+    @State private var rowBackgroundEpoch = 0
 
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
@@ -262,7 +268,10 @@ struct LandingView: View {
         // last few seconds is fresh enough (each costs round trips on a
         // remote link). Pull-to-refresh and post-mutation reloads stay forced.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await model?.refreshIfStale() } }
+            if phase == .active {
+                rowBackgroundEpoch &+= 1
+                Task { await model?.refreshIfStale() }
+            }
         }
         .onChange(of: app.pendingDeepLink) { _, link in
             if link != nil { Task { await consumePendingDeepLink() } }
@@ -278,7 +287,10 @@ struct LandingView: View {
         // Returning to the inbox is a strong signal that its rows are stale:
         // the agent has usually moved on while the user was inside a session.
         .onChange(of: router.path.isEmpty) { _, isAtRoot in
-            if isAtRoot { Task { await model?.refreshIfStale() } }
+            if isAtRoot {
+                rowBackgroundEpoch &+= 1
+                Task { await model?.refreshIfStale() }
+            }
         }
         // Usage analytics: the stack's top screen, with the drawer as an
         // overlay while it is open.
@@ -630,7 +642,8 @@ struct LandingView: View {
                         .listRowBackground(SessionListModel.lifecycleLabel(for: session) == "running"
                             ? RunningRowBackground(
                                 isFirst: session.sessionID == section.sessions.first?.sessionID,
-                                isLast: session.sessionID == section.sessions.last?.sessionID)
+                                isLast: session.sessionID == section.sessions.last?.sessionID,
+                                epoch: rowBackgroundEpoch)
                             : nil)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
@@ -860,6 +873,8 @@ private struct NewSessionRequest: Identifiable {
 private struct RunningRowBackground: View {
     var isFirst: Bool
     var isLast: Bool
+    /// Changing this rebuilds the glow (see `rowBackgroundEpoch`).
+    var epoch = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The inset-grouped section card's corner radius (continuous): fitted to
@@ -869,6 +884,16 @@ private struct RunningRowBackground: View {
     private static let inset: CGFloat = 6
 
     var body: some View {
+        // The card fill stays outside the TimelineView, so the row keeps its
+        // card even if the animated glow fails to draw.
+        ZStack {
+            Color(.secondarySystemGroupedBackground)
+            glow.id(epoch)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var glow: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
             let phase = reduceMotion
                 ? 0.6
@@ -880,25 +905,21 @@ private struct RunningRowBackground: View {
                     bottomTrailing: isLast ? r : 0, topTrailing: isFirst ? r : 0),
                 style: .continuous)
             ZStack {
-                Color(.secondarySystemGroupedBackground)
                 ZStack {
-                    ZStack {
-                        outline.stroke(Theme.liveGlow, lineWidth: 12)
-                            .blur(radius: 12)
-                            .opacity(0.04 + 0.5 * phase)
-                        outline.stroke(Theme.liveGlow, lineWidth: 5)
-                            .blur(radius: 5)
-                            .opacity(0.08 + 0.6 * phase)
-                    }
-                    .mask(outline)
-                    outline.stroke(Theme.liveGlow, lineWidth: 2)
-                        .blur(radius: 1.5)
-                        .opacity(0.18 + 0.72 * phase)
+                    outline.stroke(Theme.liveGlow, lineWidth: 12)
+                        .blur(radius: 12)
+                        .opacity(0.04 + 0.5 * phase)
+                    outline.stroke(Theme.liveGlow, lineWidth: 5)
+                        .blur(radius: 5)
+                        .opacity(0.08 + 0.6 * phase)
                 }
-                .padding(Self.inset)
+                .mask(outline)
+                outline.stroke(Theme.liveGlow, lineWidth: 2)
+                    .blur(radius: 1.5)
+                    .opacity(0.18 + 0.72 * phase)
             }
+            .padding(Self.inset)
         }
-        .accessibilityHidden(true)
     }
 }
 
