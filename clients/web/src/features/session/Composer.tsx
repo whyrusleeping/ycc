@@ -1,7 +1,7 @@
 // Multiline composer: Enter sends, Shift+Enter inserts a newline. Pictures can
 // be attached with the paperclip, pasted, or dropped onto the session view.
 // Drafts (text and pictures) are kept per session while the page is open.
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { DraftPicture } from "../attachments/attachments";
 import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
 import { track, type Attrs, type Via } from "../../app/analytics";
@@ -51,11 +51,17 @@ export const Composer = forwardRef<
     drafts.set(sessionKey, text);
   }, [sessionKey, text]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = area.current;
     if (!el) return;
+    // Measuring via height:auto momentarily collapses the composer; the forced
+    // layout would let the transcript above clamp its scroll offset, so a reader
+    // at the bottom slips up by the extra lines. Hold the row's height meanwhile.
+    const row = el.parentElement;
+    if (row) row.style.minHeight = `${row.offsetHeight}px`;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+    if (row) row.style.minHeight = "";
   }, [text]);
 
   const hasPictures = draft.pictures.length > 0;

@@ -79,6 +79,8 @@ export function Transcript({
     // Live-tail pacing (and other in-row layout changes) does not render the
     // Transcript itself. React's layout effect above still owns prepend anchoring
     // and runs before resize notifications, so these never apply that delta twice.
+    // The viewport itself is observed too: a composer growing a line shrinks it,
+    // and a reader at the live edge should stay there.
     const observer = new ResizeObserver(() => {
       if (following.current) {
         el.scrollTop = el.scrollHeight;
@@ -89,6 +91,7 @@ export function Transcript({
       lastHeight.current = el.scrollHeight;
     });
     observer.observe(content);
+    observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
