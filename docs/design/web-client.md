@@ -168,7 +168,12 @@ restricted to safe schemes, and code, diffs, and tool output render as text with
 highlighting applied to escaped tokens. No event payload is inserted as HTML. The file viewer
 renders SVG only as an `<img>` from a `data:` URL (no script, no external loads, and an opaque
 origin if opened alone); `blob:` URLs, which carry the app's origin, are built only for raster
-images and PDFs (`frame-src blob:` admits the PDF frame). The shared transcript
+images and PDFs (`frame-src blob:` admits the PDF frame). Markdown images that name project files
+render through ReadFile under the same rules; remote images are never fetched and show as a link
+with their alt text. Markdown files in the file viewer render raw HTML as GitHub does, through its
+sanitization allowlist (unknown tags keep their text, script-like elements and comments vanish, no
+`class`, `style`, `id` or event handler survives), built as React elements with `<a>` and `<img>`
+under the markdown link and image rules; model and user text keeps raw HTML literal. The shared transcript
 invariants in spec §18 apply: model and user turns are prominent, tool, reasoning, review, and
 system detail folds, question plumbing coalesces into one exchange, and new events never move a
 reader who has scrolled away from the live edge. An idle report that merely carries the agent's

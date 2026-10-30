@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { client, errorMessage } from "../../api/client";
+import { ExpandableImage } from "../../ui/ExpandableImage";
 import type { Picture } from "../session/projection";
 import { formatBytes, isPictureType } from "./attachments";
 
@@ -138,7 +139,7 @@ export function PictureDetail({ session, picture }: { session: SessionRef; pictu
   return (
     <div className="picture-detail">
       {meta}
-      {url && <img src={url} alt={label(picture)} onError={() => setBroken(true)} />}
+      {url && <ExpandableImage src={url} alt={label(picture)} onError={() => setBroken(true)} />}
     </div>
   );
 }

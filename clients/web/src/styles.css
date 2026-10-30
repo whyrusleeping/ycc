@@ -2596,6 +2596,40 @@ pre.clamp {
   font-size: var(--fs-xs);
 }
 
+/* Project-file images in markdown; tall ones are capped, click expands. An
+   HTML <img width> sizes the wrapper (MarkdownImage). */
+.md .md-img {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.md .md-img .expandable-image {
+  display: block;
+  width: 100%;
+}
+
+.md .md-img .expandable-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  height: auto;
+}
+
+/* Markdown files size pictures like GitHub: column width, no height cap. */
+.file-markdown .md .md-img .expandable-image img {
+  max-height: none;
+}
+
+/* Raw HTML in markdown files (features/markdown/html.tsx). */
+.md details {
+  margin: 0.5em 0;
+}
+
+.md summary {
+  cursor: pointer;
+}
+
 .md-table-wrap {
   overflow-x: auto;
   margin: 0 0 10px;
@@ -5268,6 +5302,95 @@ th[aria-sort="descending"] .sort-btn {
   max-width: 100%;
   border: 1px solid var(--border);
   background: repeating-conic-gradient(var(--bg-sunk) 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+/* Viewer images open in a lightbox (ui/ExpandableImage). */
+.expandable-image {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.dialog.modal.image-lightbox {
+  width: calc(100vw - 32px);
+  height: calc(100dvh - 32px);
+  max-width: none;
+  max-height: none;
+  padding: 12px 14px;
+}
+
+.dialog.modal.image-lightbox[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.image-lightbox .modal-head h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-lightbox .lightbox-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+/* Specific enough to beat .picture-detail img / .file-image img, which also match. */
+.image-lightbox .lightbox-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  transform-origin: 0 0;
+  background: repeating-conic-gradient(var(--bg-sunk) 0% 25%, var(--bg) 0% 50%) 50% / 16px 16px;
+  cursor: zoom-in;
+}
+
+.image-lightbox .lightbox-img.zoomed {
+  cursor: grab;
+}
+
+.image-lightbox .lightbox-img.zoomed:active {
+  cursor: grabbing;
+}
+
+.image-lightbox .lightbox-img.animate {
+  transition: transform 0.18s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-lightbox .lightbox-img.animate {
+    transition: none;
+  }
+}
+
+.lightbox-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.lightbox-zoom {
+  display: inline-flex;
+  align-items: center;
+  margin-right: auto;
+}
+
+.lightbox-level {
+  min-width: 5.5ch;
+  font-variant-numeric: tabular-nums;
 }
 
 .file-pdf {

@@ -12,6 +12,7 @@ import { queryKeys } from "../../api/queries";
 import { paths } from "../../app/paths";
 import type { FileEntry, ReadFileResponse } from "../../gen/ycc/v1/ycc_pb";
 import { CopyButton } from "../../ui/CopyButton";
+import { ExpandableImage } from "../../ui/ExpandableImage";
 import { Icon } from "../../ui/icons";
 import { Spans } from "../code/CodeBlock";
 import { highlightLines, languageForPath, type Span } from "../code/highlight";
@@ -22,7 +23,6 @@ import { formatReference, type FileReference, type LineRange } from "./fileRefer
 import {
   HIGHLIGHT_LINE_LIMIT,
   PDF_TYPE,
-  VIEWER_MAX_BYTES,
   basename,
   clampLines,
   dirname,
@@ -35,13 +35,9 @@ import {
   splitLines,
   svgDataUrl,
 } from "./model";
+import { useBlobUrl, useFileRead, type FileTarget } from "./preview";
 
-export interface FileTarget {
-  project: string;
-  /** Resolve against this session's live worktree ("" = the project root). */
-  sessionId: string;
-  path: string;
-}
+export type { FileTarget };
 
 function codeOf(err: unknown): Code | null {
   return err ? ConnectError.from(err).code : null;
@@ -53,18 +49,6 @@ export function useFileList(t: FileTarget, enabled = true) {
     queryKey: queryKeys.fileList(t.project, t.sessionId, t.path),
     enabled,
     queryFn: ({ signal }) => client.listFiles({ project: t.project, sessionId: t.sessionId, path: t.path }, { signal }),
-  });
-}
-
-function useFileRead(t: FileTarget, enabled: boolean) {
-  return useQuery({
-    queryKey: queryKeys.fileRead(t.project, t.sessionId, t.path),
-    enabled,
-    queryFn: ({ signal }) =>
-      client.readFile(
-        { project: t.project, sessionId: t.sessionId, path: t.path, maxBytes: BigInt(VIEWER_MAX_BYTES) },
-        { signal },
-      ),
   });
 }
 
@@ -222,12 +206,12 @@ function FileContent({
         </p>
       ) : rendered && svg ? (
         <div className="file-image">
-          <img src={svgDataUrl(text)} alt={basename(target.path)} />
+          <ExpandableImage src={svgDataUrl(text)} alt={basename(target.path)} />
         </div>
       ) : rendered ? (
         <div className="file-markdown">
           <FileLinksProvider value={links}>
-            <Markdown text={text} />
+            <Markdown text={text} html />
           </FileLinksProvider>
         </div>
       ) : fileLines.length === 0 ? (
@@ -358,28 +342,13 @@ const CodeLines = memo(function CodeLines({
   );
 });
 
-/** A blob: URL for previewable bytes (raster images, PDF), revoked on change. */
-function useBlobUrl(data: Uint8Array, mediaType: string): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!data.length || !(isRasterPreviewType(mediaType) || mediaType === PDF_TYPE)) {
-      setUrl(null);
-      return;
-    }
-    const u = URL.createObjectURL(new Blob([data as BlobPart], { type: mediaType }));
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [data, mediaType]);
-  return url;
-}
-
 function ImagePreview({ data, mediaType, name, size }: { data: Uint8Array; mediaType: string; name: string; size: number }) {
   const url = useBlobUrl(data, mediaType);
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [url]);
   if (!data.length) return <p className="muted pad">Image too large to preview ({formatSize(size)}).</p>;
   if (broken) return <p className="muted pad">This browser can’t display {mediaType} images ({formatSize(size)}).</p>;
-  return <div className="file-image">{url && <img src={url} alt={name} onError={() => setBroken(true)} />}</div>;
+  return <div className="file-image">{url && <ExpandableImage src={url} alt={name} onError={() => setBroken(true)} />}</div>;
 }
 
 function PdfPreview({ data, name, size }: { data: Uint8Array; name: string; size: number }) {

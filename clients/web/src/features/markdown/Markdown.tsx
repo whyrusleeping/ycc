@@ -2,7 +2,8 @@
 // strikethrough, autolinks) lexed by `marked` and rendered token-by-token to
 // React elements. Nothing is ever inserted as HTML: raw HTML in the source
 // renders as its literal text, links are limited to safe schemes (anything
-// else is inert text), images are never fetched, and code is highlighted
+// else is inert text), remote images are never fetched (project-file images
+// render through the daemon), and code is highlighted
 // over escaped text spans.
 import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { Lexer, type Token, type Tokens } from "marked";
@@ -10,10 +11,16 @@ import { CodeBlock, DiffView } from "../code/CodeBlock";
 import { languageForFence } from "../code/highlight";
 import { FileRef, useFileLinks } from "../files/FileRef";
 import { fromCodeSpan, type FileLinkContext } from "../files/fileReference";
+import { HtmlBuilder } from "./html";
 import { classifyLink, decodeEntities } from "./links";
+import { MarkdownImage } from "./MarkdownImage";
 
 interface Ctx {
   links: FileLinkContext | undefined;
+  /** Inside a link's label: no nested interactive file refs or expandable images. */
+  inLink?: boolean;
+  /** Render raw HTML through the GitHub-style allowlist (markdown files only). */
+  html?: boolean;
 }
 
 /** Lex markdown into marked tokens (GFM, single newlines are line breaks). */
@@ -22,17 +29,21 @@ export function lexMarkdown(text: string): Token[] {
   return lexer.lex(text);
 }
 
-export const Markdown = memo(function Markdown({ text, className = "" }: { text: string; className?: string }) {
+/**
+ * `html` renders raw HTML like GitHub does (features/markdown/html.tsx); it's
+ * for markdown files, while model and user text keeps HTML as literal text.
+ */
+export const Markdown = memo(function Markdown({ text, className = "", html = false }: { text: string; className?: string; html?: boolean }) {
   const fileLinks = useFileLinks();
   const linkContext = fileLinks?.context;
   const rendered = useMemo(() => {
     try {
-      return renderMarkdown(text, { links: linkContext });
+      return renderMarkdown(text, { links: linkContext, html });
     } catch {
       // The lexer should never throw; if it does, show the source verbatim.
       return <div className="text">{text}</div>;
     }
-  }, [text, linkContext]);
+  }, [text, linkContext, html]);
   return <div className={`md ${className}`.trim()}>{rendered}</div>;
 });
 
@@ -42,7 +53,10 @@ export function renderMarkdown(text: string, ctx: Ctx = { links: undefined }): R
 }
 
 function blocks(tokens: readonly Token[], ctx: Ctx): ReactNode[] {
-  return tokens.map((t, i) => block(t, ctx, i));
+  if (!ctx.html || !tokens.some((t) => t.type === "html")) return tokens.map((t, i) => block(t, ctx, i));
+  const b = new HtmlBuilder(ctx);
+  tokens.forEach((t, i) => (t.type === "html" ? b.raw((t as Tokens.HTML).text) : b.node(block(t, { ...ctx, inLink: b.insideLink() }, i))));
+  return b.finish();
 }
 
 function block(token: Token, ctx: Ctx, key: number): ReactNode {
@@ -113,17 +127,27 @@ function block(token: Token, ctx: Ctx, key: number): ReactNode {
 }
 
 function listItem(item: Tokens.ListItem, loose: boolean, ctx: Ctx, key: number): ReactNode {
+  const b = ctx.html && item.tokens.some((t) => t.type === "html") ? new HtmlBuilder(ctx) : null;
   const children: ReactNode[] = [];
   item.tokens.forEach((t, i) => {
     if (t.type === "checkbox") return;
+    if (b && t.type === "html") {
+      b.raw((t as Tokens.HTML).text);
+      return;
+    }
+    const c = b ? { ...ctx, inLink: b.insideLink() } : ctx;
     // Tight list items hold bare text tokens: keep them inline, not <p>.
+    let node: ReactNode;
     if (t.type === "text" && !loose) {
       const tt = t as Tokens.Text;
-      children.push(<Fragment key={i}>{tt.tokens ? inlines(tt.tokens, ctx) : decodeEntities(tt.text)}</Fragment>);
+      node = <Fragment key={i}>{tt.tokens ? inlines(tt.tokens, c) : decodeEntities(tt.text)}</Fragment>;
     } else {
-      children.push(block(t, ctx, i));
+      node = block(t, c, i);
     }
+    if (b) b.node(node);
+    else children.push(node);
   });
+  if (b) children.push(...b.finish());
   if (item.task) {
     return (
       <li key={key} className="md-task">
@@ -166,7 +190,11 @@ function table(t: Tokens.Table, ctx: Ctx, key: number): ReactNode {
 }
 
 function inlines(tokens: readonly Token[] | undefined, ctx: Ctx): ReactNode[] {
-  return (tokens ?? []).map((t, i) => inline(t, ctx, i));
+  const list = tokens ?? [];
+  if (!ctx.html || !list.some((t) => t.type === "html")) return list.map((t, i) => inline(t, ctx, i));
+  const b = new HtmlBuilder(ctx);
+  list.forEach((t, i) => (t.type === "html" ? b.raw((t as Tokens.HTML).text) : b.node(inline(t, { ...ctx, inLink: b.insideLink() }, i))));
+  return b.finish();
 }
 
 function inline(token: Token, ctx: Ctx, key: number): ReactNode {
@@ -188,7 +216,7 @@ function inline(token: Token, ctx: Ctx, key: number): ReactNode {
       return <br key={key} />;
     case "codespan": {
       const text = (token as Tokens.Codespan).text;
-      const ref = fromCodeSpan(text, ctx.links);
+      const ref = ctx.inLink ? null : fromCodeSpan(text, ctx.links);
       if (ref) {
         return (
           <FileRef key={key} path={text} reference={ref}>
@@ -200,7 +228,9 @@ function inline(token: Token, ctx: Ctx, key: number): ReactNode {
     }
     case "link": {
       const t = token as Tokens.Link;
-      const label = t.tokens?.length ? inlines(t.tokens, ctx) : decodeEntities(t.text);
+      const label = t.tokens?.length ? inlines(t.tokens, { ...ctx, inLink: true }) : decodeEntities(t.text);
+      // Links can't nest (an HTML <a> around a markdown link): keep the label.
+      if (ctx.inLink) return <Fragment key={key}>{label}</Fragment>;
       const target = classifyLink(t.href, ctx.links);
       if (target.kind === "external") {
         return (
@@ -223,12 +253,25 @@ function inline(token: Token, ctx: Ctx, key: number): ReactNode {
       );
     }
     case "image": {
-      // Images are never fetched (privacy, and the CSP blocks remote images):
-      // show the alt text, linking to a safe URL.
+      // Remote images are never fetched (privacy, and the CSP blocks them):
+      // show the alt text, linking to a safe URL. Project files render
+      // inline, read through the daemon like the file viewer.
       const t = token as Tokens.Image;
       const alt = decodeEntities(t.text) || "image";
       const target = classifyLink(t.href, ctx.links);
-      if (target.kind === "external") {
+      if (target.kind === "file" && ctx.links?.project && !target.ref.isDirectory && !ctx.inLink) {
+        return (
+          <MarkdownImage
+            key={key}
+            alt={alt}
+            href={decodeEntities(t.href)}
+            reference={target.ref}
+            project={ctx.links.project}
+            sessionId={ctx.links.sessionId}
+          />
+        );
+      }
+      if (target.kind === "external" && !ctx.inLink) {
         return (
           <a key={key} className="md-image" href={target.href} target="_blank" rel="noopener noreferrer nofollow">
             Image: {alt}

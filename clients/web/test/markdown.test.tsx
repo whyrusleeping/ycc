@@ -1,4 +1,5 @@
-// Markdown renders inertly: raw HTML shows as text, unsafe link schemes never
+// Markdown renders inertly: raw HTML shows as text (markdown files: through a
+// GitHub-style allowlist), unsafe link schemes never
 // become links, images are never fetched, code is highlighted over escaped
 // spans, and nothing in the client injects HTML.
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -124,5 +125,81 @@ describe("no HTML injection anywhere in the client", () => {
       const src = readFileSync(f, "utf8");
       expect(src, f).not.toMatch(/dangerouslySetInnerHTML|\.innerHTML\b|\.outerHTML\b|insertAdjacentHTML|document\.write/);
     }
+  });
+});
+
+// Markdown files render raw HTML like GitHub: an allowlist of elements and
+// attributes, built as React elements (features/markdown/html.tsx).
+describe("raw HTML in markdown files", () => {
+  const file = (md: string) => renderToStaticMarkup(<Markdown text={md} html />);
+
+  it("drops script-like elements with their content, and every event handler, class, style and id", () => {
+    const out = file(
+      '<div onclick="x()" class="c" style="color:red" id="i">kept</div>\n\n<script>alert(1)</script>\n\n<style>body{}</style>\n\n<iframe src="https://evil"></iframe>\n\nText <img src=x onerror=alert(2)> <svg onload=alert(3)><circle/></svg>',
+    );
+    expect(out).toContain("<div>kept</div>");
+    expect(out).not.toMatch(/onclick|onerror|onload|class="c"|color:red|id="i"/);
+    expect(out).not.toMatch(/<script|alert\(1\)|<style|body\{\}|<iframe|<svg/);
+    expect(out).not.toMatch(/<img/i); // no project context: never fetched
+  });
+
+  it("strips unknown tags but keeps their text, and hides comments", () => {
+    const out = file("<custom-el>inner</custom-el> <!-- secret --> after\n\n<!-- block -->");
+    expect(out).toContain("inner");
+    expect(out).toContain("after");
+    expect(out).not.toMatch(/custom-el|secret|block/);
+  });
+
+  it("gives HTML links the markdown link rules", () => {
+    const out = file('<a href="javascript:alert(1)">bad</a> <a href="https://example.com" onclick="x()">good</a>');
+    expect(out).not.toMatch(/javascript:|onclick/);
+    expect(out).toContain('<span class="md-link-inert" title="Link not opened: unsupported or unsafe address">bad</span>');
+    expect(out).toContain('href="https://example.com/"');
+    expect(out).toContain('rel="noopener noreferrer nofollow"');
+  });
+
+  it("builds tables, alignment and inline formatting like GitHub", () => {
+    const out = file(
+      '<p align="center">centred</p>\n\n<table>\n<tr>\n<td width="33%" valign="top" colspan="2"><b>Bold.</b> text &amp; more<br>next</td>\n</tr>\n</table>\n\nPress <kbd>Ctrl</kbd>+<b>x</b> now',
+    );
+    expect(out).toContain('<p style="text-align:center">centred</p>');
+    expect(out).toContain('<div class="md-table-wrap"><table class="md-table"><tbody><tr><td colSpan="2" style="vertical-align:top;width:33%"><b>Bold.</b> text &amp; more<br/>next</td></tr></tbody></table></div>');
+    expect(out).toContain("Press <kbd>Ctrl</kbd>+<b>x</b> now");
+  });
+
+  it("wraps markdown between HTML blocks, closing what the source leaves open", () => {
+    const out = file("<details open>\n<summary>More</summary>\n\nSome **markdown** inside.\n\n</details>\n\n<div><i>unclosed\n\n</span>stray close");
+    expect(out).toContain('<details open="">\n<summary>More</summary><p>Some <strong>markdown</strong> inside.</p></details>');
+    expect(out).toContain("<div><i>unclosed<p>stray close</p></i></div>");
+  });
+
+  it("keeps HTML literal unless asked (model and user text)", () => {
+    expect(html("<b>x</b>")).toContain("&lt;b&gt;x&lt;/b&gt;");
+  });
+
+  it("implies the end tags the HTML parser would", () => {
+    expect(file("<table><tr><td>one<td>two<tr><td>three</table>")).toContain(
+      "<tbody><tr><td>one</td><td>two</td></tr><tr><td>three</td></tr></tbody>",
+    );
+    expect(file("<ul><li>one<li>two<ul><li>inner<li>inner2</ul></ul>")).toContain(
+      "<ul><li>one</li><li>two<ul><li>inner</li><li>inner2</li></ul></li></ul>",
+    );
+    expect(file("<div><p>one<p>two<div>three</div></div>")).toContain("<div><p>one</p><p>two</p><div>three</div></div>");
+  });
+
+  it("never nests links", () => {
+    const out = file('<a href="https://a.test">[b](https://b.test) <a href="https://c.test">c</a></a>');
+    expect(out.match(/<a /g)).toHaveLength(1);
+    expect(out).toContain('href="https://a.test/"');
+  });
+
+  it("keeps a malformed tag and its unterminated attribute as text", () => {
+    const out = file('<div><span title="unfinished <b>oops</b></div>');
+    expect(out).not.toContain("<b>");
+    expect(out).toContain("oops");
+  });
+
+  it("decodes HTML attribute entities once", () => {
+    expect(file('<a href="https://example.com/?q=&amp;copy;">q</a>')).toContain('href="https://example.com/?q=&amp;copy;"');
   });
 });
