@@ -27,6 +27,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/health"
 	"github.com/whyrusleeping/ycc/internal/imagefit"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/secrets"
@@ -51,6 +52,7 @@ type Server struct {
 	viewKeepalive  time.Duration
 	anthropicLogin anthropicLoginState
 	analytics      *uianalytics.Store // nil: usage events are validated and discarded
+	health         *health.Monitor    // nil: GetHealth reports no checks
 }
 
 // sessionViewKeepalive bounds silence on SubscribeSessionView. Quiet sessions

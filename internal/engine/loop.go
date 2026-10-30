@@ -1006,6 +1006,9 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 		start := time.Now()
 		resp, attempts, err := l.runTurn(ctx, client, opts)
 		elapsedMS := time.Since(start).Milliseconds()
+		if ctx.Err() == nil {
+			observeTurn(ident.Name, err)
+		}
 		if err != nil {
 			// A stopped/cancelled session is not an API failure: return the ctx
 			// error without recording a session_error.

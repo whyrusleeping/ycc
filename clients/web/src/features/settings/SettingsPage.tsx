@@ -28,6 +28,7 @@ import { ModelEditorDialog, type EditorTarget } from "./ModelEditor";
 import { TierEditorDialog } from "./TierEditor";
 import { SETTINGS_SECTIONS as SECTIONS } from "./sections";
 import { NotificationControls } from "../notify/NotifyControls";
+import { HealthPanel } from "../health/HealthPanel";
 import { draftFromConfig, pricingLine, rolesOf, sortedModels, toggleReviewer, upsertModelRequest } from "./models";
 import { draftFromTier, isRemovable, newTierDraft, tierBadge, tierSummary, type TierDraft } from "./tiers";
 
@@ -110,6 +111,9 @@ export function SettingsPage() {
         Daemon-wide defaults for new sessions. Model and tier selections require Apply; changes are saved to the daemon’s ycc.toml. A running session keeps its own
         settings (change those from its Settings panel).
       </p>
+      <Section id="health" title="Daemon health">
+        <HealthPanel />
+      </Section>
       <AccountsSection />
       <Section id="notifications" title="Notifications (this browser)">
         <NotificationControls />

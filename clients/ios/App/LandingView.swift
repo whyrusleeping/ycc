@@ -32,13 +32,11 @@ struct LandingView: View {
     /// separate project `@State`) so the composer can never be presented with a
     /// stale project and silently fall back to the last-*started* one.
     @State private var newSessionRequest: NewSessionRequest?
-    /// Whether the Recent Sessions project picker is visible.
-    @State private var showNewSessionProjectPicker = false
     /// Whether the unscoped feed's backlog project picker is visible.
     @State private var showBacklogProjectPicker = false
     /// The last project the user actually looked at, remembered across launches.
     /// The unscoped Recent Sessions feed has no project of its own, so this is
-    /// the choice the new-chat chooser offers first (it never picks silently).
+    /// the choice its backlog chooser offers first.
     @AppStorage("ycc.lastViewedProject") private var lastViewedProject = ""
     /// A deep-link routing failure (unknown/stale session or project) to surface
     /// as an alert — a graceful landing instead of navigating into a dead view.
@@ -62,6 +60,10 @@ struct LandingView: View {
     /// after the list sat hidden under a session view; rebuilding it on
     /// reappearance redraws it. Not reproduced in the simulator.
     @State private var rowBackgroundEpoch = 0
+    /// Daemon dependency health, behind the alert row atop the list; created
+    /// with the list model for the same connection.
+    @State private var health: HealthModel?
+    @State private var showHealth = false
 
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
@@ -101,22 +103,6 @@ struct LandingView: View {
     private func presentations(_ content: some View) -> some View {
         content
         .confirmationDialog(
-            "Start a new chat in…",
-            isPresented: $showNewSessionProjectPicker,
-            titleVisibility: .visible
-        ) {
-            if let model {
-                ForEach(newSessionProjectChoices(model), id: \.self) { project in
-                    Button(project) {
-                        newSessionRequest = NewSessionRequest(project: project)
-                    }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Choose which project this chat should work in.")
-        }
-        .confirmationDialog(
             "Open backlog for…",
             isPresented: $showBacklogProjectPicker,
             titleVisibility: .visible
@@ -133,7 +119,15 @@ struct LandingView: View {
             Text("Choose which project's backlog to open.")
         }
         .sheet(item: $newSessionRequest) { request in
-            if let client = app.client {
+            if request.choosingProject, let model {
+                // Same request id, so picking a project swaps this sheet's
+                // content for the composer in place instead of dismissing
+                // and re-presenting.
+                NewChatProjectSheet(model: model) { project in
+                    newSessionRequest?.project = project
+                    newSessionRequest?.choosingProject = false
+                }
+            } else if let client = app.client {
                 // The composer opens in the project the user was last looking
                 // at; the chip inside it can still move the session elsewhere.
                 NewSessionView(
@@ -164,6 +158,12 @@ struct LandingView: View {
                     Task { await model?.refresh() }
                 }
                 .trackedFlow("add_project")
+            }
+        }
+        .sheet(isPresented: $showHealth) {
+            if let health {
+                HealthSheet(model: health)
+                    .trackedView("health")
             }
         }
         .confirmationDialog(
@@ -271,6 +271,7 @@ struct LandingView: View {
             if phase == .active {
                 rowBackgroundEpoch &+= 1
                 Task { await model?.refreshIfStale() }
+                Task { await health?.refresh() }
             }
         }
         .onChange(of: app.pendingDeepLink) { _, link in
@@ -290,6 +291,7 @@ struct LandingView: View {
             if isAtRoot {
                 rowBackgroundEpoch &+= 1
                 Task { await model?.refreshIfStale() }
+                Task { await health?.refresh() }
             }
         }
         // Usage analytics: the stack's top screen, with the drawer as an
@@ -514,7 +516,7 @@ struct LandingView: View {
             case let .file(route):
                 FileScreen(route: route)
             case .settings:
-                GlobalSettingsView(client: client, cache: app.dataCache)
+                GlobalSettingsView(client: client, cache: app.dataCache, health: health)
             }
         }
     }
@@ -527,17 +529,17 @@ struct LandingView: View {
     /// so it starts straight away; the unscoped Recent sessions feed does not,
     /// so it *asks* — silently inheriting the last project the user happened to
     /// browse put chats in the wrong workspace with no visible choice. The
-    /// chooser lists the last-viewed project first, so the common case is still
-    /// one tap away.
+    /// chooser preselects the most recently active project, so the common case
+    /// is still one tap away.
     private func beginNewSession() {
         guard let model else { return }
         if !model.requiresProjectChoiceForNewSession, let project = model.selectedProject {
             newSessionRequest = NewSessionRequest(project: project)
             return
         }
-        let choices = newSessionProjectChoices(model)
+        let choices = model.newSessionProjectChoices
         if choices.count > 1 {
-            showNewSessionProjectPicker = true
+            newSessionRequest = NewSessionRequest(project: nil, choosingProject: true)
         } else {
             // Sole project (or none registered): nothing to choose between — let
             // the composer resolve it and show its project chip.
@@ -545,8 +547,8 @@ struct LandingView: View {
         }
     }
 
-    /// Registered projects for the new-chat chooser, with the last project the
-    /// user viewed hoisted to the top as the likely intent.
+    /// Registered projects for the unscoped feed's backlog chooser, with the
+    /// last project the user viewed hoisted to the top as the likely intent.
     private func newSessionProjectChoices(_ model: SessionListModel) -> [String] {
         let choices = model.newSessionProjectChoices
         guard !lastViewedProject.isEmpty, choices.contains(lastViewedProject) else {
@@ -607,13 +609,38 @@ struct LandingView: View {
             ScrollView {
                 placeholder
                     .frame(width: proxy.size.width, height: proxy.size.height)
+                    // A broken model login matters most before any session
+                    // exists, so the empty screen keeps the health alert too.
+                    .overlay(alignment: .top) {
+                        if let health, !health.alerting.isEmpty {
+                            HealthBanner(alerting: health.alerting) { showHealth = true }
+                                .padding(12)
+                                .background(
+                                    Color(.secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .padding()
+                        }
+                    }
             }
         }
-        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
+        .refreshable { Analytics.action("refresh", via: .pull); await refreshAll(model) }
+    }
+
+    /// Pull-to-refresh reloads the sessions and, alongside, the health checks.
+    private func refreshAll(_ model: SessionListModel) async {
+        Task { await health?.refresh() }
+        await model.refresh()
     }
 
     private func sessionList(_ model: SessionListModel) -> some View {
         List {
+            // Its own leading section, so it appearing or clearing is a plain
+            // section insert/remove that never touches the session sections.
+            if let health, !health.alerting.isEmpty {
+                Section {
+                    HealthBanner(alerting: health.alerting) { showHealth = true }
+                }
+            }
             if let warning = model.partialWarning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
@@ -622,7 +649,12 @@ struct LandingView: View {
             }
             ForEach(model.sections) { section in
                 Section {
-                    ForEach(section.sessions, id: \.sessionID) { session in
+                    // Section-scoped row ids: a (un)flag moves a row between
+                    // sections, and a bare session id makes List animate that
+                    // as a cross-section move (rows below slide up first, then
+                    // the old row reappears and fades). Distinct ids make it a
+                    // plain delete from one section and insert into the other.
+                    ForEach(section.sessions.map { (section.id + "/" + $0.sessionID, $0) }, id: \.0) { _, session in
                         NavigationLink(value: HomeDestination.session(
                             id: session.sessionID,
                             project: model.project(for: session),
@@ -718,7 +750,11 @@ struct LandingView: View {
             }
         }
         .listStyle(.insetGrouped)
-        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
+        // Animate the optimistic (un)flag and any rollback: both land in the
+        // same update that adds/removes the id from followUpUpdatingIDs.
+        // Unanimated, the row snaps out from under the closing swipe action.
+        .animation(.default, value: model.followUpUpdatingIDs)
+        .refreshable { Analytics.action("refresh", via: .pull); await refreshAll(model) }
     }
 
     private func setFollowUp(_ session: Ycc_V1_SessionSummary, model: SessionListModel, via: UsageAnalytics.Via) {
@@ -765,7 +801,10 @@ struct LandingView: View {
             guard let client = app.client else { return }
             modelCacheGeneration = app.dataCache.generation
             model = SessionListModel(source: client, readMarks: app.readMarks)
+            health = HealthModel(source: client)
         }
+        // Health is supplementary: never hold the session list up for it.
+        Task { await health?.refresh() }
         // A new model has never refreshed, so this always loads it; a
         // re-appearing landing view reuses a fresh list.
         await model?.refreshIfStale()
@@ -838,12 +877,15 @@ struct LandingView: View {
     }
 }
 
-/// A pending "new session" composer presentation, identified by the project it
-/// opens in. `nil` means "no explicit choice" — the composer falls back to its
-/// own remembered project.
+/// A pending "new session" presentation: the project chooser first when the
+/// Recent feed must ask, then the composer in the chosen project. A `nil`
+/// project means "no explicit choice" — the composer falls back to its own
+/// remembered project. The id is fixed per request so the chooser → composer
+/// step updates the presented sheet rather than replacing it.
 private struct NewSessionRequest: Identifiable {
-    let project: String?
-    var id: String { project ?? "" }
+    var project: String?
+    var choosingProject = false
+    let id = UUID()
 }
 
 /// A single session row, laid out like a mail inbox entry so it scans fast:

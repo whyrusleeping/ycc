@@ -300,6 +300,7 @@ JSON="Content-Type: application/json"
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
 | [`GetBudget`](#getbudget) | configured spend-guard caps |
 | [`Notify`](#notify) | route a push notification through the daemon-side notifier |
+| [`GetHealth`](#gethealth) | latest dependency health checks (models, Exa, disk) |
 | [`RecordUiEvents` / `GetUiAnalytics`](#recorduievents--getuianalytics) | report client usage analytics / read the summary |
 | [`StartWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / graceful stop / observe |
 
@@ -1060,6 +1061,25 @@ curl -sS -H "$AUTH" -H "$JSON" \
 ```
 
 An unknown `kind` is `invalid_argument`.
+
+### GetHealth
+
+Latest result of each periodic dependency check (spec §14.2). Without `refresh` the
+call makes no provider requests; `refresh: true` re-runs every check first (up to
+~45 s). `status` is `pending`, `ok`, `warn`, `fail`, or `off`; clients alert on
+`warn`/`fail`. A one-shot in-process daemon runs no checks and returns `{}`.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{}' $B/ycc.v1.SessionService/GetHealth
+```
+
+```json
+{"checks":[
+  {"id":"model:opus","label":"Model opus","status":"ok","detail":"Responded in 2.8s.","checkedAt":"2026-10-29T19:10:00Z"},
+  {"id":"exa","label":"Web search (Exa)","status":"ok","detail":"Exa API responded.","checkedAt":"2026-10-29T19:10:00Z"},
+  {"id":"disk:/","label":"Disk space (/)","status":"fail","detail":"6.1 GB free.","remedy":"Free space now: sessions, worktrees, and builds fail when the disk fills.","checkedAt":"2026-10-29T19:14:00Z"}
+]}
+```
 
 ### RecordUiEvents / GetUiAnalytics
 

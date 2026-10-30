@@ -410,6 +410,12 @@ public final class SessionListModel {
         }.map(\.element)
     }
 
+    /// When the project's newest loaded session was last active, or `nil` when
+    /// none of its sessions are loaded.
+    public func latestActivity(forProject name: String) -> Date? {
+        activitySnapshot.latestByProject[name]
+    }
+
     /// Project names that produced a successful history load, so a project with
     /// no sessions still reports (empty) activity rather than being absent.
     private var loadedProjects: [String] = []

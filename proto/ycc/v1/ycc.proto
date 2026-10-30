@@ -945,6 +945,21 @@ message NotifyRequest {
 }
 message NotifyResponse { bool delivered = 1; }
 
+// Daemon health: the latest result of each periodic dependency check (model
+// providers, the Exa web API, free disk space). Without refresh the call is
+// cheap and makes no provider requests; refresh re-runs every check first and
+// returns when they finish (bounded by a per-check timeout).
+message GetHealthRequest { bool refresh = 1; }
+message GetHealthResponse { repeated HealthCheck checks = 1; }
+message HealthCheck {
+  string id = 1;         // stable, e.g. "model:opus", "exa", "disk:/home"
+  string label = 2;      // human label
+  string status = 3;     // pending | ok | warn | fail | off; clients alert on warn/fail
+  string detail = 4;     // what was observed; never contains credentials
+  string remedy = 5;     // suggested fix; empty when none
+  string checked_at = 6; // RFC3339; empty while pending
+}
+
 // Client usage analytics (docs/design/usage-analytics.md). Events carry only
 // identifiers from a fixed vocabulary — never user content. The daemon drops
 // events that fail its charset/length bounds rather than rejecting the batch.
@@ -1420,6 +1435,9 @@ service SessionService {
   // Push notifications: route a client-originated notification (the
   // work-loop completion digest) through the daemon-side webhook notifier.
   rpc Notify(NotifyRequest) returns (NotifyResponse);
+
+  // Periodic daemon dependency checks (models, Exa, disk) for client alerts.
+  rpc GetHealth(GetHealthRequest) returns (GetHealthResponse);
 
   // Client usage analytics: clients report UI events (best-effort, batched);
   // GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.

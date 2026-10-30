@@ -1,6 +1,7 @@
 // The Settings page's sections (its contents bar, deep links like
 // /settings#models, and the command palette's "Settings ›" entries).
 export const SETTINGS_SECTIONS = [
+  { id: "health", title: "Health" },
   { id: "accounts", title: "Accounts" },
   { id: "notifications", title: "Notifications" },
   { id: "roles", title: "Default roles" },

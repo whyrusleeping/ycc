@@ -355,7 +355,8 @@ private struct DrawerRow: View {
 /// Live-activity badges for a drawer row. A waiting question is the loudest
 /// state a phone client exists to surface, so it outranks plain activity; unread
 /// agent output sits between the two — it needs the user eventually, not now.
-private struct ActivityBadge: View {
+/// Also used by the new-chat project chooser.
+struct ActivityBadge: View {
     let activity: ProjectActivity
 
     var body: some View {

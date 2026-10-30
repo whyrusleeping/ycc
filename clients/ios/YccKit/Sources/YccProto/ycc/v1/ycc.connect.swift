@@ -249,6 +249,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `notify`(request: Ycc_V1_NotifyRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_NotifyResponse>
 
+    /// Periodic daemon dependency checks (models, Exa, disk) for client alerts.
+    @available(iOS 13, *)
+    func `getHealth`(request: Ycc_V1_GetHealthRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetHealthResponse>
+
     /// Client usage analytics: clients report UI events (best-effort, batched);
     /// GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
     @available(iOS 13, *)
@@ -598,6 +602,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getHealth`(request: Ycc_V1_GetHealthRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetHealthResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetHealth", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `recordUiEvents`(request: Ycc_V1_RecordUiEventsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_RecordUiEventsResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/RecordUiEvents", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -713,6 +722,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)
+            public static let getHealth = Connect.MethodSpec(name: "GetHealth", service: "ycc.v1.SessionService", type: .unary)
             public static let recordUiEvents = Connect.MethodSpec(name: "RecordUiEvents", service: "ycc.v1.SessionService", type: .unary)
             public static let getUiAnalytics = Connect.MethodSpec(name: "GetUiAnalytics", service: "ycc.v1.SessionService", type: .unary)
             public static let startWorkLoop = Connect.MethodSpec(name: "StartWorkLoop", service: "ycc.v1.SessionService", type: .unary)

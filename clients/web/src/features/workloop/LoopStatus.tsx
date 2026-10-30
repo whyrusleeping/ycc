@@ -62,10 +62,17 @@ export function LoopStatus({ scope }: { scope: string | null }) {
           loop.inReview.length ? `${loop.inReview.length} in review` : "",
         ].filter(Boolean).join(" · ");
         const outcome = loop.outcome.trim();
+        const failed = state === "finished" && !!outcome && isFailureOutcome(outcome);
         return (
           <section key={loop.loopId} className={`loop-status-card state-${state}`} aria-label={`Work loop${scope === null ? ` in ${project}` : ""}`}>
             <div className="loop-status-head">
-              <Link to={paths.loop(project)} className="loop-status-title" data-track="sidebar.loop_status.open">
+              {/* A routine outcome ("loop complete: …") repeats the state badge, so it is the title's tooltip; failures show inline. */}
+              <Link
+                to={paths.loop(project)}
+                className="loop-status-title"
+                title={state === "finished" && outcome && !failed ? outcome : undefined}
+                data-track="sidebar.loop_status.open"
+              >
                 <span className={`nav-badge tone-${state === "running" ? "live" : state === "waiting" ? "warn" : "idle"}`}>
                   {stateTitle(state).toLowerCase()}
                 </span>
@@ -85,9 +92,7 @@ export function LoopStatus({ scope }: { scope: string | null }) {
               )}
             </div>
             {state === "waiting" && <div className="loop-status-line muted">{waitingLine(loop)}</div>}
-            {state === "finished" && outcome && (
-              <div className={`loop-status-line${isFailureOutcome(outcome) ? " error" : " muted"}`}>{outcome}</div>
-            )}
+            {failed && <div className="loop-status-line error">{outcome}</div>}
             {current && (
               <div className="loop-status-line">
                 <span className="loop-status-label"><span className="live-dot" aria-hidden="true" /> Now</span>
@@ -98,21 +103,25 @@ export function LoopStatus({ scope }: { scope: string | null }) {
               </div>
             )}
             {isActive(state) && !current && state !== "waiting" && <div className="loop-status-line muted">Between sessions…</div>}
-            {done.length > 0 && (
+            {(done.length > 0 || attention) && (
               <div className="loop-status-line">
-                <span className="loop-status-label">✓ Done</span>
-                {done.slice(0, SHOWN_DONE).map((t) => (
-                  <TaskLink key={t.id} project={project} id={t.id} className="chip task-chip" title={`${t.id} ${t.title}`} inInspector />
-                ))}
-                {done.length > SHOWN_DONE && (
-                  <Link to={paths.loop(project)} className="muted">+{done.length - SHOWN_DONE}</Link>
+                {done.length > 0 && (
+                  <>
+                    <span className="loop-status-label">✓ Done</span>
+                    {done.slice(0, SHOWN_DONE).map((t) => (
+                      <TaskLink key={t.id} project={project} id={t.id} className="chip task-chip" title={`${t.id} ${t.title}`} inInspector />
+                    ))}
+                    {done.length > SHOWN_DONE && (
+                      <Link to={paths.loop(project)} className="muted">+{done.length - SHOWN_DONE}</Link>
+                    )}
+                  </>
+                )}
+                {attention && (
+                  <Link to={paths.loop(project)} className="loop-status-attention" data-track="sidebar.loop_status.attention">
+                    ⚠ {attention}
+                  </Link>
                 )}
               </div>
-            )}
-            {attention && (
-              <Link to={paths.loop(project)} className="loop-status-line loop-status-attention" data-track="sidebar.loop_status.attention">
-                ⚠ {attention}
-              </Link>
             )}
           </section>
         );

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/whyrusleeping/gollama"
@@ -69,6 +71,65 @@ func safeSecretOutput(text, key string) string {
 	return strings.ReplaceAll(text, key, "[REDACTED AUTHORIZED SECRET]")
 }
 
+// exaObserver, when set, is told the outcome of every web tool's Exa request so
+// the daemon health monitor can react to real failures.
+var exaObserver atomic.Pointer[func(error)]
+
+// SetExaObserver installs fn as the Exa request observer (nil removes it).
+func SetExaObserver(fn func(error)) {
+	if fn == nil {
+		exaObserver.Store(nil)
+		return
+	}
+	exaObserver.Store(&fn)
+}
+
+// observeExa reports a web tool's request outcome; a cancelled request says
+// nothing about Exa.
+func observeExa(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	if fn := exaObserver.Load(); fn != nil {
+		(*fn)(err)
+	}
+}
+
+// exaStatusError is a non-2xx Exa API response.
+type exaStatusError struct {
+	status int
+	msg    string
+}
+
+func (e *exaStatusError) Error() string { return e.msg }
+
+// ProbeExa makes one minimal Exa contents request (the cheapest endpoint) to
+// confirm the key and API work. configured is false when no key is set; status
+// is the HTTP status of a non-2xx response, or 0.
+func ProbeExa(ctx context.Context) (configured bool, status int, err error) {
+	key, ok := exaAPIKey()
+	if !ok {
+		return false, 0, nil
+	}
+	var out struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	body := map[string]any{"urls": []string{"https://example.com"}, "text": map[string]any{"maxCharacters": 100}}
+	if err := exaPost(ctx, key, "/contents", body, &out); err != nil {
+		var se *exaStatusError
+		if errors.As(err, &se) {
+			status = se.status
+		}
+		// Redact the key from the whole message (status line, redirect URLs)
+		// while keeping the error chain so timeouts stay classifiable.
+		return true, status, llmhttp.RedactError(err, key)
+	}
+	if len(out.Results) == 0 {
+		return true, 0, errors.New("Exa returned no content for the probe page")
+	}
+	return true, 0, nil
+}
+
 // Web returns the web tools (web_search, fetch_page).
 func Web() []*gollama.Tool {
 	return []*gollama.Tool{webSearch(), fetchPage()}
@@ -105,7 +166,7 @@ func exaPost(ctx context.Context, key, path string, body any, out any) error {
 		if len(snippet) > exaErrBodyCap {
 			snippet = snippet[:exaErrBodyCap] + "…"
 		}
-		return fmt.Errorf("Exa API returned %s: %s", resp.Status, snippet)
+		return &exaStatusError{status: resp.StatusCode, msg: fmt.Sprintf("Exa API returned %s: %s", resp.Status, snippet)}
 	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return fmt.Errorf("decoding response: %w", err)
@@ -173,7 +234,9 @@ func webSearch() *gollama.Tool {
 					Text       string   `json:"text"`
 				} `json:"results"`
 			}
-			if err := exaPost(ctx, key, "/search", reqBody, &out); err != nil {
+			err := exaPost(ctx, key, "/search", reqBody, &out)
+			observeExa(ctx, err)
+			if err != nil {
 				return errResult("%s", safeSecretOutput("web_search: "+err.Error(), key)), nil
 			}
 			if len(out.Results) == 0 {
@@ -235,7 +298,9 @@ func fetchPage() *gollama.Tool {
 					Text  string `json:"text"`
 				} `json:"results"`
 			}
-			if err := exaPost(ctx, key, "/contents", reqBody, &out); err != nil {
+			err := exaPost(ctx, key, "/contents", reqBody, &out)
+			observeExa(ctx, err)
+			if err != nil {
 				return errResult("%s", safeSecretOutput("fetch_page: "+err.Error(), key)), nil
 			}
 			if len(out.Results) == 0 {

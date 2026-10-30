@@ -19,6 +19,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
+	"github.com/whyrusleeping/ycc/internal/health"
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
@@ -129,6 +130,21 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 		} else {
 			srv.SetAnalytics(store)
 		}
+		// Dependency health checks make (small) provider requests, so only the
+		// long-lived daemon runs them; it lives until process exit.
+		mon := health.New(health.Targets(health.Sources{
+			Registry: reg,
+			DiskPaths: func() []string {
+				paths := []string{filepath.Dir(project.StateFile())}
+				for _, p := range mgr.Projects() {
+					paths = append(paths, p.Path)
+				}
+				return paths
+			},
+		}))
+		health.Install(mon)
+		go mon.Run(context.Background())
+		srv.SetHealth(mon)
 	}
 
 	mux := http.NewServeMux()

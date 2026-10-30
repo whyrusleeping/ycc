@@ -128,6 +128,29 @@ export function SessionRowView({
   );
 }
 
+/** The list filter; the sidebar shows it as its heading. */
+export function SessionFilterSelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: SessionFilter;
+  onChange: (filter: SessionFilter) => void;
+  className?: string;
+}) {
+  return (
+    <select
+      aria-label="Filter sessions"
+      className={className}
+      value={value}
+      data-track="sessions.filter"
+      onChange={(e) => onChange(e.target.value as SessionFilter)}
+    >
+      {SESSION_FILTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+    </select>
+  );
+}
+
 export function SessionList({
   scope,
   activeSessionId,
@@ -161,19 +184,11 @@ export function SessionList({
   const unreadRows = visibleRows.filter(isUnread);
   return (
     <div className={`session-list variant-${variant}`}>
-      <div className="session-list-toolbar">
-        <select
-          aria-label="Filter sessions"
-          value={filter}
-          data-track="sessions.filter"
-          onChange={(e) => setFilter(e.target.value as SessionFilter)}
-        >
-          {SESSION_FILTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-        </select>
-        {variant === "page" && (
+      {/* The sidebar's filter lives in its heading (Shell); flagged rows already have their own section there. */}
+      {variant === "page" && (
+        <div className="session-list-toolbar">
+          <SessionFilterSelect value={filter} onChange={setFilter} />
           <input type="search" className="field" aria-label="Search loaded sessions" placeholder="Search sessions…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        )}
-        {(variant === "page" || flagged.length > 0 || followUpOnly) && (
           <button
             type="button"
             className="btn ghost small follow-up-filter"
@@ -183,8 +198,8 @@ export function SessionList({
           >
             Follow-up ({flagged.length})
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {feed.warning && <p className="warn pad small">{feed.warning}</p>}
       {variant === "page" && unreadRows.length > 0 && (
         <div className="unread-bar">

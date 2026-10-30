@@ -39,6 +39,7 @@ vi.mock("../src/features/settings/ModelEditor", () => ({ ModelEditorDialog: () =
 vi.mock("../src/features/settings/TierEditor", () => ({ TierEditorDialog: () => null }));
 vi.mock("../src/features/settings/AnthropicLogin", () => ({ openAnthropicLogin: vi.fn() }));
 vi.mock("../src/features/notify/NotifyControls", () => ({ NotificationControls: () => null }));
+vi.mock("../src/features/health/HealthPanel", () => ({ HealthPanel: () => null }));
 
 let container: HTMLDivElement;
 let root: Root;

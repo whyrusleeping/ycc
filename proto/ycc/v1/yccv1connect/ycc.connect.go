@@ -203,6 +203,9 @@ const (
 	SessionServiceGetBudgetProcedure = "/ycc.v1.SessionService/GetBudget"
 	// SessionServiceNotifyProcedure is the fully-qualified name of the SessionService's Notify RPC.
 	SessionServiceNotifyProcedure = "/ycc.v1.SessionService/Notify"
+	// SessionServiceGetHealthProcedure is the fully-qualified name of the SessionService's GetHealth
+	// RPC.
+	SessionServiceGetHealthProcedure = "/ycc.v1.SessionService/GetHealth"
 	// SessionServiceRecordUiEventsProcedure is the fully-qualified name of the SessionService's
 	// RecordUiEvents RPC.
 	SessionServiceRecordUiEventsProcedure = "/ycc.v1.SessionService/RecordUiEvents"
@@ -360,6 +363,8 @@ type SessionServiceClient interface {
 	// Push notifications: route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
+	// Periodic daemon dependency checks (models, Exa, disk) for client alerts.
+	GetHealth(context.Context, *connect.Request[v1.GetHealthRequest]) (*connect.Response[v1.GetHealthResponse], error)
 	// Client usage analytics: clients report UI events (best-effort, batched);
 	// GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
 	RecordUiEvents(context.Context, *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error)
@@ -749,6 +754,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("Notify")),
 			connect.WithClientOptions(opts...),
 		),
+		getHealth: connect.NewClient[v1.GetHealthRequest, v1.GetHealthResponse](
+			httpClient,
+			baseURL+SessionServiceGetHealthProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetHealth")),
+			connect.WithClientOptions(opts...),
+		),
 		recordUiEvents: connect.NewClient[v1.RecordUiEventsRequest, v1.RecordUiEventsResponse](
 			httpClient,
 			baseURL+SessionServiceRecordUiEventsProcedure,
@@ -879,6 +890,7 @@ type sessionServiceClient struct {
 	getSubscriptionUsage   *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
 	getBudget              *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	notify                 *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
+	getHealth              *connect.Client[v1.GetHealthRequest, v1.GetHealthResponse]
 	recordUiEvents         *connect.Client[v1.RecordUiEventsRequest, v1.RecordUiEventsResponse]
 	getUiAnalytics         *connect.Client[v1.GetUiAnalyticsRequest, v1.GetUiAnalyticsResponse]
 	startWorkLoop          *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
@@ -1187,6 +1199,11 @@ func (c *sessionServiceClient) Notify(ctx context.Context, req *connect.Request[
 	return c.notify.CallUnary(ctx, req)
 }
 
+// GetHealth calls ycc.v1.SessionService.GetHealth.
+func (c *sessionServiceClient) GetHealth(ctx context.Context, req *connect.Request[v1.GetHealthRequest]) (*connect.Response[v1.GetHealthResponse], error) {
+	return c.getHealth.CallUnary(ctx, req)
+}
+
 // RecordUiEvents calls ycc.v1.SessionService.RecordUiEvents.
 func (c *sessionServiceClient) RecordUiEvents(ctx context.Context, req *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error) {
 	return c.recordUiEvents.CallUnary(ctx, req)
@@ -1364,6 +1381,8 @@ type SessionServiceHandler interface {
 	// Push notifications: route a client-originated notification (the
 	// work-loop completion digest) through the daemon-side webhook notifier.
 	Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error)
+	// Periodic daemon dependency checks (models, Exa, disk) for client alerts.
+	GetHealth(context.Context, *connect.Request[v1.GetHealthRequest]) (*connect.Response[v1.GetHealthResponse], error)
 	// Client usage analytics: clients report UI events (best-effort, batched);
 	// GetUiAnalytics returns the stored summary. See docs/design/usage-analytics.md.
 	RecordUiEvents(context.Context, *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error)
@@ -1749,6 +1768,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("Notify")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetHealthHandler := connect.NewUnaryHandler(
+		SessionServiceGetHealthProcedure,
+		svc.GetHealth,
+		connect.WithSchema(sessionServiceMethods.ByName("GetHealth")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceRecordUiEventsHandler := connect.NewUnaryHandler(
 		SessionServiceRecordUiEventsProcedure,
 		svc.RecordUiEvents,
@@ -1935,6 +1960,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetBudgetHandler.ServeHTTP(w, r)
 		case SessionServiceNotifyProcedure:
 			sessionServiceNotifyHandler.ServeHTTP(w, r)
+		case SessionServiceGetHealthProcedure:
+			sessionServiceGetHealthHandler.ServeHTTP(w, r)
 		case SessionServiceRecordUiEventsProcedure:
 			sessionServiceRecordUiEventsHandler.ServeHTTP(w, r)
 		case SessionServiceGetUiAnalyticsProcedure:
@@ -2200,6 +2227,10 @@ func (UnimplementedSessionServiceHandler) GetBudget(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) Notify(context.Context, *connect.Request[v1.NotifyRequest]) (*connect.Response[v1.NotifyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Notify is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetHealth(context.Context, *connect.Request[v1.GetHealthRequest]) (*connect.Response[v1.GetHealthResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetHealth is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) RecordUiEvents(context.Context, *connect.Request[v1.RecordUiEventsRequest]) (*connect.Response[v1.RecordUiEventsResponse], error) {

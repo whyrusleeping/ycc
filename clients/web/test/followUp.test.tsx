@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "../src/api/queries";
 import { SessionList } from "../src/features/sessions/SessionList";
 import { buildFeed, type HistoryLoad } from "../src/features/sessions/feed";
+import { setSidebarFilter } from "../src/features/sessions/listFilter";
 import { SessionSummarySchema, SetSessionFollowUpResponseSchema } from "../src/gen/ycc/v1/ycc_pb";
 
 const { rpc, toast } = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn() }));
@@ -110,10 +111,14 @@ describe("session follow-up", () => {
     expect(flag().title).toContain(new Date(serverAt).toLocaleString());
     expect(flag().getAttribute("aria-label")).toBe("Clear follow-up on First session");
 
-    const filter = button("sessions.follow_up_filter");
-    expect(filter.textContent).toBe("Follow-up (1)");
-    await click(filter);
-    expect(filter.getAttribute("aria-pressed")).toBe("true");
+    // The page has its own Follow-up toggle; the sidebar filters from the Shell's heading select.
+    const followUpFilter = async (on: boolean) => {
+      if (variant === "page") await click(button("sessions.follow_up_filter"));
+      else await act(async () => { setSidebarFilter(on ? "followup" : "inbox"); await flush(); });
+    };
+    if (variant === "page") expect(button("sessions.follow_up_filter").textContent).toBe("Follow-up (1)");
+    await followUpFilter(true);
+    if (variant === "page") expect(button("sessions.follow_up_filter").getAttribute("aria-pressed")).toBe("true");
     expect(container.querySelectorAll(".session-row")).toHaveLength(1);
     expect(container.querySelector(".session-row-link")?.textContent).toBe("First session");
     expect(rpc).toHaveBeenCalledTimes(1); // Viewing/filtering never clears a bookmark.
@@ -123,9 +128,9 @@ describe("session follow-up", () => {
     expect(rpc).toHaveBeenLastCalledWith({ project: "work", sessionId: "one", followUp: false });
     expect(cachedFirst()).toMatchObject({ followUp: false, followUpAt: "" });
     expect(container.textContent).toContain("No sessions flagged for follow-up.");
-    expect(button("sessions.follow_up_filter").textContent).toBe("Follow-up (0)");
+    if (variant === "page") expect(button("sessions.follow_up_filter").textContent).toBe("Follow-up (0)");
     expect(container.querySelector('[data-track="sessions.start_first"]')).toBeNull();
-    await click(filter);
+    await followUpFilter(false);
     expect(container.querySelectorAll(".session-row")).toHaveLength(2);
     expect(container.querySelector('[data-track="sessions.follow_up_filter"]') !== null).toBe(variant === "page");
   });

@@ -61,6 +61,8 @@ export const queryKeys = {
   fileRead: (project: string, sessionId: string, path: string) => ["files", "read", project, sessionId, path] as const,
   /** Every file listing and read (a browser refresh revalidates them). */
   filesAll: ["files"] as const,
+  /** GetHealth: the daemon's latest health-check results. */
+  health: ["health"] as const,
 };
 
 export function makeQueryClient(): QueryClient {
@@ -385,6 +387,28 @@ export function usePlans(project: string, enabled = true) {
     enabled,
     queryFn: async ({ signal }) => (await client.listPlans({ project }, { signal })).plans,
   });
+}
+
+/**
+ * GetHealth's cached results, polled about once a minute. A daemon without
+ * the RPC (Unimplemented) is not retried; callers treat errors as "no checks".
+ */
+export function useHealth() {
+  return useQuery({
+    queryKey: queryKeys.health,
+    refetchInterval: 60_000,
+    retry: (count, err) => {
+      const code = ConnectError.from(err).code;
+      return code !== Code.Unimplemented && code !== Code.Unauthenticated && count < 2;
+    },
+    queryFn: async ({ signal }) => (await client.getHealth({ refresh: false }, { signal })).checks,
+  });
+}
+
+/** GetHealth with refresh: re-runs every check (can take tens of seconds). */
+export async function refreshHealth(qc: QueryClient) {
+  const resp = await client.getHealth({ refresh: true });
+  qc.setQueryData(queryKeys.health, resp.checks);
 }
 
 /** GetPlan: one plan's markdown. */

@@ -877,6 +877,30 @@ state. Unsupported automatic strategy/configuration degrades to the review gate 
 performing a different history operation. Rationale is retained in
 `docs/design/parallel-workstreams.md` and `docs/design/workstream-integration.md`.
 
+### 14.2 Health monitoring
+
+The persistent daemon periodically checks the dependencies unattended work needs, so the user
+learns about a broken login or a full disk from the client rather than from a failed session.
+Checks are:
+
+- **Models**, hourly: one small inference probe per enabled model that is subscription-authenticated
+  or local. A model billed per request is probed only when a role, preset, or review tier uses it.
+- **Exa**, every six hours: one minimal contents request (the cheapest endpoint). A missing key is
+  reported as `off`, not as an alert.
+- **Disk**, every five minutes: free space on each filesystem holding daemon state or a registered
+  project; warn below 20 GB, fail below 10 GB.
+
+Real traffic counts as evidence. A successful model turn or web-tool request marks its check healthy
+and postpones the next probe. A failed one triggers a confirming re-check shortly afterwards (at
+most one every two minutes per check), not an alert, because one request can fail for reasons
+specific to that request. Context-length
+failures are ignored. Results live in memory. `GetHealth` returns the latest result for each check
+without making provider requests, and `refresh` re-runs every check first. Details are categorical
+(error kind, HTTP status) and never include provider bodies or credentials.
+
+The web and iOS clients show a banner whenever any check is `warn` or `fail`. It opens a Health
+panel listing every check with its detail, suggested fix, and a re-check action.
+
 ## 18. Client interaction model
 
 All clients project the same session/backlog/workstream state and may differ in layout. The TUI is

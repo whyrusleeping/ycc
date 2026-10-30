@@ -1782,6 +1782,35 @@ func (r *Registry) Models() []ModelInfo {
 	return out
 }
 
+// HealthProbeModels returns, sorted, the enabled models the health monitor
+// probes: every subscription (OAuth) or local model, plus a model billed per
+// request only when a role, preset, or review tier uses it.
+func (r *Registry) HealthProbeModels() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	used := map[string]bool{r.cfg.Roles.Coordinator: true, r.cfg.Roles.Implementer: true}
+	for _, n := range r.cfg.Roles.Reviewers {
+		used[n] = true
+	}
+	for _, n := range r.cfg.Roles.Presets {
+		used[n] = true
+	}
+	tiers, _ := r.cfg.effectiveReviewTiers()
+	for _, t := range tiers {
+		for _, rv := range t.resolveReviewers() {
+			used[rv.Model] = true
+		}
+	}
+	var out []string
+	for name, m := range r.cfg.Models {
+		if !m.Disabled && (m.Auth == "oauth" || m.Backend == "ollama" || used[name]) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // resolveKey returns the API credential for a model following a documented
 // precedence: an explicit env var wins (e.g. a CI/one-off override), then a
 // token stored in the machine-local secrets store (so a token can be saved once

@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { InspectorPane } from "../features/inspector/InspectorPane";
 import { useInspector } from "../features/inspector/inspector";
-import { SessionList } from "../features/sessions/SessionList";
+import { SessionFilterSelect, SessionList } from "../features/sessions/SessionList";
 import { reconnectActiveSessions } from "../features/session/useSession";
 import { Toasts, toast } from "../ui/toast";
 import { PROJECT_SECTIONS, paths, sectionPath } from "./paths";
@@ -20,7 +20,7 @@ import { canStart, canStop, currentSessionId, loopIndicator, loopState } from ".
 import { useLoopSessionIds, useLoopWatcher } from "../features/workloop/hooks";
 import { LoopStatus } from "../features/workloop/LoopStatus";
 import { filterSessions, isInboxSession } from "../features/sessions/attention";
-import { useSidebarFilter } from "../features/sessions/listFilter";
+import { setSidebarFilter, useSidebarFilter } from "../features/sessions/listFilter";
 import { loopIntentKey } from "../features/workloop/WorkLoopPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { workstreamsIntentKey } from "../features/workstreams/WorkstreamsPage";
@@ -44,6 +44,7 @@ import { setNotificationsEnabled, useNotifyState } from "../features/notify/noti
 import { backlogIntentKey } from "../features/backlog/BacklogPage";
 import { memoryIntentKey } from "../features/memory/MemoryPage";
 import type { FeedRow } from "../features/sessions/feed";
+import { HealthBanner } from "../features/health/HealthPanel";
 
 /** Shell-owned shortcuts (Alt chords leave text fields alone on macOS, where Option types characters). */
 const SHORTCUTS = {
@@ -172,10 +173,12 @@ function Sidebar() {
   // Scoped: that project's activity; Recent: every project's.
   const loopBadge = loopIndicator(loops.filter((l) => scope === null || l.project === scope).map((l) => l.loop));
   const wsBadge = workstreamIndicator(workstreams.data);
+  const sidebarFilter = useSidebarFilter();
   return (
     <nav className="sidebar" aria-label="Sidebar">
       <div className="sidebar-top">
-        <Link to={paths.home()} className="brand" data-track="sidebar.home">
+        {/* Home is the full session list of the current scope. */}
+        <Link to={scope ? paths.project(scope) : paths.home()} className="brand" title={scope ? `All ${scope} sessions` : "All sessions"} data-track="sidebar.home">
           ycc
         </Link>
         <span className="sidebar-top-actions">
@@ -202,10 +205,9 @@ function Sidebar() {
         <kbd>{PALETTE_LABEL}</kbd>
       </button>
       <ProjectSwitcher />
+      <LoopStatus scope={scope} />
       <div className="sidebar-heading">
-        <NavLink to={scope ? paths.project(scope) : paths.home()} end className="sidebar-heading-link" data-track="sidebar.sessions">
-          {scope ? "Sessions" : "Your sessions"}
-        </NavLink>
+        <SessionFilterSelect value={sidebarFilter} onChange={setSidebarFilter} className="sidebar-filter" />
         <span className="sidebar-heading-actions">
           {unreadRows.length > 0 && (
             <button
@@ -214,8 +216,10 @@ function Sidebar() {
               data-track="sidebar.mark_all_read"
               onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}
               title={`Mark all ${unreadRows.length} unread ${unreadRows.length === 1 ? "session" : "sessions"} read`}
+              aria-label={`Mark all ${unreadRows.length} unread ${unreadRows.length === 1 ? "session" : "sessions"} read`}
             >
-              <span className="unread-dot static" aria-hidden="true" /> {unreadRows.length} · Mark read
+              <span className="activity-badge unread" aria-hidden="true">{unreadRows.length}</span>
+              <span className="mark-all-read-label" aria-hidden="true">Mark read</span>
             </button>
           )}
           <button
@@ -232,10 +236,10 @@ function Sidebar() {
         </span>
       </div>
       <div className="sidebar-list">
-        <LoopStatus scope={scope} />
         <SessionList scope={scope} activeSessionId={sessionId} variant="sidebar" />
       </div>
       <NotificationPrompt />
+      <HealthBanner />
       <div className="sidebar-nav">
         {PROJECT_SECTIONS.map((s) => {
           // Backlog, work loop, and workstreams ask for a project when unscoped; other sections need one.

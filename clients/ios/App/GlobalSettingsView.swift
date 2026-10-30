@@ -11,10 +11,14 @@ struct GlobalSettingsView: View {
     @State private var editorTarget: ModelEditorTarget?
     @State private var pendingRemoval: String?
     @State private var showAnthropicLogin = false
+    @State private var showHealth = false
     private let client: YccClient
+    /// The home screen's shared health model; nil hides the Health row.
+    private let health: HealthModel?
 
-    init(client: YccClient, cache: AppDataCache? = nil) {
+    init(client: YccClient, cache: AppDataCache? = nil, health: HealthModel? = nil) {
         self.client = client
+        self.health = health
         // A revisit renders the cached registry at once and revalidates.
         _model = State(initialValue: GlobalSettingsModel(source: client, cache: cache))
     }
@@ -27,6 +31,9 @@ struct GlobalSettingsView: View {
                         .foregroundStyle(Theme.danger)
                         .font(.callout)
                 }
+            }
+            if let health {
+                healthSection(health)
             }
             Section("Provider accounts") {
                 Button {
@@ -50,6 +57,12 @@ struct GlobalSettingsView: View {
         .sheet(isPresented: $showAnthropicLogin) {
             NavigationStack { AnthropicLoginView(client: client) }
                 .trackedView("anthropic_login")
+        }
+        .sheet(isPresented: $showHealth) {
+            if let health {
+                HealthSheet(model: health)
+                    .trackedView("health")
+            }
         }
         .sheet(item: $editorTarget) { target in
             NavigationStack {
@@ -76,6 +89,29 @@ struct GlobalSettingsView: View {
         }
         .onChange(of: model.unauthorized) { _, unauthorized in
             if unauthorized { app.handleUnauthorized() }
+        }
+    }
+
+    private func healthSection(_ health: HealthModel) -> some View {
+        let alerting = health.alerting.count
+        return Section {
+            Button {
+                showHealth = true
+            } label: {
+                HStack {
+                    Label("Health", systemImage: "stethoscope")
+                    Spacer()
+                    if alerting > 0 {
+                        Text(alerting == 1 ? "1 problem" : "\(alerting) problems")
+                            .foregroundStyle(health.alerting.contains { HealthModel.severity(of: $0) == .fail }
+                                ? Theme.danger : Theme.attention)
+                    } else if !health.checks.isEmpty {
+                        Text("No problems").foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } footer: {
+            Text("Periodic checks of model logins, web search, and disk space on the daemon host.")
         }
     }
 

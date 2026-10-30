@@ -155,3 +155,24 @@ func TestProbeModelHonorsContextDeadline(t *testing.T) {
 		t.Fatalf("probe ignored deadline: %v", elapsed)
 	}
 }
+
+// Paid per-request models are probed by the health monitor only when work can
+// actually reach them; subscription and local models are always probed.
+func TestHealthProbeModelsSkipsUnusedPaidModels(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{
+			"sub":      {Backend: "anthropic", Model: "m", Auth: "oauth"},
+			"local":    {Backend: "ollama", Model: "m"},
+			"paidRole": {Backend: "anthropic", Model: "m", KeyEnv: "K"},
+			"paidTier": {Backend: "anthropic", Model: "m", KeyEnv: "K"},
+			"unused":   {Backend: "openai-compatible", Model: "m", KeyEnv: "K"},
+			"off":      {Backend: "openai", Model: "m", Auth: "oauth", Disabled: true},
+		},
+		Roles:   Roles{Coordinator: "sub", Implementer: "paidRole", Reviewers: []string{"sub"}},
+		Reviews: Reviews{Tiers: map[string]ReviewTier{"deep": {Models: []string{"paidTier"}}}},
+	})
+	got := strings.Join(reg.HealthProbeModels(), ",")
+	if want := "local,paidRole,paidTier,sub"; got != want {
+		t.Fatalf("HealthProbeModels = %s, want %s", got, want)
+	}
+}
