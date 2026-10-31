@@ -15,7 +15,7 @@ spec_refs:
 Delivers incremental model-output streaming in the session view end to end. Originally
 the gollama-only prerequisite for ycc task 0114; per pm grooming 2026-07-08, 0114's small
 remainder (the ycc adapter + live verification) was **folded into this task** and 0114
-closed as merged. gollama work happens in the separate repo (/home/why/code/gollama);
+closed as merged. gollama work happens in its separate repository;
 this task tracks it from the ycc backlog, like earlier gollama thinking-levels work.
 
 ycc-side groundwork is already done (tasks 0128/0129): the transient never-persisted
@@ -53,14 +53,11 @@ KEY DESIGN DECISION: gollama's TurnStream signature is exactly
   func (c *Client) TurnStream(opts RequestOptions, onDelta func(text string)) (*ResponseMessageGenerate, error)
 with SNAPSHOT semantics: onDelta receives the full accumulated assistant text so far (not increments), invoked serially, possibly zero times (tool-only turns). This matches ycc's engine.StreamTurner (internal/engine/loop.go:42) verbatim, so *gollama.Client satisfies the seam with no ycc adapter — adoption is just the go.mod bump. Document the contract in gollama. Thinking-delta streaming and OpenAI/Ollama native SSE are explicitly follow-ups (separate backlog tasks).
 
-WORKSPACE MECHANICS (gollama lives outside this workspace; file tools cannot write there):
-1. git clone /home/why/code/gollama .gollama-work  (inside the ycc workspace; already listed in .git/info/exclude so it never enters ycc's git). Edit ONLY in .gollama-work with normal file tools; build/test with `cd .gollama-work && go build ./... && go vet ./... && go test ./...` (ANTHROPIC_API_KEY is set, so live tests run — good).
-2. When gollama work is done: commit in .gollama-work (clear message), then
-   git -C /home/why/code/gollama pull --ff-only /home/why/code/ycc/.gollama-work main
-   git -C /home/why/code/gollama push origin main    (established pattern, tasks 0001/0025/0093/0134)
-   Record the new sha.
-3. ycc bump: GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha> && go mod tidy.
-4. Cleanup at the very end: rm -rf .gollama-work.
+CROSS-REPOSITORY WORKFLOW:
+1. Use a separate gollama checkout for dependency changes. Build/test there with `go build ./... && go vet ./... && go test ./...`; live tests require their documented credentials.
+2. Land the changes through gollama's normal contribution workflow and record the new sha (established pattern, tasks 0001/0025/0093/0134).
+3. ycc bump: `go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`.
+4. Remove any temporary checkout when finished.
 
 PART A — gollama:
 - turn.go: add TurnStream with the contract doc. Routing: Backend()==BackendAnthropic → new streaming path; every other backend (OpenAI, Ollama, Bedrock) → fallback: resp, err := c.Turn(opts); if err==nil and text non-empty, call onDelta once with the whole text; return resp. Callers never branch. Turn itself is untouched.
@@ -87,20 +84,20 @@ Acceptance mapping: TurnStream+fallback (A); Anthropic SSE + offline fixture tes
 - gollama repo readable via symlink .gollama-link/ (READ ONLY — write via a clone at .gollama-work/)
 - gollama: turn.go (Turn/Backend), anthropic.go (buildAnthropicRequest, parseAnthropicResponse ~line 503, ChatCompletionAnthropic), http.go prepareRequest/doWithRetry, client.go anthropicEndpoint
 - gollama live-test pattern: anthropic_live_test.go liveAnthropicClient()
-- ycc bump pattern (task 0134): commit gollama, push origin main, then GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha> && go mod tidy
+- ycc bump pattern (task 0134): land the gollama changes, then `go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`
 - ycc wiring refs: internal/config/config.go Registry.Build ~line 959 (returns *gollama.Client as engine.Turner); internal/server/subscribe_transient_test.go + internal/engine/stream_test.go for emitter/broadcast test wiring
 - spec.md §7.1 (~line 400) 'what it lacks and we add' list — add TurnStream as item 3; §5.2 turn_delta contract ~line 212 already matches
 - Anthropic SSE event types: message_start, content_block_start, content_block_delta (text_delta|thinking_delta|signature_delta|input_json_delta), content_block_stop, message_delta, message_stop, ping, error
 
 ## Work log
-- 2026-07-08 pm grooming (with user): unblocked — the gollama working repo now exists at
-  /home/why/code/gollama (HEAD d8e738f, still no TurnStream). Scope kept Anthropic-first.
+- 2026-07-08 pm grooming (with user): unblocked — a gollama working checkout became
+  available (HEAD d8e738f, still no TurnStream). Scope kept Anthropic-first.
   Folded in the remainder of 0114 (ycc StreamTurner adapter + live end-to-end
   verification) so one cross-repo session lands streaming completely; 0114 closed as
   merged into this task.
-- 2026-07-05 blocked (coordinator): the work lives in the separate gollama repo at
-  /home/why/code/gollama, which does not exist in this environment (gollama is only
-  present as a read-only module-cache dependency). Cloning/forking gollama into the ycc
+- 2026-07-05 blocked (coordinator): the work required a separate gollama checkout,
+  which was unavailable during that pass (gollama was only present as a read-only
+  module-cache dependency). Cloning/forking gollama into the ycc
   workspace would be a hard-to-reverse structural decision the task explicitly avoids.
   Unblock when the gollama working repo is available alongside ycc.
 - 2026-07-06 plan: Goal: land streaming turns end to end — gollama grows TurnStream (Anthropic SSE first, graceful fallback elsewhere), ycc adopts it via a version bump (zero adapter code: the method signature is desi

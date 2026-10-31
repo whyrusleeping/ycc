@@ -39,14 +39,11 @@ KEY DESIGN DECISION (zero-adapter seam, same trick as task 0262): gollama grows 
   ycc engine.Turner       → method TurnCtx(ctx, opts)
   ycc engine.StreamTurner → Turner + TurnStreamCtx(ctx, opts, onDelta)
 
-WORKSPACE MECHANICS (gollama lives outside this workspace; file tools cannot write there — established pattern from task 0262):
-1. git clone /home/why/code/gollama .gollama-work (inside the ycc workspace; add to .git/info/exclude if not already there). Edit ONLY in .gollama-work with normal file tools; build/test with `cd .gollama-work && go build ./... && go vet ./... && go test ./...`.
-2. When done: commit in .gollama-work, then
-   git -C /home/why/code/gollama pull --ff-only /home/why/code/ycc/.gollama-work main
-   git -C /home/why/code/gollama push origin main
-   Record the new sha.
-3. ycc bump: GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha> && go mod tidy. (If the proxy hasn't seen the commit yet, use GOPROXY=direct for the go get.)
-4. Cleanup at the very end: rm -rf .gollama-work.
+CROSS-REPOSITORY WORKFLOW (established pattern from task 0262):
+1. Use a separate gollama checkout for dependency changes. Build/test there with `go build ./... && go vet ./... && go test ./...`.
+2. Land the gollama changes through its normal contribution workflow and record the new sha.
+3. ycc bump: `go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`. (If the proxy hasn't seen the commit yet, use GOPROXY=direct for the go get.)
+4. Remove any temporary checkout when finished.
 
 PART A — gollama (context threading):
 - http.go: add ctx-aware variants — doWithRetry/prepareRequest/prepareGet gain ctx (either add prepareRequestCtx/prepareGetCtx keeping thin Background wrappers, or thread ctx params through the private funcs; private funcs may just change signature). Use http.NewRequestWithContext, and make the retry backoff sleep ctx-aware (select on timer vs ctx.Done, returning ctx.Err()). Bail out before an attempt when ctx is already done.
@@ -83,7 +80,7 @@ Acceptance mapping: ctx into both blocking+streaming turns (B loop.go); adapters
 - internal/anthropicauth/turner.go:99-152 (Turn/TurnStream/run; token ctx from Background at :131/:142)
 - internal/config/config.go Registry.Build ~:1302 (returns *gollama.Client / anthropicauth wrappers / codex.New as engine.Turner)
 - gollama (clone to .gollama-work): turn.go (Turn/TurnStream/Backend), http.go (doWithRetry/prepareRequest/prepareGet), openai.go ChatCompletion :192, anthropic.go ChatCompletionAnthropic :581, anthropic_stream.go :61, openai_stream.go :69, bedrock.go ChatCompletionBedrock :76 + NewRequest :107
-- push/bump pattern from task 0262: commit in .gollama-work → git -C /home/why/code/gollama pull --ff-only <workspace>/.gollama-work main → push origin main → GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha> && go mod tidy
+- dependency-update pattern from task 0262: land changes in the separate gollama repository, then `go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`
 - session Stop path: internal/session/session.go Stop ~:2271, run() ~:1054 (TurnError dedupe + ctx.Err() guards)
 - fakes to update: engine/{loop,retry,stream,context}_test.go, session/{reopen,checkpoint_persistence,retry_resume,refusal,settings}_test.go, orchestrator/{revise,background}_test.go, codex_test.go, anthropicauth/turner_test.go, config/live_oauth_smoke_test.go, engine/stream_live_test.go
 

@@ -27,9 +27,9 @@ func TestRequireLoopbackHost(t *testing.T) {
 		{"[::1]:8787", http.StatusNoContent},
 		{"[::1]", http.StatusNoContent},
 		{"evil.example", http.StatusForbidden},
-		{"127.0.0.1.evil.com", http.StatusForbidden},
+		{"127.0.0.1.evil.example", http.StatusForbidden},
 		{"foo.localhost", http.StatusForbidden},
-		{"192.168.1.1:8787", http.StatusForbidden},
+		{"192.0.2.1:8787", http.StatusForbidden},
 		{"", http.StatusForbidden},
 	} {
 		t.Run(tc.host, func(t *testing.T) {

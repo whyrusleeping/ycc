@@ -1,9 +1,12 @@
 # Security audit: deployed ycc system (2026-10-26)
 
-Deployment audited: `ycc daemon --web` (pid 2463299, started Oct 22, binary built between the
-Oct-6 fixes and Oct 23) bound to `127.0.0.1:8787`, `YCC_TOKEN` set, published at
-`https://random-app-thing.ngrok.dev` via `ngrok http 8787 --inspect=false` (user unit
-`ycc-ngrok`). Host is the multi-user dev box (ian/clover/hailey, host-networked containers).
+Audit scenario: a bearer-authenticated `ycc daemon --web` on `127.0.0.1:8787`,
+published through an HTTPS tunnel. The threat model includes shared-host access and
+host-networked containers, where loopback is not an isolation boundary.
+
+This public summary preserves the dated code findings, verification methodology, and
+mitigations. Personal deployment inventory, credential fingerprints, and private evidence
+locators are omitted. It is not a statement of current deployment status.
 
 Method: four parallel read-only review agents (glm — adversarial HTTP/pre-auth probing of the
 live daemon + scratch `buildHandler` harness; opus — code audit of everything new since the
@@ -14,83 +17,74 @@ and the top code findings. Secrets were never printed; token/key presence was co
 
 ## Status of the 2026-10-06 audit (docs/reports/security-audit-2026-10.md)
 
-All four fix commits (5e23b96, 0314c7a, ab9ef80, 59ee60b) are **deployed in the running binary**
-(confirmed by `strings` of `/proc/2463299/exe` finding the guardrail/token-file messages).
-Re-verified live: unauthenticated 33 MB POST → 401 in ~30 ms before the body is read, locally
-and through ngrok; ngrok inspector off (`web_addr: false`, :4040 closed); `--web`/non-loopback
-guardrails hold; every one of the 70 Connect methods requires the bearer token; pre-auth
-rejection never reads or decompresses the body (gzip bombs without a token → 401 in
-milliseconds). F1/F2/F5 of the old audit are fixed in deployment. **F3 (token rotation) never
-happened** — see T1.
+The audit verified the four fix commits (5e23b96, 0314c7a, ab9ef80, 59ee60b), using
+binary guardrail/token-file markers and behavioral tests rather than assuming source HEAD
+matched the tested executable. An unauthenticated 33 MB POST returned 401 in ~30 ms before
+the body was read, locally and through the tunnel. `--web`/non-loopback guardrails held;
+every one of the 70 Connect methods required the bearer token; pre-auth rejection never
+read or decompressed the body (gzip bombs without a token → 401 in milliseconds).
+The audit verified the F1/F5 fixes and F2 inspector-disable mitigation. Credential rotation
+and removal of retained copies remain separate operational obligations (T1); code deployment
+alone does not complete them.
 
 ## Findings
 
-### T1 — CRITICAL (operational) — Weak token still live, never rotated, and persisted in 8+ places
+### T1 — CRITICAL (operational) — Credential rotation and retained-copy hygiene
 
-The daemon still runs with the pre-rotation hand-chosen `YCC_TOKEN` (22 chars, `[a-z0-9]`, 12
-distinct characters — matching the old audit's F3 profile), while the strong CSPRNG token
-(`~/.local/state/ycc/daemon-token`, 64 hex) sits unused. Coordinator-verified copies of the
-live token on disk (occurrence counts, never the value):
+A generated state-file token does not replace a credential still supplied through
+`YCC_TOKEN`. Fixing an exposure without rotating the active credential leaves access intact.
+Retained copies can survive in shell history, event logs, derived databases, analysis exports,
+and terminal scrollback. Private copy locations, counts, and token characteristics are omitted.
 
-| Location | Mode | Count |
-|---|---|---|
-| `~/.bash_history` (`YCC_TOKEN=… ycc daemon --web`) | 600 | 12 |
-| `.ycc/sessions/s_d00c2246f0918dfe/events.jsonl` | **644** | 9 |
-| `.ycc/sessions/s_a8223d64edab39f0/events.jsonl` | 600 | 5 |
-| `.ycc/sessions/s_8055eb4d7ddd2554/events.jsonl` | **644** | 2 |
-| `.ycc/sessions/s_414837b2057ad83f/events.jsonl` | 600 | 2 |
-| `.ycc/session-view.sqlite` (+ lamia copy) | 600 | 1 |
-| `.ycc/tmp/slowaudit/sessions.pkl` | **664** | 29 |
-| daemon process env, tmux pane scrollback (`.ycc/redeploy.sh` re-sends it via `tmux send-keys`) | — | — |
+Restrictive parent-directory modes help against other users but do not isolate same-uid
+agents. The file-tool deny covers `~/.config/ycc/**` and `daemon-token`, not arbitrary
+historical copies. A prompt-injected agent that finds a copy can gain persistent remote
+access; on a privileged deployment, T3 expands that impact.
 
-None is world-readable (`/home/why` 0750, `.ycc` 0700), but **every agent can read all of
-them**: the file-tool deny covers only `~/.config/ycc/**` and `daemon-token`, not `.ycc/sessions`
-or `~/.bash_history`. A prompt-injected agent (or a malicious repo driving one) that finds any
-copy gets persistent remote access — and per T3, that is root-equivalent.
+**Fix:** rotate to a cryptographically generated token, verify which credential source the
+running daemon actually uses, and stop putting credentials in shell commands or terminal
+automation. Use a 0600 `EnvironmentFile=` for a user service or rely on the state-dir token.
+Inventory and scrub retained copies, including derived projections and exports; redact
+`Bearer <token>` and known secret values in tool-result emission (the `safeSecretOutput`
+mechanism for the Exa key in `internal/tools/web.go` is the model).
 
-**Fix:** rotate to the existing 64-hex `daemon-token` (stop passing `YCC_TOKEN` on the command
-line; use a 0600 `EnvironmentFile=` systemd --user unit or rely on the state-dir token);
-scrub/delete the two 644 event logs, the sqlite projections, `sessions.pkl`, and the
-`.bash_history` line; redact `Bearer <token>` and known secret values in tool-result emission
-(the `safeSecretOutput` mechanism for the Exa key in `internal/tools/web.go` is the model).
+### T2 — CRITICAL (operational) — Provider credentials can persist in session logs
 
-### T2 — CRITICAL (operational) — Live Anthropic API key in a 0644 session log
+The audit confirmed the F6 failure mode: a shell can read `secrets.json`, and unfiltered tool
+output can carry credentials into durable logs. Credential equality can be checked privately
+without publishing values or fingerprints. The path deny is defense-in-depth, not an OS
+boundary; even correctly protected credential files can leak through tool output.
 
-`.ycc/sessions/s_2a289a4ad44dc96a/events.jsonl` (mode 644, 2026-07-06 autonomous run) contains a
-full dump of `secrets.json`; the `sk-ant-…` key in it **is the live key** (SHA-256 prefix
-`6dd0a3ae8a9a` matches `~/.config/ycc/secrets.json`, coordinator-verified). This is the F6
-"Bash can `cat` secrets.json" reality: the deny is documented as defense-in-depth, and the
-tool output flowed into the durable log verbatim.
+**Fix:** rotate exposed provider keys; scrub affected logs and derived copies; add an
+emit-time redaction pass over tool results for known secret values. Default session log
+files to 0600 and directories to 0700. Permissive child modes rely on every ancestor staying
+private, and copies or exports can lose that protection.
 
-**Fix:** rotate the Anthropic key; delete/scrub that log; add an emit-time redaction pass over
-tool results for every value present in `secrets.json`; default session logs and dirs to 0600
-(447 of 3552 `events.jsonl` are not 0600; session dirs are 0755 — harmless only because the
-`.ycc` parent is 0700).
-
-### T3 — CRITICAL (design) — Token holder = unconfined shell as `why` = root on this host
+### T3 — CRITICAL (design) — Token holder = unconfined shell; host privileges determine impact
 
 Agent Bash (coordinator/implementer/chat roles) is `sh -c` with the daemon's scrubbed env, no
 sandbox, no allowlist (`internal/tools/worker.go:1458,1567`); `internal/sandbox` is used **only
-for the reviewer role**, and there is no config knob to confine anything else. User `why` is in
-the `docker` and `sudo` groups (`docker:x:999:why,ian,hailey`), so any shell as `why` is root
-(`docker run -v /:/host …`). The reviewer sandbox was probed from inside: `/` is read-only and
-scratch is confined, **but** `docker ps` and `tmux list-panes`/`send-keys` both work from it
-(sockets not masked), so even a "read-only reviewer" can pivot to root or inject keystrokes
-into the user's live shell pane.
+for the reviewer role**, and there is no config knob to confine anything else. If the daemon
+user controls a rootful Docker socket, shell access is root-equivalent
+(`docker run -v /:/host …`). Sudo policy can further expand privileges.
+
+Probing from inside the reviewer sandbox demonstrated that a read-only `/` and confined
+scratch do not prevent access to unmasked control sockets. Docker APIs can mutate the host;
+terminal-multiplexer APIs can inject keystrokes into an existing shell. A "read-only reviewer"
+therefore needs socket isolation, not just read-only filesystem mounts.
 
 **Fix:** mask `/var/run/docker.sock`, `/tmp/tmux-*` (and ideally loopback) in the sandbox
 helper; run agents under a dedicated uid/container without docker/sudo access; until then,
 treat the bearer token as a root credential.
 
-### T4 — HIGH (operational) — ngrok publishes the daemon to the internet with the token as the only gate
+### T4 — HIGH (operational) — Public tunnels need defense beyond the bearer token
 
-`ngrok.yml` has no traffic-policy, OAuth, IP restriction, or mTLS — the web UI is served
-unauthenticated at `/` (by design, gives attackers a ready-made UI and full service
-identification) and every RPC's only gate is the bearer token. There is **no failed-auth rate
-limiting and no failed-auth logging** (the latency interceptor sits inside auth, so 401s are
-invisible), and the token's entropy is weak (T1). Local brute force is unbounded: other local
-processes and host-networked containers reach `127.0.0.1:8787` directly at high rps, bypassing
-ngrok.
+Without an edge traffic policy, OAuth, IP restriction, or mTLS, a tunnel leaves the bearer
+token as the only RPC gate. The web UI is served unauthenticated at `/` by design, exposing
+service identification. There is **no failed-auth rate limiting and no failed-auth logging**
+(the latency interceptor sits inside auth, so 401s are invisible). A weak or leaked credential
+therefore has little defense in depth. Local processes and host-networked containers can
+reach `127.0.0.1:8787` directly at high request rates, bypassing tunnel-side controls.
 
 **Fix:** rotate (T1), add failed-auth throttling + logging in `RequireBearer`
 (`internal/server/auth.go:27`), and add an ngrok edge gate (OAuth/IP restriction) or switch to
@@ -169,15 +163,15 @@ discloses the exact decompressed size.
 
 ### T9 — LOW — Adjacent host exposure (workstation-takeover context, beyond ycc)
 
-`ian` and `hailey` are also in `docker`+`sudo` (root-equivalent; only `clover` is confined by
-the 0700 walls). LAN/Tailscale-reachable unauthenticated services probed once each:
-RedisInsight :8001 (full Redis access via UI), Prometheus :9090 and node_exporter :9100
-(host metrics), Grafana :3000 (login page), `python -m http.server` :8000, Lamia :8791,
-nvidia_smi_exporter :9835. None grants exec as `why`; qdrant/immich published ports were not
-answering. `~/.ssh/authorized_keys` 0600, 9 ed25519 keys; git hooks are samples only; no
-cron/systemd user units found.
+A daemon audit should consider adjacent administrative UIs, metrics endpoints, ad-hoc file
+servers, and container-control privileges. Unauthenticated helper services can expose data
+or operational metadata even without directly granting shell execution. Restrictive file
+modes do not protect against root-equivalent accounts. Personal service inventory, account
+memberships, ports, and key inventory are intentionally omitted from this public report.
 
-**Fix:** bind the helper UIs to loopback/Tailscale; reconsider docker/sudo membership.
+**Fix:** restrict helper-service reachability and require appropriate authentication;
+review Docker access and sudo policy. Loopback binding reduces remote exposure but does not
+isolate a service from other users or host-networked containers.
 
 ## Verified solid (highlights)
 
@@ -195,20 +189,21 @@ cron/systemd user units found.
   raster-only attachment allow-list holds against SVG/MIME-param/data-URL variants; deps and
   lockfile clean (Darwin-only fsevents hook); dist manifest matches a fresh typecheck/build
   hash. Connect transport uses `redirect: "error"`.
-- Secrets at rest are 0600 in 0700 dirs with a verified parent chain; state `daemon-token`
-  is CSPRNG 64-hex 0600; SSH keys 0600; `.git/hooks` samples only.
+- Credential-storage checks covered owner-only files and directories, the full parent
+  permission chain, and CSPRNG state-token generation. Those controls must also cover
+  copies and exports; they do not isolate same-uid agents.
 - Workstream paths use `ContainedPath`/`VerifyUnderRoot`, re-verified before removal; no
   client-path RemoveAll; activity SQL parameterized; GetJobOutput session-scoped and capped.
 
 ## Recommended order
 
-1. **Now (operational):** rotate `YCC_TOKEN` to the 64-hex state-file token (stop putting it on
-   command lines/tmux) and rotate the Anthropic key; scrub the two 644 event logs, the sqlite
-   projections, `sessions.pkl`, and the `.bash_history` line (T1, T2).
+1. **First (operational):** rotate exposed daemon/provider credentials, verify the active
+   credential source, and stop putting secrets in command lines or terminal automation.
+   Scrub retained copies, including logs, projections, history, and exports (T1, T2).
 2. **Outer gate:** ngrok traffic-policy OAuth/IP restriction (or Tailscale), plus
    failed-auth rate limiting/logging in `RequireBearer` (T4).
 3. **Contain the blast radius:** mask docker/tmux sockets and loopback in the sandbox; plan a
-   dedicated uid for the daemon/agents; reconsider `why`'s docker-group membership (T3).
+   dedicated uid for the daemon/agents without root-equivalent control privileges (T3).
 4. **Code fixes:** Search re-check + `/proc` deny + `PR_SET_DUMPABLE` (T5); session-id
    validation (T6); emit-time secret redaction + 0600 default logs (T2); reject request
    `Content-Encoding` pre-Connect (T7); OAuth-fallback/`base_url` tightening and

@@ -22,7 +22,7 @@ attributable per role and per model.
 ## Context
 - gollama `ResponseMessageGenerate.Usage` exposes `PromptTokens`, `CompletionTokens`,
   `TotalTokens`, `CacheCreationInputTokens`, `CacheReadInputTokens`, and
-  `PromptTokensDetails.CachedTokens` — confirmed in `/home/why/code/gollama/types.go`.
+  `PromptTokensDetails.CachedTokens` — confirmed in gollama's `types.go`.
 - The event `actor` already encodes the role (`coordinator`, `implementer`,
   `reviewer:<name>`), so role attribution needs no new plumbing.
 - The engine `Loop` knows the resolved model id (`Loop.Model`) but NOT the logical model

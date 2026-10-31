@@ -14,7 +14,7 @@ My recommended direction is **less incidental orchestration, stronger evidence c
 
 ### Corpus
 
-I inspected the local vals logs under `/home/why/code/vals/.ycc/sessions/`; historical records commonly identify the workspace as `valstore`. The directory was receiving new sessions during analysis. To make the census reproducible, all statistics below use events **strictly before 2026-09-17T00:00:00Z**, excluding empty logs. The retained event range is July 15–September 16.
+I inspected the local vals logs under `<workspace>/.ycc/sessions/`. The directory was receiving new sessions during analysis. To make the census reproducible, all statistics below use events **strictly before 2026-09-17T00:00:00Z**, excluding empty logs. The retained event range is July 15–September 16. Personal paths and private session locators are omitted from this public summary.
 
 | Measure | Fixed-cutoff observation |
 |---|---:|
@@ -37,21 +37,17 @@ All **137 distinct recorded commit SHAs resolve to commit objects in vals's loca
 Reproduce the census without a provider call:
 
 ```sh
-python3 scripts/vals-session-census.py /home/why/code/vals/.ycc/sessions \
+python3 scripts/vals-session-census.py /path/to/workspace/.ycc/sessions \
   --before 2026-09-17T00:00:00Z --summary
 ```
 
-Omit `--summary` for per-log counts and hashes. Use complete/quiescent log snapshots; if a live append leaves an incomplete record, the cutoff census deliberately fails with a retry diagnostic rather than silently discarding it. Timestamp offsets are normalized for comparisons. The aggregate SHA-256 over sorted `session-id:filtered-content-sha256` records is:
-
-```text
-0d09077866733372b9cf75c4cd9067ba0e78dbcc7d8bda6e7d5927d97c5dd1d6
-```
+Omit `--summary` for per-log counts and hashes. Use complete/quiescent log snapshots; if a live append leaves an incomplete record, the cutoff census deliberately fails with a retry diagnostic rather than silently discarding it. Timestamp offsets are normalized for comparisons. For private reproducibility, the census computes an aggregate SHA-256 over sorted `session-id:filtered-content-sha256` records; the private corpus fingerprint is not published here.
 
 ### Method
 
 The investigation combined a full event census with three parallel read-only investigations: user interventions and long conversations; delegation/review/work-loop outcomes; and tool/provider reliability. I separately checked aggregates, Git objects, representative successful and difficult trajectories, and current source. The selected deep dives are deliberately stratified around failure modes and successful counterexamples, **not a statistically random outcome sample**.
 
-References below are **session ID, event sequence**. Locate them in `<vals>/.ycc/sessions/<id>/events.jsonl`; sequence is the durable identifier, not an assumed physical line number. Raw logs remain local: this report does not embed entire transcripts, tool captures, credentials, or opaque provider state.
+Examples below are identified by task, date, or descriptive case label rather than private session IDs and event locators. In a private evidence ledger, use durable event sequences rather than assumed physical line numbers. Raw logs remain private: this report does not embed entire transcripts, tool captures, credentials, or opaque provider state.
 
 Important limits:
 
@@ -68,21 +64,21 @@ Important limits:
 
 Task 0292 is a strong example. An implementer prematurely committed a candidate. In the next session, reviewers found a placement-transition race that could escape mirroring, and fanout of rejected writes. Corrections added targeted regressions; both reviewers subsequently accepted.
 
-Evidence: `s_0dda3cb359b3797e` #906 (September 11 handoff); `s_23ae3e3df5110f71` #250/#256 (findings), #1035/#1078 (acceptance).
+Evidence: the September 11 handoff and follow-up review record, ordered from findings to acceptance.
 
-Across the corpus, 62 sessions contain a `revise`; 52 of those also contain a commit event. Revision and recorded delivery frequently coexist; these counts alone do not establish that every finding was resolved before commit. The ordered examples above are stronger evidence of convergence. At the smaller end, task 0261 obtained one focused acceptance and committed a bounded estimator correction (`s_c26a24042a1601f4` #345/#384, September 8).
+Across the corpus, 62 sessions contain a `revise`; 52 of those also contain a commit event. Revision and recorded delivery frequently coexist; these counts alone do not establish that every finding was resolved before commit. The ordered examples above are stronger evidence of convergence. At the smaller end, task 0261 obtained one focused acceptance and committed a bounded estimator correction (September 8).
 
-Task 0236 is another useful positive control: collision-resistant writer identities and shared HLC state were propagated through replication/storage/hints/anti-entropy; two reviewers accepted, then another revision caught wire-budget and handshake-readiness details. The final report preserved the protocol migration caveat and separated hardware rollout from software completion (`s_015f7a7a78891afa` #992/#1005, #1285/#1355, #1405/#1410, September 7).
+Task 0236 is another useful positive control: collision-resistant writer identities and shared HLC state were propagated through replication/storage/hints/anti-entropy; two reviewers accepted, then another revision caught wire-budget and handshake-readiness details. The final report preserved the protocol migration caveat and separated hardware rollout from software completion (September 7).
 
 **Preserve:** independent scrutiny, concrete regression tests, explicit deployment constraints, and the ability to revise after a superficially successful implementation.
 
 ### The system can retain negative findings instead of manufacturing success
 
-Task 0208 needed seven implementation rounds and four numbered review rounds. That looks expensive until one reads the missing gates: per-owner progress, flush/merge versus actual compaction, bounded qpair ownership, and hardware restoration. The final evidence supported the eight-shard recommendation only after the missing compaction arm was added (`s_9784754c841e67fb` #829/#835, #1710/#1719, #2285/#2291, #2326/#2331, August 15).
+Task 0208 needed seven implementation rounds and four numbered review rounds. That looks expensive until one reads the missing gates: per-owner progress, flush/merge versus actual compaction, bounded qpair ownership, and hardware restoration. The final evidence supported the eight-shard recommendation only after the missing compaction arm was added (August 15).
 
-Conversely, task 0186 kept its write-combiner feature default-off when hardware tails regressed despite substantial development effort (`s_8c5372d4370f4958` #3558, August 12).
+Conversely, task 0186 kept its write-combiner feature default-off when hardware tails regressed despite substantial development effort (August 12).
 
-The long September ingestion investigation also distinguishes source-event admission, acknowledged logical writes, and physical replication work, and eventually rejects an incomplete comparison after a crash (`s_3770be49aaf4e538` #866, #5260, #16598). These distinctions matter more than optimistic task closure.
+The long September ingestion investigation also distinguishes source-event admission, acknowledged logical writes, and physical replication work, and eventually rejects an incomplete comparison after a crash. These distinctions matter more than optimistic task closure.
 
 **Preserve:** honest uncertainty and negative experiments. Missing commits or unchanged task status can coexist with real progress.
 
@@ -106,19 +102,19 @@ The immediate opportunity is enabling *generation of a batch*, not concurrently 
 
 ### B. “READY” means different things to the agent and scheduler
 
-One September 5 coordinator reported that all seven tasks labeled ready were actually blocked and correctly did nothing (`s_e2479ddba5f75449` #12).
+One September 5 coordinator reported that all seven tasks labeled ready were actually blocked and correctly did nothing.
 
 The contradiction still exists: `internal/orchestrator/orchestrator.go`'s `list_backlog` annotates dependency-clear blocked tasks `[READY]` and includes them under “Ready to start,” while `internal/session/workloop.go:topReadyTask` excludes blocked tasks and accepts todo/in-progress work.
 
 **Proposal 0387:** share eligibility semantics. “Dependencies satisfied” is useful information but must not imply “actionable now.” Keep blockers and explicit authorization gates intact. This is a small, high-confidence usability/correctness fix, not a reason to auto-unblock work.
 
-Related preflight examples were legitimate refusals: task 0182 lacked a required fleet reservation (`s_16001646893b9a30` #65; `s_4e7264f4379bf626` #32, August 12), and task 0258 lacked an approved archive destination/deletion authorization (`s_6d9bb1b94f3bf338` #45, September 5). Existing proposal **0324** can make these prerequisites visible before expensive delegation.
+Related preflight examples were legitimate refusals: task 0182 lacked a required test-resource reservation (August 12), and task 0258 lacked an approved archive destination/deletion authorization (September 5). Existing proposal **0324** can make these prerequisites visible before expensive delegation.
 
 ### C. Review isolation works, but independent build execution often does not
 
 Fifty review summaries mention cross-device errors; 62 mention read-only restrictions. These are overlapping text-match sets, not 112 independent failures. The qualitative pattern is clear: reviewers try Cargo, hit artifact-write restrictions, and either rely on the implementer's report or inspect prebuilt binaries.
 
-Examples: `s_c26a24042a1601f4` #345 (September 8), `s_23ae3e3df5110f71` #1035 (September 11). A useful workaround is visible at `s_74bcfc320e3f8430` #841: the reviewer runs available test binaries despite being unable to build.
+Examples include the September 8 estimator review and September 11 placement-transition review. Another review demonstrates a useful workaround: the reviewer runs available test binaries despite being unable to build.
 
 When an OS sandbox is available, current `internal/sandbox/sandbox.go` deliberately protects the workspace with Landlock or a read-only bind; the unsupported-platform fallback is prompt-only enforcement. Scratch writes are already possible; the deficiency is a reliable, discoverable build workflow with source identity—not a complete inability to run tests in isolation.
 
@@ -126,9 +122,9 @@ When an OS sandbox is available, current `internal/sandbox/sandbox.go` deliberat
 
 ### D. Verification needs a concise evidence contract
 
-Task 0186 repeatedly tested the wrong execution topology. A nominal 30-second hardware arm hung for over 58 minutes; another produced zero server writes because the detached executor was not driven. The coordinator eventually insisted on reproducing the real reactor/TCP arrangement before another rewrite (`s_8c5372d4370f4958` #2183, #2341, #2428/#2518). The session contains 1,060 model-turn events and 16 review events, but not all that effort is harness waste: later review found real lost-wake and timer-error defects.
+Task 0186 repeatedly tested the wrong execution topology. A nominal 30-second hardware arm hung for over 58 minutes; another produced zero server writes because the detached executor was not driven. The coordinator eventually insisted on reproducing the real reactor/TCP arrangement before another rewrite. The session contains 1,060 model-turn events and 16 review events, but not all that effort is harness waste: later review found real lost-wake and timer-error defects.
 
-Task 0197 illustrates a different ambiguity. A prototype regressed and production code was reverted; reviewers then debated whether an evidence-only negative result completed an implementation task. One review also caught a substantive inserts-versus-overwrites confound. The user ultimately authorized the negative-result disposition (`s_d8b8a396ebb85a0c` #2160, #2184, #2229/#2242, #2254/#2255, #2458/#2629). About 6h45m of this session's 10.32-hour span was waiting for that answer.
+Task 0197 illustrates a different ambiguity. A prototype regressed and production code was reverted; reviewers then debated whether an evidence-only negative result completed an implementation task. One review also caught a substantive inserts-versus-overwrites confound. The user ultimately authorized the negative-result disposition. About 6h45m of this session's 10.32-hour span was waiting for that answer.
 
 **Recommendation:** evolve existing **0324** preflight, **0320** analytics, and the useful ledger portion of **0322**, rather than creating another blanket process:
 
@@ -142,7 +138,7 @@ This is not a recommendation for an elaborate dossier on every small change.
 
 ## 4. Long-session behavior: continuity is more valuable than a larger transcript
 
-The September 11–16 conversation `s_3770be49aaf4e538` contains 16,975 events, 5,210 model turns, 100 generic-agent invocations, and 24.3 MB of tool-result text. Its 132-hour span includes substantial idle gaps. The coordinator's last recorded pre-rollover model-turn estimate approaches 924k tokens; #15392 records a context-error recovery with an old selected-view estimate of 924,185.
+The September 11–16 ingestion conversation contains 16,975 events, 5,210 model turns, 100 generic-agent invocations, and 24.3 MB of tool-result text. Its 132-hour span includes substantial idle gaps. The coordinator's last recorded pre-rollover model-turn estimate approaches 924k tokens; a context-error recovery records an old selected-view estimate of 924,185.
 
 This is an important workload, not an outlier to dismiss. The user authorized a sustained performance investigation, then repeatedly asked for check-ins. Fresh subagent handoffs kept specialist work manageable, but the parent still accumulated the whole investigation. A larger context limit alone does not solve continuity, relevance, status, or retained experiment identity.
 
@@ -156,15 +152,15 @@ Current ycc already has significant remedies: generic-agent fresh handoffs (**03
 - accepted findings and unresolved criteria;
 - live job/resource ownership and next action.
 
-The full transcript remains the audit trail, not the mandatory working set. Any automatic rollover must fail closed on authority loss and prove restart/steering correctness; a hard context threshold alone is not a complete design. Custom model definitions also need a known context window: #15393 records `context_window=0`, so model-window-driven pressure handling cannot rely on a configured limit in that case.
+The full transcript remains the audit trail, not the mandatory working set. Any automatic rollover must fail closed on authority loss and prove restart/steering correctness; a hard context threshold alone is not a complete design. Custom model definitions also need a known context window: the next turn records `context_window=0`, so model-window-driven pressure handling cannot rely on a configured limit in that case.
 
-There is a smaller, directly traceable current bug: #15392 reports **`new_context_tokens_est=0`** for an approximately 18.7 KB summary; the next successful coordinator turn (#15393) estimates 14,099 tokens. `ContextTokensEstimateForHistory` applies the previous history's measured-input anchor to a discontinuous replacement (`internal/engine/loop.go:538–566`). Its subtractive correction can go negative and clamp to zero. `SetHistory` resets the anchor afterward, explaining why the actual next request has a plausible size. **Proposal 0392** corrects prospective replacement accounting and tests the strictly-smaller check with comparable estimates; it does not add automatic policy or change context limits.
+There is a smaller, directly traceable current bug: the recovery reports **`new_context_tokens_est=0`** for an approximately 18.7 KB summary; the next successful coordinator turn estimates 14,099 tokens. `ContextTokensEstimateForHistory` applies the previous history's measured-input anchor to a discontinuous replacement (`internal/engine/loop.go:538–566`). Its subtractive correction can go negative and clamp to zero. `SetHistory` resets the anchor afterward, explaining why the actual next request has a plausible size. **Proposal 0392** corrects prospective replacement accounting and tests the strictly-smaller check with comparable estimates; it does not add automatic policy or change context limits.
 
 ## 5. Where the human became the scheduler, anomaly detector, and source of truth
 
 ### Completed work did not always wake its parent
 
-The clearest user-facing historical defect was not slow inference: finished work could sit until the user typed again. In `s_3770be49aaf4e538`, reviewer jobs finished at #3744/#3807 on September 11 but their completion notices were delivered at #3809/#3810 the next afternoon, immediately after the user's #3808 check-in. One report waited about 16h45m.
+The clearest user-facing historical defect was not slow inference: finished work could sit until the user typed again. In the long September ingestion conversation, reviewer jobs finished on September 11 but their completion notices were delivered the next afternoon, immediately after the user's check-in. One report waited about 16h45m.
 
 The full-corpus completion-to-automatic-notification sample has 167 pairs: median about nine seconds, p90 about 90 minutes, and 22 over 30 minutes. This is only the automatically notified subset; explicitly waited/claimed jobs are separate. It is not all avoidable compute time, but it establishes severe continuity failures when continued work was intended.
 
@@ -172,11 +168,11 @@ The full-corpus completion-to-automatic-notification sample has 167 pairs: media
 
 ### “The process is alive” is not a useful experiment health criterion
 
-In `s_0dd031d407fe4524` (September 4), the user asked for hourly monitoring (#948). A watcher hit the then-relevant timeout validation (#954), then died immediately because a POSIX shell could not run its Bash arrays (#959). The user reported the failed job about 90 minutes later (#962). The model's response incorrectly claimed no monitoring time had been lost (#964).
+In a September 4 monitoring case, the user asked for hourly monitoring. A watcher hit the then-relevant timeout validation, then died immediately because a POSIX shell could not run its Bash arrays. The user reported the failed job about 90 minutes later. The model's response incorrectly claimed no monitoring time had been lost.
 
-More revealingly, the next report called **+70k source events** healthy (#967). The user asked whether that was slow (#976). Only then did the agent normalize the interval to about **13 events/s**, inspect dropped batches, and diagnose a rehome abort/retry livelock (#977/#982/#990). This does not prove the user was the only possible route to diagnosis; it shows a concrete case where reassurance preceded interpretation of the measurements.
+More revealingly, the next report called **+70k source events** healthy. The user asked whether that was slow. Only then did the agent normalize the interval to about **13 events/s**, inspect dropped batches, and diagnose a rehome abort/retry livelock. This does not prove the user was the only possible route to diagnosis; it shows a concrete case where reassurance preceded interpretation of the measurements.
 
-The five-day September performance conversation shows the larger version of the same risk: careful local percentage gains preceded reconciliation of the much larger gap to historical performance (#16953/#16965/#16975). The workloads and hardware differ, so million-write microbenchmarks are not a valid direct baseline. Establishing a comparable baseline should be an early deliverable, not something the user must request after days of tuning.
+The five-day September performance conversation shows the larger version of the same risk: careful local percentage gains preceded reconciliation of the much larger gap to historical performance. The workloads and hardware differ, so million-write microbenchmarks are not a valid direct baseline. Establishing a comparable baseline should be an early deliverable, not something the user must request after days of tuning.
 
 **Proposal 0391:** bounded run supervision and health receipts. Track source/build, workload, acknowledgements/durability, elapsed time, expected baseline, drop/error counts, progress and monitoring failures. A completed local job is not the same thing as a healthy external experiment. Current background timeout semantics are already improved; do not infer that all present watchers must have a one-hour lifetime.
 
@@ -188,13 +184,13 @@ A prior permissive answer is **not** standing authorization to wipe a later corp
 
 ### Memory can turn observations into invented policy
 
-At `s_b44e2a8799400f69` #694 (August 29), the user explicitly says they never imposed a +/-13% benchmark-variance rule. The agent acknowledges the mistake (#696) and repairs memory to say that variance was measured once, not a user preference (#702).
+In an August 29 memory-correction case, the user explicitly says they never imposed a +/-13% benchmark-variance rule. The agent acknowledges the mistake and repairs memory to say that variance was measured once, not a user preference.
 
 **Proposal 0390:** distinguish user-stated guidance, measured observation, model inference, and proposed policy, with source event/date/scope and correction semantics. The failure is authority laundering through summarization, not simply a missing memory entry. Carrying more memory without provenance can make future sessions worse.
 
 ### Ordinary conversation must not become the secrets store
 
-Credentials were supplied through an ordinary question answer and a session prompt (`s_d1a15d39d944c779` #63; `s_84d3c8c0940ee9e6` #2, August 22). A later answer asked the agent to recover the previously pasted credential from session history (`s_66adfde7ea26f5bb` #61). No values are reproduced here; current validity was not tested.
+The retrospective found credentials supplied through ordinary conversational inputs and later requests to recover previously pasted credentials from history. No values, credential-bearing session locators, or fingerprints are reproduced here; current validity was not tested.
 
 Owner-only logs are useful protection, but the plaintext still becomes part of retained history and potential exports/model replay. **Proposal 0389 (P1):** dedicated secret entry and named references, with raw values excluded from ordinary events and model-visible answers. Do not promise that regex redaction solves arbitrary tool-output leakage. Existing exposed credentials should be treated as candidates for rotation through their normal provider, and any historical-log cleanup must be an explicit user decision because rewriting the audit/replay source has consequences.
 
@@ -202,7 +198,7 @@ Owner-only logs are useful protection, but the plaintext still becomes part of r
 
 Several difficult sessions finished the engineering but struggled to reconcile task status, candidate commits, and the session's ownership baseline.
 
-For task 0292, an implementer committed before independent review, moving HEAD and invalidating attribution (`s_0dda3cb359b3797e` #856/#874/#893). In the follow-up, updating the already-dirty task document itself invalidated attribution; accepted, committed code still did not imply successful administrative finalization (`s_23ae3e3df5110f71` #647/#658, #1101/#1114/#1118). Another reopened session lacked a persisted baseline (`s_9c0c11e8b18a23f3` #810/#827, September 10).
+For task 0292, an implementer committed before independent review, moving HEAD and invalidating attribution. In the follow-up, updating the already-dirty task document itself invalidated attribution; accepted, committed code still did not imply successful administrative finalization. Another reopened session lacked a persisted baseline (September 10).
 
 The guards were not pointless: they protected unrelated work and forced scrutiny of a genuinely defective candidate. Removing them would make the metric look better by removing safety.
 
@@ -216,7 +212,7 @@ Current remedies include explicit scoped Git changesets/persisted baselines (**0
 |---|---|
 | 41 of 70 structured session errors were `max_output_tokens` HTTP 400s, August 9–10 | Adapter now deliberately omits the unsupported parameter and has a wire-level test. Historical capability failure, not proof current Codex is unreliable. |
 | 22 of 31 unknown review verdicts came from that parameter error; eight from rate limits | Unknown execution is not substantive rejection. Keep review execution status separate from verdict. |
-| Repeated identical capability failure despite tier escalation (`s_2d497b782356c8d1` #176/#192) | Preflight and deterministic-failure suppression are better than blind retries; existing provider work **0363/0364** is relevant. |
+| Repeated identical capability failure despite tier escalation | Preflight and deterministic-failure suppression are better than blind retries; existing provider work **0363/0364** is relevant. |
 | Retained implementer/reviewer context overflow | **0321** provides automatic subagent rollover; fresh handoffs and coordinator rollover also exist now. Verify recovery quality rather than treating this as untouched. |
 | Work loop stopped because task metadata did not change after useful failed hardware evidence | **0344** fixed metadata-only progress stopping. Evidence-aware continuation is now explicit. |
 | Parent stopped after a progress response while a child remained live | **0379** added completion-driven wakeup and `awaiting_jobs`; keep a long-running regression fixture. |
@@ -225,9 +221,9 @@ Current remedies include explicit scoped Git changesets/persisted baselines (**0
 
 The 70 error events occurred in 34 sessions, not 70 failed sessions. The dominant historical error was a narrow two-day incompatibility, so an undifferentiated “33% failure rate” would be false.
 
-One current classification gap remains: all eight `unknown` errors in this cohort are Codex in-stream `cyber_policy` rejections, including September 15's `s_3770be49aaf4e538` #16656. `internal/engine/apierror.go` recognizes stream rate-limit/overload/server codes but not that policy code. Classify and display it as a non-retryable provider-policy refusal, retain the explanation and unfinished-work handoff, and preserve the refusal stop boundary. This belongs alongside typed-provider-error work **0364**. Do **not** implement blind retries, automatic cross-provider routing to evade a refusal, or prompt obfuscation; any continuation must resolve scope/authorization appropriately and respect applicable safeguards.
+One current classification gap remains: all eight `unknown` errors in this cohort are Codex in-stream `cyber_policy` rejections, including a September 15 event in the ingestion investigation. `internal/engine/apierror.go` recognizes stream rate-limit/overload/server codes but not that policy code. Classify and display it as a non-retryable provider-policy refusal, retain the explanation and unfinished-work handoff, and preserve the refusal stop boundary. This belongs alongside typed-provider-error work **0364**. Do **not** implement blind retries, automatic cross-provider routing to evade a refusal, or prompt obfuscation; any continuation must resolve scope/authorization appropriately and respect applicable safeguards.
 
-Task 0233 shows why unchanged status cannot mean no progress: two failed hardware gates yielded evidence, then a later session diagnosed serial durable mirror fanout and created an accepted prerequisite instead of blindly repeating (`s_38910dab7b63bd93` #575; `s_b92adfd52ef2590d` #546; `s_59fed849b01f78f3` #314, September 6–7). Preserve this behavior. **0366** explicitly rejects reinstating an arbitrary attempt-count exit without policy approval.
+Task 0233 shows why unchanged status cannot mean no progress: two failed hardware gates yielded evidence, then a later session diagnosed serial durable mirror fanout and created an accepted prerequisite instead of blindly repeating (September 6–7). Preserve this behavior. **0366** explicitly rejects reinstating an arbitrary attempt-count exit without policy approval.
 
 ## 8. Measurement improvements
 

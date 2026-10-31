@@ -1,8 +1,12 @@
 # Security audit: internet-exposed daemon (task 0427, 2026-10-06)
 
-Deployment audited: `ycc daemon --web` bound to `127.0.0.1:8787` with `YCC_TOKEN` set, published
-by `ngrok http 8787 --url https://<reserved>.ngrok.dev`. The host is multi-user (other accounts
-have login shells) and runs host-networked containers, so loopback is **not** private.
+Audit scenario: `ycc daemon --web` bound to `127.0.0.1:8787` with bearer authentication,
+published through an HTTPS tunnel. On shared hosts, other login users and host-networked
+containers can reach loopback, so loopback is **not** a privacy boundary.
+
+This public summary retains the October 2026 findings and methodology, not personal
+deployment inventory or credential characteristics. Findings describe the audit date,
+not the current security posture.
 
 Trust model: a bearer-token holder can start agent sessions that run arbitrary shell commands,
 so token = shell as the daemon user. Findings therefore concern (a) unauthenticated internet
@@ -41,26 +45,28 @@ request gets `io.ReadAll`'d before routing (`h2c.go:186`).
 the interceptor as well); `connect.WithReadMaxBytes(~32 MiB)`, which also bounds decompressed
 size; replace `x/net/h2c` with Go's native unencrypted HTTP/2 (`http.Server.Protocols`).
 
-### F2 — HIGH (operational) — ngrok inspector stores the bearer token for every local user
-ngrok's request inspector on `127.0.0.1:4040` had captured 100 requests, 93 of them with the
-`Authorization: Bearer` header in clear, along with response bodies (transcripts). Every local
-account and every host-networked container can `curl` it, so any of them gets the token, and with
-it a shell as the daemon user.
+### F2 — HIGH (operational) — Request inspectors can expose bearer tokens to local users
+A tunnel's local request inspector can retain the `Authorization: Bearer` header in clear,
+along with response bodies (transcripts). Loopback listeners are reachable by other local
+accounts and host-networked containers; access to a captured token gives a shell as the
+daemon user. Inspection must be disabled, not merely hidden from the public tunnel.
 **Fix:** run `ngrok http 8787 --inspect=false` (or `inspect: false` / `web_addr: false` in
 ngrok.yml), then **rotate the token**. If ngrok's cloud Traffic Inspector with full capture is
 enabled, turn it off.
 
-### F3 — HIGH (operational) — The token looks hand-chosen; there is no rate limiting
-The live token is 22 characters, lowercase+digits, with only 12 distinct characters and a common
-word in it. The daemon applies no brute-force throttling.
+### F3 — HIGH (operational) — Hand-chosen tokens and absent rate limiting
+Hand-chosen bearer tokens are unsuitable for a shell-capable API. The daemon applies no
+brute-force throttling; use a cryptographically generated token rather than relying on a
+human-selected secret.
 **Fix:** use `head -c 32 /dev/urandom | base64` as `docs/remote-api.md` recommends. Optionally
 add failed-auth rate limiting, and/or put ngrok edge auth in front (OAuth/IP restriction traffic
 policy) as defense in depth.
 
 ### F4 — HIGH (local) — Tokenless loopback daemons: other local users and DNS rebinding
 The one-shot in-process daemon is **always** tokenless (`cmd/ycc/main.go:768-778`).
-`ycc --background` and loopback `ycc daemon` are tokenless whenever `YCC_TOKEN` is unset. On this
-host, any other local user or host-networked container can drive them, which is a shell as `why`.
+`ycc --background` and loopback `ycc daemon` are tokenless whenever `YCC_TOKEN` is unset. On a
+shared host, another local user or host-networked container can drive them, gaining a shell
+as the daemon user.
 No Host/Origin check exists, so a web page that DNS-rebinds to `127.0.0.1:8787` can drive a
 tokenless daemon same-origin (confirmed locally: foreign `Host`/`Origin` → 200 with data).
 **Fix:** generate a random per-process token for the in-process daemon (the client is the same

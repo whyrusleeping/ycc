@@ -3,7 +3,7 @@ import XCTest
 
 final class ToolPreviewTests: XCTestCase {
     func testLongPathsKeepTheirIdentifyingTail() {
-        let args = #"{"file_path":"/home/why/code/ycc/clients/ios/YccKit/Sources/YccKit/ToolPreview.swift"}"#
+        let args = #"{"file_path":"/workspace/ycc/clients/ios/YccKit/Sources/YccKit/ToolPreview.swift"}"#
         XCTAssertEqual(
             ToolPreview.summary(tool: "Read", args: args),
             "…/Sources/YccKit/ToolPreview.swift")

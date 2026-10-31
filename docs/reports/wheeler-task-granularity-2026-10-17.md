@@ -5,7 +5,7 @@
 Read-only investigation of Wheeler's backlog, git history, and session logs for
 2026-10-16 22:33 through 2026-10-17 22:33 UTC, plus ycc's current prompts and work-loop
 implementation. Freeze the quantitative sample at the first 49 completed sessions of
-`loop_bc5e02f2`; its 50th session was still running. All 50 sessions started in this
+the sampled work loop; its 50th session was still running. All 50 sessions started in this
 window were direct-work Astra coordinators. This is not a comparison with another
 coordinator model, a correctness audit of Wheeler, or a measured prompt experiment.
 
@@ -17,7 +17,7 @@ Start with explicit task-sizing guidance, not a task-count cap or weaker safety 
 
 ## Observations
 
-Source: `/home/why/code/wheeler/.ycc/workloop.json`, each referenced session's
+Source: `<workspace>/.ycc/workloop.json`, each referenced session's
 `events.jsonl`, `backlog/0047*`, `backlog/0068*`, and git history through the cutoff.
 
 | Measure | Observed |
@@ -71,20 +71,20 @@ from roughly 83 to 1,818 historical items/s; 0086 found an actual librdkafka han
 
 ## Session evidence
 
-Selected references (paths relative to Wheeler `.ycc/sessions`):
+Selected evidence, labeled by case rather than private session identifier:
 
-- `s_61891bdc76990526/events.jsonl`, event 57: selects 0068, then says it will split
-  allocation limits and "complete that slice in this run"; events 62/67 create separate
-  parent/child plans. This starts the repeated clustering pattern.
-- `s_2010d6f23e9a6c96/events.jsonl`, event 46: splits cooperative seeding, expressly
-  excluding live-priority integration. Event 222 reports the complete 240-test real-service
-  suite taking 667.5 s. Whole session: 833 s. This shows the fixed verification cost a
-  small primitive can carry; it does not imply those tests were unnecessary.
-- `s_f6786d9dbba770a7/events.jsonl`, events 47/211: finishes cooperative finite-barrier
-  units while recording pending handoff as the next integration step.
-- `s_ff859ea9ad437697/events.jsonl`, events 23/61: initially announces rotation/retirement
-  work, then chooses the separately excluded merge-capacity measurement. Useful evidence,
-  but another session leaves the same connected outcome open.
+- **Initial clustering split:** selects 0068, then says it will split allocation limits
+  and "complete that slice in this run"; creates separate parent/child plans. This starts
+  the repeated clustering pattern.
+- **Cooperative seeding:** splits seeding, expressly excluding live-priority integration.
+  Reports the complete 240-test real-service suite taking 667.5 s. Whole session: 833 s.
+  This shows the fixed verification cost a small primitive can carry; it does not imply
+  those tests were unnecessary.
+- **Finite barrier:** finishes cooperative finite-barrier units while recording pending
+  handoff as the next integration step.
+- **Merge capacity:** initially announces rotation/retirement work, then chooses the
+  separately excluded merge-capacity measurement. Useful evidence, but another session
+  leaves the same connected outcome open.
 
 Splits are not forced by current context exhaustion. Among clustering sessions that
 create a task, the median measured coordinator input at the first creation is about

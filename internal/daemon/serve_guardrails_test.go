@@ -44,10 +44,11 @@ func TestIsLoopback(t *testing.T) {
 	}
 	nonLoopback := []string{
 		"0.0.0.0:8787",
-		":8787", // empty host => wildcard bind (all interfaces), network-exposed
-		"",      // empty addr => ":http" wildcard bind, network-exposed
-		"192.168.1.10:8787",
-		"100.64.0.1:8787", // tailnet-style CGNAT address
+		":8787",            // empty host => wildcard bind (all interfaces), network-exposed
+		"",                 // empty addr => ":http" wildcard bind, network-exposed
+		"192.0.2.10:8787",  // RFC5737 documentation address
+		"10.23.45.67:8787", // synthetic RFC1918 private-network address, not loopback
+		"100.64.0.1:8787",  // synthetic RFC6598 shared-address-space fixture, not loopback
 		"example.com:8787",
 	}
 	for _, a := range nonLoopback {

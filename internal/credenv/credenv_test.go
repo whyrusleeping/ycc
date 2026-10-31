@@ -55,7 +55,9 @@ func TestValidateCredentialURL(t *testing.T) {
 			t.Errorf("rejected %q: %v", u, err)
 		}
 	}
-	for _, u := range []string{"http://provider.example", "http://192.168.1.1", "http://128.0.0.1", "http://localhost.example", "http://localhost@evil.example", "//localhost", "https:", "https:///v1", "ftp://localhost", "://broken"} {
+	// The RFC1918 fixture is synthetic: private-network HTTP must still be rejected.
+	// Documentation and adjacent-to-loopback addresses must also be rejected.
+	for _, u := range []string{"http://provider.example", "http://10.23.45.67", "http://192.0.2.1", "http://128.0.0.1", "http://localhost.example", "http://localhost@evil.example", "//localhost", "https:", "https:///v1", "ftp://localhost", "://broken"} {
 		if ValidateCredentialURL(u) == nil {
 			t.Errorf("accepted %q", u)
 		}

@@ -55,8 +55,8 @@ non-persisted events through the existing Subscribe pipe.**
   (0128 transient broadcast path + 0129 engine StreamTurner seam/TUI tail row are done;
   the loop already type-asserts StreamTurner and emits throttled transient turn_delta).
   The only remaining work — making the real gollama client implement TurnStream (task
-  0120) and live end-to-end verification — is gated on the gollama working repo at
-  /home/why/code/gollama, which is still absent in this environment. Verified upstream
+  0120) and live end-to-end verification — was gated on access to a separate gollama
+  working repository, which was unavailable during that verification pass. Verified upstream
   gollama HEAD is still the pinned 567eebc with no TurnStream, so nothing can be adopted
   from the module cache either. Note: list_backlog shows this task [READY] because dep
   0120 is "blocked" rather than an undone todo — do not start it until 0120 is done.

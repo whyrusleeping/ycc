@@ -25,7 +25,7 @@ Goal: `ycc task add|list|show` CLI with daemon-backed and daemon-free (direct do
 
 Note: the task description assumes a `CreateTask` RPC exists; it does NOT (only ListBacklog/GetTask/UpdateTask/CaptureBacklogItem). Part of this task is adding it.
 
-1. Proto (proto/ycc/v1/ycc.proto): add `rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse)` next to the other backlog RPCs. `CreateTaskRequest { string project; string title; string body; int32 priority (0 => default 3); repeated string depends_on; repeated string spec_refs; }`, `CreateTaskResponse { TaskDetail task; }`. Regenerate with `buf generate` (buf, protoc-gen-go, protoc-gen-connect-go are all on PATH at /home/why/go/bin).
+1. Proto (proto/ycc/v1/ycc.proto): add `rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse)` next to the other backlog RPCs. `CreateTaskRequest { string project; string title; string body; int32 priority (0 => default 3); repeated string depends_on; repeated string spec_refs; }`, `CreateTaskResponse { TaskDetail task; }`. Regenerate with `buf generate` (requires buf, protoc-gen-go, and protoc-gen-connect-go on PATH).
 
 2. Shared body composer: `taskBody`/`startsWithDescriptionHeader`/`hasHeaderLine` live unexported in internal/orchestrator/modes.go (~line 152). Move them into internal/docs as exported `docs.TaskBody(desc string) string` (plus unexported helpers) and make orchestrator call docs.TaskBody, so server and CLI compose the same "## Description / ## Acceptance criteria / ## Work log" scaffold. Keep behavior identical (existing orchestrator tests must pass).
 

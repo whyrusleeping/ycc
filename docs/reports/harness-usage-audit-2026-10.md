@@ -4,7 +4,7 @@
 
 Read-only inspection and streaming analysis of reachable session logs on the development host, followed by focused harness cleanup. This is not a complete end-to-end live-model evaluation. No new provider runs were performed for the audit.
 
-The corpus contains **987 unique sessions**, June 28–October 9, 2026: ycc 429, valstore 291, oldgrowth 108, lamia 95, sage 25, ychat-dev 20, ipfs-nu 8, algoz 3, wheeler 2, ychat 2, plus four web-e2e fixtures. Discovery covered the project registry, `/home/why/code`, and reachable temporary/review copies. Realpath/inode dedup collapsed symlinks; session-id dedup removed 631 copied logs, preferring the registered original. Benchmark JSONL that was not a ycc session was excluded. Live logs were still changing during the scan.
+The corpus contains **987 unique sessions**, June 28–October 9, 2026: ycc 429 and nine other workspaces with 291, 108, 95, 25, 20, 8, 3, 2, and 2 sessions, plus four web-e2e fixtures. Discovery covered the project registry, the operator's workspace root, and reachable temporary/review copies. Private workspace inventory is omitted. Realpath/inode dedup collapsed symlinks; session-id dedup removed 631 copied logs, preferring the registered original. Benchmark JSONL that was not a ycc session was excluded. Live logs were still changing during the scan.
 
 Counts below exclude synthetic tool calls. The analysis used event types, actor/model metadata, tool argument fields, and result/status markers, not transcript excerpts. They describe one operator's workloads, not all harness users. Rare-feature counts must also be interpreted against when features became available.
 
@@ -42,7 +42,7 @@ No background lifetime, notification, replay, cancellation, or timeout policy wa
 
 ## Compaction and fresh contexts
 
-- **Two coordinator `context_view_changed` events**, both valstore automatic `context_error_recovery` (September 14 and 21). **Zero explicit rollovers.** Coordinator rollover became available around mid-September; this is not a full three-month exposure window.
+- **Two coordinator `context_view_changed` events**, both automatic `context_error_recovery` in the same non-ycc workspace (September 14 and 21). **Zero explicit rollovers.** Coordinator rollover became available around mid-September; this is not a full three-month exposure window.
 - Seven structured context-length errors, all in August: two coordinator and five implementer. This predates the rollover feature; successful later recovery need not emit the same terminal error.
 - Subagent `rollover_reason`: 233 `coordinator_fresh` events (147 generic, 60 implementer, 26 reviewer), two `automatic_pressure` events, zero subagent `context_error_recovery` events.
 - Fresh requests: 149/240 `send_to_agent`, 99/438 `send_to_implementer`, and 43/317 `re_review`. These are requested-mode counts, distinct from lifecycle rollover counts.

@@ -14,7 +14,7 @@ spec_refs:
 ## Description
 Task 0120 landed `TurnStream` (gollama 4140920) with native SSE streaming for Anthropic only; OpenAI-compatible and Ollama backends currently use the graceful fallback (blocking Turn + one whole-text snapshot delta). The task 0120 description explicitly scoped these as follow-ups.
 
-Implement native streaming for the OpenAI-compatible `/chat/completions` path (`stream: true` chunked deltas, incl. tool-call argument assembly) and Ollama, preserving TurnStream's contract: snapshot-semantics onDelta, final message byte-equivalent to the non-streaming shape, Turn untouched. Work happens in /home/why/code/gollama (clone-into-workspace pattern from task 0120's plan), then bump ycc's go.mod.
+Implement native streaming for the OpenAI-compatible `/chat/completions` path (`stream: true` chunked deltas, incl. tool-call argument assembly) and Ollama, preserving TurnStream's contract: snapshot-semantics onDelta, final message byte-equivalent to the non-streaming shape, Turn untouched. Work happens in the separate gollama repository (clone-into-workspace pattern from task 0120's plan), then bump ycc's go.mod.
 
 ## Acceptance criteria
 - [ ] OpenAI-compatible TurnStream streams natively (offline recorded-SSE tests: text deltas, tool-call assembly, usage; DeepEqual to non-streaming shape)
@@ -26,11 +26,11 @@ Implement native streaming for the OpenAI-compatible `/chat/completions` path (`
 
 Goal: native SSE streaming for the OpenAI-compatible /chat/completions path in gollama's TurnStream, which also covers Ollama (its /v1 endpoint IS the OpenAI-compatible path — Turn already routes Ollama through it; document that choice). Bedrock keeps the graceful fallback. Then bump ycc's gollama dep and touch spec §7.1.
 
-WORKSPACE MECHANICS (established pattern from task 0120):
-1. git clone /home/why/code/gollama .gollama-work (already in .git/info/exclude). Edit ONLY in .gollama-work; .gollama-link is the read-only view. Build/test with `cd .gollama-work && go build ./... && go vet ./... && go test ./...` (ANTHROPIC_API_KEY is set, so Anthropic live tests run — they should stay green).
-2. When done: commit in .gollama-work, then `git -C /home/why/code/gollama pull --ff-only /home/why/code/ycc/.gollama-work main` and `git -C /home/why/code/gollama push origin main`. Record the sha.
-3. ycc bump: `GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`.
-4. Cleanup: rm -rf .gollama-work at the very end.
+CROSS-REPOSITORY WORKFLOW (established pattern from task 0120):
+1. Use a separate gollama checkout. Build/test there with `go build ./... && go vet ./... && go test ./...`; live tests require their documented credentials.
+2. Land the changes through gollama's normal contribution workflow and record the sha.
+3. ycc bump: `go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`.
+4. Remove any temporary checkout when finished.
 
 PART A — gollama:
 
@@ -74,7 +74,7 @@ Acceptance mapping: A2+A4a/c/d → OpenAI native streaming w/ recorded-SSE tests
 - gollama anthropic_stream_test.go — offline SSE test style (httptest + scripted body); TestTurnStreamFallback at :167 needs repurposing
 - gollama http.go prepareRequest — pre-stream retry handling, reuse as-is
 - ycc spec.md:412-417 — §7.1 item 3 wording to update
-- push pattern: commit in .gollama-work; git -C /home/why/code/gollama pull --ff-only /home/why/code/ycc/.gollama-work main; push origin main; then GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha>
+- dependency-update pattern: land changes in the separate gollama repository, then `go get github.com/whyrusleeping/gollama@<sha>`
 
 ## Work log
 - 2026-07-06 plan: Goal: native SSE streaming for the OpenAI-compatible /chat/completions path in gollama's TurnStream, which also covers Ollama (its /v1 endpoint IS the OpenAI-compatible path — Turn already routes Ol

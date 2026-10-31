@@ -14,8 +14,8 @@ spec_refs:
 ---
 
 ## Description
-gollama now supports Anthropic extended thinking + effort (done outside the ycc backlog, in
-/home/why/code/gollama): `RequestOptions.Thinking` ("adaptive"), `Effort` ("low".."max"),
+gollama now supports Anthropic extended thinking + effort (done outside the ycc backlog,
+in the separate gollama repository): `RequestOptions.Thinking` ("adaptive"), `Effort` ("low".."max"),
 `ThinkingDisplay` map to the Anthropic `thinking` + `output_config.effort` fields; response
 `thinking`/`redacted_thinking` blocks are parsed into `Message.Thinking` +
 `Message.ThinkingBlocks` and replayed verbatim (signatures intact) so tool-using turns
@@ -52,12 +52,12 @@ engine and to surface returned thinking in the event log/TUI.
 
 Goal (narrowed scope per work log): implement the missing OpenAI-compatible + Ollama thinking/effort translations in gollama, live-smoke what we can (Ollama locally; Anthropic already done), document the per-backend mapping, and implement the decided ycc degrade behavior (ignore + one-time session-log warning). The OpenAI live smoke requires OPENAI_API_KEY (absent) — write it key-guarded and split its execution into a follow-on task.
 
-VERIFIED ENVIRONMENT FACTS (this session):
-- gollama working repo exists at /home/why/code/gollama (HEAD 4140920, clean).
-- Local Ollama at localhost:11434 is live; its OpenAI-compatible /v1/chat/completions endpoint HONORS `"think": true` and returns the reasoning text in `message.reasoning`; native /api/chat returns it as `message.thinking`. Model gemma4:26b produces thinking. No OPENAI_API_KEY anywhere (env, ~/.config/ycc/secrets.json).
+VERIFICATION CONTEXT:
+- The implementation started from gollama HEAD 4140920.
+- Ollama's OpenAI-compatible /v1/chat/completions endpoint honors `"think": true` and returns reasoning text in `message.reasoning`; native /api/chat returns it as `message.thinking`. Verified with gemma4:26b. The OpenAI live smoke was deferred because its required credential was unavailable.
 - OpenAI's documented `reasoning_effort` values: none|minimal|low|medium|high|xhigh (model-dependent). gollama Effort levels: low|medium|high|xhigh|max.
 
-WORKSPACE MECHANICS (same as task 0120): git clone /home/why/code/gollama .gollama-work (inside the ycc workspace; check .git/info/exclude already lists it, add if not). Edit only in .gollama-work; build/test there. When done: commit in .gollama-work, then `git -C /home/why/code/gollama pull --ff-only /home/why/code/ycc/.gollama-work main` (branch name may be master — check), then `git -C /home/why/code/gollama push origin main`. Record the sha. Then ycc: `GOPRIVATE=github.com/whyrusleeping go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`. rm -rf .gollama-work at the very end.
+CROSS-REPOSITORY WORKFLOW (same as task 0120): use a separate gollama checkout for dependency changes and build/test there. Land those changes through gollama's normal contribution workflow and record the sha. Then update ycc: `go get github.com/whyrusleeping/gollama@<sha> && go mod tidy`. Remove any temporary checkout when finished.
 
 PART A — gollama:
 1. openai.go: add to openaiRequest: `ReasoningEffort string `json:"reasoning_effort,omitempty"`` and `Think bool `json:"think,omitempty"``. In ChatCompletion's OpenAI-compatible branch, branch on c.Backend():
@@ -71,7 +71,7 @@ PART A — gollama:
 5. Live smokes:
    - New ollama_live_test.go: skip with t.Skip unless localhost:11434 is reachable (quick GET /api/tags with short timeout). Model "gemma4:26b". (a) Turn with Thinking="adaptive", Effort="high" (effort must be harmlessly ignored): assert no error, non-empty Choices[0].Message.Thinking, non-empty or empty Content tolerated but request accepted. (b) tool round-trip with thinking on: define a trivial tool (e.g. get_weather), prompt that invites a call; if the model returns a tool call, append the assistant msg + tool result and run a second Turn — assert no error end-to-end. If gemma4:26b rejects tools (Ollama 400 "does not support tools"), note it in the test and fall back to asserting the thinking-on plain round-trip (2 sequential turns with history replay) does not error — document which path ran.
    - New openai_live_test.go (or extend an existing pattern): guarded by OPENAI_API_KEY (t.Skip when absent) — Turn against https://api.openai.com/v1 with a reasoning model (e.g. "gpt-5.1") and Effort="low"; assert accepted + answer returned. It will be exercised by the follow-on task when a key is available.
-6. cd .gollama-work && go build ./... && go vet ./... && go test ./... (Anthropic live tests run with ANTHROPIC_API_KEY; Ollama live tests run against local daemon). Remove the stray untracked .edit-test.txt? — NO: that's in /home/why/code/gollama itself, leave it alone (don't commit it; a fresh clone won't include it).
+6. In the gollama checkout, run `go build ./... && go vet ./... && go test ./...` (Anthropic live tests require ANTHROPIC_API_KEY; Ollama live tests require a local test endpoint).
 
 PART B — ycc (after the go.mod bump):
 1. Degrade behavior (decided 2026-07-08 with user: ignore + ONE-TIME warning in the session log, per session/role): in internal/engine/loop.go, before/around the turn request in Run(), when think.Thinking != "" emit at most one event.Narration per Loop describing what the backend cannot express, guarded by a private bool (e.g. l.thinkingWarned) that resets in SetBackend and SetThinking (so a backend/level change may warn once more — still per role/session in practice):
@@ -87,15 +87,15 @@ PART B — ycc (after the go.mod bump):
 ACCEPTANCE MAPPING: criterion 1 (translations) → Part A 1–3; criterion 2 (live smokes) → Ollama done live locally, Anthropic previously done, OpenAI test written but key-guarded (execution split to follow-on task — coordinator will create it); criterion 3 (mapping doc) → A3 + B3; criterion 4 (degrade decision implemented) → B1–B2. GLM remains deferred per the 2026-07-05 grooming (treated as generic OpenAI-compatible: it receives reasoning_effort; provider-specific thinking param verification deferred).
 
 ## Work log
-- 2026-07-08 pm grooming (with user): unblocked to todo — the gollama working repo now
-  exists at /home/why/code/gollama and the user can attend live smokes / supply keys.
+- 2026-07-08 pm grooming (with user): unblocked to todo — a gollama working checkout
+  and user-assisted live verification became available.
   Sequenced **after 0120** (added as a dependency): both touch gollama's turn/request
   paths, so doing effort translation after TurnStream lands avoids churn. Degrade
   decision recorded: ignore + one-time session-log warning (see acceptance criteria).
   Scope remains OpenAI + Ollama (GLM deferred).
 - 2026-07-05 re-blocked (autonomous coordinator): this session cannot complete the
-  narrowed scope — the gollama working repo (/home/why/code/gollama) is still absent
-  (only the read-only module cache exists) and no OPENAI_API_KEY is available, so the
+  narrowed scope — a gollama working checkout was unavailable
+  (only the read-only module cache existed), as was the OpenAI test credential, so the
   missing OpenAI translation cannot be implemented or smoke-tested. Verification done
   meanwhile against the pinned gollama (v0.0.0-20260628184513):
   - anthropic: `Thinking`/`Effort`/`ThinkingDisplay` → `thinking` + `output_config.effort`
@@ -121,7 +121,7 @@ ACCEPTANCE MAPPING: criterion 1 (translations) → Part A 1–3; criterion 2 (li
 - 2026-07-02 blocked: parked for the overnight autonomous run — requires live smoke tests against OpenAI/GLM/Ollama backends (keys/endpoints not available unattended) and edits in the separate gollama repo; user wants to be present. Unblock when the user can supply/verify backend access.
 - 2026-07-06 plan: Goal (narrowed scope per work log): implement the missing OpenAI-compatible + Ollama thinking/effort translations in gollama, live-smoke what we can (Ollama locally; Anthropic already done), document 
 …[truncated]
-- 2026-07-06 context hints: gollama repo: /home/why/code/gollama (HEAD 4140920, clean; branch main) — clone to .gollama-work, do not edit the real repo directly; gollama openai.go:47 ChatCompletion, :102 openaiRequest literal;
+- 2026-07-06 context hints: gollama base revision 4140920 — use a separate working checkout; gollama openai.go:47 ChatCompletion, :102 openaiRequest literal;
 …[truncated]
 - 2026-07-06 implementer report: Completed task 0025: cross-backend thinking/effort verification + missing translations + graceful degrade.  ## PART A — gollama (pushed to origin/main, sha c92bd8b4201ff472d4e8d916ce03c6020d9e05b6) 
 …[truncated]

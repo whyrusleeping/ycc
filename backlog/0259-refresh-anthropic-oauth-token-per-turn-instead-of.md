@@ -24,10 +24,9 @@ another workspace — silently kills every live session's credential. The failur
 a non-retryable `kind: auth` 401 `"OAuth access token has been revoked."`, which ends the
 session and loses its context.
 
-Observed: `/home/why/code/valstore/.ycc/sessions/s_48f210c2a3df61d5` (started 2026-08-05
-23:00:19Z, opus/oauth) idled ~2h55m on an `ask_user`, resumed 2026-08-06 04:11:37Z and
-immediately took that 401. `~/.config/ycc/secrets.json` had been rewritten with a fresh 8h
-token at 02:58:22Z — i.e. a background refresh 73 minutes before the death.
+Observed failure: a long-lived OAuth session resumed after idling on an `ask_user`
+and immediately received that 401. A background refresh had updated the stored token
+while the session was idle, leaving its client with the revoked access token.
 
 The codex/OpenAI path does not have this bug: `codex.New(base, openaiauth.AccessToken)`
 receives the token *function* and resolves it per request. Anthropic is the asymmetric one.
