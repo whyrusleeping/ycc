@@ -54,12 +54,6 @@ struct LandingView: View {
     /// A rename failure (collision, unknown name) surfaced as its own alert.
     @State private var projectRenameError: String?
     @State private var followUpError: String?
-    /// Bumped whenever the list comes back into view (popping back to it,
-    /// returning to the foreground) to rebuild running rows' backgrounds. On
-    /// device, a running row's background was seen to come back fully blank
-    /// after the list sat hidden under a session view; rebuilding it on
-    /// reappearance redraws it. Not reproduced in the simulator.
-    @State private var rowBackgroundEpoch = 0
     /// Daemon dependency health, behind the alert row atop the list; created
     /// with the list model for the same connection.
     @State private var health: HealthModel?
@@ -269,7 +263,6 @@ struct LandingView: View {
         // remote link). Pull-to-refresh and post-mutation reloads stay forced.
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
-                rowBackgroundEpoch &+= 1
                 Task { await model?.refreshIfStale() }
                 Task { await health?.refresh() }
             }
@@ -289,7 +282,6 @@ struct LandingView: View {
         // the agent has usually moved on while the user was inside a session.
         .onChange(of: router.path.isEmpty) { _, isAtRoot in
             if isAtRoot {
-                rowBackgroundEpoch &+= 1
                 Task { await model?.refreshIfStale() }
                 Task { await health?.refresh() }
             }
@@ -655,11 +647,20 @@ struct LandingView: View {
                     // the old row reappears and fades). Distinct ids make it a
                     // plain delete from one section and insert into the other.
                     ForEach(section.sessions.map { (section.id + "/" + $0.sessionID, $0) }, id: \.0) { _, session in
-                        NavigationLink(value: HomeDestination.session(
+                        let destination = HomeDestination.session(
                             id: session.sessionID,
                             project: model.project(for: session),
                             live: session.live,
                             title: SessionListModel.displayTitle(for: session))
+                        // No row tint for needs-answer: the section header and
+                        // the gutter bell already carry the one attention cue.
+                        // Running sessions breathe instead (RunningGlow).
+                        SessionCell(
+                            isRunning: SessionListModel.lifecycleLabel(for: session) == "running",
+                            isFirst: session.sessionID == section.sessions.first?.sessionID,
+                            isLast: session.sessionID == section.sessions.last?.sessionID,
+                            // A drill-in pushes, as a NavigationLink would.
+                            open: { router.path.append(destination) }
                         ) {
                             SessionRow(
                                 session: session,
@@ -668,15 +669,6 @@ struct LandingView: View {
                                 isLoopOwned: model.isLoopSession(session),
                                 isUnread: model.isUnread(session))
                         }
-                        // No row tint for needs-answer: the section header and
-                        // the gutter bell already carry the one attention cue.
-                        // Running sessions breathe instead (RunningRowBackground).
-                        .listRowBackground(SessionListModel.lifecycleLabel(for: session) == "running"
-                            ? RunningRowBackground(
-                                isFirst: session.sessionID == section.sessions.first?.sessionID,
-                                isLast: session.sessionID == section.sessions.last?.sessionID,
-                                epoch: rowBackgroundEpoch)
-                            : nil)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 setFollowUp(session, model: model, via: .swipe)
@@ -888,20 +880,61 @@ private struct NewSessionRequest: Identifiable {
     let id = UUID()
 }
 
-/// A single session row, laid out like a mail inbox entry so it scans fast:
+/// A session row laid out edge to edge in its list cell, with its own
+/// disclosure chevron and, while running, the glow behind it.
 ///
-///     ▪  project  0431                           13m
-///        Title of the session, wrapping to at
-///        most two lines
-///        ▪ running · work · via loop
-///
-/// The leading gutter carries the loudest attention signal (needs-answer bell,
-/// else the unread square) without shifting the text column; unread also bolds
-/// the title. The header says *where* (project in the unscoped feed, focus
-/// tasks) and *when*; the footer is one quiet mono line of routine metadata. A
-/// row with nothing to put in the header (a plain chat in a project-scoped list)
-/// moves the timestamp onto the title line instead of spending a line on it.
-/// The list-row background of a running session: an "on" LED glow with no
+/// Every row keeps the system cell background and draws the glow as row
+/// content. Swapping a running row's
+/// `.listRowBackground` in and out was unreliable on device: such rows
+/// sometimes came back with no background at all (no card, no glow) after
+/// the list had been hidden under a session view (0486). The row is a
+/// Button that pushes the session rather than a NavigationLink, so List
+/// adds no accessory chevron (which the glow would have to stop short of);
+/// VoiceOver reads it as one button.
+private struct SessionCell<Content: View>: View {
+    var isRunning: Bool
+    var isFirst: Bool
+    var isLast: Bool
+    var open: () -> Void
+    @ViewBuilder var content: Content
+
+    /// The system row's content margins (matched against the default
+    /// NavigationLink row on the iOS 27 simulator).
+    private static var padding: EdgeInsets { EdgeInsets(top: 15, leading: 16, bottom: 15, trailing: 18) }
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                content
+                Image(systemName: "chevron.forward")
+                    .font(.body.weight(.semibold))
+                    .imageScale(.small)
+                    .foregroundStyle(Color(.tertiaryLabel))
+                    .accessibilityHidden(true)
+            }
+            .padding(Self.padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if isRunning { RunningGlow(isFirst: isFirst, isLast: isLast) }
+            }
+        }
+        .buttonStyle(PressHighlight())
+        .listRowInsets(EdgeInsets())
+    }
+
+    /// Leaves the label's own colours alone (a default-styled List button
+    /// re-tints them) and draws the cell's press highlight, which List only
+    /// draws for default-styled buttons, under the glow.
+    private struct PressHighlight: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .contentShape(Rectangle())
+                .background(configuration.isPressed ? Color(.systemGray4) : .clear)
+        }
+    }
+}
+
+/// The glow behind a running session's row: an "on" LED glow with no
 /// drawn line. A thin blurred stroke centred on the outline makes the light
 /// densest where a border would be; it spreads only a few points outward, so
 /// it fades inside the cell instead of cutting off against neighbouring rows.
@@ -912,11 +945,9 @@ private struct NewSessionRequest: Identifiable {
 /// The outline follows the cell's own shape: in an inset-grouped list only a
 /// section's first row has rounded (top) corners and its last row rounded
 /// (bottom) corners, concentric with the section card; other corners are square.
-private struct RunningRowBackground: View {
+private struct RunningGlow: View {
     var isFirst: Bool
     var isLast: Bool
-    /// Changing this rebuilds the glow (see `rowBackgroundEpoch`).
-    var epoch = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The inset-grouped section card's corner radius (continuous): fitted to
@@ -926,13 +957,7 @@ private struct RunningRowBackground: View {
     private static let inset: CGFloat = 6
 
     var body: some View {
-        // The card fill stays outside the TimelineView, so the row keeps its
-        // card even if the animated glow fails to draw.
-        ZStack {
-            Color(.secondarySystemGroupedBackground)
-            glow.id(epoch)
-        }
-        .accessibilityHidden(true)
+        glow.accessibilityHidden(true)
     }
 
     private var glow: some View {
@@ -965,6 +990,19 @@ private struct RunningRowBackground: View {
     }
 }
 
+/// A single session row, laid out like a mail inbox entry so it scans fast:
+///
+///     ▪  project  0431                           13m
+///        Title of the session, wrapping to at
+///        most two lines
+///        ▪ running · work · via loop
+///
+/// The leading gutter carries the loudest attention signal (needs-answer bell,
+/// else the unread square) without shifting the text column; unread also bolds
+/// the title. The header says *where* (project in the unscoped feed, focus
+/// tasks) and *when*; the footer is one quiet mono line of routine metadata. A
+/// row with nothing to put in the header (a plain chat in a project-scoped list)
+/// moves the timestamp onto the title line instead of spending a line on it.
 private struct SessionRow: View {
     let session: Ycc_V1_SessionSummary
     var project = ""

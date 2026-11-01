@@ -12,9 +12,10 @@ import SwiftUI
 /// pile of stale intermediates, each refreshing as it reappears. With replace
 /// semantics a single Back always returns straight to Recent.
 ///
-/// The one carve-out is the genuine drill-in: `NavigationLink` pushes
-/// (Recent → session, backlog → task) append to `path` directly without going
-/// through ``open(_:)``, so Back still returns to the list being browsed. And
+/// The one carve-out is the genuine drill-in: pushes from a list (Recent →
+/// session, backlog → task) append to `path` directly — via `NavigationLink`
+/// or, for Recent's rows, a plain append — without going through ``open(_:)``,
+/// so Back still returns to the list being browsed. And
 /// a *lateral* move to the same kind of screen (task → dependency task) swaps
 /// the top in place, keeping that parent underneath.
 @MainActor
