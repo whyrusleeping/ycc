@@ -153,6 +153,8 @@ interface RowViewProps {
   repeat?: number;
   /** A question row the answer panel is showing in full right now. */
   answering?: boolean;
+  /** Only the current retryable session error offers this control. */
+  retry?: { disabled: boolean; pending: boolean };
 }
 
 export const RowView = memo(function RowView({
@@ -163,6 +165,7 @@ export const RowView = memo(function RowView({
   search = null,
   repeat = 1,
   answering = false,
+  retry,
 }: RowViewProps) {
   const inspector = useInspector();
   const openInInspector = () =>
@@ -246,6 +249,11 @@ export const RowView = memo(function RowView({
             <span className="repeat" title={`${repeat} identical notices in a row`}>
               ×{repeat}
             </span>
+          )}
+          {retry && (
+            <button type="button" className="link" disabled={retry.disabled} data-track="session.retry" onClick={() => void controller.retry()}>
+              {retry.pending ? "Retrying…" : "Retry"}
+            </button>
           )}
         </div>
       );

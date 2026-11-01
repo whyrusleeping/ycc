@@ -28,7 +28,7 @@ export type RowKind =
   | { type: "tool"; name: string; status: ToolStatus; args: string; output: string }
   | { type: "question"; prompt: string; options: string[]; answer: string | null }
   | { type: "assumption"; questions: Question[]; response: string | null }
-  | { type: "system"; text: string; activity?: boolean }
+  | { type: "system"; text: string; activity?: boolean; sessionError?: boolean }
   | { type: "commit"; text: string; sha: string }
   | { type: "review"; text: string; verdict: string; summary: string; task: string; reviewedSnapshot: string }
   | { type: "liveTail"; text: string };
@@ -174,7 +174,7 @@ export class SessionProjection {
       case "session_error": {
         this.removeLiveTail(event.actor);
         const text = systemSummary(event.type, data);
-        if (text !== null) this.appendDurable(event, { type: "system", text });
+        if (text !== null) this.appendDurable(event, { type: "system", text, sessionError: true });
         break;
       }
       case "session_idle": {

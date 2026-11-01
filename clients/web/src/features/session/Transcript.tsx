@@ -7,6 +7,7 @@
 // activity summary (see blocks.ts) that the reader can expand in place.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionController, SessionSnapshot } from "./controller";
+import { isSubagentActor } from "./projection";
 import { clickVia, track } from "../../app/analytics";
 import { RowView } from "./RowView";
 import type { DraftPicture } from "../attachments/attachments";
@@ -169,6 +170,15 @@ export function Transcript({
       return next;
     });
   };
+  const retryRowId = useMemo(() => {
+    if (snap.mode !== "live" || snap.conn === "finished" || snap.conn === "failed" ||
+      snap.phase.kind !== "error" || !snap.phase.retryable) return null;
+    for (let i = snap.rows.length - 1; i >= 0; i--) {
+      const row = snap.rows[i];
+      if (row.kind.type === "system" && row.kind.sessionError && !isSubagentActor(row.actor)) return row.id;
+    }
+    return null;
+  }, [snap.mode, snap.conn, snap.phase, snap.rows]);
   const renderRow = (i: number, repeat = 1) => {
     const row = snap.rows[i];
     return (
@@ -180,6 +190,7 @@ export function Transcript({
         report={row.kind.type === "report" ? reportPresentation(snap.rows, i) : undefined}
         repeat={repeat}
         answering={snap.mode === "live" && row.id === snap.pendingQuestion?.rowId}
+        retry={row.id === retryRowId ? { disabled: snap.control !== null, pending: snap.control?.kind === "retry" } : undefined}
         search={
           search?.needle
             ? row.id === search.currentRowId

@@ -22,7 +22,8 @@ function isActivity(row: TranscriptRow): boolean {
 }
 
 function sameNotice(a: TranscriptRow, b: TranscriptRow): boolean {
-  return a.kind.type === "system" && b.kind.type === "system" && a.kind.text === b.kind.text && a.actor === b.actor;
+  return a.kind.type === "system" && b.kind.type === "system" && !a.kind.sessionError && !b.kind.sessionError &&
+    a.kind.text === b.kind.text && a.actor === b.actor;
 }
 
 /**
