@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/whyrusleeping/gollama"
@@ -2025,6 +2026,23 @@ type Manager struct {
 	// startMemoryGroom, when non-nil, replaces the real groom session launcher
 	// (test seam).
 	startMemoryGroom func(primary string, status docs.MemoryStatus) (*Session, error)
+
+	// Watches (watch.go). watchMu serializes all watch file I/O and guards the
+	// in-memory run state; it may be held while a run session starts.
+	watchMu       sync.Mutex
+	watchBusy     map[string]bool // watch key → probe or first pass active
+	watchFollowed map[string]bool // run session id → follower attached
+	watchWG       sync.WaitGroup
+	watchCtx      context.Context
+	watchCancel   context.CancelFunc
+	watchWake     chan struct{}
+	watchStop     bool
+	watchStarted  bool
+	watchRunning  atomic.Bool
+	// Test seams: run launcher, clock, and follower poll interval.
+	startWatchSession func(primary string, def WatchDefinition, runCtx string) (*Session, error)
+	watchNow          func() time.Time
+	watchPoll         time.Duration
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -2042,7 +2060,13 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	gitSyncCtx, gitSyncCancel := context.WithCancel(context.Background())
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	groomCtx, groomCancel := context.WithCancel(context.Background())
+	watchCtx, watchCancel := context.WithCancel(context.Background())
 	m := &Manager{
+		watchBusy:         map[string]bool{},
+		watchFollowed:     map[string]bool{},
+		watchCtx:          watchCtx,
+		watchCancel:       watchCancel,
+		watchWake:         make(chan struct{}, 1),
 		sessions:          map[string]*Session{},
 		historyCache:      map[string]sessionSummaryCacheEntry{},
 		usageScans:        usage.NewScanner(),
@@ -2414,7 +2438,7 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
-	if !cfg.Unattended {
+	if !cfg.Unattended && s.origin != OriginWatch {
 		// A user-started session floats its project to the top of pickers now;
 		// background activity is picked up by the periodic log-mtime scan.
 		m.TouchProjectWorkspace(absWS)
@@ -2846,6 +2870,13 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
 	deps.HeldTasks = func() map[string]string { return m.heldTasks(absWS, id) }
+	if mode == watchMode {
+		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
+	} else if !unattended && m.watchSchedulerRunning() {
+		deps.ScheduleWatch = func(_ context.Context, spec orchestrator.WatchSpec) (string, error) {
+			return m.scheduleWatchFromChat(absWS, spec)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
@@ -2935,7 +2966,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	// session's replayed history never re-fires; the goroutine exits when the log
 	// is closed (its channel closes).
 	if m.notifier != nil {
-		m.startNotifyWatcher(absWS, id, log)
+		m.startNotifyWatcher(absWS, id, mode, log)
 	}
 
 	return s, nil
@@ -2946,7 +2977,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 // events emitted after attach fire — a reopened session's replayed history never
 // re-notifies. The goroutine exits when the log closes (the subscription channel
 // closes).
-func (m *Manager) startNotifyWatcher(absWS, id string, log *event.Log) {
+func (m *Manager) startNotifyWatcher(absWS, id, mode string, log *event.Log) {
 	project := m.projectLabel(absWS)
 	ch, cancel := log.Subscribe(log.LastSeq())
 	go func() {
@@ -2962,6 +2993,10 @@ func (m *Manager) startNotifyWatcher(absWS, id string, log *event.Log) {
 				}
 				m.notifier.Send(notify.KindQuestion, project, id, questionLine(ev.Data))
 			case event.SessionIdle:
+				if mode == watchMode {
+					// Watch runs notify through their report status instead.
+					continue
+				}
 				if boolVal(ev.Data, "awaiting_jobs") {
 					// A progress report while delegated work still runs: the
 					// session resumes by itself, and its later idle report is the
@@ -3485,6 +3520,9 @@ func (m *Manager) ReclaimAll() {
 	}
 	m.groomMu.Unlock()
 	m.groomWG.Wait()
+
+	// Stop the watch scheduler and run followers; run sessions are reaped below.
+	m.stopWatches()
 
 	m.mu.Lock()
 	sessions := m.sessions

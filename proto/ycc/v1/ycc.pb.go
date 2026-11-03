@@ -11980,6 +11980,1135 @@ func (x *GetActivityStepsResponse) GetTotals() []*ActivityStepTotal {
 	return nil
 }
 
+// WatchDefinition is the user-controlled part of a watch.
+type WatchDefinition struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                           // unique per project: 1-64 of [a-z0-9_-], starting with a letter or digit
+	Brief          string                 `protobuf:"bytes,2,opt,name=brief,proto3" json:"brief,omitempty"`                                         // what each run checks and how to judge it
+	IntervalSecs   int64                  `protobuf:"varint,3,opt,name=interval_secs,json=intervalSecs,proto3" json:"interval_secs,omitempty"`      // at least 300
+	Model          string                 `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`                                         // logical model for runs; empty = coordinator default
+	Probe          string                 `protobuf:"bytes,5,opt,name=probe,proto3" json:"probe,omitempty"`                                         // optional shell command run first; exit 0 records ok without a model run
+	ProbeAlways    bool                   `protobuf:"varint,6,opt,name=probe_always,json=probeAlways,proto3" json:"probe_always,omitempty"`         // start the model run even when the probe passes
+	Expires        string                 `protobuf:"bytes,7,opt,name=expires,proto3" json:"expires,omitempty"`                                     // the watch pauses at this time; empty = never
+	AllowedActions []string               `protobuf:"bytes,8,rep,name=allowed_actions,json=allowedActions,proto3" json:"allowed_actions,omitempty"` // pre-authorized actions beyond the low-risk default
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *WatchDefinition) Reset() {
+	*x = WatchDefinition{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[181]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchDefinition) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchDefinition) ProtoMessage() {}
+
+func (x *WatchDefinition) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[181]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchDefinition.ProtoReflect.Descriptor instead.
+func (*WatchDefinition) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{181}
+}
+
+func (x *WatchDefinition) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *WatchDefinition) GetBrief() string {
+	if x != nil {
+		return x.Brief
+	}
+	return ""
+}
+
+func (x *WatchDefinition) GetIntervalSecs() int64 {
+	if x != nil {
+		return x.IntervalSecs
+	}
+	return 0
+}
+
+func (x *WatchDefinition) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *WatchDefinition) GetProbe() string {
+	if x != nil {
+		return x.Probe
+	}
+	return ""
+}
+
+func (x *WatchDefinition) GetProbeAlways() bool {
+	if x != nil {
+		return x.ProbeAlways
+	}
+	return false
+}
+
+func (x *WatchDefinition) GetExpires() string {
+	if x != nil {
+		return x.Expires
+	}
+	return ""
+}
+
+func (x *WatchDefinition) GetAllowedActions() []string {
+	if x != nil {
+		return x.AllowedActions
+	}
+	return nil
+}
+
+// One action a run took, with how to undo it.
+type WatchAction struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Action        string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	Undo          string                 `protobuf:"bytes,2,opt,name=undo,proto3" json:"undo,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchAction) Reset() {
+	*x = WatchAction{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[182]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchAction) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchAction) ProtoMessage() {}
+
+func (x *WatchAction) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[182]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchAction.ProtoReflect.Descriptor instead.
+func (*WatchAction) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{182}
+}
+
+func (x *WatchAction) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *WatchAction) GetUndo() string {
+	if x != nil {
+		return x.Undo
+	}
+	return ""
+}
+
+// One entry in a watch's report history.
+type WatchReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	At            string                 `protobuf:"bytes,1,opt,name=at,proto3" json:"at,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`                            // run | probe | skipped | failed
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // the run session; empty for probe and skipped entries
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`                        // ok | warn | alert; empty for skipped entries
+	Summary       string                 `protobuf:"bytes,5,opt,name=summary,proto3" json:"summary,omitempty"`
+	Actions       []*WatchAction         `protobuf:"bytes,6,rep,name=actions,proto3" json:"actions,omitempty"`
+	ScheduledFor  string                 `protobuf:"bytes,7,opt,name=scheduled_for,json=scheduledFor,proto3" json:"scheduled_for,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchReport) Reset() {
+	*x = WatchReport{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[183]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchReport) ProtoMessage() {}
+
+func (x *WatchReport) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[183]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchReport.ProtoReflect.Descriptor instead.
+func (*WatchReport) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{183}
+}
+
+func (x *WatchReport) GetAt() string {
+	if x != nil {
+		return x.At
+	}
+	return ""
+}
+
+func (x *WatchReport) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *WatchReport) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *WatchReport) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *WatchReport) GetSummary() string {
+	if x != nil {
+		return x.Summary
+	}
+	return ""
+}
+
+func (x *WatchReport) GetActions() []*WatchAction {
+	if x != nil {
+		return x.Actions
+	}
+	return nil
+}
+
+func (x *WatchReport) GetScheduledFor() string {
+	if x != nil {
+		return x.ScheduledFor
+	}
+	return ""
+}
+
+// A user answer to a watch question, carried to later runs.
+type WatchDecision struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	At            string                 `protobuf:"bytes,1,opt,name=at,proto3" json:"at,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Seq           int64                  `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"` // the answer's event seq in session_id
+	Question      string                 `protobuf:"bytes,4,opt,name=question,proto3" json:"question,omitempty"`
+	Answer        string                 `protobuf:"bytes,5,opt,name=answer,proto3" json:"answer,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchDecision) Reset() {
+	*x = WatchDecision{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[184]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchDecision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchDecision) ProtoMessage() {}
+
+func (x *WatchDecision) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[184]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchDecision.ProtoReflect.Descriptor instead.
+func (*WatchDecision) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{184}
+}
+
+func (x *WatchDecision) GetAt() string {
+	if x != nil {
+		return x.At
+	}
+	return ""
+}
+
+func (x *WatchDecision) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *WatchDecision) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *WatchDecision) GetQuestion() string {
+	if x != nil {
+		return x.Question
+	}
+	return ""
+}
+
+func (x *WatchDecision) GetAnswer() string {
+	if x != nil {
+		return x.Answer
+	}
+	return ""
+}
+
+// Watch is a watch's client-facing state.
+type Watch struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Project          string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Definition       *WatchDefinition       `protobuf:"bytes,2,opt,name=definition,proto3" json:"definition,omitempty"`
+	CreatedAt        string                 `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Paused           bool                   `protobuf:"varint,4,opt,name=paused,proto3" json:"paused,omitempty"`
+	PausedReason     string                 `protobuf:"bytes,5,opt,name=paused_reason,json=pausedReason,proto3" json:"paused_reason,omitempty"` // user | expired; empty when not paused
+	NextDue          string                 `protobuf:"bytes,6,opt,name=next_due,json=nextDue,proto3" json:"next_due,omitempty"`
+	Notes            string                 `protobuf:"bytes,7,opt,name=notes,proto3" json:"notes,omitempty"` // notes the latest run passed forward
+	Decisions        []*WatchDecision       `protobuf:"bytes,8,rep,name=decisions,proto3" json:"decisions,omitempty"`
+	Last             *WatchReport           `protobuf:"bytes,9,opt,name=last,proto3" json:"last,omitempty"`                                                    // unset before the first report
+	Running          bool                   `protobuf:"varint,10,opt,name=running,proto3" json:"running,omitempty"`                                            // a probe or run is active
+	ParkedSessionIds []string               `protobuf:"bytes,11,rep,name=parked_session_ids,json=parkedSessionIds,proto3" json:"parked_session_ids,omitempty"` // runs waiting on a user answer
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Watch) Reset() {
+	*x = Watch{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[185]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Watch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Watch) ProtoMessage() {}
+
+func (x *Watch) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[185]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Watch.ProtoReflect.Descriptor instead.
+func (*Watch) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{185}
+}
+
+func (x *Watch) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *Watch) GetDefinition() *WatchDefinition {
+	if x != nil {
+		return x.Definition
+	}
+	return nil
+}
+
+func (x *Watch) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *Watch) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+func (x *Watch) GetPausedReason() string {
+	if x != nil {
+		return x.PausedReason
+	}
+	return ""
+}
+
+func (x *Watch) GetNextDue() string {
+	if x != nil {
+		return x.NextDue
+	}
+	return ""
+}
+
+func (x *Watch) GetNotes() string {
+	if x != nil {
+		return x.Notes
+	}
+	return ""
+}
+
+func (x *Watch) GetDecisions() []*WatchDecision {
+	if x != nil {
+		return x.Decisions
+	}
+	return nil
+}
+
+func (x *Watch) GetLast() *WatchReport {
+	if x != nil {
+		return x.Last
+	}
+	return nil
+}
+
+func (x *Watch) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+func (x *Watch) GetParkedSessionIds() []string {
+	if x != nil {
+		return x.ParkedSessionIds
+	}
+	return nil
+}
+
+// Project-scoped requests resolve an empty project to the only registered one.
+type ListWatchesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWatchesRequest) Reset() {
+	*x = ListWatchesRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[186]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWatchesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWatchesRequest) ProtoMessage() {}
+
+func (x *ListWatchesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[186]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWatchesRequest.ProtoReflect.Descriptor instead.
+func (*ListWatchesRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{186}
+}
+
+func (x *ListWatchesRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+type ListWatchesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Watches       []*Watch               `protobuf:"bytes,1,rep,name=watches,proto3" json:"watches,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWatchesResponse) Reset() {
+	*x = ListWatchesResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[187]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWatchesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWatchesResponse) ProtoMessage() {}
+
+func (x *ListWatchesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[187]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWatchesResponse.ProtoReflect.Descriptor instead.
+func (*ListWatchesResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{187}
+}
+
+func (x *ListWatchesResponse) GetWatches() []*Watch {
+	if x != nil {
+		return x.Watches
+	}
+	return nil
+}
+
+type GetWatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	ReportLimit   int32                  `protobuf:"varint,3,opt,name=report_limit,json=reportLimit,proto3" json:"report_limit,omitempty"` // newest reports returned; zero uses 20, clamped to 500
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWatchRequest) Reset() {
+	*x = GetWatchRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[188]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWatchRequest) ProtoMessage() {}
+
+func (x *GetWatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[188]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWatchRequest.ProtoReflect.Descriptor instead.
+func (*GetWatchRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{188}
+}
+
+func (x *GetWatchRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *GetWatchRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GetWatchRequest) GetReportLimit() int32 {
+	if x != nil {
+		return x.ReportLimit
+	}
+	return 0
+}
+
+type GetWatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Watch         *Watch                 `protobuf:"bytes,1,opt,name=watch,proto3" json:"watch,omitempty"`
+	Reports       []*WatchReport         `protobuf:"bytes,2,rep,name=reports,proto3" json:"reports,omitempty"` // newest first
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetWatchResponse) Reset() {
+	*x = GetWatchResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[189]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWatchResponse) ProtoMessage() {}
+
+func (x *GetWatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[189]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWatchResponse.ProtoReflect.Descriptor instead.
+func (*GetWatchResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{189}
+}
+
+func (x *GetWatchResponse) GetWatch() *Watch {
+	if x != nil {
+		return x.Watch
+	}
+	return nil
+}
+
+func (x *GetWatchResponse) GetReports() []*WatchReport {
+	if x != nil {
+		return x.Reports
+	}
+	return nil
+}
+
+// CreateWatch persists a new watch; its first run is due immediately.
+type CreateWatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Definition    *WatchDefinition       `protobuf:"bytes,2,opt,name=definition,proto3" json:"definition,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateWatchRequest) Reset() {
+	*x = CreateWatchRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[190]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateWatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateWatchRequest) ProtoMessage() {}
+
+func (x *CreateWatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[190]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateWatchRequest.ProtoReflect.Descriptor instead.
+func (*CreateWatchRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{190}
+}
+
+func (x *CreateWatchRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *CreateWatchRequest) GetDefinition() *WatchDefinition {
+	if x != nil {
+		return x.Definition
+	}
+	return nil
+}
+
+type CreateWatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Watch         *Watch                 `protobuf:"bytes,1,opt,name=watch,proto3" json:"watch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateWatchResponse) Reset() {
+	*x = CreateWatchResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[191]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateWatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateWatchResponse) ProtoMessage() {}
+
+func (x *CreateWatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[191]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateWatchResponse.ProtoReflect.Descriptor instead.
+func (*CreateWatchResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{191}
+}
+
+func (x *CreateWatchResponse) GetWatch() *Watch {
+	if x != nil {
+		return x.Watch
+	}
+	return nil
+}
+
+// UpdateWatch replaces the definition of the watch named by definition.name,
+// keeping its notes, decisions and history.
+type UpdateWatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Definition    *WatchDefinition       `protobuf:"bytes,2,opt,name=definition,proto3" json:"definition,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateWatchRequest) Reset() {
+	*x = UpdateWatchRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[192]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateWatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateWatchRequest) ProtoMessage() {}
+
+func (x *UpdateWatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[192]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateWatchRequest.ProtoReflect.Descriptor instead.
+func (*UpdateWatchRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{192}
+}
+
+func (x *UpdateWatchRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *UpdateWatchRequest) GetDefinition() *WatchDefinition {
+	if x != nil {
+		return x.Definition
+	}
+	return nil
+}
+
+type UpdateWatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Watch         *Watch                 `protobuf:"bytes,1,opt,name=watch,proto3" json:"watch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateWatchResponse) Reset() {
+	*x = UpdateWatchResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[193]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateWatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateWatchResponse) ProtoMessage() {}
+
+func (x *UpdateWatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[193]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateWatchResponse.ProtoReflect.Descriptor instead.
+func (*UpdateWatchResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{193}
+}
+
+func (x *UpdateWatchResponse) GetWatch() *Watch {
+	if x != nil {
+		return x.Watch
+	}
+	return nil
+}
+
+// DeleteWatch removes a watch and its report history; run session logs remain.
+type DeleteWatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteWatchRequest) Reset() {
+	*x = DeleteWatchRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[194]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteWatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteWatchRequest) ProtoMessage() {}
+
+func (x *DeleteWatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[194]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteWatchRequest.ProtoReflect.Descriptor instead.
+func (*DeleteWatchRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{194}
+}
+
+func (x *DeleteWatchRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *DeleteWatchRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type DeleteWatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteWatchResponse) Reset() {
+	*x = DeleteWatchResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[195]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteWatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteWatchResponse) ProtoMessage() {}
+
+func (x *DeleteWatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[195]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteWatchResponse.ProtoReflect.Descriptor instead.
+func (*DeleteWatchResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{195}
+}
+
+// SetWatchPaused pauses or resumes a watch. Resuming does not replay missed runs.
+type SetWatchPausedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Paused        bool                   `protobuf:"varint,3,opt,name=paused,proto3" json:"paused,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetWatchPausedRequest) Reset() {
+	*x = SetWatchPausedRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[196]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetWatchPausedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetWatchPausedRequest) ProtoMessage() {}
+
+func (x *SetWatchPausedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[196]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetWatchPausedRequest.ProtoReflect.Descriptor instead.
+func (*SetWatchPausedRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{196}
+}
+
+func (x *SetWatchPausedRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *SetWatchPausedRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SetWatchPausedRequest) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+type SetWatchPausedResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Watch         *Watch                 `protobuf:"bytes,1,opt,name=watch,proto3" json:"watch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetWatchPausedResponse) Reset() {
+	*x = SetWatchPausedResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[197]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetWatchPausedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetWatchPausedResponse) ProtoMessage() {}
+
+func (x *SetWatchPausedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[197]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetWatchPausedResponse.ProtoReflect.Descriptor instead.
+func (*SetWatchPausedResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{197}
+}
+
+func (x *SetWatchPausedResponse) GetWatch() *Watch {
+	if x != nil {
+		return x.Watch
+	}
+	return nil
+}
+
+// RunWatchNow starts a run immediately without changing the schedule. A run
+// already active is FailedPrecondition.
+type RunWatchNowRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunWatchNowRequest) Reset() {
+	*x = RunWatchNowRequest{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[198]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunWatchNowRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunWatchNowRequest) ProtoMessage() {}
+
+func (x *RunWatchNowRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[198]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunWatchNowRequest.ProtoReflect.Descriptor instead.
+func (*RunWatchNowRequest) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{198}
+}
+
+func (x *RunWatchNowRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *RunWatchNowRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type RunWatchNowResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunWatchNowResponse) Reset() {
+	*x = RunWatchNowResponse{}
+	mi := &file_ycc_v1_ycc_proto_msgTypes[199]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunWatchNowResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunWatchNowResponse) ProtoMessage() {}
+
+func (x *RunWatchNowResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ycc_v1_ycc_proto_msgTypes[199]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunWatchNowResponse.ProtoReflect.Descriptor instead.
+func (*RunWatchNowResponse) Descriptor() ([]byte, []int) {
+	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{199}
+}
+
 var File_ycc_v1_ycc_proto protoreflect.FileDescriptor
 
 const file_ycc_v1_ycc_proto_rawDesc = "" +
@@ -12953,7 +14082,90 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x18GetActivityStepsResponse\x12*\n" +
 	"\x05steps\x18\x01 \x03(\v2\x14.ycc.v1.ActivityStepR\x05steps\x12'\n" +
 	"\x0fomitted_earlier\x18\x02 \x01(\x05R\x0eomittedEarlier\x121\n" +
-	"\x06totals\x18\x03 \x03(\v2\x19.ycc.v1.ActivityStepTotalR\x06totals2\xbf+\n" +
+	"\x06totals\x18\x03 \x03(\v2\x19.ycc.v1.ActivityStepTotalR\x06totals\"\xf2\x01\n" +
+	"\x0fWatchDefinition\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05brief\x18\x02 \x01(\tR\x05brief\x12#\n" +
+	"\rinterval_secs\x18\x03 \x01(\x03R\fintervalSecs\x12\x14\n" +
+	"\x05model\x18\x04 \x01(\tR\x05model\x12\x14\n" +
+	"\x05probe\x18\x05 \x01(\tR\x05probe\x12!\n" +
+	"\fprobe_always\x18\x06 \x01(\bR\vprobeAlways\x12\x18\n" +
+	"\aexpires\x18\a \x01(\tR\aexpires\x12'\n" +
+	"\x0fallowed_actions\x18\b \x03(\tR\x0eallowedActions\"9\n" +
+	"\vWatchAction\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x12\n" +
+	"\x04undo\x18\x02 \x01(\tR\x04undo\"\xd6\x01\n" +
+	"\vWatchReport\x12\x0e\n" +
+	"\x02at\x18\x01 \x01(\tR\x02at\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x18\n" +
+	"\asummary\x18\x05 \x01(\tR\asummary\x12-\n" +
+	"\aactions\x18\x06 \x03(\v2\x13.ycc.v1.WatchActionR\aactions\x12#\n" +
+	"\rscheduled_for\x18\a \x01(\tR\fscheduledFor\"\x84\x01\n" +
+	"\rWatchDecision\x12\x0e\n" +
+	"\x02at\x18\x01 \x01(\tR\x02at\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x03R\x03seq\x12\x1a\n" +
+	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\x16\n" +
+	"\x06answer\x18\x05 \x01(\tR\x06answer\"\x8d\x03\n" +
+	"\x05Watch\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x127\n" +
+	"\n" +
+	"definition\x18\x02 \x01(\v2\x17.ycc.v1.WatchDefinitionR\n" +
+	"definition\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x03 \x01(\tR\tcreatedAt\x12\x16\n" +
+	"\x06paused\x18\x04 \x01(\bR\x06paused\x12#\n" +
+	"\rpaused_reason\x18\x05 \x01(\tR\fpausedReason\x12\x19\n" +
+	"\bnext_due\x18\x06 \x01(\tR\anextDue\x12\x14\n" +
+	"\x05notes\x18\a \x01(\tR\x05notes\x123\n" +
+	"\tdecisions\x18\b \x03(\v2\x15.ycc.v1.WatchDecisionR\tdecisions\x12'\n" +
+	"\x04last\x18\t \x01(\v2\x13.ycc.v1.WatchReportR\x04last\x12\x18\n" +
+	"\arunning\x18\n" +
+	" \x01(\bR\arunning\x12,\n" +
+	"\x12parked_session_ids\x18\v \x03(\tR\x10parkedSessionIds\".\n" +
+	"\x12ListWatchesRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\">\n" +
+	"\x13ListWatchesResponse\x12'\n" +
+	"\awatches\x18\x01 \x03(\v2\r.ycc.v1.WatchR\awatches\"b\n" +
+	"\x0fGetWatchRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
+	"\freport_limit\x18\x03 \x01(\x05R\vreportLimit\"f\n" +
+	"\x10GetWatchResponse\x12#\n" +
+	"\x05watch\x18\x01 \x01(\v2\r.ycc.v1.WatchR\x05watch\x12-\n" +
+	"\areports\x18\x02 \x03(\v2\x13.ycc.v1.WatchReportR\areports\"g\n" +
+	"\x12CreateWatchRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x127\n" +
+	"\n" +
+	"definition\x18\x02 \x01(\v2\x17.ycc.v1.WatchDefinitionR\n" +
+	"definition\":\n" +
+	"\x13CreateWatchResponse\x12#\n" +
+	"\x05watch\x18\x01 \x01(\v2\r.ycc.v1.WatchR\x05watch\"g\n" +
+	"\x12UpdateWatchRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x127\n" +
+	"\n" +
+	"definition\x18\x02 \x01(\v2\x17.ycc.v1.WatchDefinitionR\n" +
+	"definition\":\n" +
+	"\x13UpdateWatchResponse\x12#\n" +
+	"\x05watch\x18\x01 \x01(\v2\r.ycc.v1.WatchR\x05watch\"B\n" +
+	"\x12DeleteWatchRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x15\n" +
+	"\x13DeleteWatchResponse\"]\n" +
+	"\x15SetWatchPausedRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06paused\x18\x03 \x01(\bR\x06paused\"=\n" +
+	"\x16SetWatchPausedResponse\x12#\n" +
+	"\x05watch\x18\x01 \x01(\v2\r.ycc.v1.WatchR\x05watch\"B\n" +
+	"\x12RunWatchNowRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x15\n" +
+	"\x13RunWatchNowResponse2\xb7/\n" +
 	"\x0eSessionService\x12@\n" +
 	"\tListModes\x12\x18.ycc.v1.ListModesRequest\x1a\x19.ycc.v1.ListModesResponse\x12I\n" +
 	"\fStartSession\x12\x1b.ycc.v1.StartSessionRequest\x1a\x1c.ycc.v1.StartSessionResponse\x12I\n" +
@@ -13029,7 +14241,14 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\fPreviewMerge\x12\x1b.ycc.v1.PreviewMergeRequest\x1a\x1c.ycc.v1.PreviewMergeResponse\x12R\n" +
 	"\x0fMergeWorkstream\x12\x1e.ycc.v1.MergeWorkstreamRequest\x1a\x1f.ycc.v1.MergeWorkstreamResponse\x12X\n" +
 	"\x11DiscardWorkstream\x12 .ycc.v1.DiscardWorkstreamRequest\x1a!.ycc.v1.DiscardWorkstreamResponse\x12U\n" +
-	"\x10RetryIntegration\x12\x1f.ycc.v1.RetryIntegrationRequest\x1a .ycc.v1.RetryIntegrationResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
+	"\x10RetryIntegration\x12\x1f.ycc.v1.RetryIntegrationRequest\x1a .ycc.v1.RetryIntegrationResponse\x12F\n" +
+	"\vListWatches\x12\x1a.ycc.v1.ListWatchesRequest\x1a\x1b.ycc.v1.ListWatchesResponse\x12=\n" +
+	"\bGetWatch\x12\x17.ycc.v1.GetWatchRequest\x1a\x18.ycc.v1.GetWatchResponse\x12F\n" +
+	"\vCreateWatch\x12\x1a.ycc.v1.CreateWatchRequest\x1a\x1b.ycc.v1.CreateWatchResponse\x12F\n" +
+	"\vUpdateWatch\x12\x1a.ycc.v1.UpdateWatchRequest\x1a\x1b.ycc.v1.UpdateWatchResponse\x12F\n" +
+	"\vDeleteWatch\x12\x1a.ycc.v1.DeleteWatchRequest\x1a\x1b.ycc.v1.DeleteWatchResponse\x12O\n" +
+	"\x0eSetWatchPaused\x12\x1d.ycc.v1.SetWatchPausedRequest\x1a\x1e.ycc.v1.SetWatchPausedResponse\x12F\n" +
+	"\vRunWatchNow\x12\x1a.ycc.v1.RunWatchNowRequest\x1a\x1b.ycc.v1.RunWatchNowResponseB1Z/github.com/whyrusleeping/ycc/proto/ycc/v1;yccv1b\x06proto3"
 
 var (
 	file_ycc_v1_ycc_proto_rawDescOnce sync.Once
@@ -13043,7 +14262,7 @@ func file_ycc_v1_ycc_proto_rawDescGZIP() []byte {
 	return file_ycc_v1_ycc_proto_rawDescData
 }
 
-var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 185)
+var file_ycc_v1_ycc_proto_msgTypes = make([]protoimpl.MessageInfo, 204)
 var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*Event)(nil),                          // 0: ycc.v1.Event
 	(*StartSessionRequest)(nil),            // 1: ycc.v1.StartSessionRequest
@@ -13226,10 +14445,29 @@ var file_ycc_v1_ycc_proto_goTypes = []any{
 	(*ActivityStepTotal)(nil),              // 178: ycc.v1.ActivityStepTotal
 	(*GetActivityStepsRequest)(nil),        // 179: ycc.v1.GetActivityStepsRequest
 	(*GetActivityStepsResponse)(nil),       // 180: ycc.v1.GetActivityStepsResponse
-	nil,                                    // 181: ycc.v1.UiEvent.AttrsEntry
-	nil,                                    // 182: ycc.v1.UiClientSummary.VisitAttrsEntry
-	nil,                                    // 183: ycc.v1.UiAnalyticsRow.BreakdownEntry
-	nil,                                    // 184: ycc.v1.UiAnalyticsRow.ContextsEntry
+	(*WatchDefinition)(nil),                // 181: ycc.v1.WatchDefinition
+	(*WatchAction)(nil),                    // 182: ycc.v1.WatchAction
+	(*WatchReport)(nil),                    // 183: ycc.v1.WatchReport
+	(*WatchDecision)(nil),                  // 184: ycc.v1.WatchDecision
+	(*Watch)(nil),                          // 185: ycc.v1.Watch
+	(*ListWatchesRequest)(nil),             // 186: ycc.v1.ListWatchesRequest
+	(*ListWatchesResponse)(nil),            // 187: ycc.v1.ListWatchesResponse
+	(*GetWatchRequest)(nil),                // 188: ycc.v1.GetWatchRequest
+	(*GetWatchResponse)(nil),               // 189: ycc.v1.GetWatchResponse
+	(*CreateWatchRequest)(nil),             // 190: ycc.v1.CreateWatchRequest
+	(*CreateWatchResponse)(nil),            // 191: ycc.v1.CreateWatchResponse
+	(*UpdateWatchRequest)(nil),             // 192: ycc.v1.UpdateWatchRequest
+	(*UpdateWatchResponse)(nil),            // 193: ycc.v1.UpdateWatchResponse
+	(*DeleteWatchRequest)(nil),             // 194: ycc.v1.DeleteWatchRequest
+	(*DeleteWatchResponse)(nil),            // 195: ycc.v1.DeleteWatchResponse
+	(*SetWatchPausedRequest)(nil),          // 196: ycc.v1.SetWatchPausedRequest
+	(*SetWatchPausedResponse)(nil),         // 197: ycc.v1.SetWatchPausedResponse
+	(*RunWatchNowRequest)(nil),             // 198: ycc.v1.RunWatchNowRequest
+	(*RunWatchNowResponse)(nil),            // 199: ycc.v1.RunWatchNowResponse
+	nil,                                    // 200: ycc.v1.UiEvent.AttrsEntry
+	nil,                                    // 201: ycc.v1.UiClientSummary.VisitAttrsEntry
+	nil,                                    // 202: ycc.v1.UiAnalyticsRow.BreakdownEntry
+	nil,                                    // 203: ycc.v1.UiAnalyticsRow.ContextsEntry
 }
 var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	22,  // 0: ycc.v1.StartSessionRequest.images:type_name -> ycc.v1.ImageAttachment
@@ -13276,12 +14514,12 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	130, // 41: ycc.v1.SubscriptionUsageAccount.windows:type_name -> ycc.v1.SubscriptionUsageWindow
 	131, // 42: ycc.v1.GetSubscriptionUsageResponse.accounts:type_name -> ycc.v1.SubscriptionUsageAccount
 	139, // 43: ycc.v1.GetHealthResponse.checks:type_name -> ycc.v1.HealthCheck
-	181, // 44: ycc.v1.UiEvent.attrs:type_name -> ycc.v1.UiEvent.AttrsEntry
+	200, // 44: ycc.v1.UiEvent.attrs:type_name -> ycc.v1.UiEvent.AttrsEntry
 	140, // 45: ycc.v1.RecordUiEventsRequest.events:type_name -> ycc.v1.UiEvent
 	141, // 46: ycc.v1.RecordUiEventsRequest.catalog:type_name -> ycc.v1.UiCatalogEntry
-	182, // 47: ycc.v1.UiClientSummary.visit_attrs:type_name -> ycc.v1.UiClientSummary.VisitAttrsEntry
-	183, // 48: ycc.v1.UiAnalyticsRow.breakdown:type_name -> ycc.v1.UiAnalyticsRow.BreakdownEntry
-	184, // 49: ycc.v1.UiAnalyticsRow.contexts:type_name -> ycc.v1.UiAnalyticsRow.ContextsEntry
+	201, // 47: ycc.v1.UiClientSummary.visit_attrs:type_name -> ycc.v1.UiClientSummary.VisitAttrsEntry
+	202, // 48: ycc.v1.UiAnalyticsRow.breakdown:type_name -> ycc.v1.UiAnalyticsRow.BreakdownEntry
+	203, // 49: ycc.v1.UiAnalyticsRow.contexts:type_name -> ycc.v1.UiAnalyticsRow.ContextsEntry
 	145, // 50: ycc.v1.GetUiAnalyticsResponse.clients:type_name -> ycc.v1.UiClientSummary
 	146, // 51: ycc.v1.GetUiAnalyticsResponse.rows:type_name -> ycc.v1.UiAnalyticsRow
 	147, // 52: ycc.v1.GetUiAnalyticsResponse.flows:type_name -> ycc.v1.UiFlow
@@ -13301,153 +14539,179 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	76,  // 66: ycc.v1.TestModelRequest.model:type_name -> ycc.v1.ModelConfig
 	177, // 67: ycc.v1.GetActivityStepsResponse.steps:type_name -> ycc.v1.ActivityStep
 	178, // 68: ycc.v1.GetActivityStepsResponse.totals:type_name -> ycc.v1.ActivityStepTotal
-	38,  // 69: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
-	1,   // 70: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
-	42,  // 71: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
-	45,  // 72: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
-	48,  // 73: ycc.v1.SessionService.SetSessionFollowUp:input_type -> ycc.v1.SetSessionFollowUpRequest
-	50,  // 74: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
-	55,  // 75: ycc.v1.SessionService.GetSessionView:input_type -> ycc.v1.GetSessionViewRequest
-	57,  // 76: ycc.v1.SessionService.GetSessionViewPage:input_type -> ycc.v1.GetSessionViewPageRequest
-	59,  // 77: ycc.v1.SessionService.GetSessionViewDetail:input_type -> ycc.v1.GetSessionViewDetailRequest
-	61,  // 78: ycc.v1.SessionService.SubscribeSessionView:input_type -> ycc.v1.SubscribeSessionViewRequest
-	65,  // 79: ycc.v1.SessionService.GetSessionActivity:input_type -> ycc.v1.GetSessionActivityRequest
-	67,  // 80: ycc.v1.SessionService.GetJobOutput:input_type -> ycc.v1.GetJobOutputRequest
-	179, // 81: ycc.v1.SessionService.GetActivitySteps:input_type -> ycc.v1.GetActivityStepsRequest
-	69,  // 82: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
-	71,  // 83: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
-	175, // 84: ycc.v1.SessionService.GetWorkingChanges:input_type -> ycc.v1.GetWorkingChangesRequest
-	21,  // 85: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
-	23,  // 86: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
-	25,  // 87: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
-	28,  // 88: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
-	30,  // 89: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
-	32,  // 90: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
-	34,  // 91: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
-	36,  // 92: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
-	5,   // 93: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
-	7,   // 94: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
-	9,   // 95: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
-	11,  // 96: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
-	14,  // 97: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
-	17,  // 98: ycc.v1.SessionService.ListFiles:input_type -> ycc.v1.ListFilesRequest
-	19,  // 99: ycc.v1.SessionService.ReadFile:input_type -> ycc.v1.ReadFileRequest
-	73,  // 100: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
-	85,  // 101: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
-	87,  // 102: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
-	89,  // 103: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
-	77,  // 104: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
-	79,  // 105: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
-	81,  // 106: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
-	83,  // 107: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
-	173, // 108: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
-	93,  // 109: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
-	95,  // 110: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
-	97,  // 111: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
-	99,  // 112: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
-	101, // 113: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
-	104, // 114: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
-	107, // 115: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
-	109, // 116: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
-	111, // 117: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
-	114, // 118: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
-	116, // 119: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
-	119, // 120: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
-	120, // 121: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
-	123, // 122: ycc.v1.SessionService.BeginAnthropicLogin:input_type -> ycc.v1.BeginAnthropicLoginRequest
-	125, // 123: ycc.v1.SessionService.CompleteAnthropicLogin:input_type -> ycc.v1.CompleteAnthropicLoginRequest
-	127, // 124: ycc.v1.SessionService.CancelAnthropicLogin:input_type -> ycc.v1.CancelAnthropicLoginRequest
-	129, // 125: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
-	133, // 126: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
-	135, // 127: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
-	137, // 128: ycc.v1.SessionService.GetHealth:input_type -> ycc.v1.GetHealthRequest
-	142, // 129: ycc.v1.SessionService.RecordUiEvents:input_type -> ycc.v1.RecordUiEventsRequest
-	144, // 130: ycc.v1.SessionService.GetUiAnalytics:input_type -> ycc.v1.GetUiAnalyticsRequest
-	153, // 131: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
-	155, // 132: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
-	157, // 133: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
-	160, // 134: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
-	162, // 135: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
-	164, // 136: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
-	166, // 137: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
-	168, // 138: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
-	170, // 139: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
-	41,  // 140: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
-	2,   // 141: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
-	44,  // 142: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
-	47,  // 143: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
-	49,  // 144: ycc.v1.SessionService.SetSessionFollowUp:output_type -> ycc.v1.SetSessionFollowUpResponse
-	51,  // 145: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
-	56,  // 146: ycc.v1.SessionService.GetSessionView:output_type -> ycc.v1.GetSessionViewResponse
-	58,  // 147: ycc.v1.SessionService.GetSessionViewPage:output_type -> ycc.v1.GetSessionViewPageResponse
-	60,  // 148: ycc.v1.SessionService.GetSessionViewDetail:output_type -> ycc.v1.GetSessionViewDetailResponse
-	62,  // 149: ycc.v1.SessionService.SubscribeSessionView:output_type -> ycc.v1.SessionViewUpdate
-	66,  // 150: ycc.v1.SessionService.GetSessionActivity:output_type -> ycc.v1.GetSessionActivityResponse
-	68,  // 151: ycc.v1.SessionService.GetJobOutput:output_type -> ycc.v1.GetJobOutputResponse
-	180, // 152: ycc.v1.SessionService.GetActivitySteps:output_type -> ycc.v1.GetActivityStepsResponse
-	70,  // 153: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
-	72,  // 154: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
-	176, // 155: ycc.v1.SessionService.GetWorkingChanges:output_type -> ycc.v1.GetWorkingChangesResponse
-	0,   // 156: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
-	24,  // 157: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
-	26,  // 158: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
-	29,  // 159: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
-	31,  // 160: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
-	33,  // 161: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
-	35,  // 162: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
-	37,  // 163: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
-	6,   // 164: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
-	8,   // 165: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
-	10,  // 166: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
-	12,  // 167: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
-	15,  // 168: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
-	18,  // 169: ycc.v1.SessionService.ListFiles:output_type -> ycc.v1.ListFilesResponse
-	20,  // 170: ycc.v1.SessionService.ReadFile:output_type -> ycc.v1.ReadFileResponse
-	75,  // 171: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
-	86,  // 172: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
-	88,  // 173: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
-	90,  // 174: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
-	78,  // 175: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
-	80,  // 176: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
-	82,  // 177: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
-	84,  // 178: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
-	174, // 179: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
-	94,  // 180: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
-	96,  // 181: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
-	98,  // 182: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
-	100, // 183: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
-	103, // 184: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
-	106, // 185: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
-	108, // 186: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
-	110, // 187: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
-	113, // 188: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
-	115, // 189: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
-	117, // 190: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
-	0,   // 191: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
-	122, // 192: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
-	124, // 193: ycc.v1.SessionService.BeginAnthropicLogin:output_type -> ycc.v1.BeginAnthropicLoginResponse
-	126, // 194: ycc.v1.SessionService.CompleteAnthropicLogin:output_type -> ycc.v1.CompleteAnthropicLoginResponse
-	128, // 195: ycc.v1.SessionService.CancelAnthropicLogin:output_type -> ycc.v1.CancelAnthropicLoginResponse
-	132, // 196: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
-	134, // 197: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
-	136, // 198: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
-	138, // 199: ycc.v1.SessionService.GetHealth:output_type -> ycc.v1.GetHealthResponse
-	143, // 200: ycc.v1.SessionService.RecordUiEvents:output_type -> ycc.v1.RecordUiEventsResponse
-	149, // 201: ycc.v1.SessionService.GetUiAnalytics:output_type -> ycc.v1.GetUiAnalyticsResponse
-	154, // 202: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
-	156, // 203: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
-	158, // 204: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
-	161, // 205: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
-	163, // 206: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
-	165, // 207: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
-	167, // 208: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
-	169, // 209: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
-	171, // 210: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
-	140, // [140:211] is the sub-list for method output_type
-	69,  // [69:140] is the sub-list for method input_type
-	69,  // [69:69] is the sub-list for extension type_name
-	69,  // [69:69] is the sub-list for extension extendee
-	0,   // [0:69] is the sub-list for field type_name
+	182, // 69: ycc.v1.WatchReport.actions:type_name -> ycc.v1.WatchAction
+	181, // 70: ycc.v1.Watch.definition:type_name -> ycc.v1.WatchDefinition
+	184, // 71: ycc.v1.Watch.decisions:type_name -> ycc.v1.WatchDecision
+	183, // 72: ycc.v1.Watch.last:type_name -> ycc.v1.WatchReport
+	185, // 73: ycc.v1.ListWatchesResponse.watches:type_name -> ycc.v1.Watch
+	185, // 74: ycc.v1.GetWatchResponse.watch:type_name -> ycc.v1.Watch
+	183, // 75: ycc.v1.GetWatchResponse.reports:type_name -> ycc.v1.WatchReport
+	181, // 76: ycc.v1.CreateWatchRequest.definition:type_name -> ycc.v1.WatchDefinition
+	185, // 77: ycc.v1.CreateWatchResponse.watch:type_name -> ycc.v1.Watch
+	181, // 78: ycc.v1.UpdateWatchRequest.definition:type_name -> ycc.v1.WatchDefinition
+	185, // 79: ycc.v1.UpdateWatchResponse.watch:type_name -> ycc.v1.Watch
+	185, // 80: ycc.v1.SetWatchPausedResponse.watch:type_name -> ycc.v1.Watch
+	38,  // 81: ycc.v1.SessionService.ListModes:input_type -> ycc.v1.ListModesRequest
+	1,   // 82: ycc.v1.SessionService.StartSession:input_type -> ycc.v1.StartSessionRequest
+	42,  // 83: ycc.v1.SessionService.ListSessions:input_type -> ycc.v1.ListSessionsRequest
+	45,  // 84: ycc.v1.SessionService.ListSessionHistory:input_type -> ycc.v1.ListSessionHistoryRequest
+	48,  // 85: ycc.v1.SessionService.SetSessionFollowUp:input_type -> ycc.v1.SetSessionFollowUpRequest
+	50,  // 86: ycc.v1.SessionService.GetSessionTranscript:input_type -> ycc.v1.GetSessionTranscriptRequest
+	55,  // 87: ycc.v1.SessionService.GetSessionView:input_type -> ycc.v1.GetSessionViewRequest
+	57,  // 88: ycc.v1.SessionService.GetSessionViewPage:input_type -> ycc.v1.GetSessionViewPageRequest
+	59,  // 89: ycc.v1.SessionService.GetSessionViewDetail:input_type -> ycc.v1.GetSessionViewDetailRequest
+	61,  // 90: ycc.v1.SessionService.SubscribeSessionView:input_type -> ycc.v1.SubscribeSessionViewRequest
+	65,  // 91: ycc.v1.SessionService.GetSessionActivity:input_type -> ycc.v1.GetSessionActivityRequest
+	67,  // 92: ycc.v1.SessionService.GetJobOutput:input_type -> ycc.v1.GetJobOutputRequest
+	179, // 93: ycc.v1.SessionService.GetActivitySteps:input_type -> ycc.v1.GetActivityStepsRequest
+	69,  // 94: ycc.v1.SessionService.GetSessionAttachment:input_type -> ycc.v1.GetSessionAttachmentRequest
+	71,  // 95: ycc.v1.SessionService.GetCommitDiff:input_type -> ycc.v1.GetCommitDiffRequest
+	175, // 96: ycc.v1.SessionService.GetWorkingChanges:input_type -> ycc.v1.GetWorkingChangesRequest
+	21,  // 97: ycc.v1.SessionService.Subscribe:input_type -> ycc.v1.SubscribeRequest
+	23,  // 98: ycc.v1.SessionService.SendInput:input_type -> ycc.v1.SendInputRequest
+	25,  // 99: ycc.v1.SessionService.AnswerQuestion:input_type -> ycc.v1.AnswerQuestionRequest
+	28,  // 100: ycc.v1.SessionService.AnswerQuestions:input_type -> ycc.v1.AnswerQuestionsRequest
+	30,  // 101: ycc.v1.SessionService.Interrupt:input_type -> ycc.v1.InterruptRequest
+	32,  // 102: ycc.v1.SessionService.Resume:input_type -> ycc.v1.ResumeRequest
+	34,  // 103: ycc.v1.SessionService.StopSession:input_type -> ycc.v1.StopSessionRequest
+	36,  // 104: ycc.v1.SessionService.ResumeSession:input_type -> ycc.v1.ResumeSessionRequest
+	5,   // 105: ycc.v1.SessionService.ListProjects:input_type -> ycc.v1.ListProjectsRequest
+	7,   // 106: ycc.v1.SessionService.AddProject:input_type -> ycc.v1.AddProjectRequest
+	9,   // 107: ycc.v1.SessionService.RemoveProject:input_type -> ycc.v1.RemoveProjectRequest
+	11,  // 108: ycc.v1.SessionService.RenameProject:input_type -> ycc.v1.RenameProjectRequest
+	14,  // 109: ycc.v1.SessionService.ListDir:input_type -> ycc.v1.ListDirRequest
+	17,  // 110: ycc.v1.SessionService.ListFiles:input_type -> ycc.v1.ListFilesRequest
+	19,  // 111: ycc.v1.SessionService.ReadFile:input_type -> ycc.v1.ReadFileRequest
+	73,  // 112: ycc.v1.SessionService.ListModels:input_type -> ycc.v1.ListModelsRequest
+	85,  // 113: ycc.v1.SessionService.SetRoleConfig:input_type -> ycc.v1.SetRoleConfigRequest
+	87,  // 114: ycc.v1.SessionService.SetThinking:input_type -> ycc.v1.SetThinkingRequest
+	89,  // 115: ycc.v1.SessionService.SetWorkImplementation:input_type -> ycc.v1.SetWorkImplementationRequest
+	77,  // 116: ycc.v1.SessionService.UpsertModel:input_type -> ycc.v1.UpsertModelRequest
+	79,  // 117: ycc.v1.SessionService.RemoveModel:input_type -> ycc.v1.RemoveModelRequest
+	81,  // 118: ycc.v1.SessionService.GetModelConfig:input_type -> ycc.v1.GetModelConfigRequest
+	83,  // 119: ycc.v1.SessionService.DiscoverModels:input_type -> ycc.v1.DiscoverModelsRequest
+	173, // 120: ycc.v1.SessionService.TestModel:input_type -> ycc.v1.TestModelRequest
+	93,  // 121: ycc.v1.SessionService.ListReviewTiers:input_type -> ycc.v1.ListReviewTiersRequest
+	95,  // 122: ycc.v1.SessionService.UpsertReviewTier:input_type -> ycc.v1.UpsertReviewTierRequest
+	97,  // 123: ycc.v1.SessionService.RemoveReviewTier:input_type -> ycc.v1.RemoveReviewTierRequest
+	99,  // 124: ycc.v1.SessionService.SetReviewDefault:input_type -> ycc.v1.SetReviewDefaultRequest
+	101, // 125: ycc.v1.SessionService.ListBacklog:input_type -> ycc.v1.ListBacklogRequest
+	104, // 126: ycc.v1.SessionService.GetTask:input_type -> ycc.v1.GetTaskRequest
+	107, // 127: ycc.v1.SessionService.UpdateTask:input_type -> ycc.v1.UpdateTaskRequest
+	109, // 128: ycc.v1.SessionService.CreateTask:input_type -> ycc.v1.CreateTaskRequest
+	111, // 129: ycc.v1.SessionService.ListPlans:input_type -> ycc.v1.ListPlansRequest
+	114, // 130: ycc.v1.SessionService.GetPlan:input_type -> ycc.v1.GetPlanRequest
+	116, // 131: ycc.v1.SessionService.GetMemory:input_type -> ycc.v1.GetMemoryRequest
+	119, // 132: ycc.v1.SessionService.CaptureBacklogItem:input_type -> ycc.v1.CaptureBacklogItemRequest
+	120, // 133: ycc.v1.SessionService.GetUsage:input_type -> ycc.v1.GetUsageRequest
+	123, // 134: ycc.v1.SessionService.BeginAnthropicLogin:input_type -> ycc.v1.BeginAnthropicLoginRequest
+	125, // 135: ycc.v1.SessionService.CompleteAnthropicLogin:input_type -> ycc.v1.CompleteAnthropicLoginRequest
+	127, // 136: ycc.v1.SessionService.CancelAnthropicLogin:input_type -> ycc.v1.CancelAnthropicLoginRequest
+	129, // 137: ycc.v1.SessionService.GetSubscriptionUsage:input_type -> ycc.v1.GetSubscriptionUsageRequest
+	133, // 138: ycc.v1.SessionService.GetBudget:input_type -> ycc.v1.GetBudgetRequest
+	135, // 139: ycc.v1.SessionService.Notify:input_type -> ycc.v1.NotifyRequest
+	137, // 140: ycc.v1.SessionService.GetHealth:input_type -> ycc.v1.GetHealthRequest
+	142, // 141: ycc.v1.SessionService.RecordUiEvents:input_type -> ycc.v1.RecordUiEventsRequest
+	144, // 142: ycc.v1.SessionService.GetUiAnalytics:input_type -> ycc.v1.GetUiAnalyticsRequest
+	153, // 143: ycc.v1.SessionService.StartWorkLoop:input_type -> ycc.v1.StartWorkLoopRequest
+	155, // 144: ycc.v1.SessionService.StopWorkLoop:input_type -> ycc.v1.StopWorkLoopRequest
+	157, // 145: ycc.v1.SessionService.GetWorkLoop:input_type -> ycc.v1.GetWorkLoopRequest
+	160, // 146: ycc.v1.SessionService.SpawnWorkstream:input_type -> ycc.v1.SpawnWorkstreamRequest
+	162, // 147: ycc.v1.SessionService.ListWorkstreams:input_type -> ycc.v1.ListWorkstreamsRequest
+	164, // 148: ycc.v1.SessionService.PreviewMerge:input_type -> ycc.v1.PreviewMergeRequest
+	166, // 149: ycc.v1.SessionService.MergeWorkstream:input_type -> ycc.v1.MergeWorkstreamRequest
+	168, // 150: ycc.v1.SessionService.DiscardWorkstream:input_type -> ycc.v1.DiscardWorkstreamRequest
+	170, // 151: ycc.v1.SessionService.RetryIntegration:input_type -> ycc.v1.RetryIntegrationRequest
+	186, // 152: ycc.v1.SessionService.ListWatches:input_type -> ycc.v1.ListWatchesRequest
+	188, // 153: ycc.v1.SessionService.GetWatch:input_type -> ycc.v1.GetWatchRequest
+	190, // 154: ycc.v1.SessionService.CreateWatch:input_type -> ycc.v1.CreateWatchRequest
+	192, // 155: ycc.v1.SessionService.UpdateWatch:input_type -> ycc.v1.UpdateWatchRequest
+	194, // 156: ycc.v1.SessionService.DeleteWatch:input_type -> ycc.v1.DeleteWatchRequest
+	196, // 157: ycc.v1.SessionService.SetWatchPaused:input_type -> ycc.v1.SetWatchPausedRequest
+	198, // 158: ycc.v1.SessionService.RunWatchNow:input_type -> ycc.v1.RunWatchNowRequest
+	41,  // 159: ycc.v1.SessionService.ListModes:output_type -> ycc.v1.ListModesResponse
+	2,   // 160: ycc.v1.SessionService.StartSession:output_type -> ycc.v1.StartSessionResponse
+	44,  // 161: ycc.v1.SessionService.ListSessions:output_type -> ycc.v1.ListSessionsResponse
+	47,  // 162: ycc.v1.SessionService.ListSessionHistory:output_type -> ycc.v1.ListSessionHistoryResponse
+	49,  // 163: ycc.v1.SessionService.SetSessionFollowUp:output_type -> ycc.v1.SetSessionFollowUpResponse
+	51,  // 164: ycc.v1.SessionService.GetSessionTranscript:output_type -> ycc.v1.GetSessionTranscriptResponse
+	56,  // 165: ycc.v1.SessionService.GetSessionView:output_type -> ycc.v1.GetSessionViewResponse
+	58,  // 166: ycc.v1.SessionService.GetSessionViewPage:output_type -> ycc.v1.GetSessionViewPageResponse
+	60,  // 167: ycc.v1.SessionService.GetSessionViewDetail:output_type -> ycc.v1.GetSessionViewDetailResponse
+	62,  // 168: ycc.v1.SessionService.SubscribeSessionView:output_type -> ycc.v1.SessionViewUpdate
+	66,  // 169: ycc.v1.SessionService.GetSessionActivity:output_type -> ycc.v1.GetSessionActivityResponse
+	68,  // 170: ycc.v1.SessionService.GetJobOutput:output_type -> ycc.v1.GetJobOutputResponse
+	180, // 171: ycc.v1.SessionService.GetActivitySteps:output_type -> ycc.v1.GetActivityStepsResponse
+	70,  // 172: ycc.v1.SessionService.GetSessionAttachment:output_type -> ycc.v1.GetSessionAttachmentResponse
+	72,  // 173: ycc.v1.SessionService.GetCommitDiff:output_type -> ycc.v1.GetCommitDiffResponse
+	176, // 174: ycc.v1.SessionService.GetWorkingChanges:output_type -> ycc.v1.GetWorkingChangesResponse
+	0,   // 175: ycc.v1.SessionService.Subscribe:output_type -> ycc.v1.Event
+	24,  // 176: ycc.v1.SessionService.SendInput:output_type -> ycc.v1.SendInputResponse
+	26,  // 177: ycc.v1.SessionService.AnswerQuestion:output_type -> ycc.v1.AnswerQuestionResponse
+	29,  // 178: ycc.v1.SessionService.AnswerQuestions:output_type -> ycc.v1.AnswerQuestionsResponse
+	31,  // 179: ycc.v1.SessionService.Interrupt:output_type -> ycc.v1.InterruptResponse
+	33,  // 180: ycc.v1.SessionService.Resume:output_type -> ycc.v1.ResumeResponse
+	35,  // 181: ycc.v1.SessionService.StopSession:output_type -> ycc.v1.StopSessionResponse
+	37,  // 182: ycc.v1.SessionService.ResumeSession:output_type -> ycc.v1.ResumeSessionResponse
+	6,   // 183: ycc.v1.SessionService.ListProjects:output_type -> ycc.v1.ListProjectsResponse
+	8,   // 184: ycc.v1.SessionService.AddProject:output_type -> ycc.v1.AddProjectResponse
+	10,  // 185: ycc.v1.SessionService.RemoveProject:output_type -> ycc.v1.RemoveProjectResponse
+	12,  // 186: ycc.v1.SessionService.RenameProject:output_type -> ycc.v1.RenameProjectResponse
+	15,  // 187: ycc.v1.SessionService.ListDir:output_type -> ycc.v1.ListDirResponse
+	18,  // 188: ycc.v1.SessionService.ListFiles:output_type -> ycc.v1.ListFilesResponse
+	20,  // 189: ycc.v1.SessionService.ReadFile:output_type -> ycc.v1.ReadFileResponse
+	75,  // 190: ycc.v1.SessionService.ListModels:output_type -> ycc.v1.ListModelsResponse
+	86,  // 191: ycc.v1.SessionService.SetRoleConfig:output_type -> ycc.v1.SetRoleConfigResponse
+	88,  // 192: ycc.v1.SessionService.SetThinking:output_type -> ycc.v1.SetThinkingResponse
+	90,  // 193: ycc.v1.SessionService.SetWorkImplementation:output_type -> ycc.v1.SetWorkImplementationResponse
+	78,  // 194: ycc.v1.SessionService.UpsertModel:output_type -> ycc.v1.UpsertModelResponse
+	80,  // 195: ycc.v1.SessionService.RemoveModel:output_type -> ycc.v1.RemoveModelResponse
+	82,  // 196: ycc.v1.SessionService.GetModelConfig:output_type -> ycc.v1.GetModelConfigResponse
+	84,  // 197: ycc.v1.SessionService.DiscoverModels:output_type -> ycc.v1.DiscoverModelsResponse
+	174, // 198: ycc.v1.SessionService.TestModel:output_type -> ycc.v1.TestModelResponse
+	94,  // 199: ycc.v1.SessionService.ListReviewTiers:output_type -> ycc.v1.ListReviewTiersResponse
+	96,  // 200: ycc.v1.SessionService.UpsertReviewTier:output_type -> ycc.v1.UpsertReviewTierResponse
+	98,  // 201: ycc.v1.SessionService.RemoveReviewTier:output_type -> ycc.v1.RemoveReviewTierResponse
+	100, // 202: ycc.v1.SessionService.SetReviewDefault:output_type -> ycc.v1.SetReviewDefaultResponse
+	103, // 203: ycc.v1.SessionService.ListBacklog:output_type -> ycc.v1.ListBacklogResponse
+	106, // 204: ycc.v1.SessionService.GetTask:output_type -> ycc.v1.GetTaskResponse
+	108, // 205: ycc.v1.SessionService.UpdateTask:output_type -> ycc.v1.UpdateTaskResponse
+	110, // 206: ycc.v1.SessionService.CreateTask:output_type -> ycc.v1.CreateTaskResponse
+	113, // 207: ycc.v1.SessionService.ListPlans:output_type -> ycc.v1.ListPlansResponse
+	115, // 208: ycc.v1.SessionService.GetPlan:output_type -> ycc.v1.GetPlanResponse
+	117, // 209: ycc.v1.SessionService.GetMemory:output_type -> ycc.v1.GetMemoryResponse
+	0,   // 210: ycc.v1.SessionService.CaptureBacklogItem:output_type -> ycc.v1.Event
+	122, // 211: ycc.v1.SessionService.GetUsage:output_type -> ycc.v1.GetUsageResponse
+	124, // 212: ycc.v1.SessionService.BeginAnthropicLogin:output_type -> ycc.v1.BeginAnthropicLoginResponse
+	126, // 213: ycc.v1.SessionService.CompleteAnthropicLogin:output_type -> ycc.v1.CompleteAnthropicLoginResponse
+	128, // 214: ycc.v1.SessionService.CancelAnthropicLogin:output_type -> ycc.v1.CancelAnthropicLoginResponse
+	132, // 215: ycc.v1.SessionService.GetSubscriptionUsage:output_type -> ycc.v1.GetSubscriptionUsageResponse
+	134, // 216: ycc.v1.SessionService.GetBudget:output_type -> ycc.v1.GetBudgetResponse
+	136, // 217: ycc.v1.SessionService.Notify:output_type -> ycc.v1.NotifyResponse
+	138, // 218: ycc.v1.SessionService.GetHealth:output_type -> ycc.v1.GetHealthResponse
+	143, // 219: ycc.v1.SessionService.RecordUiEvents:output_type -> ycc.v1.RecordUiEventsResponse
+	149, // 220: ycc.v1.SessionService.GetUiAnalytics:output_type -> ycc.v1.GetUiAnalyticsResponse
+	154, // 221: ycc.v1.SessionService.StartWorkLoop:output_type -> ycc.v1.StartWorkLoopResponse
+	156, // 222: ycc.v1.SessionService.StopWorkLoop:output_type -> ycc.v1.StopWorkLoopResponse
+	158, // 223: ycc.v1.SessionService.GetWorkLoop:output_type -> ycc.v1.GetWorkLoopResponse
+	161, // 224: ycc.v1.SessionService.SpawnWorkstream:output_type -> ycc.v1.SpawnWorkstreamResponse
+	163, // 225: ycc.v1.SessionService.ListWorkstreams:output_type -> ycc.v1.ListWorkstreamsResponse
+	165, // 226: ycc.v1.SessionService.PreviewMerge:output_type -> ycc.v1.PreviewMergeResponse
+	167, // 227: ycc.v1.SessionService.MergeWorkstream:output_type -> ycc.v1.MergeWorkstreamResponse
+	169, // 228: ycc.v1.SessionService.DiscardWorkstream:output_type -> ycc.v1.DiscardWorkstreamResponse
+	171, // 229: ycc.v1.SessionService.RetryIntegration:output_type -> ycc.v1.RetryIntegrationResponse
+	187, // 230: ycc.v1.SessionService.ListWatches:output_type -> ycc.v1.ListWatchesResponse
+	189, // 231: ycc.v1.SessionService.GetWatch:output_type -> ycc.v1.GetWatchResponse
+	191, // 232: ycc.v1.SessionService.CreateWatch:output_type -> ycc.v1.CreateWatchResponse
+	193, // 233: ycc.v1.SessionService.UpdateWatch:output_type -> ycc.v1.UpdateWatchResponse
+	195, // 234: ycc.v1.SessionService.DeleteWatch:output_type -> ycc.v1.DeleteWatchResponse
+	197, // 235: ycc.v1.SessionService.SetWatchPaused:output_type -> ycc.v1.SetWatchPausedResponse
+	199, // 236: ycc.v1.SessionService.RunWatchNow:output_type -> ycc.v1.RunWatchNowResponse
+	159, // [159:237] is the sub-list for method output_type
+	81,  // [81:159] is the sub-list for method input_type
+	81,  // [81:81] is the sub-list for extension type_name
+	81,  // [81:81] is the sub-list for extension extendee
+	0,   // [0:81] is the sub-list for field type_name
 }
 
 func init() { file_ycc_v1_ycc_proto_init() }
@@ -13465,7 +14729,7 @@ func file_ycc_v1_ycc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ycc_v1_ycc_proto_rawDesc), len(file_ycc_v1_ycc_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   185,
+			NumMessages:   204,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

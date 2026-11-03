@@ -248,6 +248,7 @@ func TestRepositoryDocsConfig(t *testing.T) {
 		"docs/design/parallel-workstreams.md",
 		"docs/design/project-memory.md",
 		"docs/design/usage-analytics.md",
+		"docs/design/watches.md",
 		"docs/design/web-client.md",
 		"docs/design/workstream-integration.md",
 		"docs/e2e-tui.md",

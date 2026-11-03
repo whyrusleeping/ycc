@@ -4227,6 +4227,433 @@ public nonisolated struct Ycc_V1_GetActivityStepsResponse: Sendable {
   public init() {}
 }
 
+/// WatchDefinition is the user-controlled part of a watch.
+public nonisolated struct Ycc_V1_WatchDefinition: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// unique per project: 1-64 of [a-z0-9_-], starting with a letter or digit
+  public var name: String = String()
+
+  /// what each run checks and how to judge it
+  public var brief: String = String()
+
+  /// at least 300
+  public var intervalSecs: Int64 = 0
+
+  /// logical model for runs; empty = coordinator default
+  public var model: String = String()
+
+  /// optional shell command run first; exit 0 records ok without a model run
+  public var probe: String = String()
+
+  /// start the model run even when the probe passes
+  public var probeAlways: Bool = false
+
+  /// the watch pauses at this time; empty = never
+  public var expires: String = String()
+
+  /// pre-authorized actions beyond the low-risk default
+  public var allowedActions: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One action a run took, with how to undo it.
+public nonisolated struct Ycc_V1_WatchAction: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var action: String = String()
+
+  public var undo: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One entry in a watch's report history.
+public nonisolated struct Ycc_V1_WatchReport: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var at: String = String()
+
+  /// run | probe | skipped | failed
+  public var kind: String = String()
+
+  /// the run session; empty for probe and skipped entries
+  public var sessionID: String = String()
+
+  /// ok | warn | alert; empty for skipped entries
+  public var status: String = String()
+
+  public var summary: String = String()
+
+  public var actions: [Ycc_V1_WatchAction] = []
+
+  public var scheduledFor: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A user answer to a watch question, carried to later runs.
+public nonisolated struct Ycc_V1_WatchDecision: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var at: String = String()
+
+  public var sessionID: String = String()
+
+  /// the answer's event seq in session_id
+  public var seq: Int64 = 0
+
+  public var question: String = String()
+
+  public var answer: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// Watch is a watch's client-facing state.
+public nonisolated struct Ycc_V1_Watch: @unchecked Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String {
+    get {_storage._project}
+    set {_uniqueStorage()._project = newValue}
+  }
+
+  public var definition: Ycc_V1_WatchDefinition {
+    get {_storage._definition ?? Ycc_V1_WatchDefinition()}
+    set {_uniqueStorage()._definition = newValue}
+  }
+  /// Returns true if `definition` has been explicitly set.
+  public var hasDefinition: Bool {_storage._definition != nil}
+  /// Clears the value of `definition`. Subsequent reads from it will return its default value.
+  public mutating func clearDefinition() {_uniqueStorage()._definition = nil}
+
+  public var createdAt: String {
+    get {_storage._createdAt}
+    set {_uniqueStorage()._createdAt = newValue}
+  }
+
+  public var paused: Bool {
+    get {_storage._paused}
+    set {_uniqueStorage()._paused = newValue}
+  }
+
+  /// user | expired; empty when not paused
+  public var pausedReason: String {
+    get {_storage._pausedReason}
+    set {_uniqueStorage()._pausedReason = newValue}
+  }
+
+  public var nextDue: String {
+    get {_storage._nextDue}
+    set {_uniqueStorage()._nextDue = newValue}
+  }
+
+  /// notes the latest run passed forward
+  public var notes: String {
+    get {_storage._notes}
+    set {_uniqueStorage()._notes = newValue}
+  }
+
+  public var decisions: [Ycc_V1_WatchDecision] {
+    get {_storage._decisions}
+    set {_uniqueStorage()._decisions = newValue}
+  }
+
+  /// unset before the first report
+  public var last: Ycc_V1_WatchReport {
+    get {_storage._last ?? Ycc_V1_WatchReport()}
+    set {_uniqueStorage()._last = newValue}
+  }
+  /// Returns true if `last` has been explicitly set.
+  public var hasLast: Bool {_storage._last != nil}
+  /// Clears the value of `last`. Subsequent reads from it will return its default value.
+  public mutating func clearLast() {_uniqueStorage()._last = nil}
+
+  /// a probe or run is active
+  public var running: Bool {
+    get {_storage._running}
+    set {_uniqueStorage()._running = newValue}
+  }
+
+  /// runs waiting on a user answer
+  public var parkedSessionIds: [String] {
+    get {_storage._parkedSessionIds}
+    set {_uniqueStorage()._parkedSessionIds = newValue}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+/// Project-scoped requests resolve an empty project to the only registered one.
+public nonisolated struct Ycc_V1_ListWatchesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ListWatchesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var watches: [Ycc_V1_Watch] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetWatchRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var name: String = String()
+
+  /// newest reports returned; zero uses 20, clamped to 500
+  public var reportLimit: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetWatchResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var watch: Ycc_V1_Watch {
+    get {_watch ?? Ycc_V1_Watch()}
+    set {_watch = newValue}
+  }
+  /// Returns true if `watch` has been explicitly set.
+  public var hasWatch: Bool {self._watch != nil}
+  /// Clears the value of `watch`. Subsequent reads from it will return its default value.
+  public mutating func clearWatch() {self._watch = nil}
+
+  /// newest first
+  public var reports: [Ycc_V1_WatchReport] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _watch: Ycc_V1_Watch? = nil
+}
+
+/// CreateWatch persists a new watch; its first run is due immediately.
+public nonisolated struct Ycc_V1_CreateWatchRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var definition: Ycc_V1_WatchDefinition {
+    get {_definition ?? Ycc_V1_WatchDefinition()}
+    set {_definition = newValue}
+  }
+  /// Returns true if `definition` has been explicitly set.
+  public var hasDefinition: Bool {self._definition != nil}
+  /// Clears the value of `definition`. Subsequent reads from it will return its default value.
+  public mutating func clearDefinition() {self._definition = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _definition: Ycc_V1_WatchDefinition? = nil
+}
+
+public nonisolated struct Ycc_V1_CreateWatchResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var watch: Ycc_V1_Watch {
+    get {_watch ?? Ycc_V1_Watch()}
+    set {_watch = newValue}
+  }
+  /// Returns true if `watch` has been explicitly set.
+  public var hasWatch: Bool {self._watch != nil}
+  /// Clears the value of `watch`. Subsequent reads from it will return its default value.
+  public mutating func clearWatch() {self._watch = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _watch: Ycc_V1_Watch? = nil
+}
+
+/// UpdateWatch replaces the definition of the watch named by definition.name,
+/// keeping its notes, decisions and history.
+public nonisolated struct Ycc_V1_UpdateWatchRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var definition: Ycc_V1_WatchDefinition {
+    get {_definition ?? Ycc_V1_WatchDefinition()}
+    set {_definition = newValue}
+  }
+  /// Returns true if `definition` has been explicitly set.
+  public var hasDefinition: Bool {self._definition != nil}
+  /// Clears the value of `definition`. Subsequent reads from it will return its default value.
+  public mutating func clearDefinition() {self._definition = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _definition: Ycc_V1_WatchDefinition? = nil
+}
+
+public nonisolated struct Ycc_V1_UpdateWatchResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var watch: Ycc_V1_Watch {
+    get {_watch ?? Ycc_V1_Watch()}
+    set {_watch = newValue}
+  }
+  /// Returns true if `watch` has been explicitly set.
+  public var hasWatch: Bool {self._watch != nil}
+  /// Clears the value of `watch`. Subsequent reads from it will return its default value.
+  public mutating func clearWatch() {self._watch = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _watch: Ycc_V1_Watch? = nil
+}
+
+/// DeleteWatch removes a watch and its report history; run session logs remain.
+public nonisolated struct Ycc_V1_DeleteWatchRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var name: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_DeleteWatchResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// SetWatchPaused pauses or resumes a watch. Resuming does not replay missed runs.
+public nonisolated struct Ycc_V1_SetWatchPausedRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var name: String = String()
+
+  public var paused: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SetWatchPausedResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var watch: Ycc_V1_Watch {
+    get {_watch ?? Ycc_V1_Watch()}
+    set {_watch = newValue}
+  }
+  /// Returns true if `watch` has been explicitly set.
+  public var hasWatch: Bool {self._watch != nil}
+  /// Clears the value of `watch`. Subsequent reads from it will return its default value.
+  public mutating func clearWatch() {self._watch = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _watch: Ycc_V1_Watch? = nil
+}
+
+/// RunWatchNow starts a run immediately without changing the schedule. A run
+/// already active is FailedPrecondition.
+public nonisolated struct Ycc_V1_RunWatchNowRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var name: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_RunWatchNowResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "ycc.v1"
@@ -12191,6 +12618,823 @@ nonisolated extension Ycc_V1_GetActivityStepsResponse: SwiftProtobuf.Message, Sw
     if lhs.steps != rhs.steps {return false}
     if lhs.omittedEarlier != rhs.omittedEarlier {return false}
     if lhs.totals != rhs.totals {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_WatchDefinition: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WatchDefinition"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}brief\0\u{3}interval_secs\0\u{1}model\0\u{1}probe\0\u{3}probe_always\0\u{1}expires\0\u{3}allowed_actions\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.brief) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.intervalSecs) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.probe) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.probeAlways) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.expires) }()
+      case 8: try { try decoder.decodeRepeatedStringField(value: &self.allowedActions) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.brief.isEmpty {
+      try visitor.visitSingularStringField(value: self.brief, fieldNumber: 2)
+    }
+    if self.intervalSecs != 0 {
+      try visitor.visitSingularInt64Field(value: self.intervalSecs, fieldNumber: 3)
+    }
+    if !self.model.isEmpty {
+      try visitor.visitSingularStringField(value: self.model, fieldNumber: 4)
+    }
+    if !self.probe.isEmpty {
+      try visitor.visitSingularStringField(value: self.probe, fieldNumber: 5)
+    }
+    if self.probeAlways != false {
+      try visitor.visitSingularBoolField(value: self.probeAlways, fieldNumber: 6)
+    }
+    if !self.expires.isEmpty {
+      try visitor.visitSingularStringField(value: self.expires, fieldNumber: 7)
+    }
+    if !self.allowedActions.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.allowedActions, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_WatchDefinition, rhs: Ycc_V1_WatchDefinition) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.brief != rhs.brief {return false}
+    if lhs.intervalSecs != rhs.intervalSecs {return false}
+    if lhs.model != rhs.model {return false}
+    if lhs.probe != rhs.probe {return false}
+    if lhs.probeAlways != rhs.probeAlways {return false}
+    if lhs.expires != rhs.expires {return false}
+    if lhs.allowedActions != rhs.allowedActions {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_WatchAction: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WatchAction"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}action\0\u{1}undo\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.action) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.undo) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.action.isEmpty {
+      try visitor.visitSingularStringField(value: self.action, fieldNumber: 1)
+    }
+    if !self.undo.isEmpty {
+      try visitor.visitSingularStringField(value: self.undo, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_WatchAction, rhs: Ycc_V1_WatchAction) -> Bool {
+    if lhs.action != rhs.action {return false}
+    if lhs.undo != rhs.undo {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_WatchReport: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WatchReport"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}at\0\u{1}kind\0\u{3}session_id\0\u{1}status\0\u{1}summary\0\u{1}actions\0\u{3}scheduled_for\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.at) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.summary) }()
+      case 6: try { try decoder.decodeRepeatedMessageField(value: &self.actions) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.scheduledFor) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.at.isEmpty {
+      try visitor.visitSingularStringField(value: self.at, fieldNumber: 1)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 2)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 3)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 4)
+    }
+    if !self.summary.isEmpty {
+      try visitor.visitSingularStringField(value: self.summary, fieldNumber: 5)
+    }
+    if !self.actions.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.actions, fieldNumber: 6)
+    }
+    if !self.scheduledFor.isEmpty {
+      try visitor.visitSingularStringField(value: self.scheduledFor, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_WatchReport, rhs: Ycc_V1_WatchReport) -> Bool {
+    if lhs.at != rhs.at {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.summary != rhs.summary {return false}
+    if lhs.actions != rhs.actions {return false}
+    if lhs.scheduledFor != rhs.scheduledFor {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_WatchDecision: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WatchDecision"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}at\0\u{3}session_id\0\u{1}seq\0\u{1}question\0\u{1}answer\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.at) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.question) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.answer) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.at.isEmpty {
+      try visitor.visitSingularStringField(value: self.at, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if self.seq != 0 {
+      try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 3)
+    }
+    if !self.question.isEmpty {
+      try visitor.visitSingularStringField(value: self.question, fieldNumber: 4)
+    }
+    if !self.answer.isEmpty {
+      try visitor.visitSingularStringField(value: self.answer, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_WatchDecision, rhs: Ycc_V1_WatchDecision) -> Bool {
+    if lhs.at != rhs.at {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.seq != rhs.seq {return false}
+    if lhs.question != rhs.question {return false}
+    if lhs.answer != rhs.answer {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Watch"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}definition\0\u{3}created_at\0\u{1}paused\0\u{3}paused_reason\0\u{3}next_due\0\u{1}notes\0\u{1}decisions\0\u{1}last\0\u{1}running\0\u{3}parked_session_ids\0")
+
+  fileprivate class _StorageClass {
+    var _project: String = String()
+    var _definition: Ycc_V1_WatchDefinition? = nil
+    var _createdAt: String = String()
+    var _paused: Bool = false
+    var _pausedReason: String = String()
+    var _nextDue: String = String()
+    var _notes: String = String()
+    var _decisions: [Ycc_V1_WatchDecision] = []
+    var _last: Ycc_V1_WatchReport? = nil
+    var _running: Bool = false
+    var _parkedSessionIds: [String] = []
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _project = source._project
+      _definition = source._definition
+      _createdAt = source._createdAt
+      _paused = source._paused
+      _pausedReason = source._pausedReason
+      _nextDue = source._nextDue
+      _notes = source._notes
+      _decisions = source._decisions
+      _last = source._last
+      _running = source._running
+      _parkedSessionIds = source._parkedSessionIds
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularStringField(value: &_storage._project) }()
+        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._definition) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._createdAt) }()
+        case 4: try { try decoder.decodeSingularBoolField(value: &_storage._paused) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._pausedReason) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._nextDue) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._notes) }()
+        case 8: try { try decoder.decodeRepeatedMessageField(value: &_storage._decisions) }()
+        case 9: try { try decoder.decodeSingularMessageField(value: &_storage._last) }()
+        case 10: try { try decoder.decodeSingularBoolField(value: &_storage._running) }()
+        case 11: try { try decoder.decodeRepeatedStringField(value: &_storage._parkedSessionIds) }()
+        default: break
+        }
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if !_storage._project.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._project, fieldNumber: 1)
+      }
+      try { if let v = _storage._definition {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+      } }()
+      if !_storage._createdAt.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._createdAt, fieldNumber: 3)
+      }
+      if _storage._paused != false {
+        try visitor.visitSingularBoolField(value: _storage._paused, fieldNumber: 4)
+      }
+      if !_storage._pausedReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._pausedReason, fieldNumber: 5)
+      }
+      if !_storage._nextDue.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._nextDue, fieldNumber: 6)
+      }
+      if !_storage._notes.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._notes, fieldNumber: 7)
+      }
+      if !_storage._decisions.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._decisions, fieldNumber: 8)
+      }
+      try { if let v = _storage._last {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
+      } }()
+      if _storage._running != false {
+        try visitor.visitSingularBoolField(value: _storage._running, fieldNumber: 10)
+      }
+      if !_storage._parkedSessionIds.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._parkedSessionIds, fieldNumber: 11)
+      }
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_Watch, rhs: Ycc_V1_Watch) -> Bool {
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._project != rhs_storage._project {return false}
+        if _storage._definition != rhs_storage._definition {return false}
+        if _storage._createdAt != rhs_storage._createdAt {return false}
+        if _storage._paused != rhs_storage._paused {return false}
+        if _storage._pausedReason != rhs_storage._pausedReason {return false}
+        if _storage._nextDue != rhs_storage._nextDue {return false}
+        if _storage._notes != rhs_storage._notes {return false}
+        if _storage._decisions != rhs_storage._decisions {return false}
+        if _storage._last != rhs_storage._last {return false}
+        if _storage._running != rhs_storage._running {return false}
+        if _storage._parkedSessionIds != rhs_storage._parkedSessionIds {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListWatchesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListWatchesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListWatchesRequest, rhs: Ycc_V1_ListWatchesRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListWatchesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListWatchesResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}watches\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.watches) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.watches.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.watches, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListWatchesResponse, rhs: Ycc_V1_ListWatchesResponse) -> Bool {
+    if lhs.watches != rhs.watches {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetWatchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetWatchRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}name\0\u{3}report_limit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.reportLimit) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if self.reportLimit != 0 {
+      try visitor.visitSingularInt32Field(value: self.reportLimit, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetWatchRequest, rhs: Ycc_V1_GetWatchRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.reportLimit != rhs.reportLimit {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetWatchResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetWatchResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}watch\0\u{1}reports\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._watch) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.reports) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._watch {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.reports.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.reports, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetWatchResponse, rhs: Ycc_V1_GetWatchResponse) -> Bool {
+    if lhs._watch != rhs._watch {return false}
+    if lhs.reports != rhs.reports {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_CreateWatchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CreateWatchRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}definition\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._definition) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try { if let v = self._definition {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_CreateWatchRequest, rhs: Ycc_V1_CreateWatchRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs._definition != rhs._definition {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_CreateWatchResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CreateWatchResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}watch\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._watch) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._watch {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_CreateWatchResponse, rhs: Ycc_V1_CreateWatchResponse) -> Bool {
+    if lhs._watch != rhs._watch {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UpdateWatchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UpdateWatchRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}definition\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._definition) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try { if let v = self._definition {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UpdateWatchRequest, rhs: Ycc_V1_UpdateWatchRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs._definition != rhs._definition {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UpdateWatchResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UpdateWatchResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}watch\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._watch) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._watch {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UpdateWatchResponse, rhs: Ycc_V1_UpdateWatchResponse) -> Bool {
+    if lhs._watch != rhs._watch {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_DeleteWatchRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteWatchRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_DeleteWatchRequest, rhs: Ycc_V1_DeleteWatchRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_DeleteWatchResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteWatchResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_DeleteWatchResponse, rhs: Ycc_V1_DeleteWatchResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetWatchPausedRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetWatchPausedRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}name\0\u{1}paused\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.paused) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if self.paused != false {
+      try visitor.visitSingularBoolField(value: self.paused, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetWatchPausedRequest, rhs: Ycc_V1_SetWatchPausedRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.paused != rhs.paused {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetWatchPausedResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetWatchPausedResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}watch\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._watch) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._watch {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetWatchPausedResponse, rhs: Ycc_V1_SetWatchPausedResponse) -> Bool {
+    if lhs._watch != rhs._watch {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RunWatchNowRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RunWatchNowRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RunWatchNowRequest, rhs: Ycc_V1_RunWatchNowRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_RunWatchNowResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RunWatchNowResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_RunWatchNowResponse, rhs: Ycc_V1_RunWatchNowResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

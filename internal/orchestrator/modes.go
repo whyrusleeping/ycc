@@ -86,7 +86,16 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
 			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d))
+		if d.ScheduleWatch != nil {
+			reg.Add(scheduleWatch(d))
+		}
 		return reg, sys(chatModeSystem, unattended, d.Workspace)
+	case "watch":
+		// One scheduled watch run. Questions are real (the run parks while the
+		// schedule continues); the run ends with watch_report.
+		reg.Add(tools.Editing(ws)...)
+		reg.Add(listBacklog(d), getTask(d), askUser(d), spawnAgent(d), sendToAgent(d), watchReport(d))
+		return reg, sys(watchModeSystem, unattended, d.Workspace)
 	case "pm":
 		// pm maintains the project's design docs (plain files) so it keeps
 		// Write/Edit, but it does no implementation: no spawn_* / commit, and the

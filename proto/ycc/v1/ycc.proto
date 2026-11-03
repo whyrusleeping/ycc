@@ -1301,6 +1301,105 @@ message GetActivityStepsResponse {
   repeated ActivityStepTotal totals = 3; // whole range, longest first
 }
 
+// Watches are daemon-owned recurring checks (docs/design/watches.md). Each run
+// is a fresh `watch`-mode session; the definition, notes, decisions and report
+// history persist per project. Timestamps are RFC 3339; empty means unset.
+
+// WatchDefinition is the user-controlled part of a watch.
+message WatchDefinition {
+  string name = 1;          // unique per project: 1-64 of [a-z0-9_-], starting with a letter or digit
+  string brief = 2;         // what each run checks and how to judge it
+  int64 interval_secs = 3;  // at least 300
+  string model = 4;         // logical model for runs; empty = coordinator default
+  string probe = 5;         // optional shell command run first; exit 0 records ok without a model run
+  bool probe_always = 6;    // start the model run even when the probe passes
+  string expires = 7;       // the watch pauses at this time; empty = never
+  repeated string allowed_actions = 8; // pre-authorized actions beyond the low-risk default
+}
+// One action a run took, with how to undo it.
+message WatchAction {
+  string action = 1;
+  string undo = 2;
+}
+// One entry in a watch's report history.
+message WatchReport {
+  string at = 1;
+  string kind = 2;       // run | probe | skipped | failed
+  string session_id = 3; // the run session; empty for probe and skipped entries
+  string status = 4;     // ok | warn | alert; empty for skipped entries
+  string summary = 5;
+  repeated WatchAction actions = 6;
+  string scheduled_for = 7;
+}
+// A user answer to a watch question, carried to later runs.
+message WatchDecision {
+  string at = 1;
+  string session_id = 2;
+  int64 seq = 3; // the answer's event seq in session_id
+  string question = 4;
+  string answer = 5;
+}
+// Watch is a watch's client-facing state.
+message Watch {
+  string project = 1;
+  WatchDefinition definition = 2;
+  string created_at = 3;
+  bool paused = 4;
+  string paused_reason = 5; // user | expired; empty when not paused
+  string next_due = 6;
+  string notes = 7;         // notes the latest run passed forward
+  repeated WatchDecision decisions = 8;
+  WatchReport last = 9;     // unset before the first report
+  bool running = 10;        // a probe or run is active
+  repeated string parked_session_ids = 11; // runs waiting on a user answer
+}
+
+// Project-scoped requests resolve an empty project to the only registered one.
+message ListWatchesRequest { string project = 1; }
+message ListWatchesResponse { repeated Watch watches = 1; }
+message GetWatchRequest {
+  string project = 1;
+  string name = 2;
+  int32 report_limit = 3; // newest reports returned; zero uses 20, clamped to 500
+}
+message GetWatchResponse {
+  Watch watch = 1;
+  repeated WatchReport reports = 2; // newest first
+}
+// CreateWatch persists a new watch; its first run is due immediately.
+message CreateWatchRequest {
+  string project = 1;
+  WatchDefinition definition = 2;
+}
+message CreateWatchResponse { Watch watch = 1; }
+// UpdateWatch replaces the definition of the watch named by definition.name,
+// keeping its notes, decisions and history.
+message UpdateWatchRequest {
+  string project = 1;
+  WatchDefinition definition = 2;
+}
+message UpdateWatchResponse { Watch watch = 1; }
+// DeleteWatch removes a watch and its report history; run session logs remain.
+message DeleteWatchRequest {
+  string project = 1;
+  string name = 2;
+}
+message DeleteWatchResponse {}
+// SetWatchPaused pauses or resumes a watch. Resuming does not replay missed runs.
+message SetWatchPausedRequest {
+  string project = 1;
+  string name = 2;
+  bool paused = 3;
+}
+message SetWatchPausedResponse { Watch watch = 1; }
+// RunWatchNow starts a run immediately without changing the schedule. A run
+// already active is FailedPrecondition.
+message RunWatchNowRequest {
+  string project = 1;
+  string name = 2;
+}
+message RunWatchNowResponse {}
+
 service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
@@ -1463,4 +1562,15 @@ service SessionService {
   rpc MergeWorkstream(MergeWorkstreamRequest) returns (MergeWorkstreamResponse);
   rpc DiscardWorkstream(DiscardWorkstreamRequest) returns (DiscardWorkstreamResponse);
   rpc RetryIntegration(RetryIntegrationRequest) returns (RetryIntegrationResponse);
+
+  // Watches: daemon-scheduled recurring check sessions. Unknown watch is
+  // NotFound, a duplicate name AlreadyExists, an invalid definition
+  // InvalidArgument.
+  rpc ListWatches(ListWatchesRequest) returns (ListWatchesResponse);
+  rpc GetWatch(GetWatchRequest) returns (GetWatchResponse);
+  rpc CreateWatch(CreateWatchRequest) returns (CreateWatchResponse);
+  rpc UpdateWatch(UpdateWatchRequest) returns (UpdateWatchResponse);
+  rpc DeleteWatch(DeleteWatchRequest) returns (DeleteWatchResponse);
+  rpc SetWatchPaused(SetWatchPausedRequest) returns (SetWatchPausedResponse);
+  rpc RunWatchNow(RunWatchNowRequest) returns (RunWatchNowResponse);
 }

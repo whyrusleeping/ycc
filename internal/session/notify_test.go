@@ -74,7 +74,7 @@ func TestNotifyWatcherMapsEvents(t *testing.T) {
 	}
 	defer log.Close()
 
-	m.startNotifyWatcher(ws, "s1", log)
+	m.startNotifyWatcher(ws, "s1", "work", log)
 	em := event.NewEmitter(log, "coordinator")
 
 	// Auto-answered unattended ask: nobody is waiting, so it must NOT notify.
@@ -174,7 +174,7 @@ func TestNotifyWatcherSkipsHistory(t *testing.T) {
 	em.Emit(event.QuestionAsked, askData("old question", nil, false))
 
 	// Attach at the current LastSeq (reopen semantics).
-	m.startNotifyWatcher(ws, "s2", log)
+	m.startNotifyWatcher(ws, "s2", "work", log)
 
 	// A fresh event after attach should fire.
 	em.Emit(event.SessionIdle, map[string]any{"report": "fresh"})

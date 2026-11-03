@@ -126,11 +126,17 @@ type Deps struct {
 	// for the model (e.g. "an automatic memory-groom session … is running") or ""
 	// when nothing was arranged, in which case the store's own advice is shown.
 	MemoryPressure func(activeBytes int) string
-	Implementer    AgentSpec
-	Reviewers      []AgentSpec
-	Asker          Asker
-	MaxTok         int
-	MaxTurns       int // per-Run tool-call turn cap; 0 => engine default backstop
+	// WatchReport records a watch run's report (watch mode only) and returns a
+	// confirmation for the model.
+	WatchReport func(WatchReport) (string, error)
+	// ScheduleWatch creates a watch from a user-confirmed chat request. Nil
+	// hides schedule_watch.
+	ScheduleWatch func(context.Context, WatchSpec) (string, error)
+	Implementer   AgentSpec
+	Reviewers     []AgentSpec
+	Asker         Asker
+	MaxTok        int
+	MaxTurns      int // per-Run tool-call turn cap; 0 => engine default backstop
 	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
 	// PromptCacheScope prefixes each subagent loop's prompt-cache routing key

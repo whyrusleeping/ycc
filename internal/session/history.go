@@ -163,7 +163,7 @@ type sessionParticipation struct {
 
 func knownSessionOrigin(origin string) bool {
 	switch origin {
-	case OriginUser, OriginWorkLoop, OriginMemoryGroom, OriginAutomation:
+	case OriginUser, OriginWorkLoop, OriginMemoryGroom, OriginAutomation, OriginWatch:
 		return true
 	default:
 		return false

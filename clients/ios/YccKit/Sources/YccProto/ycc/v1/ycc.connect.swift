@@ -296,6 +296,30 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
 
     @available(iOS 13, *)
     func `retryIntegration`(request: Ycc_V1_RetryIntegrationRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RetryIntegrationResponse>
+
+    /// Watches: daemon-scheduled recurring check sessions. Unknown watch is
+    /// NotFound, a duplicate name AlreadyExists, an invalid definition
+    /// InvalidArgument.
+    @available(iOS 13, *)
+    func `listWatches`(request: Ycc_V1_ListWatchesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListWatchesResponse>
+
+    @available(iOS 13, *)
+    func `getWatch`(request: Ycc_V1_GetWatchRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWatchResponse>
+
+    @available(iOS 13, *)
+    func `createWatch`(request: Ycc_V1_CreateWatchRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CreateWatchResponse>
+
+    @available(iOS 13, *)
+    func `updateWatch`(request: Ycc_V1_UpdateWatchRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_UpdateWatchResponse>
+
+    @available(iOS 13, *)
+    func `deleteWatch`(request: Ycc_V1_DeleteWatchRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_DeleteWatchResponse>
+
+    @available(iOS 13, *)
+    func `setWatchPaused`(request: Ycc_V1_SetWatchPausedRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetWatchPausedResponse>
+
+    @available(iOS 13, *)
+    func `runWatchNow`(request: Ycc_V1_RunWatchNowRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_RunWatchNowResponse>
 }
 
 /// Concrete implementation of `Ycc_V1_SessionServiceClientInterface`.
@@ -661,6 +685,41 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
         return await self.client.unary(path: "/ycc.v1.SessionService/RetryIntegration", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
+    @available(iOS 13, *)
+    public func `listWatches`(request: Ycc_V1_ListWatchesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListWatchesResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ListWatches", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getWatch`(request: Ycc_V1_GetWatchRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetWatchResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetWatch", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `createWatch`(request: Ycc_V1_CreateWatchRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CreateWatchResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CreateWatch", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `updateWatch`(request: Ycc_V1_UpdateWatchRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_UpdateWatchResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/UpdateWatch", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `deleteWatch`(request: Ycc_V1_DeleteWatchRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_DeleteWatchResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/DeleteWatch", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `setWatchPaused`(request: Ycc_V1_SetWatchPausedRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetWatchPausedResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SetWatchPaused", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `runWatchNow`(request: Ycc_V1_RunWatchNowRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_RunWatchNowResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/RunWatchNow", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
     public enum Metadata {
         public enum Methods {
             public static let listModes = Connect.MethodSpec(name: "ListModes", service: "ycc.v1.SessionService", type: .unary)
@@ -734,6 +793,13 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let mergeWorkstream = Connect.MethodSpec(name: "MergeWorkstream", service: "ycc.v1.SessionService", type: .unary)
             public static let discardWorkstream = Connect.MethodSpec(name: "DiscardWorkstream", service: "ycc.v1.SessionService", type: .unary)
             public static let retryIntegration = Connect.MethodSpec(name: "RetryIntegration", service: "ycc.v1.SessionService", type: .unary)
+            public static let listWatches = Connect.MethodSpec(name: "ListWatches", service: "ycc.v1.SessionService", type: .unary)
+            public static let getWatch = Connect.MethodSpec(name: "GetWatch", service: "ycc.v1.SessionService", type: .unary)
+            public static let createWatch = Connect.MethodSpec(name: "CreateWatch", service: "ycc.v1.SessionService", type: .unary)
+            public static let updateWatch = Connect.MethodSpec(name: "UpdateWatch", service: "ycc.v1.SessionService", type: .unary)
+            public static let deleteWatch = Connect.MethodSpec(name: "DeleteWatch", service: "ycc.v1.SessionService", type: .unary)
+            public static let setWatchPaused = Connect.MethodSpec(name: "SetWatchPaused", service: "ycc.v1.SessionService", type: .unary)
+            public static let runWatchNow = Connect.MethodSpec(name: "RunWatchNow", service: "ycc.v1.SessionService", type: .unary)
         }
     }
 }

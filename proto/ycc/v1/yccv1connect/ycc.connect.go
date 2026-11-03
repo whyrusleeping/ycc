@@ -239,6 +239,26 @@ const (
 	// SessionServiceRetryIntegrationProcedure is the fully-qualified name of the SessionService's
 	// RetryIntegration RPC.
 	SessionServiceRetryIntegrationProcedure = "/ycc.v1.SessionService/RetryIntegration"
+	// SessionServiceListWatchesProcedure is the fully-qualified name of the SessionService's
+	// ListWatches RPC.
+	SessionServiceListWatchesProcedure = "/ycc.v1.SessionService/ListWatches"
+	// SessionServiceGetWatchProcedure is the fully-qualified name of the SessionService's GetWatch RPC.
+	SessionServiceGetWatchProcedure = "/ycc.v1.SessionService/GetWatch"
+	// SessionServiceCreateWatchProcedure is the fully-qualified name of the SessionService's
+	// CreateWatch RPC.
+	SessionServiceCreateWatchProcedure = "/ycc.v1.SessionService/CreateWatch"
+	// SessionServiceUpdateWatchProcedure is the fully-qualified name of the SessionService's
+	// UpdateWatch RPC.
+	SessionServiceUpdateWatchProcedure = "/ycc.v1.SessionService/UpdateWatch"
+	// SessionServiceDeleteWatchProcedure is the fully-qualified name of the SessionService's
+	// DeleteWatch RPC.
+	SessionServiceDeleteWatchProcedure = "/ycc.v1.SessionService/DeleteWatch"
+	// SessionServiceSetWatchPausedProcedure is the fully-qualified name of the SessionService's
+	// SetWatchPaused RPC.
+	SessionServiceSetWatchPausedProcedure = "/ycc.v1.SessionService/SetWatchPaused"
+	// SessionServiceRunWatchNowProcedure is the fully-qualified name of the SessionService's
+	// RunWatchNow RPC.
+	SessionServiceRunWatchNowProcedure = "/ycc.v1.SessionService/RunWatchNow"
 )
 
 // SessionServiceClient is a client for the ycc.v1.SessionService service.
@@ -387,6 +407,16 @@ type SessionServiceClient interface {
 	MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error)
 	DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error)
 	RetryIntegration(context.Context, *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error)
+	// Watches: daemon-scheduled recurring check sessions. Unknown watch is
+	// NotFound, a duplicate name AlreadyExists, an invalid definition
+	// InvalidArgument.
+	ListWatches(context.Context, *connect.Request[v1.ListWatchesRequest]) (*connect.Response[v1.ListWatchesResponse], error)
+	GetWatch(context.Context, *connect.Request[v1.GetWatchRequest]) (*connect.Response[v1.GetWatchResponse], error)
+	CreateWatch(context.Context, *connect.Request[v1.CreateWatchRequest]) (*connect.Response[v1.CreateWatchResponse], error)
+	UpdateWatch(context.Context, *connect.Request[v1.UpdateWatchRequest]) (*connect.Response[v1.UpdateWatchResponse], error)
+	DeleteWatch(context.Context, *connect.Request[v1.DeleteWatchRequest]) (*connect.Response[v1.DeleteWatchResponse], error)
+	SetWatchPaused(context.Context, *connect.Request[v1.SetWatchPausedRequest]) (*connect.Response[v1.SetWatchPausedResponse], error)
+	RunWatchNow(context.Context, *connect.Request[v1.RunWatchNowRequest]) (*connect.Response[v1.RunWatchNowResponse], error)
 }
 
 // NewSessionServiceClient constructs a client for the ycc.v1.SessionService service. By default, it
@@ -826,6 +856,48 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("RetryIntegration")),
 			connect.WithClientOptions(opts...),
 		),
+		listWatches: connect.NewClient[v1.ListWatchesRequest, v1.ListWatchesResponse](
+			httpClient,
+			baseURL+SessionServiceListWatchesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListWatches")),
+			connect.WithClientOptions(opts...),
+		),
+		getWatch: connect.NewClient[v1.GetWatchRequest, v1.GetWatchResponse](
+			httpClient,
+			baseURL+SessionServiceGetWatchProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetWatch")),
+			connect.WithClientOptions(opts...),
+		),
+		createWatch: connect.NewClient[v1.CreateWatchRequest, v1.CreateWatchResponse](
+			httpClient,
+			baseURL+SessionServiceCreateWatchProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CreateWatch")),
+			connect.WithClientOptions(opts...),
+		),
+		updateWatch: connect.NewClient[v1.UpdateWatchRequest, v1.UpdateWatchResponse](
+			httpClient,
+			baseURL+SessionServiceUpdateWatchProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("UpdateWatch")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteWatch: connect.NewClient[v1.DeleteWatchRequest, v1.DeleteWatchResponse](
+			httpClient,
+			baseURL+SessionServiceDeleteWatchProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("DeleteWatch")),
+			connect.WithClientOptions(opts...),
+		),
+		setWatchPaused: connect.NewClient[v1.SetWatchPausedRequest, v1.SetWatchPausedResponse](
+			httpClient,
+			baseURL+SessionServiceSetWatchPausedProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetWatchPaused")),
+			connect.WithClientOptions(opts...),
+		),
+		runWatchNow: connect.NewClient[v1.RunWatchNowRequest, v1.RunWatchNowResponse](
+			httpClient,
+			baseURL+SessionServiceRunWatchNowProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("RunWatchNow")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -902,6 +974,13 @@ type sessionServiceClient struct {
 	mergeWorkstream        *connect.Client[v1.MergeWorkstreamRequest, v1.MergeWorkstreamResponse]
 	discardWorkstream      *connect.Client[v1.DiscardWorkstreamRequest, v1.DiscardWorkstreamResponse]
 	retryIntegration       *connect.Client[v1.RetryIntegrationRequest, v1.RetryIntegrationResponse]
+	listWatches            *connect.Client[v1.ListWatchesRequest, v1.ListWatchesResponse]
+	getWatch               *connect.Client[v1.GetWatchRequest, v1.GetWatchResponse]
+	createWatch            *connect.Client[v1.CreateWatchRequest, v1.CreateWatchResponse]
+	updateWatch            *connect.Client[v1.UpdateWatchRequest, v1.UpdateWatchResponse]
+	deleteWatch            *connect.Client[v1.DeleteWatchRequest, v1.DeleteWatchResponse]
+	setWatchPaused         *connect.Client[v1.SetWatchPausedRequest, v1.SetWatchPausedResponse]
+	runWatchNow            *connect.Client[v1.RunWatchNowRequest, v1.RunWatchNowResponse]
 }
 
 // ListModes calls ycc.v1.SessionService.ListModes.
@@ -1259,6 +1338,41 @@ func (c *sessionServiceClient) RetryIntegration(ctx context.Context, req *connec
 	return c.retryIntegration.CallUnary(ctx, req)
 }
 
+// ListWatches calls ycc.v1.SessionService.ListWatches.
+func (c *sessionServiceClient) ListWatches(ctx context.Context, req *connect.Request[v1.ListWatchesRequest]) (*connect.Response[v1.ListWatchesResponse], error) {
+	return c.listWatches.CallUnary(ctx, req)
+}
+
+// GetWatch calls ycc.v1.SessionService.GetWatch.
+func (c *sessionServiceClient) GetWatch(ctx context.Context, req *connect.Request[v1.GetWatchRequest]) (*connect.Response[v1.GetWatchResponse], error) {
+	return c.getWatch.CallUnary(ctx, req)
+}
+
+// CreateWatch calls ycc.v1.SessionService.CreateWatch.
+func (c *sessionServiceClient) CreateWatch(ctx context.Context, req *connect.Request[v1.CreateWatchRequest]) (*connect.Response[v1.CreateWatchResponse], error) {
+	return c.createWatch.CallUnary(ctx, req)
+}
+
+// UpdateWatch calls ycc.v1.SessionService.UpdateWatch.
+func (c *sessionServiceClient) UpdateWatch(ctx context.Context, req *connect.Request[v1.UpdateWatchRequest]) (*connect.Response[v1.UpdateWatchResponse], error) {
+	return c.updateWatch.CallUnary(ctx, req)
+}
+
+// DeleteWatch calls ycc.v1.SessionService.DeleteWatch.
+func (c *sessionServiceClient) DeleteWatch(ctx context.Context, req *connect.Request[v1.DeleteWatchRequest]) (*connect.Response[v1.DeleteWatchResponse], error) {
+	return c.deleteWatch.CallUnary(ctx, req)
+}
+
+// SetWatchPaused calls ycc.v1.SessionService.SetWatchPaused.
+func (c *sessionServiceClient) SetWatchPaused(ctx context.Context, req *connect.Request[v1.SetWatchPausedRequest]) (*connect.Response[v1.SetWatchPausedResponse], error) {
+	return c.setWatchPaused.CallUnary(ctx, req)
+}
+
+// RunWatchNow calls ycc.v1.SessionService.RunWatchNow.
+func (c *sessionServiceClient) RunWatchNow(ctx context.Context, req *connect.Request[v1.RunWatchNowRequest]) (*connect.Response[v1.RunWatchNowResponse], error) {
+	return c.runWatchNow.CallUnary(ctx, req)
+}
+
 // SessionServiceHandler is an implementation of the ycc.v1.SessionService service.
 type SessionServiceHandler interface {
 	ListModes(context.Context, *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error)
@@ -1405,6 +1519,16 @@ type SessionServiceHandler interface {
 	MergeWorkstream(context.Context, *connect.Request[v1.MergeWorkstreamRequest]) (*connect.Response[v1.MergeWorkstreamResponse], error)
 	DiscardWorkstream(context.Context, *connect.Request[v1.DiscardWorkstreamRequest]) (*connect.Response[v1.DiscardWorkstreamResponse], error)
 	RetryIntegration(context.Context, *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error)
+	// Watches: daemon-scheduled recurring check sessions. Unknown watch is
+	// NotFound, a duplicate name AlreadyExists, an invalid definition
+	// InvalidArgument.
+	ListWatches(context.Context, *connect.Request[v1.ListWatchesRequest]) (*connect.Response[v1.ListWatchesResponse], error)
+	GetWatch(context.Context, *connect.Request[v1.GetWatchRequest]) (*connect.Response[v1.GetWatchResponse], error)
+	CreateWatch(context.Context, *connect.Request[v1.CreateWatchRequest]) (*connect.Response[v1.CreateWatchResponse], error)
+	UpdateWatch(context.Context, *connect.Request[v1.UpdateWatchRequest]) (*connect.Response[v1.UpdateWatchResponse], error)
+	DeleteWatch(context.Context, *connect.Request[v1.DeleteWatchRequest]) (*connect.Response[v1.DeleteWatchResponse], error)
+	SetWatchPaused(context.Context, *connect.Request[v1.SetWatchPausedRequest]) (*connect.Response[v1.SetWatchPausedResponse], error)
+	RunWatchNow(context.Context, *connect.Request[v1.RunWatchNowRequest]) (*connect.Response[v1.RunWatchNowResponse], error)
 }
 
 // NewSessionServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1840,6 +1964,48 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("RetryIntegration")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceListWatchesHandler := connect.NewUnaryHandler(
+		SessionServiceListWatchesProcedure,
+		svc.ListWatches,
+		connect.WithSchema(sessionServiceMethods.ByName("ListWatches")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetWatchHandler := connect.NewUnaryHandler(
+		SessionServiceGetWatchProcedure,
+		svc.GetWatch,
+		connect.WithSchema(sessionServiceMethods.ByName("GetWatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCreateWatchHandler := connect.NewUnaryHandler(
+		SessionServiceCreateWatchProcedure,
+		svc.CreateWatch,
+		connect.WithSchema(sessionServiceMethods.ByName("CreateWatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceUpdateWatchHandler := connect.NewUnaryHandler(
+		SessionServiceUpdateWatchProcedure,
+		svc.UpdateWatch,
+		connect.WithSchema(sessionServiceMethods.ByName("UpdateWatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceDeleteWatchHandler := connect.NewUnaryHandler(
+		SessionServiceDeleteWatchProcedure,
+		svc.DeleteWatch,
+		connect.WithSchema(sessionServiceMethods.ByName("DeleteWatch")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetWatchPausedHandler := connect.NewUnaryHandler(
+		SessionServiceSetWatchPausedProcedure,
+		svc.SetWatchPaused,
+		connect.WithSchema(sessionServiceMethods.ByName("SetWatchPaused")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceRunWatchNowHandler := connect.NewUnaryHandler(
+		SessionServiceRunWatchNowProcedure,
+		svc.RunWatchNow,
+		connect.WithSchema(sessionServiceMethods.ByName("RunWatchNow")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/ycc.v1.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SessionServiceListModesProcedure:
@@ -1984,6 +2150,20 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceDiscardWorkstreamHandler.ServeHTTP(w, r)
 		case SessionServiceRetryIntegrationProcedure:
 			sessionServiceRetryIntegrationHandler.ServeHTTP(w, r)
+		case SessionServiceListWatchesProcedure:
+			sessionServiceListWatchesHandler.ServeHTTP(w, r)
+		case SessionServiceGetWatchProcedure:
+			sessionServiceGetWatchHandler.ServeHTTP(w, r)
+		case SessionServiceCreateWatchProcedure:
+			sessionServiceCreateWatchHandler.ServeHTTP(w, r)
+		case SessionServiceUpdateWatchProcedure:
+			sessionServiceUpdateWatchHandler.ServeHTTP(w, r)
+		case SessionServiceDeleteWatchProcedure:
+			sessionServiceDeleteWatchHandler.ServeHTTP(w, r)
+		case SessionServiceSetWatchPausedProcedure:
+			sessionServiceSetWatchPausedHandler.ServeHTTP(w, r)
+		case SessionServiceRunWatchNowProcedure:
+			sessionServiceRunWatchNowHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2275,4 +2455,32 @@ func (UnimplementedSessionServiceHandler) DiscardWorkstream(context.Context, *co
 
 func (UnimplementedSessionServiceHandler) RetryIntegration(context.Context, *connect.Request[v1.RetryIntegrationRequest]) (*connect.Response[v1.RetryIntegrationResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RetryIntegration is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListWatches(context.Context, *connect.Request[v1.ListWatchesRequest]) (*connect.Response[v1.ListWatchesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListWatches is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetWatch(context.Context, *connect.Request[v1.GetWatchRequest]) (*connect.Response[v1.GetWatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetWatch is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CreateWatch(context.Context, *connect.Request[v1.CreateWatchRequest]) (*connect.Response[v1.CreateWatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CreateWatch is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) UpdateWatch(context.Context, *connect.Request[v1.UpdateWatchRequest]) (*connect.Response[v1.UpdateWatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.UpdateWatch is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) DeleteWatch(context.Context, *connect.Request[v1.DeleteWatchRequest]) (*connect.Response[v1.DeleteWatchResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DeleteWatch is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetWatchPaused(context.Context, *connect.Request[v1.SetWatchPausedRequest]) (*connect.Response[v1.SetWatchPausedResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetWatchPaused is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) RunWatchNow(context.Context, *connect.Request[v1.RunWatchNowRequest]) (*connect.Response[v1.RunWatchNowResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RunWatchNow is not implemented"))
 }

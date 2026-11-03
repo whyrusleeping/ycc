@@ -110,6 +110,9 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 		if err := mgr.ReconcileWorkstreams(); err != nil {
 			log.Printf("workstream reconcile: %v", err)
 		}
+		// Watches are recurring checks that outlive any session, so only a
+		// persistent daemon schedules them.
+		mgr.StartWatches()
 		// A persistent daemon outlives any single session, so it runs the
 		// background GC reaper when enabled in config: idle-session
 		// reaping and/or on-disk log retention. Both default to 0 (disabled), so

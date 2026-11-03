@@ -688,6 +688,37 @@ attempts per task and exposes the latest evidence, remaining acceptance criteria
 step for unfinished or blocked work. When a failed session has no idle report, its structured error
 is retained as bounded continuation evidence. These records survive daemon restart.
 
+### 9.2 Watches
+
+A watch is a daemon-owned recurring check for one project: name, brief, interval (at least five
+minutes), optional model, optional probe command, optional expiry, and optional pre-authorized
+actions. Definitions, notes, standing decisions, and run state persist in
+`.ycc/watches/<name>/watch.json` with an append-only `reports.jsonl`; only a persistent daemon
+schedules them. Due times advance on the schedule's own grid, so cadence does not drift with run
+duration. Runs never overlap: a due time reached while a probe or a run's first pass is active is
+recorded as skipped. Several slots missed while the daemon was down collapse into one run whose
+context states the gap. An expired watch pauses itself; resuming does not replay missed runs.
+
+With a probe, the daemon runs it first (`bash -c` in the project root, five-minute limit) and records
+an `ok` report without a model call when it exits 0, unless the watch asks for a run every time.
+Otherwise a fresh `watch`-mode session (origin `watch`, attended) starts with the brief as its
+opening input and daemon context: the previous run's notes and report, the user's earlier answers
+to watch questions, questions still pending from parked runs, pre-authorized actions, probe output,
+and a snapshot of the project's other live sessions with their tasks and running jobs, active
+workstreams, and `in_progress` tasks. The run ends with `watch_report` (`ok`/`warn`/`alert`,
+summary, actions with undo steps, replacement notes of at most 4 KB). A report listing actions is
+at least `warn`. A run that ends without reporting, or that a restart interrupts without a
+restorable question, is recorded as failed. An active run is stopped after an hour.
+
+An `ask_user` question parks only its own run; the schedule continues and later runs are told not
+to repeat it. Answering resumes the run (reopening it after a restart). The daemon itself appends
+each answered watch question to the watch's standing decisions (the latest 20). Watch runs never
+send idle pushes; an `alert` report sends an attention push unless the run already asked a question.
+Runs act only on low-risk or pre-authorized actions and ask rather than act on anything
+attributable to another live session or an `in_progress` task. Attended chat sessions on a
+persistent daemon offer `schedule_watch`, which creates a watch only after the user confirms its
+definition; the first run is due immediately. `docs/design/watches.md` records the rationale.
+
 ## 10. Work orchestration
 
 A work session starts with fresh coordinator context, reads the task and relevant design, chooses
