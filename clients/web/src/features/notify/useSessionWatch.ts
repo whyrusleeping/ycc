@@ -1,5 +1,5 @@
-// Shell-level watch over the session list (mounted once): baselines read
-// marks for unread tracking, keeps the tab title's needs-answer count, and
+// Shell-level watch over the session list (mounted once): syncs read marks
+// with the daemon for unread tracking, keeps the tab title's needs-answer count, and
 // raises a browser notification for a question, a finished turn, or an
 // error the user is not looking at.
 import { useEffect, useRef } from "react";
@@ -41,7 +41,7 @@ export function useSessionWatch(activeSessionId: string | null) {
         rows.push({ session, project: l.project });
       }
     }
-    readMarks.noteSeen(rows.map((r) => r.session));
+    readMarks.noteSummaries(rows);
     setNeedsAnswerCount(rows.filter((r) => needsAnswer(r.session)).length);
     const { state, events } = detectEvents(watch.current, rows, (s) => isInboxSession(s, loopIds.has(s.sessionId)));
     watch.current = state;

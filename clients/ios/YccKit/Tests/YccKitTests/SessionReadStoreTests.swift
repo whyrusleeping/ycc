@@ -3,17 +3,50 @@ import XCTest
 import YccProto
 @testable import YccKit
 
-/// Unread ("new agent messages") tracking: baselining on first sighting, going
-/// unread on later daemon activity, and clearing when the session is read.
+/// Records `MarkSessionsRead` pushes and echoes the requested marks back as the
+/// daemon's result (or fails while `error` is set).
+final class RecordingReadSync: SessionReadSync, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(project: String, marks: [String: String])] = []
+    private var failure: Error?
+
+    var requests: [(project: String, marks: [String: String])] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func fail(with error: Error?) {
+        lock.lock()
+        failure = error
+        lock.unlock()
+    }
+
+    func markSessionsRead(
+        project: String, marks: [Ycc_V1_SessionReadMark]
+    ) async throws -> [Ycc_V1_SessionReadMark] {
+        lock.lock()
+        recorded.append((project, Dictionary(uniqueKeysWithValues: marks.map { ($0.sessionID, $0.readThrough) })))
+        let error = failure
+        lock.unlock()
+        if let error { throw error }
+        return marks
+    }
+}
+
+/// Unread ("new agent messages") tracking: the effective mark is the later of
+/// this device's mark and the daemon's shared one; marking read is optimistic
+/// and pushed per project.
 @MainActor
 final class SessionReadStoreTests: XCTestCase {
-    private func makeStore(limit: Int = 600) -> SessionReadStore {
-        SessionReadStore(defaults: nil, key: "marks", limit: limit)
+    private func makeStore(limit: Int = 600, sync: SessionReadSync? = nil) -> SessionReadStore {
+        SessionReadStore(defaults: nil, key: "marks", limit: limit, sync: sync)
     }
 
     private func session(
         id: String,
         lastActivity: String = "2026-08-06T10:00:00Z",
+        readThrough: String = "",
         startedAt: String = "2026-08-06T09:00:00Z",
         status: String = "idle",
         live: Bool = false
@@ -22,114 +55,71 @@ final class SessionReadStoreTests: XCTestCase {
         s.sessionID = id
         s.startedAt = startedAt
         s.lastActivity = lastActivity
+        s.readThrough = readThrough
         s.status = status
         s.live = live
         return s
     }
 
-    // MARK: - Baseline
+    // MARK: - Daemon marks
 
-    func testUnknownSessionIsNotUnread() {
-        let store = makeStore()
-        XCTAssertFalse(store.isUnread(session(id: "a")))
-    }
-
-    func testFirstSightingBaselinesAsRead() {
-        let store = makeStore()
-        store.noteSeen([session(id: "a")])
-        XCTAssertFalse(store.isUnread(session(id: "a")))
-    }
-
-    func testActivityAfterFirstSightingIsUnread() {
-        let store = makeStore()
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00Z")])
+    func testListingNeverCreatesOrPushesMarks() async {
+        let sync = RecordingReadSync()
+        let store = makeStore(sync: sync)
+        // No read state for the project yet: everything reads as read.
+        store.noteListed(["one": [session(id: "a", lastActivity: "2026-08-06T10:00:00Z")]])
+        XCTAssertNil(store.mark(for: "a"))
         let progressed = session(id: "a", lastActivity: "2026-08-06T10:05:00Z")
-        XCTAssertTrue(store.isUnread(progressed))
-        XCTAssertEqual(store.unreadCount(in: [progressed]), 1)
+        store.noteListed(["one": [progressed]])
+        XCTAssertFalse(store.isUnread(progressed))
+        await store.waitForPushes()
+        XCTAssertTrue(sync.requests.isEmpty)
     }
 
-    func testNoteSeenDoesNotRebaselineKnownSessions() {
+    func testDaemonMarkDrivesUnread() {
         let store = makeStore()
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00Z")])
-        let progressed = session(id: "a", lastActivity: "2026-08-06T10:05:00Z")
-        // A later refresh re-reports the session; that must not silence it.
-        store.noteSeen([progressed])
-        XCTAssertTrue(store.isUnread(progressed))
+        let unread = session(id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z")
+        XCTAssertTrue(store.isUnread(unread))
+        XCTAssertEqual(store.unreadCount(in: [unread]), 1)
+        let readElsewhere = session(id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:05:00Z")
+        store.noteListed(["one": [readElsewhere]])
+        XCTAssertFalse(store.isUnread(readElsewhere))
+        XCTAssertEqual(store.mark(for: "a"), "2026-08-06T10:05:00Z")
+    }
+
+    func testEffectiveMarkIsTheLaterOfLocalAndDaemon() {
+        let store = makeStore()
+        store.markRead(sessionID: "a", through: "2026-08-06T10:05:00Z")
+        let behind = session(id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z")
+        store.noteListed(["one": [behind]])
+        XCTAssertFalse(store.isUnread(behind))
+        XCTAssertEqual(store.mark(for: "a"), "2026-08-06T10:05:00Z")
+
+        store.noteListed(["one": [session(id: "a", lastActivity: "2026-08-06T10:10:00Z", readThrough: "2026-08-06T10:10:00Z")]])
+        XCTAssertEqual(store.mark(for: "a"), "2026-08-06T10:10:00Z")
     }
 
     func testRunningSessionIsNeverUnread() {
         let store = makeStore()
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00Z")])
         // Still working: the live row speaks for itself, and a log that grows
         // every few seconds would keep the badge permanently lit.
         let running = session(
-            id: "a", lastActivity: "2026-08-06T10:05:00Z", status: "running", live: true)
+            id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z",
+            status: "running", live: true)
         XCTAssertFalse(store.isUnread(running))
 
         // The same session, having finished, is exactly what unread is for.
         let finished = session(
-            id: "a", lastActivity: "2026-08-06T10:05:00Z", status: "idle", live: true)
+            id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z",
+            status: "idle", live: true)
         XCTAssertTrue(store.isUnread(finished))
-    }
-
-    // MARK: - New sessions
-
-    func testNewSessionAfterWatermarkIsUnreadAndMarkReadClearsIt() {
-        let store = makeStore()
-        let existing = session(id: "existing", lastActivity: "2026-08-06T10:00:00Z")
-        store.noteSeen([existing])
-
-        let new = session(id: "new", lastActivity: "2026-08-06T11:00:00Z")
-        store.noteSeen([existing, new])
-        XCTAssertTrue(store.isUnread(new))
-
-        store.markRead(new)
-        XCTAssertFalse(store.isUnread(new))
-    }
-
-    func testNewRunningSessionWaitsUntilItStopsToBecomeUnread() {
-        let store = makeStore()
-        let existing = session(id: "existing", lastActivity: "2026-08-06T10:00:00Z")
-        store.noteSeen([existing])
-
-        let running = session(
-            id: "new", lastActivity: "2026-08-06T11:00:00Z", status: "running", live: true)
-        store.noteSeen([existing, running])
-        XCTAssertFalse(store.isUnread(running))
-
-        let stopped = session(
-            id: "new", lastActivity: "2026-08-06T11:00:00Z", status: "idle", live: true)
-        XCTAssertTrue(store.isUnread(stopped))
-    }
-
-    func testBackCatalogueFirstSeenBeforeWatermarkIsRead() {
-        let store = makeStore()
-        let existing = session(id: "existing", lastActivity: "2026-08-06T10:00:00Z")
-        store.noteSeen([existing])
-
-        let backCatalogue = session(id: "old", lastActivity: "2026-08-05T10:00:00Z")
-        let tiedWithWatermark = session(id: "tied", lastActivity: "2026-08-06T10:00:00Z")
-        store.noteSeen([existing, backCatalogue, tiedWithWatermark])
-        XCTAssertFalse(store.isUnread(backCatalogue))
-        XCTAssertFalse(store.isUnread(tiedWithWatermark))
-    }
-
-    func testFreshInstallFirstListIsAllRead() {
-        let store = makeStore()
-        let firstList = [
-            session(id: "older", lastActivity: "2026-08-05T10:00:00Z"),
-            session(id: "newer", lastActivity: "2026-08-06T10:00:00Z"),
-        ]
-        store.noteSeen(firstList)
-        XCTAssertEqual(store.unreadCount(in: firstList), 0)
     }
 
     // MARK: - Marking read
 
     func testMarkReadThroughEventTimestampClears() {
         let store = makeStore()
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00Z")])
-        let progressed = session(id: "a", lastActivity: "2026-08-06T10:05:00Z")
+        let progressed = session(id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z")
         XCTAssertTrue(store.isUnread(progressed))
         store.markRead(sessionID: "a", through: "2026-08-06T10:05:00Z")
         XCTAssertFalse(store.isUnread(progressed))
@@ -143,85 +133,124 @@ final class SessionReadStoreTests: XCTestCase {
         XCTAssertFalse(store.isUnread(session(id: "a", lastActivity: "2026-08-06T10:05:00Z")))
     }
 
-    func testMarkReadOnRowUsesItsLastActivity() {
-        let store = makeStore()
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00Z")])
-        let progressed = session(id: "a", lastActivity: "2026-08-06T10:05:00Z")
-        store.markRead(progressed)
-        XCTAssertFalse(store.isUnread(progressed))
+    func testMarkAllReadPushesOneBatchPerProject() async {
+        let sync = RecordingReadSync()
+        let store = makeStore(sync: sync)
+        let rows = [
+            session(id: "a", lastActivity: "2026-08-06T11:00:00Z", readThrough: "2026-08-06T10:00:00Z"),
+            session(id: "b", lastActivity: "2026-08-06T12:00:00Z", readThrough: "2026-08-06T10:00:00Z"),
+            session(id: "c", lastActivity: "2026-08-06T11:30:00Z", readThrough: "2026-08-06T10:00:00Z"),
+        ]
+        store.noteListed(["one": Array(rows.prefix(2)), "two": [rows[2]]])
+        XCTAssertEqual(store.unreadCount(in: rows), 3)
+
+        store.markAllRead(rows)
+        XCTAssertEqual(store.unreadCount(in: rows), 0, "Marking read is optimistic")
+        await store.waitForPushes()
+        let pushed = Dictionary(uniqueKeysWithValues: sync.requests.map { ($0.project, $0.marks) })
+        XCTAssertEqual(sync.requests.count, 2)
+        XCTAssertEqual(pushed["one"], ["a": "2026-08-06T11:00:00Z", "b": "2026-08-06T12:00:00Z"])
+        XCTAssertEqual(pushed["two"], ["c": "2026-08-06T11:30:00Z"])
+
+        // Confirmed marks are not pushed again by later lists.
+        store.noteListed(["one": Array(rows.prefix(2)), "two": [rows[2]]])
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.count, 2)
     }
 
-    func testMarkAllReadClearsEveryRow() {
-        let store = makeStore()
-        let old = [session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
-                   session(id: "b", lastActivity: "2026-08-06T10:00:00Z")]
-        store.noteSeen(old)
-        let progressed = [session(id: "a", lastActivity: "2026-08-06T11:00:00Z"),
-                          session(id: "b", lastActivity: "2026-08-06T12:00:00Z")]
-        XCTAssertEqual(store.unreadCount(in: progressed), 2)
-        store.markAllRead(progressed)
-        XCTAssertEqual(store.unreadCount(in: progressed), 0)
+    func testMarkReadUsesExplicitProjectOrWaitsForAListing() async {
+        let sync = RecordingReadSync()
+        let store = makeStore(sync: sync)
+        store.markRead(sessionID: "a", through: "2026-08-06T10:05:00Z", project: "one")
+        // Opened before any list named its project: kept locally for now.
+        store.markRead(sessionID: "b", through: "2026-08-06T10:05:00Z")
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.map(\.project), ["one"])
+        XCTAssertEqual(sync.requests.first?.marks, ["a": "2026-08-06T10:05:00Z"])
+
+        store.noteListed(["two": [session(id: "b", lastActivity: "2026-08-06T10:05:00Z")]])
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.count, 2)
+        XCTAssertEqual(sync.requests.last?.project, "two")
+        XCTAssertEqual(sync.requests.last?.marks, ["b": "2026-08-06T10:05:00Z"])
+    }
+
+    func testFailedPushKeepsTheLocalMarkAndRetriesOnTheNextListing() async {
+        let sync = RecordingReadSync()
+        sync.fail(with: YccError.rpc(message: "offline"))
+        let store = makeStore(sync: sync)
+        let row = session(id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z")
+        store.noteListed(["one": [row]])
+        store.markRead(row)
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.count, 1)
+        XCTAssertFalse(store.isUnread(row))
+
+        sync.fail(with: nil)
+        store.noteListed(["one": [row]])
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.count, 2)
+        XCTAssertEqual(sync.requests.last?.marks, ["a": "2026-08-06T10:05:00Z"])
+    }
+
+    func testDaemonMillisecondMarkCoversAFinerEventStamp() async {
+        let sync = RecordingReadSync()
+        let store = makeStore(sync: sync)
+        store.markRead(sessionID: "a", through: "2026-08-06T10:00:00.123456Z", project: "one")
+        await store.waitForPushes()
+        // The daemon truncates to milliseconds; that must not look like it is behind.
+        store.noteListed(["one": [session(
+            id: "a", lastActivity: "2026-08-06T10:00:00.123Z", readThrough: "2026-08-06T10:00:00.123Z")]])
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.count, 1)
     }
 
     func testFractionalSecondStampsCompare() {
         let store = makeStore()
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00.120Z")])
+        store.markRead(sessionID: "a", through: "2026-08-06T10:00:00.120Z")
         XCTAssertFalse(store.isUnread(session(id: "a", lastActivity: "2026-08-06T10:00:00.120Z")))
         XCTAssertTrue(store.isUnread(session(id: "a", lastActivity: "2026-08-06T10:00:00.500Z")))
     }
 
     // MARK: - Persistence & bounds
 
+    func testStoredMarksMigrateToTheDaemonAndTheWatermarkIsDropped() async {
+        let suite = "ycc.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(["ahead": "2026-08-06T10:05:00Z", "behind": "2026-08-06T09:00:00Z"], forKey: "marks")
+        defaults.set("2026-08-06T10:05:00Z", forKey: "marks.watermark")
+
+        let sync = RecordingReadSync()
+        let store = SessionReadStore(defaults: defaults, key: "marks", sync: sync)
+        XCTAssertNil(defaults.object(forKey: "marks.watermark"))
+        store.noteListed(["one": [
+            session(id: "ahead", lastActivity: "2026-08-06T10:05:00Z"),
+            session(id: "behind", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z"),
+        ]])
+        await store.waitForPushes()
+        XCTAssertEqual(sync.requests.count, 1)
+        XCTAssertEqual(sync.requests.first?.project, "one")
+        XCTAssertEqual(sync.requests.first?.marks, ["ahead": "2026-08-06T10:05:00Z"])
+    }
+
     func testMarksPersistAcrossStoreInstances() {
         let suite = "ycc.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
         let store = SessionReadStore(defaults: defaults, key: "marks")
-        store.noteSeen([session(id: "a", lastActivity: "2026-08-06T10:00:00Z")])
+        store.markRead(sessionID: "a", through: "2026-08-06T10:00:00Z")
 
         let reloaded = SessionReadStore(defaults: defaults, key: "marks")
         XCTAssertTrue(reloaded.isUnread(session(id: "a", lastActivity: "2026-08-06T10:05:00Z")))
         XCTAssertFalse(reloaded.isUnread(session(id: "a", lastActivity: "2026-08-06T10:00:00Z")))
     }
 
-    func testWatermarkPersistsAcrossStoreInstances() {
-        let suite = "ycc.tests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        let original = SessionReadStore(defaults: defaults, key: "marks")
-        let first = session(id: "a", lastActivity: "2026-08-06T10:00:00Z")
-        original.noteSeen([first])
-        let progressed = session(id: "a", lastActivity: "2026-08-06T12:00:00Z")
-        original.noteSeen([progressed])
-
-        // The mark for a remains at 10:00, while the separately persisted
-        // watermark has advanced to 12:00. A session from 11:00 is back-catalogue.
-        let reloaded = SessionReadStore(defaults: defaults, key: "marks")
-        let backCatalogue = session(id: "b", lastActivity: "2026-08-06T11:00:00Z")
-        reloaded.noteSeen([progressed, backCatalogue])
-        XCTAssertFalse(reloaded.isUnread(backCatalogue))
-    }
-
-    func testLegacyMarksDeriveWatermarkOnUpgrade() {
-        let suite = "ycc.tests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(["known": "2026-08-06T10:00:00Z"], forKey: "marks")
-        XCTAssertNil(defaults.string(forKey: "marks.watermark"))
-
-        let upgraded = SessionReadStore(defaults: defaults, key: "marks")
-        XCTAssertEqual(defaults.string(forKey: "marks.watermark"), "2026-08-06T10:00:00Z")
-        let new = session(id: "new", lastActivity: "2026-08-06T11:00:00Z")
-        upgraded.noteSeen([new])
-        XCTAssertTrue(upgraded.isUnread(new))
-    }
-
     func testEvictionKeepsTheMostRecentMarks() {
         let store = makeStore(limit: 2)
-        store.noteSeen([
+        store.markAllRead([
             session(id: "old", lastActivity: "2026-08-01T10:00:00Z"),
             session(id: "mid", lastActivity: "2026-08-05T10:00:00Z"),
             session(id: "new", lastActivity: "2026-08-06T10:00:00Z"),

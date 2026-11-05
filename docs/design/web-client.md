@@ -93,8 +93,10 @@ session events that change them. Mutations replace local state with the daemon's
 rather than trusting optimistic edits. `UpdateTask` carries no revision, so the task editor sends
 only the fields the user changed and re-reads the task just before saving: a field that also
 changed on the daemon since editing began refuses the save (offering overwrite or discard), while
-non-overlapping changes merge. Open drafts are kept per task for the life of the tab. Unread state is a client-side watermark per session kept in
-browser storage, matching the iOS read store.
+non-overlapping changes merge. Open drafts are kept per task for the life of the tab. Unread state
+uses the daemon's shared per-session read marks (spec §18.6), so it agrees with iOS and survives a
+change of browser or origin. Browser storage keeps only an optimistic copy that is re-pushed until
+the daemon reflects it.
 
 The default session inbox emphasizes user-launched conversations, including automatic sessions a
 human subsequently engaged with, and manually flagged follow-ups. Routine automatic memory grooming
@@ -114,7 +116,7 @@ history. Work-loop outcome notifications remain separate from routine per-sessio
 Classification uses durable origin and human participation from session summaries, never title,
 mode, or preset heuristics. Unknown legacy origins remain visible; current-loop membership is
 positive evidence of automatic work. Hiding an automatic session changes presentation, not its
-history or read watermark. A manually launched grooming preset is still a personal conversation.
+history or read mark. A manually launched grooming preset is still a personal conversation.
 User-facing state describes work or attention, not whether a session happens to be in daemon memory;
 the technical `live` flag is not a UI badge.
 

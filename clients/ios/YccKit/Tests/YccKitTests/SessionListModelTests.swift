@@ -180,7 +180,8 @@ final class SessionListModelTests: XCTestCase {
         modelUsage: [(String, Int64)] = [],
         totalTokens: Int64 = 0,
         contextTokens: Int64 = 0,
-        workspace: String = ""
+        workspace: String = "",
+        readThrough: String = ""
     ) -> Ycc_V1_SessionSummary {
         var s = Ycc_V1_SessionSummary()
         s.sessionID = id
@@ -203,6 +204,7 @@ final class SessionListModelTests: XCTestCase {
         s.totalTokens = totalTokens
         s.contextTokens = contextTokens
         s.workspace = workspace
+        s.readThrough = readThrough
         return s
     }
 
@@ -987,33 +989,33 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.sessionProjects["same"], "one")
     }
 
-    func testProgressiveUnreadBaselineUsesOneAggregateWatermark() async {
-        // With no prior watermark the whole first list is read. With an existing
-        // watermark both newly discovered sessions are unread, regardless of which
-        // one completes first (the earlier response must not advance the baseline).
-        for hasPriorWatermark in [false, true] {
-            for reverseOrder in [false, true] {
-                let marks = SessionReadStore.ephemeral()
-                if hasPriorWatermark {
-                    marks.noteSeen([session(id: "known", lastActivity: "2026-07-08T09:00:00Z")])
-                }
-                let source = MockListSource()
-                source.projects = [project("one"), project("two")]
-                source.sessionsByProject = [
-                    "one": [session(id: "one", lastActivity: "2026-07-08T10:00:00Z")],
-                    "two": [session(id: "two", lastActivity: "2026-07-08T11:00:00Z")],
-                ]
-                let gate = ListLoadGate()
-                source.historyGates[reverseOrder ? "one" : "two"] = gate
-                let model = SessionListModel(
-                    source: source, readMarks: marks, retryDelays: [], partialPublishDelay: 0)
-                let refresh = Task { await model.refresh() }
-                await eventually { model.allSessions.count == 1 }
-                await gate.open()
-                await refresh.value
-                XCTAssertEqual(model.unreadCount, hasPriorWatermark ? 2 : 0)
-            }
-        }
+    func testUnreadFollowsDaemonReadMarksAndMarkingPushesPerProject() async {
+        let sync = RecordingReadSync()
+        let marks = SessionReadStore(defaults: nil, sync: sync)
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = [
+            "one": [session(id: "a", lastActivity: "2026-07-08T10:00:00Z",
+                            readThrough: "2026-07-08T09:00:00Z")],
+            // No read state for this project yet: read, and listing must not mark it.
+            "two": [session(id: "b", lastActivity: "2026-07-08T11:00:00Z")],
+        ]
+        let model = SessionListModel(source: source, readMarks: marks, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.unreadCount, 1)
+        XCTAssertEqual(model.activity(forProject: "one").unread, 1)
+        await marks.waitForPushes()
+        XCTAssertTrue(sync.requests.isEmpty)
+        XCTAssertNil(marks.mark(for: "b"))
+
+        model.markAllRead()
+        XCTAssertEqual(model.unreadCount, 0)
+        await marks.waitForPushes()
+        let pushed = Dictionary(uniqueKeysWithValues: sync.requests.map { ($0.project, $0.marks) })
+        XCTAssertEqual(pushed, [
+            "one": ["a": "2026-07-08T10:00:00Z"],
+            "two": ["b": "2026-07-08T11:00:00Z"],
+        ])
     }
 
     func testFailedSupplementalRequestRetainsBadgesButSuccessfulNilClearsThem() async {
@@ -1374,6 +1376,7 @@ final class SessionListModelTests: XCTestCase {
     // MARK: - Unread agent activity
 
     /// A fresh, isolated read-mark store so unread tests never share state.
+    /// Unread rows come from the daemon's `readThrough` on later summaries.
     private func makeReadStore() -> SessionReadStore { .ephemeral() }
 
     func testFirstLoadReportsNothingUnread() async {
@@ -1402,7 +1405,7 @@ final class SessionListModelTests: XCTestCase {
 
         // The agent worked (and finished) while the phone was away.
         source.sessionsByProject = ["one": [
-            session(id: "a", status: "idle", lastActivity: "2026-08-06T10:30:00Z", turns: 4),
+            session(id: "a", status: "idle", lastActivity: "2026-08-06T10:30:00Z", turns: 4, readThrough: "2026-08-06T10:00:00Z"),
         ]]
         await model.refresh()
 
@@ -1421,7 +1424,7 @@ final class SessionListModelTests: XCTestCase {
         let model = SessionListModel(source: source, readMarks: makeReadStore())
         await model.refresh()
         source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:30:00Z"),
+            session(id: "a", lastActivity: "2026-08-06T10:30:00Z", readThrough: "2026-08-06T10:00:00Z"),
         ]]
         await model.refresh()
 
@@ -1441,8 +1444,8 @@ final class SessionListModelTests: XCTestCase {
         let model = SessionListModel(source: source, readMarks: makeReadStore())
         await model.refresh()
         source.sessionsByProject = [
-            "one": [session(id: "a", lastActivity: "2026-08-06T11:00:00Z")],
-            "two": [session(id: "b", lastActivity: "2026-08-06T11:00:00Z")],
+            "one": [session(id: "a", lastActivity: "2026-08-06T11:00:00Z", readThrough: "2026-08-06T10:00:00Z")],
+            "two": [session(id: "b", lastActivity: "2026-08-06T11:00:00Z", readThrough: "2026-08-06T10:00:00Z")],
         ]
         await model.refresh()
         XCTAssertEqual(model.totalActivity.unread, 2)
@@ -1465,7 +1468,7 @@ final class SessionListModelTests: XCTestCase {
         let model = SessionListModel(source: source, readMarks: readMarks)
         await model.refresh()
         source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:30:00Z"),
+            session(id: "a", lastActivity: "2026-08-06T10:30:00Z", readThrough: "2026-08-06T10:00:00Z"),
         ]]
         await model.refresh()
         XCTAssertTrue(model.isUnread(model.sessions[0]))
@@ -1673,9 +1676,9 @@ final class SessionListModelTests: XCTestCase {
         let model = SessionListModel(source: source, readMarks: readMarks)
         await model.refresh()
         source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T11:00:00Z"),
-            session(id: "b", lastActivity: "2026-08-06T11:00:00Z"),
-            session(id: "c", lastActivity: "2026-08-06T11:00:00Z"),
+            session(id: "a", lastActivity: "2026-08-06T11:00:00Z", readThrough: "2026-08-06T10:00:00Z"),
+            session(id: "b", lastActivity: "2026-08-06T11:00:00Z", readThrough: "2026-08-06T10:00:00Z"),
+            session(id: "c", lastActivity: "2026-08-06T11:00:00Z", readThrough: "2026-08-06T10:00:00Z"),
         ]]
         await model.refresh()
         // Prime the caches.

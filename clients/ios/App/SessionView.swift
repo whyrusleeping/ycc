@@ -430,7 +430,7 @@ struct SessionView: View {
     /// Record everything folded so far as seen for this session.
     private func markRead() {
         app.readMarks.markRead(
-            sessionID: sessionID, through: model.lastEventTimestamp)
+            sessionID: sessionID, through: model.lastEventTimestamp, project: project)
     }
 
     // MARK: - Bottom chrome (banner + input bar)

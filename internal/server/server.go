@@ -266,6 +266,7 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			AwaitingJobs:      su.AwaitingJobs,
 			FollowUp:          su.FollowUp,
 			FollowUpAt:        rfc3339(su.FollowUpAt),
+			ReadThrough:       rfc3339(su.ReadThrough),
 		}
 	}
 	out := make([]*v1.SessionSummary, 0, len(sums))
@@ -292,6 +293,31 @@ func (s *Server) SetSessionFollowUp(_ context.Context, req *connect.Request[v1.S
 		}
 	}
 	return connect.NewResponse(&v1.SetSessionFollowUpResponse{FollowUp: req.Msg.FollowUp, FollowUpAt: rfc3339(at)}), nil
+}
+
+// MarkSessionsRead advances the user's shared read marks. Unparseable stamps
+// are rejected; unknown sessions are skipped by the manager.
+func (s *Server) MarkSessionsRead(_ context.Context, req *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error) {
+	marks := make([]session.SessionReadMark, 0, len(req.Msg.Marks))
+	for _, mark := range req.Msg.Marks {
+		t, err := time.Parse(time.RFC3339Nano, mark.ReadThrough)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("read_through for %q: %w", mark.SessionId, err))
+		}
+		marks = append(marks, session.SessionReadMark{SessionID: mark.SessionId, ReadThrough: t})
+	}
+	got, err := s.mgr.MarkSessionsRead(req.Msg.Project, marks)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	out := make([]*v1.SessionReadMark, 0, len(got))
+	for _, mark := range got {
+		out = append(out, &v1.SessionReadMark{SessionId: mark.SessionID, ReadThrough: rfc3339(mark.ReadThrough)})
+	}
+	return connect.NewResponse(&v1.MarkSessionsReadResponse{Marks: out}), nil
 }
 
 // GetSessionTranscript returns a session's full event log (live or persisted on

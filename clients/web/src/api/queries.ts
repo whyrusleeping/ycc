@@ -171,7 +171,7 @@ export function useSessionFeed(scope: string | null) {
   return {
     projects: projects.data as ProjectInfo[] | undefined,
     feed,
-    /** Every project's loaded pages (unread baselining and notifications use them all). */
+    /** Every project's loaded pages (read-mark sync and notifications use them all). */
     loads: loads.data,
     isLoading: projects.isPending || (targets !== null && loads.isPending),
     error: projects.error ?? loads.error,

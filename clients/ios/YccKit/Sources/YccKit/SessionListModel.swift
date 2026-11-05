@@ -338,7 +338,7 @@ public final class SessionListModel {
 
     // MARK: - Unread agent activity
 
-    /// Whether a row carries agent activity this device has not seen yet.
+    /// Whether a row carries agent activity the user has not seen yet.
     public func isUnread(_ session: Ycc_V1_SessionSummary) -> Bool {
         readMarks.isUnread(session)
     }
@@ -349,12 +349,17 @@ public final class SessionListModel {
 
     /// Clear the unread flag on a single row without opening it.
     public func markRead(_ session: Ycc_V1_SessionSummary) {
-        readMarks.markRead(session)
+        readMarks.markRead(session, project: sessionProjects[session.sessionID])
     }
 
     /// Clear every unread row in the current scope.
     public func markAllRead() {
-        readMarks.markAllRead(sessions)
+        readMarks.markAllRead(sessions, projects: sessionProjects)
+    }
+
+    /// Hand the loaded rows' daemon read marks to the shared store.
+    private func noteListedReadMarks() {
+        readMarks.noteListed(historyLoads.mapValues { $0.sessions + $0.pinned })
     }
 
     /// Live-activity counts per project name, for the drawer's badges. Derived
@@ -493,7 +498,7 @@ public final class SessionListModel {
         if !failures.isEmpty {
             partialWarning = "Couldn’t load older sessions for \(failures.joined(separator: ", "))."
         }
-        readMarks.noteSeen(historyLoads.values.flatMap { $0.sessions + $0.pinned })
+        noteListedReadMarks()
     }
 
     /// Daemon-wide live-activity counts, for the drawer's "Recent sessions" row.
@@ -793,10 +798,7 @@ public final class SessionListModel {
             valve?.cancel()
             if !targets.isEmpty {
                 publish()
-                // One aggregate baseline per refresh: advancing the shared
-                // watermark for partial results would make unread status
-                // depend on which project happened to finish first.
-                readMarks.noteSeen(historyLoads.values.flatMap { $0.sessions + $0.pinned })
+                noteListedReadMarks()
             }
             if let projectsError {
                 // The project list itself failed: report it (histories for the

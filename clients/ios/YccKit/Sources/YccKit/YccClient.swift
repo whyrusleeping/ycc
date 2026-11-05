@@ -213,6 +213,23 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Advance the shared per-session read marks for sessions in one project,
+    /// returning the resulting mark for each session the daemon accepted.
+    public func markSessionsRead(
+        project: String, marks: [Ycc_V1_SessionReadMark]
+    ) async throws -> [Ycc_V1_SessionReadMark] {
+        var request = Ycc_V1_MarkSessionsReadRequest()
+        request.project = project
+        request.marks = marks
+        let response = await generated.markSessionsRead(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.marks
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Lists the daemon's session history — live and persisted, most-recent
     /// first per the daemon (docs/remote-api.md "ListSessionHistory"). `project`
     /// names the registered workspace; empty is accepted only when exactly one

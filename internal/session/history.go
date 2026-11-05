@@ -53,6 +53,9 @@ type SessionSummary struct {
 	AwaitingJobs bool
 	FollowUp     bool
 	FollowUpAt   time.Time
+	// ReadThrough is the user's shared read mark (MarkSessionsRead), else the
+	// workspace's read baseline; zero when no read state exists yet.
+	ReadThrough time.Time
 }
 
 // ModelUsage is the total recorded token usage for one logical model name in a
@@ -637,6 +640,15 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		entry, ok := followUps.Sessions[summaries[i].ID]
 		summaries[i].FollowUp = ok
 		summaries[i].FollowUpAt = entry.FlaggedAt
+	}
+	m.readMarkMu.Lock()
+	readMarks, _, err := loadSessionReadMarks(absWS)
+	m.readMarkMu.Unlock()
+	if err != nil {
+		log.Printf("ycc: session history: ignoring read marks: %v", err)
+	}
+	for i := range summaries {
+		summaries[i].ReadThrough = readMarks.readThrough(summaries[i].ID)
 	}
 
 	sort.Slice(summaries, func(i, j int) bool {

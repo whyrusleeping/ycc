@@ -312,6 +312,14 @@ message SessionSummary {
   // A human-origin launch (even an empty opening), later actual user input, or
   // nonautomatic question answer. Automatic opening prompts/answers do not count.
   bool human_participated = 20;
+  // RFC3339 daemon-clock stamp through which the user has seen this session,
+  // shared by every client (see MarkSessionsRead). A session with no explicit
+  // mark reports the project's read baseline, so sessions active only after
+  // read tracking began are unread. Empty means no read state exists yet for the
+  // project: clients treat the row as read. A row is unread when its
+  // last_activity is later than read_through (clients still never badge a
+  // running live session).
+  string read_through = 21;
 }
 // Sessions are ordered by the serialized millisecond-precision last_activity
 // descending, started_at descending, then id ascending. The keyset cursor
@@ -336,6 +344,24 @@ message SetSessionFollowUpRequest {
 message SetSessionFollowUpResponse {
   bool follow_up = 1;
   string follow_up_at = 2; // RFC3339, empty when not flagged
+}
+
+// MarkSessionsRead records that the user has seen the given sessions through
+// the given daemon timestamps (event ts or summary last_activity). Marks are
+// shared by all clients and only move forward: an older stamp is a no-op.
+// Stamps later than the daemon's clock are clamped to it. Unknown or invalid
+// session ids are skipped rather than failing the batch.
+message SessionReadMark {
+  string session_id = 1;
+  string read_through = 2; // RFC3339
+}
+message MarkSessionsReadRequest {
+  string project = 1;
+  repeated SessionReadMark marks = 2;
+}
+message MarkSessionsReadResponse {
+  // The resulting mark for every accepted session in the request.
+  repeated SessionReadMark marks = 1;
 }
 
 // GetSessionTranscript returns the full event log for a session — live or
@@ -1408,6 +1434,8 @@ service SessionService {
   // on-disk logs), most-recent first. ListSessions stays live-only.
   rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
   rpc SetSessionFollowUp(SetSessionFollowUpRequest) returns (SetSessionFollowUpResponse);
+  // MarkSessionsRead advances the user's shared per-session read marks.
+  rpc MarkSessionsRead(MarkSessionsReadRequest) returns (MarkSessionsReadResponse);
   // GetSessionTranscript returns a session's full event log (live or persisted)
   // for the read-only transcript drill-in.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);

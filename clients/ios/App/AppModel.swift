@@ -12,9 +12,9 @@ import YccKit
 final class AppModel {
     let store: ConnectionStore
 
-    /// Durable per-session "seen up to here" marks driving the unread badges on
-    /// the session list and drawer. Owned here so the list model and every
-    /// session view share one set of marks.
+    /// Per-session "seen up to here" marks driving the unread badges on the
+    /// session list and drawer, synced through the active daemon. Owned here so
+    /// the list model and every session view share one set of marks.
     let readMarks = SessionReadStore()
 
     /// Per-connection, in-memory warm start for screens the home router
@@ -27,7 +27,9 @@ final class AppModel {
 
     /// The authenticated client for the active server, or `nil` when
     /// disconnected (which shows the connect screen).
-    private(set) var client: YccClient?
+    private(set) var client: YccClient? {
+        didSet { readMarks.sync = client }
+    }
 
     /// A deep link awaiting consumption once the app is connected and the
     /// landing view is on screen. Set by ``handleDeepLink(_:)`` on
@@ -65,6 +67,8 @@ final class AppModel {
         // Restore a previously-authenticated session on launch.
         if let profile = store.activeProfile, let token = store.activeToken {
             client = YccClient(baseURL: profile.baseURL, token: token)
+            // Observers do not run during init.
+            readMarks.sync = client
         }
     }
 

@@ -262,12 +262,15 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     inspector, Alt+Shift+N starts a new session (⌥ labels on macOS, where Alt chords don't fire
     inside text fields). Typing `?` or `j` in a text field only types; browser chords (Ctrl+T, W,
     N, L, Tab) are untouched. A toast raised repeatedly shows once with a "×N" count.
-39. Unread. With a fresh browser profile every listed session reads as read. Send input to a
+39. Unread. A fresh browser profile shows the daemon's shared unread state, not an all-read
+    baseline. Send input to a
     session from the TUI or iOS: once it finishes, its row gets a blue dot and bold title, the
     project switcher option counts it ("alpha · 1 waiting · 1 unread"), and the sidebar and Recent
     page offer Mark read / Mark all read. A running session never shows unread. Reload: still
     unread. Clicking the dot marks it read without opening it; opening a session marks it read up
-    to what was shown (and keeps it read while it is open and the tab is visible).
+    to what was shown (and keeps it read while it is open and the tab is visible). Cross-client:
+    open the unread session on iOS (or mark it read there). After the next sidebar refresh it is
+    read here too, and the reverse also holds.
 40. Notifications (on `http://localhost` / `127.0.0.1` or https). The sidebar offers "Enable" once
     (permission is requested only from that click or Settings → Notifications); "Not now" hides
     it. Settings → Notifications shows the state, an on/off checkbox, and Send a test

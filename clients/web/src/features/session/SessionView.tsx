@@ -221,20 +221,21 @@ export function SessionView({
     const s = seen.current;
     s.ts = snap.lastEventTimestamp;
     if (s.timer) return;
-    readMarks.markRead(sessionId, s.ts);
+    readMarks.markRead(project, sessionId, s.ts);
     s.timer = setTimeout(() => {
       s.timer = null;
-      readMarks.markRead(sessionId, s.ts);
+      readMarks.markRead(project, sessionId, s.ts);
     }, 1000);
-  }, [visible, snap.installed, snap.lastEventTimestamp, sessionId]);
+  }, [visible, snap.installed, snap.lastEventTimestamp, project, sessionId]);
   useEffect(() => {
     const s = seen.current;
     return () => {
       if (s.timer) clearTimeout(s.timer);
       s.timer = null;
-      if (s.ts) readMarks.markRead(sessionId, s.ts);
+      if (s.ts) readMarks.markRead(project, sessionId, s.ts);
+      void readMarks.flush();
     };
-  }, [sessionId]);
+  }, [project, sessionId]);
   // The session list's status/needs-answer markers follow this session's
   // durable lifecycle: refresh them when it changes.
   const qc = useQueryClient();

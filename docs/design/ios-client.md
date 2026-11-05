@@ -45,7 +45,9 @@ than trusting local profile state. A 401 clears the active authenticated session
 the profile so the user can re-enter or replace the token.
 
 The app treats daemon data as authoritative and keeps only client-local navigation, drafts,
-preferences, and read watermarks. Session, backlog, usage, and workstream state are projections of
+and preferences, plus a local cache of read marks that is pushed to the daemon. Read marks
+themselves are daemon state shared with the web client (spec §18.6). Session, backlog, usage, and
+workstream state are projections of
 RPC responses/events and refresh when the app returns to the foreground. Backlog task detail has an
 explicit editor for title, status, priority, dependencies, spec references, and Markdown body;
 `UpdateTask` saves the whole draft and the returned canonical detail replaces the projection.
@@ -117,9 +119,9 @@ Recent publishes each project's history as it arrives, retaining prior rows for 
 failed projects. Supplemental work-loop badges never gate history display; failed badge requests
 retain known ownership, while successful empty results clear it. Aggregate ordering and duplicate
 routing follow registry order, not request completion order. Histories are sorted on ingestion;
-section/filter reads preserve that order without re-parsing timestamps. Read-watermark baselining
-runs once after all history requests finish, so request order cannot turn first-load history into
-unread activity or hide genuinely new sessions.
+section/filter reads preserve that order without re-parsing timestamps. Listing sessions never
+creates read marks. Only opening a session or an explicit mark-read action does, so a fresh install
+shows the daemon's shared unread state rather than baselining its first list as read.
 
 ### Notifications
 

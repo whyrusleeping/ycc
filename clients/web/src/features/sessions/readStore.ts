@@ -1,17 +1,23 @@
-// Per-session "seen up to here" marks: which sessions have agent activity this
-// browser has not looked at yet. A port of YccKit's SessionReadStore so the web
-// and iOS clients agree on what "unread" means:
+// Per-session "seen up to here" marks: which sessions have agent activity the
+// user has not looked at yet. The daemon keeps one shared mark per session
+// (SessionSummary.readThrough, advanced by MarkSessionsRead), so reading a
+// session on any client clears it everywhere. This store layers a local cache
+// over it:
 //
+// - Effective mark = the later of the local mark and the daemon's readThrough.
+//   Local marks apply at once (optimistic) and are pushed to the daemon,
+//   coalesced per project. A local mark later than the daemon's is re-pushed
+//   whenever the session is listed again, which retries failed pushes and
+//   migrates marks this browser kept before the daemon tracked them.
+// - Listing never creates marks: the daemon's per-project baseline decides
+//   what a new client sees as read. No mark at all reads as read.
 // - Daemon clocks only: marks are daemon event / summary timestamps, never the
 //   browser's clock, so a skewed clock cannot read or unread a session.
-// - The first list is read: the newest activity shown in any list is kept as a
-//   watermark. A fresh browser baselines its first list as read; a session first
-//   seen later is new (unread) only when it is newer than that watermark.
 // - Running (or idle-but-awaiting-jobs) live sessions are never unread: the row
 //   already says it is live. It goes unread once it stops producing.
 //
-// Marks persist in localStorage (a UI convenience, not a secret), capped by
-// evicting the least recently active sessions first.
+// Local marks persist in localStorage (a UI convenience, not a secret), capped
+// by evicting the least recently active sessions first.
 import type { SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 
 export interface KeyValueStorage {
@@ -35,13 +41,45 @@ export function recencyStamp(s: Pick<SessionSummary, "lastActivity" | "startedAt
   return b !== null ? { text: s.startedAt, ms: b } : null;
 }
 
-type Summary = Pick<SessionSummary, "sessionId" | "lastActivity" | "startedAt" | "status" | "live" | "awaitingJobs">;
+type Summary = Pick<SessionSummary, "sessionId" | "lastActivity" | "startedAt" | "status" | "live" | "awaitingJobs" | "readThrough">;
+
+/** A listed session with the project argument its RPCs use. */
+export interface ReadRow {
+  session: Summary;
+  project: string;
+}
+
+export interface ReadMark {
+  sessionId: string;
+  readThrough: string;
+}
+
+/** Sends one project's marks to the daemon; resolves to the resulting marks. */
+export type ReadMarkSink = (project: string, marks: ReadMark[]) => Promise<readonly ReadMark[]>;
 
 export const READ_MARKS_KEY = "ycc.sessionReadMarks";
+/** Per-device baseline from before the daemon kept read state; removed on load. */
+const LEGACY_WATERMARK_SUFFIX = ".watermark";
+
+export interface ReadStoreOptions {
+  limit?: number;
+  sink?: ReadMarkSink | null;
+  /** How long marks are collected before one push per project. */
+  pushDelayMs?: number;
+}
 
 export class SessionReadStore {
   private marks: Record<string, string> = {};
-  private watermark: string | null = null;
+  /** The daemon's mark per session, from summaries and push responses. */
+  private server = new Map<string, string>();
+  /** Marks waiting to be pushed, by project then session. */
+  private pending = new Map<string, Map<string, string>>();
+  /** Marks in flight, by session. */
+  private inflight = new Map<string, string>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private limit: number;
+  private sink: ReadMarkSink | null;
+  private pushDelayMs: number;
   /** Bumped on every change (React subscribes to it). */
   revision = 0;
   private listeners = new Set<() => void>();
@@ -49,43 +87,32 @@ export class SessionReadStore {
   constructor(
     private storage: KeyValueStorage | null = null,
     readonly key: string = READ_MARKS_KEY,
-    private limit = 600,
+    { limit = 600, sink = null, pushDelayMs = 1500 }: ReadStoreOptions = {},
   ) {
+    this.limit = limit;
+    this.sink = sink;
+    this.pushDelayMs = pushDelayMs;
     this.load();
   }
 
   /** (Re)read persisted marks, e.g. after another tab wrote them. */
   load() {
     let marks: Record<string, string> = {};
-    let watermark: string | null = null;
     try {
       const raw = this.storage?.getItem(this.key);
       const parsed = raw ? JSON.parse(raw) : null;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         for (const [k, v] of Object.entries(parsed)) if (typeof v === "string") marks[k] = v;
       }
-      watermark = this.storage?.getItem(this.key + ".watermark") || null;
     } catch {
       marks = {};
     }
-    this.marks = marks;
-    this.watermark = watermark;
-    if (!this.watermark && Object.keys(marks).length) {
-      // Marks written without a watermark: derive one from the newest mark.
-      let best: { text: string; ms: number } | null = null;
-      for (const v of Object.values(marks)) {
-        const ms = parseTimestamp(v);
-        if (ms !== null && (!best || ms > best.ms)) best = { text: v, ms };
-      }
-      if (best) {
-        this.watermark = best.text;
-        try {
-          this.storage?.setItem(this.key + ".watermark", best.text);
-        } catch {
-          // ignore
-        }
-      }
+    try {
+      this.storage?.removeItem(this.key + LEGACY_WATERMARK_SUFFIX);
+    } catch {
+      // ignore
     }
+    this.marks = marks;
     this.changed();
   }
 
@@ -100,16 +127,14 @@ export class SessionReadStore {
 
   // MARK: queries
 
-  /** Whether a session has agent activity newer than what this browser saw. Unknown sessions are not unread. */
+  /** Whether a session has agent activity newer than what the user saw. Sessions without any mark are not unread. */
   isUnread(s: Summary): boolean {
     if (s.live && s.status.toLowerCase() === "running") return false;
     if (s.live && s.awaitingJobs) return false;
-    const mark = this.marks[s.sessionId];
-    if (mark === undefined) return false;
+    const markMs = later(this.effectiveMs(s.sessionId), parseTimestamp(s.readThrough));
+    if (markMs === null) return false;
     const activity = recencyStamp(s);
-    const markMs = parseTimestamp(mark);
-    if (!activity || markMs === null) return false;
-    return activity.ms > markMs;
+    return activity !== null && activity.ms > markMs;
   }
 
   unreadCount(sessions: readonly Summary[]): number {
@@ -120,62 +145,106 @@ export class SessionReadStore {
 
   /** Whether everything through `timestamp` has been seen for a session. */
   hasSeen(sessionId: string, timestamp: string): boolean {
-    const mark = this.marks[sessionId];
-    const markMs = mark === undefined ? null : parseTimestamp(mark);
+    const markMs = this.effectiveMs(sessionId);
     const ms = parseTimestamp(timestamp);
     return markMs !== null && ms !== null && ms <= markMs;
   }
 
-  // MARK: marking
+  // MARK: syncing
 
   /**
-   * Baseline the first list and later back-catalogue as read. An unknown
-   * session newer than the pre-refresh watermark is genuinely new: its mark
-   * starts at that watermark, so its activity is unread. Known sessions keep
-   * their mark (that is what makes them go unread).
+   * Record the daemon's marks from a fresh list, and push local marks the
+   * daemon is behind on. Never creates a mark.
    */
-  noteSeen(sessions: readonly Summary[]) {
-    const priorText = this.watermark;
-    const priorMs = priorText ? parseTimestamp(priorText) : null;
+  noteSummaries(rows: readonly ReadRow[]) {
     let changed = false;
-    for (const s of sessions) {
-      if (this.marks[s.sessionId] !== undefined) continue;
-      const recency = recencyStamp(s);
-      if (priorText && priorMs !== null && recency && recency.ms > priorMs) {
-        this.marks[s.sessionId] = priorText;
-      } else {
-        // No usable timestamp cannot be compared later either; record what we have.
-        this.marks[s.sessionId] = recency?.text ?? stamp(s);
-      }
-      changed = true;
+    for (const { session: s, project } of rows) {
+      if (this.noteServer(s.sessionId, s.readThrough)) changed = true;
+      const local = this.marks[s.sessionId];
+      if (local !== undefined) this.enqueue(project, s.sessionId, local);
     }
-    let newest = priorText && priorMs !== null ? { text: priorText, ms: priorMs } : null;
-    for (const s of sessions) {
-      const recency = recencyStamp(s);
-      if (recency && (!newest || recency.ms > newest.ms)) newest = recency;
-    }
-    if (newest && newest.text !== this.watermark) {
-      this.watermark = newest.text;
-      changed = true;
-    }
-    if (changed) this.persist();
+    if (changed) this.changed();
   }
 
+  // MARK: marking
+
   /** Everything up to `timestamp` (a daemon event stamp) is seen; never moves a mark back. */
-  markRead(sessionId: string, timestamp: string) {
-    if (this.apply(sessionId, timestamp)) this.persist();
+  markRead(project: string, sessionId: string, timestamp: string) {
+    if (!this.apply(sessionId, timestamp)) return;
+    this.persist();
+    this.enqueue(project, sessionId, timestamp);
   }
 
   /** Mark a listed session read at its last reported activity ("I know, stop nagging"). */
-  markSummaryRead(s: Summary) {
-    if (this.apply(s.sessionId, stamp(s))) this.persist();
+  markSummaryRead(row: ReadRow) {
+    this.markAllRead([row]);
   }
 
   /** Mark a whole list read in one write. */
-  markAllRead(sessions: readonly Summary[]) {
+  markAllRead(rows: readonly ReadRow[]) {
+    const applied: ReadRow[] = [];
+    for (const row of rows) if (this.apply(row.session.sessionId, stamp(row.session))) applied.push(row);
+    if (!applied.length) return;
+    this.persist();
+    for (const row of applied) this.enqueue(row.project, row.session.sessionId, stamp(row.session));
+  }
+
+  /**
+   * Push pending marks now (view closing, page hidden). Failures keep the
+   * local marks; the next list re-pushes them.
+   */
+  async flush(): Promise<void> {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    const batches = [...this.pending];
+    this.pending.clear();
+    await Promise.all(batches.map(([project, marks]) => this.send(project, marks)));
+  }
+
+  private async send(project: string, batch: Map<string, string>) {
+    if (!this.sink) return;
+    const marks = [...batch].map(([sessionId, readThrough]) => ({ sessionId, readThrough }));
+    for (const m of marks) this.inflight.set(m.sessionId, m.readThrough);
+    let result: readonly ReadMark[] | null = null;
+    try {
+      result = await this.sink(project, marks);
+    } catch {
+      // Offline or an older daemon: the local mark stands and is retried.
+    } finally {
+      for (const m of marks) if (this.inflight.get(m.sessionId) === m.readThrough) this.inflight.delete(m.sessionId);
+    }
+    if (!result) return;
     let changed = false;
-    for (const s of sessions) if (this.apply(s.sessionId, stamp(s))) changed = true;
-    if (changed) this.persist();
+    for (const m of result) if (this.noteServer(m.sessionId, m.readThrough)) changed = true;
+    if (changed) this.changed();
+  }
+
+  /** Queue a push unless the daemon already has (or is being sent) this mark. */
+  private enqueue(project: string, sessionId: string, timestamp: string) {
+    if (!this.sink) return;
+    const ms = parseTimestamp(timestamp);
+    if (ms === null) return;
+    const known = later(parseOrNull(this.server.get(sessionId)), parseOrNull(this.inflight.get(sessionId)));
+    if (known !== null && ms <= known) return;
+    let batch = this.pending.get(project);
+    if (!batch) this.pending.set(project, (batch = new Map()));
+    const queued = parseOrNull(batch.get(sessionId));
+    if (queued !== null && ms <= queued) return;
+    batch.set(sessionId, timestamp);
+    this.timer ??= setTimeout(() => void this.flush(), this.pushDelayMs);
+  }
+
+  private noteServer(sessionId: string, readThrough: string): boolean {
+    const ms = parseTimestamp(readThrough);
+    if (!sessionId || ms === null) return false;
+    const prior = parseOrNull(this.server.get(sessionId));
+    if (prior !== null && ms <= prior) return false;
+    this.server.set(sessionId, readThrough);
+    return true;
+  }
+
+  private effectiveMs(sessionId: string): number | null {
+    return later(parseOrNull(this.marks[sessionId]), parseOrNull(this.server.get(sessionId)));
   }
 
   private apply(sessionId: string, timestamp: string): boolean {
@@ -197,8 +266,6 @@ export class SessionReadStore {
     this.evict();
     try {
       this.storage?.setItem(this.key, JSON.stringify(this.marks));
-      if (this.watermark) this.storage?.setItem(this.key + ".watermark", this.watermark);
-      else this.storage?.removeItem(this.key + ".watermark");
     } catch {
       // Storage full or unavailable: marks stay in memory for this tab.
     }
@@ -223,4 +290,14 @@ export class SessionReadStore {
 
 function stamp(s: Summary): string {
   return s.lastActivity || s.startedAt;
+}
+
+function parseOrNull(value: string | undefined): number | null {
+  return value === undefined ? null : parseTimestamp(value);
+}
+
+function later(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.max(a, b);
 }

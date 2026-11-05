@@ -283,6 +283,7 @@ JSON="Content-Type: application/json"
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
 | [`SetSessionFollowUp`](#setsessionfollowup) | set or clear a user-owned session bookmark |
+| [`MarkSessionsRead`](#marksessionsread) | advance the user's shared per-session read marks |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
 | [`GetSessionView`](#indexed-session-view) / `GetSessionViewPage` / `GetSessionViewDetail` | bounded indexed presentation pages and detail |
 | [`SubscribeSessionView`](#indexed-session-view) | sequence-safe presentation row/state updates |
@@ -533,6 +534,10 @@ ignored, and it is omitted/zero for logs without the telemetry).
 original RFC3339 timestamp, empty when unflagged. Both are populated on `sessions`
 and `pinned` rows. These fields do not change the RPC's recency ordering; clients
 show flagged rows in a "Follow up" section at the top.
+`readThrough` is the user's shared read mark (see
+[`MarkSessionsRead`](#marksessionsread)). A session without its own mark reports the
+project's read baseline, and the field is empty when the project has no read state yet. A row
+is unread when `lastActivity` is later than `readThrough`.
 Omitted fields (`toolCalls`, `focusTasks`, `waitingInput` here) are zero/empty.
 
 For a bounded feed, send `{"project":"work","limit":50}` and then pass the
@@ -574,6 +579,28 @@ session or invalid session id returns `not_found`. Storage errors, including a
 corrupt bookmark file, return `internal` without overwriting the file. See
 [session history in the spec](../spec.md#186-session-history-and-reopen) for storage
 and lifecycle semantics.
+
+### MarkSessionsRead
+
+Record that the user has seen sessions through the given daemon timestamps. Pass an
+event `ts` or a summary's `lastActivity`, never the client's clock. Marks are shared
+by all clients and are per project (the project may be omitted only on a
+single-project daemon). A mark only moves forward: an older stamp is a no-op. Stamps
+later than the daemon's clock are clamped to it. Unknown or invalid session ids are
+skipped, so a stale row cannot fail a batch. The response lists the resulting mark
+for each accepted session.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" \
+  -d '{"project":"work","marks":[{"sessionId":"s_doc","readThrough":"2026-07-04T17:10:32.643Z"}]}' \
+  $B/ycc.v1.SessionService/MarkSessionsRead
+```
+
+```json
+{"marks":[{"sessionId":"s_doc","readThrough":"2026-07-04T17:10:32.643Z"}]}
+```
+
+An unparseable `readThrough` or an unknown project returns `invalid_argument`.
 
 ### GetSessionTranscript
 

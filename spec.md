@@ -1030,6 +1030,20 @@ show `⚑` on flagged rows; `f` toggles the selected bookmark and `F` filters to
 notes, remind-at/snooze reminders, and
 opt-in auto-clearing are deferred; the current API stores only the flag and timestamp.
 
+Unread state belongs to the user, not to a device. Read marks are kept on the daemon, so a session
+read on one client is read on every client. `MarkSessionsRead` advances per-session daemon-clock
+`read_through` stamps (event or summary timestamps the client was shown). Marks only move forward,
+are clamped to the daemon's clock, and skip unknown ids. They live in the project's root workspace
+at `.ycc/session-read-marks.json` (`{"baseline_at":…,"sessions":{"<id>":…}}`), outside the event
+logs, because reading is not session activity. The first mark records `baseline_at`. History
+summaries report each session's mark, or the baseline when the session has none, so only activity
+after read tracking began can be unread. With no file, `read_through` is empty and clients treat
+every row as read. A corrupt file lists as empty and is replaced by the next mark, since read state
+is a convenience. A row is unread when `last_activity` is later than `read_through`. Clients never
+badge running or job-awaiting live sessions, and they keep a local optimistic copy that they re-push
+whenever it is ahead of the daemon. That copy also migrates read state recorded before marks were
+shared.
+
 ### 18.7 Interrupt and steer
 
 Interrupt durably acknowledges a `pause_requested` action immediately; it requests a graceful pause at a safe checkpoint and does not cancel a tool mid-write. `interrupted` alone confirms the pause. `pause_cancelled` (Resume before the checkpoint), `interrupted`, `resumed`, stop, and reopen clear the pending indication.

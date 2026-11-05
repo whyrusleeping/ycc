@@ -214,7 +214,7 @@ function Sidebar() {
               type="button"
               className="btn ghost small mark-all-read"
               data-track="sidebar.mark_all_read"
-              onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}
+              onClick={() => marks.markAllRead(unreadRows)}
               title={`Mark all ${unreadRows.length} unread ${unreadRows.length === 1 ? "session" : "sessions"} read`}
               aria-label={`Mark all ${unreadRows.length} unread ${unreadRows.length === 1 ? "session" : "sessions"} read`}
             >
@@ -651,7 +651,7 @@ function useNavigationActions() {
               title: scope ? `Mark all ${scope} sessions read (${unreadScoped})` : `Mark all sessions read (${unreadScoped})`,
               group: "Sessions",
               keywords: "unread clear",
-              run: () => marks.markAllRead(latest.current.scoped.map((r) => r.session)),
+              run: () => marks.markAllRead(latest.current.scoped),
             }
           : null,
       [unreadScoped, scope, marks],
@@ -666,7 +666,7 @@ function useNavigationActions() {
               title: `Mark sessions in every project read (${unreadAll})`,
               group: "Sessions",
               keywords: "unread clear all projects",
-              run: () => marks.markAllRead(latest.current.all.map((r) => r.session)),
+              run: () => marks.markAllRead(latest.current.all),
             }
           : null,
       [scope, unreadAll, unreadScoped, marks],

@@ -48,6 +48,9 @@ const (
 	// SessionServiceSetSessionFollowUpProcedure is the fully-qualified name of the SessionService's
 	// SetSessionFollowUp RPC.
 	SessionServiceSetSessionFollowUpProcedure = "/ycc.v1.SessionService/SetSessionFollowUp"
+	// SessionServiceMarkSessionsReadProcedure is the fully-qualified name of the SessionService's
+	// MarkSessionsRead RPC.
+	SessionServiceMarkSessionsReadProcedure = "/ycc.v1.SessionService/MarkSessionsRead"
 	// SessionServiceGetSessionTranscriptProcedure is the fully-qualified name of the SessionService's
 	// GetSessionTranscript RPC.
 	SessionServiceGetSessionTranscriptProcedure = "/ycc.v1.SessionService/GetSessionTranscript"
@@ -270,6 +273,8 @@ type SessionServiceClient interface {
 	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
 	SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error)
+	// MarkSessionsRead advances the user's shared per-session read marks.
+	MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error)
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
@@ -458,6 +463,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceSetSessionFollowUpProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("SetSessionFollowUp")),
+			connect.WithClientOptions(opts...),
+		),
+		markSessionsRead: connect.NewClient[v1.MarkSessionsReadRequest, v1.MarkSessionsReadResponse](
+			httpClient,
+			baseURL+SessionServiceMarkSessionsReadProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("MarkSessionsRead")),
 			connect.WithClientOptions(opts...),
 		),
 		getSessionTranscript: connect.NewClient[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse](
@@ -908,6 +919,7 @@ type sessionServiceClient struct {
 	listSessions           *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	listSessionHistory     *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
 	setSessionFollowUp     *connect.Client[v1.SetSessionFollowUpRequest, v1.SetSessionFollowUpResponse]
+	markSessionsRead       *connect.Client[v1.MarkSessionsReadRequest, v1.MarkSessionsReadResponse]
 	getSessionTranscript   *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
 	getSessionView         *connect.Client[v1.GetSessionViewRequest, v1.GetSessionViewResponse]
 	getSessionViewPage     *connect.Client[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse]
@@ -1006,6 +1018,11 @@ func (c *sessionServiceClient) ListSessionHistory(ctx context.Context, req *conn
 // SetSessionFollowUp calls ycc.v1.SessionService.SetSessionFollowUp.
 func (c *sessionServiceClient) SetSessionFollowUp(ctx context.Context, req *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error) {
 	return c.setSessionFollowUp.CallUnary(ctx, req)
+}
+
+// MarkSessionsRead calls ycc.v1.SessionService.MarkSessionsRead.
+func (c *sessionServiceClient) MarkSessionsRead(ctx context.Context, req *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error) {
+	return c.markSessionsRead.CallUnary(ctx, req)
 }
 
 // GetSessionTranscript calls ycc.v1.SessionService.GetSessionTranscript.
@@ -1382,6 +1399,8 @@ type SessionServiceHandler interface {
 	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
 	SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error)
+	// MarkSessionsRead advances the user's shared per-session read marks.
+	MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error)
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
@@ -1566,6 +1585,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceSetSessionFollowUpProcedure,
 		svc.SetSessionFollowUp,
 		connect.WithSchema(sessionServiceMethods.ByName("SetSessionFollowUp")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceMarkSessionsReadHandler := connect.NewUnaryHandler(
+		SessionServiceMarkSessionsReadProcedure,
+		svc.MarkSessionsRead,
+		connect.WithSchema(sessionServiceMethods.ByName("MarkSessionsRead")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetSessionTranscriptHandler := connect.NewUnaryHandler(
@@ -2018,6 +2043,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListSessionHistoryHandler.ServeHTTP(w, r)
 		case SessionServiceSetSessionFollowUpProcedure:
 			sessionServiceSetSessionFollowUpHandler.ServeHTTP(w, r)
+		case SessionServiceMarkSessionsReadProcedure:
+			sessionServiceMarkSessionsReadHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionTranscriptProcedure:
 			sessionServiceGetSessionTranscriptHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionViewProcedure:
@@ -2191,6 +2218,10 @@ func (UnimplementedSessionServiceHandler) ListSessionHistory(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetSessionFollowUp is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.MarkSessionsRead is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {

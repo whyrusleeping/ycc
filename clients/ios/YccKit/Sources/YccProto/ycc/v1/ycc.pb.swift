@@ -998,6 +998,18 @@ public nonisolated struct Ycc_V1_SessionSummary: @unchecked Sendable {
     set {_uniqueStorage()._humanParticipated = newValue}
   }
 
+  /// RFC3339 daemon-clock stamp through which the user has seen this session,
+  /// shared by every client (see MarkSessionsRead). A session with no explicit
+  /// mark reports the project's read baseline, so sessions active only after
+  /// read tracking began are unread. Empty means no read state exists yet for the
+  /// project: clients treat the row as read. A row is unread when its
+  /// last_activity is later than read_through (clients still never badge a
+  /// running live session).
+  public var readThrough: String {
+    get {_storage._readThrough}
+    set {_uniqueStorage()._readThrough = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1056,6 +1068,53 @@ public nonisolated struct Ycc_V1_SetSessionFollowUpResponse: Sendable {
 
   /// RFC3339, empty when not flagged
   public var followUpAt: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// MarkSessionsRead records that the user has seen the given sessions through
+/// the given daemon timestamps (event ts or summary last_activity). Marks are
+/// shared by all clients and only move forward: an older stamp is a no-op.
+/// Stamps later than the daemon's clock are clamped to it. Unknown or invalid
+/// session ids are skipped rather than failing the batch.
+public nonisolated struct Ycc_V1_SessionReadMark: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  /// RFC3339
+  public var readThrough: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_MarkSessionsReadRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var marks: [Ycc_V1_SessionReadMark] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_MarkSessionsReadResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The resulting mark for every accepted session in the request.
+  public var marks: [Ycc_V1_SessionReadMark] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -6338,7 +6397,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0\u{3}read_through\0")
 
   fileprivate class _StorageClass {
     var _sessionID: String = String()
@@ -6361,6 +6420,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     var _followUpAt: String = String()
     var _origin: String = String()
     var _humanParticipated: Bool = false
+    var _readThrough: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -6391,6 +6451,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       _followUpAt = source._followUpAt
       _origin = source._origin
       _humanParticipated = source._humanParticipated
+      _readThrough = source._readThrough
     }
   }
 
@@ -6429,6 +6490,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         case 18: try { try decoder.decodeSingularStringField(value: &_storage._followUpAt) }()
         case 19: try { try decoder.decodeSingularStringField(value: &_storage._origin) }()
         case 20: try { try decoder.decodeSingularBoolField(value: &_storage._humanParticipated) }()
+        case 21: try { try decoder.decodeSingularStringField(value: &_storage._readThrough) }()
         default: break
         }
       }
@@ -6497,6 +6559,9 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       if _storage._humanParticipated != false {
         try visitor.visitSingularBoolField(value: _storage._humanParticipated, fieldNumber: 20)
       }
+      if !_storage._readThrough.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._readThrough, fieldNumber: 21)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -6526,6 +6591,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         if _storage._followUpAt != rhs_storage._followUpAt {return false}
         if _storage._origin != rhs_storage._origin {return false}
         if _storage._humanParticipated != rhs_storage._humanParticipated {return false}
+        if _storage._readThrough != rhs_storage._readThrough {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -6645,6 +6711,106 @@ nonisolated extension Ycc_V1_SetSessionFollowUpResponse: SwiftProtobuf.Message, 
   public static func ==(lhs: Ycc_V1_SetSessionFollowUpResponse, rhs: Ycc_V1_SetSessionFollowUpResponse) -> Bool {
     if lhs.followUp != rhs.followUp {return false}
     if lhs.followUpAt != rhs.followUpAt {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SessionReadMark: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SessionReadMark"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}read_through\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.readThrough) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if !self.readThrough.isEmpty {
+      try visitor.visitSingularStringField(value: self.readThrough, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SessionReadMark, rhs: Ycc_V1_SessionReadMark) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.readThrough != rhs.readThrough {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_MarkSessionsReadRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MarkSessionsReadRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}marks\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.marks) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.marks.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.marks, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_MarkSessionsReadRequest, rhs: Ycc_V1_MarkSessionsReadRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.marks != rhs.marks {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_MarkSessionsReadResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".MarkSessionsReadResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}marks\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.marks) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.marks.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.marks, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_MarkSessionsReadResponse, rhs: Ycc_V1_MarkSessionsReadResponse) -> Bool {
+    if lhs.marks != rhs.marks {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -211,7 +211,7 @@ export function SessionList({
             type="button"
             className="btn ghost small"
             data-track="sessions.mark_all_read"
-            onClick={() => marks.markAllRead(unreadRows.map((r) => r.session))}
+            onClick={() => marks.markAllRead(unreadRows)}
           >
             Mark all read
           </button>
@@ -240,7 +240,7 @@ export function SessionList({
               variant={variant}
               loopOwned={loopIds.has(row.session.sessionId)}
               unread={isUnread(row)}
-              onMarkRead={() => marks.markSummaryRead(row.session)}
+              onMarkRead={() => marks.markSummaryRead(row)}
               onToggleFollowUp={() => void followUp.toggle(row)}
               followUpPending={followUp.isPending(row)}
             />
