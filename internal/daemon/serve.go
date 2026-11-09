@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -32,16 +33,22 @@ import (
 
 // Options configures the daemon.
 type Options struct {
-	Addr       string
-	Workspace  string
-	ConfigPath string // TOML config; empty => single Anthropic backend from Model/BaseURL/KeyEnv
-	Model      string
-	BaseURL    string
-	KeyEnv     string
-	MaxTokens  int
-	Token      string
-	TLSCert    string
-	TLSKey     string
+	Addr      string
+	Workspace string
+	// WorkspaceExplicit: Workspace was named by the user (--workspace), so a
+	// persistent daemon registers it even when it is not a git repository.
+	WorkspaceExplicit bool
+	ConfigPath        string // TOML config; empty => single Anthropic backend from Model/BaseURL/KeyEnv
+	Model             string
+	BaseURL           string
+	KeyEnv            string
+	MaxTokens         int
+	Token             string
+	// TokenFile is where Token was read from when the daemon generated it, so
+	// startup can tell the user where to find it; empty for a supplied token.
+	TokenFile string
+	TLSCert   string
+	TLSKey    string
 	// Persist enables the durable project registry in the daemon state dir.
 	// The one-shot in-process path leaves this false: cwd is the
 	// single implicit project and nothing is written to the state dir.
@@ -74,6 +81,9 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	}
 
 	reg := config.NewRegistry(cfg)
+	if o.ConfigPath == "" {
+		reg.MarkBuiltinFallback()
+	}
 	reg.SetPath(persistPath(o))
 	mgr := session.NewManager(reg, o.Workspace)
 	// Daemon-side push notifier: best-effort webhook that reaches out
@@ -92,9 +102,14 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 		mgr.SetProjects(preg)
 		mgr.SetIDStateFile(docs.DefaultIDStateFile())
 		// The startup workspace is not a privileged "default"; register it as a
-		// normal named project so every RPC/UI uses the same project model.
+		// normal named project so every RPC/UI uses the same project model. A
+		// daemon is often started from wherever the shell happens to be, so only
+		// a named directory or a git repository is taken as meant to be a project.
 		if o.Workspace != "" {
-			if _, err := mgr.AddProject(o.Workspace, ""); err != nil {
+			if why := startupProjectSkipReason(o.Workspace, o.WorkspaceExplicit); why != "" {
+				dir, _ := filepath.Abs(o.Workspace)
+				log.Printf("not registering %s as a project: %s", dir, why)
+			} else if _, err := mgr.AddProject(o.Workspace, ""); err != nil {
 				return nil, nil, fmt.Errorf("register startup project: %w", err)
 			}
 		}
@@ -219,11 +234,87 @@ func Serve(o Options) error {
 	}
 
 	httpSrv := newHTTPServer(o.Addr, handler)
-	log.Printf("ycc daemon listening on %s (workspace=%s tls=%v)", o.Addr, o.Workspace, usingTLS)
+	log.Printf("ycc daemon listening on %s (tls=%v)", o.Addr, usingTLS)
+	for _, line := range startupGuidance(o, mgr, usingTLS) {
+		log.Print(line)
+	}
 	if usingTLS {
 		return httpSrv.ListenAndServeTLS(o.TLSCert, o.TLSKey)
 	}
 	return httpSrv.ListenAndServe()
+}
+
+// startupProjectSkipReason says why a persistent daemon should not register its
+// startup directory as a project, or "" to register it. A directory named with
+// --workspace is always registered; an implicit one (the shell's current
+// directory) only when it is a git repository other than the home directory.
+func startupProjectSkipReason(dir string, explicit bool) string {
+	if explicit {
+		return ""
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "cannot resolve it"
+	}
+	if home, err := os.UserHomeDir(); err == nil && sameDir(home, abs) {
+		return "it is your home directory"
+	}
+	out, err := exec.Command("git", "-C", abs, "rev-parse", "--is-inside-work-tree").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "true" {
+		return "it is not a git repository"
+	}
+	return ""
+}
+
+// sameDir reports whether a and b name the same directory, through symlinks.
+func sameDir(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
+}
+
+// startupGuidance tells the person who just started the daemon what to do
+// next: where the web app is and how to sign in, and what setup is missing.
+func startupGuidance(o Options, mgr *session.Manager, usingTLS bool) []string {
+	var lines []string
+	if o.Web {
+		scheme := "http"
+		if usingTLS {
+			scheme = "https"
+		}
+		host, port, err := net.SplitHostPort(o.Addr)
+		if err == nil && (host == "" || host == "0.0.0.0" || host == "::") {
+			host = "<this machine's address>"
+		}
+		url := scheme + "://" + o.Addr + "/"
+		if err == nil {
+			url = scheme + "://" + net.JoinHostPort(host, port) + "/"
+		}
+		lines = append(lines, "web app: "+url)
+		if o.TokenFile != "" {
+			lines = append(lines, "sign in with the access token in "+o.TokenFile)
+		} else {
+			lines = append(lines, "sign in with the access token the daemon was started with (YCC_TOKEN)")
+		}
+	}
+	coord, _, _ := mgr.Roles()
+	if m, ok := mgr.GetModel(coord); ok {
+		if missing := config.MissingCredential(m); missing != "" {
+			if o.ConfigPath == "" {
+				lines = append(lines, "no model is set up yet: connect a Claude subscription from the app's Get started screen, "+
+					"or run `ycc login anthropic` (or `ycc login openai`) and restart the daemon")
+			} else {
+				lines = append(lines, fmt.Sprintf("coordinator model %q is not set up (%s); see Settings → Health in the app", coord, missing))
+			}
+		}
+	}
+	if len(mgr.Projects()) == 0 {
+		lines = append(lines, "no projects yet: add one from the web or iOS app, or with `ycc project add <dir>`")
+	}
+	return lines
 }
 
 // InProcess is a running one-shot daemon: a server bound to an ephemeral

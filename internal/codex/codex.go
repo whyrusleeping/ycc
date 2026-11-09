@@ -41,11 +41,12 @@ const DefaultBaseURL = "https://chatgpt.com/backend-api/codex"
 
 // Models lists the model ids the codex backend serves (OAuth-eligible ids
 // only — the platform-API catalog does not apply). There is no listing
-// endpoint, so this is the curated suggestion set (verified live 2026-08);
-// free-text ids still work. Codex's own catalog marks gpt-5.4 and gpt-5.4-mini
+// endpoint, so this is the curated suggestion set (the gpt-6 ids are in daily
+// use as of 2026-11; the gpt-5 tail was verified live 2026-08); free-text ids
+// still work. Codex's own catalog marks gpt-5.4 and gpt-5.4-mini
 // deprecated (with forced upgrade paths to terra and luna respectively), but
 // both still serve and remain as tail suggestions.
-var Models = []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"}
+var Models = []string{"gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"}
 
 // TokenSource supplies a live access token + ChatGPT account id per request
 // (openaiauth.AccessToken in production; injectable for tests).

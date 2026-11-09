@@ -994,6 +994,12 @@ type Registry struct {
 	mu   sync.RWMutex
 	cfg  *Config
 	path string // discovered config file path for persist=true (empty => cannot persist)
+	// fallback: cfg is the built-in no-config fallback (see AdoptAnthropicLogin),
+	// whose model was fallbackModel when the daemon started.
+	fallback      bool
+	fallbackModel Model
+	// edited: settings have been changed (and persisted) through this registry.
+	edited bool
 }
 
 // NewRegistry returns a Registry over cfg.
@@ -1674,11 +1680,13 @@ func (r *Registry) SetReviewDefault(name string) error {
 // to write it (the common paths always resolve a path — see daemon.persistPath).
 func (r *Registry) persistLocked() error {
 	if r.path == "" {
+		r.edited = true
 		return nil
 	}
 	if err := Save(r.path, r.cfg); err != nil {
 		return fmt.Errorf("persist config: %w", err)
 	}
+	r.edited = true
 	return nil
 }
 

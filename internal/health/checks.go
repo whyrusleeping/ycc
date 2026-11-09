@@ -71,6 +71,9 @@ func modelTarget(reg *config.Registry, name string) Target {
 			if !ok {
 				return Check{Status: StatusPending}
 			}
+			if missing := config.MissingCredential(m); missing != "" {
+				return notSetUp(m, missing)
+			}
 			d, err := config.ProbeModel(ctx, name, m)
 			if err == nil {
 				return Check{Status: StatusOK, Detail: fmt.Sprintf("Responded in %.1fs.", d.Seconds())}
@@ -79,6 +82,18 @@ func modelTarget(reg *config.Registry, name string) Target {
 			return modelFailure(m, err)
 		},
 	}
+}
+
+// notSetUp reports a model whose credential is absent: a probe would only
+// fail authentication, and "not set up" tells the user what is actually wrong.
+func notSetUp(m config.Model, missing string) Check {
+	remedy := "Run `ycc login " + m.Backend + "` on the daemon host."
+	if m.Auth != "oauth" {
+		remedy = fmt.Sprintf("Run `ycc token set %s` on the daemon host, or connect a subscription in Settings.", m.KeyEnv)
+	} else if m.Backend == "anthropic" {
+		remedy = "Connect the subscription in Settings, or run `ycc login anthropic` on the daemon host."
+	}
+	return Check{Status: StatusFail, Detail: "Not set up: " + missing + ".", Remedy: remedy}
 }
 
 // modelFailure describes a failed probe categorically: provider error bodies

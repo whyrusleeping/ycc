@@ -3596,6 +3596,10 @@ func (m *Manager) Budget() config.Budget { return m.reg.Budget() }
 // settings overlay.
 func (m *Manager) GetModel(name string) (config.Model, bool) { return m.reg.GetModel(name) }
 
+// AdoptAnthropicLogin points a not-yet-set-up daemon at a just-stored Claude
+// subscription login (see config.Registry.AdoptAnthropicLogin).
+func (m *Manager) AdoptAnthropicLogin() (bool, error) { return m.reg.AdoptAnthropicLogin() }
+
 // DiscoverModels lists the model ids available from a backend connection for the
 // connection form. key_env is resolved locally; the secret
 // value never leaves the daemon.

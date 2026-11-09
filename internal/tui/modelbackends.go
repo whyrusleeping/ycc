@@ -61,7 +61,7 @@ var (
 	// model field stays a normal text input; ctrl+n/ctrl+p just fill it with the
 	// next/previous preset for the current backend.
 	mbModelPresets = map[string][]string{
-		"anthropic": {"claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5", "claude-fable-5"},
+		"anthropic": {"claude-opus-5-5", "claude-fable-5-1", "claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5", "claude-fable-5"},
 		"openai":    {"gpt-5.5", "gpt-5-mini", "gpt-4o", "o3"},
 		"ollama":    {"qwen2.5-coder", "llama3.3", "deepseek-r1"},
 	}

@@ -6,12 +6,14 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/config"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
@@ -105,7 +107,17 @@ func (s *Server) CompleteAnthropicLogin(ctx context.Context, req *connect.Reques
 	if err := anthropicauth.Save(creds); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, errors.New("could not save Anthropic credentials on the daemon; check its secrets-store permissions and disk space, then start a new login"))
 	}
-	// No session, model configuration, or work-loop state is changed here.
+	// No session or work-loop state is changed here, and model configuration only
+	// when nothing was set up yet: then the built-in fallback model becomes this
+	// subscription, so connecting from a client leaves a working daemon.
+	if s.mgr == nil {
+		return connect.NewResponse(&v1.CompleteAnthropicLoginResponse{}), nil
+	}
+	if adopted, err := s.mgr.AdoptAnthropicLogin(); err != nil {
+		log.Printf("anthropic login: saved, but could not configure the fallback model: %v", err)
+	} else if adopted {
+		log.Printf("anthropic login: model %q now uses the Claude subscription", config.FallbackModelName)
+	}
 	return connect.NewResponse(&v1.CompleteAnthropicLoginResponse{}), nil
 }
 

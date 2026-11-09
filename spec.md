@@ -72,7 +72,10 @@ Persistence is opt-in:
 
 A persistent daemon stores its project name-to-path registry in its state directory. Projects may
 be added, renamed, and removed without changing workspace contents. Starting a session in an
-unknown workspace registers it. A request may omit the project only when exactly one project is
+unknown workspace registers it. `ycc daemon` registers its startup directory when it is named with
+`--workspace`, or when it is a git work tree other than the home directory; a daemon started from
+an arbitrary shell directory therefore does not adopt it (or `~`) as a project. A request may
+omit the project only when exactly one project is
 registered; ambiguity is an error. The exception is `GetUsage`: an omitted project requests the
 all-project rollup even when several projects are registered.
 
@@ -821,7 +824,11 @@ consumes it even on failure. State must match before exchange. An in-flight exch
 new begin; cancellation discards only the matching pending attempt, not submitted exchanges or
 stored credentials. Attempts are memory-only and do not survive daemon restart. URLs/codes are
 transient UI state, excluded from caches, session events, and diagnostics; provider errors are
-sanitized rather than echoed. Login changes neither model settings nor work-loop state. Saved
+sanitized rather than echoed. Login changes no work-loop state, and no model settings except on a
+daemon still running the untouched built-in no-config fallback (no settings changed and no
+`ycc.toml` written since startup) whose model has no API key: there the
+fallback model switches to `auth = "oauth"` and the config is persisted, the same result as
+`ycc login anthropic` on a machine without a config. Saved
 credentials apply to all projects on the daemon; reconnect never restarts unattended work.
 A refresh may persist its result only if the stored credential snapshot still matches the one
 it refreshed (an atomic cross-process compare-and-swap). A newer login or removal wins over
@@ -849,8 +856,7 @@ by a role is rejected. Provider model discovery is only a listing probe; setting
 offer a real model test that sends one small, bounded, potentially billed inference request using the
 current unsaved model draft. Draft tests resolve credentials daemon-side, do not install or persist
 the draft, and report provider authentication/request failures as diagnostics rather than confusing
-them with daemon authentication. A first-run client wizard creates a usable config when no model
-configuration or fallback credential exists.
+them with daemon authentication. Machine setup is described in §19.1.
 
 ### 13.1 Review tiers
 
@@ -917,6 +923,8 @@ Checks are:
 
 - **Models**, hourly: one small inference probe per enabled model that is subscription-authenticated
   or local. A model billed per request is probed only when a role, preset, or review tier uses it.
+  A model whose credential is absent on the daemon host (no API key, or no stored subscription
+  login) fails as "not set up" without a probe.
 - **Exa**, every six hours: one minimal contents request (the cheapest endpoint). A missing key is
   reported as `off`, not as an alert.
 - **Disk**, every five minutes: free space on each filesystem holding daemon state or a registered
@@ -1074,10 +1082,17 @@ improvement loop; an agent is pointed at the report on request. Event vocabulary
 
 ### 19.1 Machine setup
 
-Machine onboarding is a client-side form because it must work before a model does. When no usable
-configuration or fallback credential exists, it collects one or more providers and role
-assignments, performs subscription login when selected, and writes user config. Existing usable
-configuration skips the wizard.
+Machine setup must work before a model does, so it is never an agent flow. There are three entry
+points, and each leaves the same `ycc.toml`:
+
+- `ycc login anthropic|openai` stores the subscription login and adds an `auth = "oauth"` model,
+  creating the config with all roles on it when none exists. A daemon already running keeps the
+  config it loaded, so the command tells the user to restart it.
+- Plain `ycc` runs a TUI form when no usable configuration or fallback credential exists. The form
+  collects providers and role assignments and performs subscription login.
+- `ycc daemon` without a config runs the built-in Anthropic fallback. At startup it prints the web
+  address, where the access token comes from (the generated token file or `YCC_TOKEN`), and what
+  is missing: a usable coordinator model, or any project.
 
 ### 19.2 Project onboarding
 

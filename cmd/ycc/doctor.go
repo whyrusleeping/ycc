@@ -194,7 +194,8 @@ func configChecks(ws, configPath string) (*config.Config, []check) {
 			status: statusWarn,
 			label:  "config file",
 			detail: "no ycc.toml found; the built-in Anthropic fallback will be used",
-			remedy: "run `ycc` to launch the first-run setup wizard, or write a ycc.toml",
+			remedy: "run `ycc login anthropic` or `ycc login openai` to use a subscription (writes a ycc.toml), " +
+				"or connect one from the web app's Get started screen",
 		}}
 	}
 	cfg, err := config.Load(path)
@@ -384,7 +385,7 @@ func keyCheck(label, keyEnv string) check {
 		status: statusFail,
 		label:  label,
 		detail: keyEnv + " MISSING (not in env or secrets store)",
-		remedy: fmt.Sprintf("run `ycc token set %s` (or export %s)", keyEnv, keyEnv),
+		remedy: fmt.Sprintf("run `ycc token set %s` (or export %s), or use a subscription with `ycc login`", keyEnv, keyEnv),
 	}
 }
 

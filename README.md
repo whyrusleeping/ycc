@@ -101,7 +101,8 @@ export YCC_TOKEN=$(openssl rand -hex 32)       # every client authenticates with
 ycc daemon --web --addr 100.64.0.1:8787        # e.g. the machine's Tailscale address
 ```
 
-Run it under tmux, screen, or a service manager so it outlives your shell. The daemon refuses
+Run it under tmux, screen, or a service manager so it outlives your shell. On startup it prints the
+web address and anything still missing (a model, a project). The daemon refuses
 to listen on a non-loopback address without a token. Treat the token like an SSH key: anyone who
 has it can run commands in your projects. Keep the daemon on a private network such as Tailscale
 or WireGuard. If a device can't join one, put a TLS-terminating tunnel in front of the daemon
@@ -109,8 +110,9 @@ or WireGuard. If a device can't join one, put a TLS-terminating tunnel in front 
 
 ### 3. Add your projects
 
-Each project is a git repository on the daemon's machine. Add them from the web app or the iOS
-drawer (**Add project…**), or with `ycc project add ~/code/myproject`. For a new project, start
+Each project is a git repository on the daemon's machine. A daemon started inside a repository
+registers that one; add others from the web app or the iOS drawer (**Add project…**), or with
+`ycc project add ~/code/myproject`. For a new project, start
 a **Project manager** session with the **Onboard** preset. In an empty repository it works out
 the project's purpose with you, writes an initial `spec.md`, and creates a starter backlog. In
 an existing codebase it asks what you want to change next and documents only that part.

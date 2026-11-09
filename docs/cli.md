@@ -348,9 +348,9 @@ does not dial a client of its own.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--addr ADDR` | `127.0.0.1:8787` | address to listen on |
-| `--workspace DIR` | `.` | startup project directory, registered by basename |
+| `--workspace DIR` | `.` | startup project directory, registered by basename; the default `.` is registered only when it is a git repository other than your home directory |
 | `--config FILE` | | TOML config file (models + roles) |
-| `--model ID` | `claude-opus-4-8` | fallback model id (when no `--config`) |
+| `--model ID` | `claude-opus-5-5` | fallback model id (when no `--config`) |
 | `--base-url URL` | `https://api.anthropic.com` | fallback API base URL (when no `--config`) |
 | `--key-env VAR` | `ANTHROPIC_API_KEY` | fallback API key env var (when no `--config`) |
 | `--max-tokens N` | `32000` | fallback max tokens per turn (when no `--config`) |

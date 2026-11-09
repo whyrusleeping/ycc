@@ -207,8 +207,11 @@ func (a *app) configureSubscriptionModel(backend string) {
 		fmt.Printf("Wrote %s with model %q (auth = \"oauth\") assigned to all roles.\n", path, name)
 	} else {
 		fmt.Printf("Added model %q (auth = \"oauth\") to %s.\n", name, path)
-		fmt.Println("Assign it to roles from the TUI settings (esc → settings) or [roles] in ycc.toml.")
+		fmt.Println("Assign it to roles in the app's Settings → Default roles, or [roles] in ycc.toml.")
 	}
+	// A running daemon read its config at startup and would keep (and on its
+	// next settings change, rewrite) the old one.
+	fmt.Println("If a ycc daemon is already running, restart it to use the new model.")
 }
 
 // openBrowser makes a best-effort attempt to open url in the user's browser;

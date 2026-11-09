@@ -687,9 +687,9 @@ func daemonCommand() *cli.Command {
 			"the `Authorization: Bearer <token>` header.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "`address` to listen on (non-loopback requires bearer authentication)"},
-			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "startup project directory (registered by basename)"},
+			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "startup project directory (registered by basename; the default . only when it is a git repository other than $HOME)"},
 			&cli.StringFlag{Name: "config", Usage: "TOML config `file` (models + roles)"},
-			&cli.StringFlag{Name: "model", Value: "claude-opus-4-8", Usage: "fallback model id (when no --config)"},
+			&cli.StringFlag{Name: "model", Value: "claude-opus-5-5", Usage: "fallback model id (when no --config)"},
 			&cli.StringFlag{Name: "base-url", Value: "https://api.anthropic.com", Usage: "fallback API base URL (when no --config)"},
 			&cli.StringFlag{Name: "key-env", Value: "ANTHROPIC_API_KEY", Usage: "fallback API key env var (when no --config)"},
 			&cli.IntFlag{Name: "max-tokens", Value: config.DefaultMaxTokens, Usage: "fallback max tokens per turn (when no --config)"},
@@ -710,27 +710,30 @@ func daemonCommand() *cli.Command {
 				configPath = daemon.DiscoverConfig(workspace)
 			}
 			token := cmd.String("token")
+			tokenFile := ""
 			if token == "" && daemon.IsLoopback(cmd.String("addr")) {
 				var err error
 				token, err = daemon.EnsureLocalToken()
 				if err != nil {
 					return fmt.Errorf("daemon: %w", err)
 				}
-				fmt.Fprintf(os.Stderr, "ycc: using local daemon token file %s\n", daemon.LocalTokenFile())
+				tokenFile = daemon.LocalTokenFile()
 			}
 			err := daemon.Serve(daemon.Options{
-				Addr:       cmd.String("addr"),
-				Workspace:  workspace,
-				ConfigPath: configPath,
-				Model:      cmd.String("model"),
-				BaseURL:    cmd.String("base-url"),
-				KeyEnv:     cmd.String("key-env"),
-				MaxTokens:  int(cmd.Int("max-tokens")),
-				Token:      token,
-				TLSCert:    cmd.String("tls-cert"),
-				TLSKey:     cmd.String("tls-key"),
-				Web:        cmd.Bool("web"),
-				Persist:    true,
+				Addr:              cmd.String("addr"),
+				Workspace:         workspace,
+				WorkspaceExplicit: cmd.IsSet("workspace"),
+				ConfigPath:        configPath,
+				Model:             cmd.String("model"),
+				BaseURL:           cmd.String("base-url"),
+				KeyEnv:            cmd.String("key-env"),
+				MaxTokens:         int(cmd.Int("max-tokens")),
+				Token:             token,
+				TokenFile:         tokenFile,
+				TLSCert:           cmd.String("tls-cert"),
+				TLSKey:            cmd.String("tls-key"),
+				Web:               cmd.Bool("web"),
+				Persist:           true,
 			})
 			if err != nil {
 				return fmt.Errorf("daemon: %w", err)
@@ -777,7 +780,7 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 	}
 	ip, err := daemon.StartInProcess(daemon.Options{
 		Addr: "127.0.0.1:0", Workspace: ws, ConfigPath: configPath,
-		Model: "claude-opus-4-8", BaseURL: "https://api.anthropic.com",
+		Model: "claude-opus-5-5", BaseURL: "https://api.anthropic.com",
 		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: config.DefaultMaxTokens,
 	})
 	if err != nil {
