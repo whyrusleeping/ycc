@@ -44,8 +44,9 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
    correct token opens the shell. Reload: the token survives for that origin. The address bar and
    the daemon log never show the token.
 2. The sidebar shows the Recent feed across all projects: a "Needs answer" section first when a
-   session is waiting, then most recent first, each row with title, project name, status badge,
-   live marker, background-jobs state, turn count, and relative time. "Load older sessions" pages
+   session is waiting, then most recent first, each row with project and task ids, the age (or a
+   running, background, paused, or error state) right-aligned, and a two-line title; a waiting row
+   has a bell and an unread row a dot in its gutter. "Load older sessions" pages
    further back. The project switcher scopes the list to one project and back to Recent. A project
    with no sessions offers "Start a session".
 3. Open the live session. User and model turns are prominent; tool, reasoning, review, and

@@ -522,36 +522,6 @@ h1.brand {
   padding: 14px 12px 12px 16px;
 }
 
-.palette-trigger {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 12px 8px;
-  height: 32px;
-  padding: 0 6px 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--input-bg);
-  color: var(--fg-subtle);
-  font: inherit;
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.12s,
-    color 0.12s;
-}
-
-.palette-trigger:hover {
-  border-color: var(--border-strong);
-  color: var(--fg-muted);
-}
-
-.palette-trigger-text {
-  flex: 1;
-}
-
 .project-switcher {
   padding: 0 12px 8px;
 }
@@ -749,42 +719,36 @@ select.sidebar-filter:hover:not(:disabled, :focus) {
   padding: 0 8px 8px;
 }
 
+/* Section navigation: one row of icons (labels are tooltips and aria-labels). */
 .sidebar-nav {
-  border-top: 1px solid var(--border);
-  padding: 8px;
+  flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
 }
 
 .nav-item {
-  display: flex;
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 28px;
-  padding: 0 10px;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
   text-decoration: none;
-  text-align: left;
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  font-weight: 400;
   transition:
     background-color 0.12s,
     color 0.12s;
 }
 
-.nav-item .icon {
-  opacity: 0.85;
-}
-
-.nav-label {
-  flex: 1;
-  min-width: 0;
-}
-
-a.nav-item:hover {
+a.nav-item:hover,
+.btn.nav-item:hover:not(:disabled) {
   background: var(--bg-sunk);
   color: var(--fg);
 }
@@ -792,11 +756,7 @@ a.nav-item:hover {
 .nav-item.active {
   background: var(--bg-sunk);
   color: var(--fg);
-  box-shadow: inset 2px 0 0 var(--accent-strong);
-}
-
-.nav-item.active .icon {
-  opacity: 1;
+  box-shadow: inset 0 -2px 0 var(--accent-strong);
 }
 
 .nav-item.disabled {
@@ -805,17 +765,43 @@ a.nav-item:hover {
   cursor: not-allowed;
 }
 
-.sidebar-foot {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-top: 6px;
-  padding-top: 7px;
-  border-top: 1px solid var(--border);
+/* Loop/workstream activity: a dot on the icon's corner. */
+.nav-dot {
+  position: absolute;
+  top: 5px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-subtle);
+  box-shadow: 0 0 0 2px var(--bg-soft);
 }
 
-.sidebar-foot .nav-item {
-  flex: 1;
+.nav-dot.tone-live {
+  background: var(--ok);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.nav-dot.tone-warn {
+  background: var(--warn);
+}
+
+.nav-dot.tone-attention {
+  background: var(--error);
+}
+
+.nav-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
+/* At the bottom of the sidebar the menu opens upwards. */
+.sidebar-nav .menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+  min-width: 220px;
 }
 
 .main {
@@ -898,23 +884,187 @@ a.nav-item:hover {
   color: var(--fg-muted);
 }
 
-/* Sidebar rows stay one line tall so the list shows more than a handful;
- * the full title is the link's tooltip, and unread rows carry the weight. */
-.session-list.variant-sidebar .session-row {
-  padding: 7px 10px;
+/* Sidebar rows (SidebarRow): a fixed attention gutter, a quiet where/when line
+ * with the age right-aligned, and a two-line title. Hairlines between rows
+ * keep the rhythm without boxing anything. */
+.session-list.variant-sidebar .section-title {
+  padding: 12px 10px 4px 22px;
+  text-transform: lowercase;
+  letter-spacing: 0;
+}
+
+/* Every row in the follow-up section is flagged: the heading says so, and the
+ * flag (to clear it) appears on hover like the flag on any other row. */
+.session-section.followUp .session-row.variant-sidebar:not(:hover, :focus-within) .follow-up-flag.flagged {
+  opacity: 0;
+}
+
+.session-row.variant-sidebar {
+  display: flex;
+  gap: 0;
+  margin: 0;
+  padding: 8px 10px 9px 0;
+  border-radius: var(--radius-sm);
+}
+
+.session-row.variant-sidebar + .session-row.variant-sidebar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 22px;
+  right: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.session-row.variant-sidebar:hover::before,
+.session-row.variant-sidebar:hover + .session-row.variant-sidebar::before,
+.session-row.variant-sidebar.active::before,
+.session-row.variant-sidebar.active + .session-row.variant-sidebar::before {
+  border-color: transparent;
+}
+
+.row-gutter {
+  flex: none;
+  width: 22px;
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.row-gutter .unread-dot {
+  align-self: flex-start;
+  margin-top: 0;
+}
+
+.row-needs {
+  display: inline-flex;
+  color: var(--warn);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-head,
+.row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.row-head {
+  margin-bottom: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  line-height: 16px;
+  color: var(--fg-subtle);
+}
+
+.row-where {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.row-where .project {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+}
+
+/* Task ids: plain mono text, linkable above the row's stretched link. */
+.row-task {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  color: inherit;
+  text-decoration: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+a.row-task:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.row-trail {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  line-height: 16px;
+  color: var(--fg-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-state.tone-running,
+.row-state.tone-background {
+  color: var(--ok);
+}
+
+.row-state.tone-running::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  background: currentColor;
+  vertical-align: 1px;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.row-state.tone-paused {
+  color: var(--warn);
+}
+
+.row-state.tone-error {
+  color: var(--error);
+}
+
+.session-row.variant-sidebar .follow-up-flag {
+  position: relative;
+  font-size: var(--fs-xs);
+  line-height: 16px;
+}
+
+.session-row.variant-sidebar .follow-up-flag:not(.flagged) {
+  top: auto;
+  right: auto;
+  width: auto;
+  height: auto;
+  background: transparent;
+}
+
+.session-row.variant-sidebar .follow-up-flag.flagged {
+  color: var(--warn);
 }
 
 .session-list.variant-sidebar .title-text {
-  -webkit-line-clamp: 1;
+  flex: 1;
+  min-width: 0;
   font-weight: 400;
+  color: var(--fg);
 }
 
 .session-list.variant-sidebar .session-row.unread .title-text {
   font-weight: 600;
 }
 
-.session-list.variant-sidebar .session-row-meta {
-  margin-top: 2px;
+@media (prefers-reduced-motion: reduce) {
+  .row-state.tone-running::before,
+  .nav-dot.tone-live {
+    animation: none;
+  }
 }
 
 .session-list.variant-page .section-title {
@@ -4161,45 +4311,6 @@ th[aria-sort="descending"] .sort-btn {
   margin: 0;
 }
 
-/* Sidebar activity badges (work loop, workstreams) */
-.nav-badge {
-  font-size: var(--fs-2xs);
-  line-height: 18px;
-  padding: 0;
-  border-radius: var(--radius-pill);
-  font-weight: 400;
-  background: none;
-  color: var(--fg-muted);
-  font-family: var(--mono);
-}
-
-.nav-badge.tone-live {
-  background: none;
-  color: var(--ok);
-}
-
-.nav-badge.tone-live::before {
-  content: "";
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 4px;
-  border-radius: 50%;
-  background: none;
-  vertical-align: 1px;
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-.nav-badge.tone-warn {
-  background: none;
-  color: var(--warn);
-}
-
-.nav-badge.tone-attention {
-  background: none;
-  color: var(--error);
-}
-
 @keyframes pulse {
   50% {
     opacity: 0.35;
@@ -4207,7 +4318,6 @@ th[aria-sort="descending"] .sort-btn {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .nav-badge.tone-live::before,
   .live-dot,
   .spinner {
     animation: none;
@@ -4219,73 +4329,102 @@ th[aria-sort="descending"] .sort-btn {
   color: var(--fg-muted);
 }
 
-/* Ambient work-loop status between the project switcher and the inbox: flat
- * blocks with text aligned to the session rows; scrolls if many loops run. */
+/* Ambient work-loop status between the project switcher and the inbox: plain
+ * mono lines on the session rows' gutter and text column, no box. */
 .loop-status {
   display: flex;
   flex-direction: column;
   flex: none;
-  gap: 4px;
+  gap: 6px;
   max-height: 30vh;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 2px 8px 10px;
 }
 
 .loop-status-card {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunk);
+  gap: 2px;
+  padding-right: 10px;
   font-family: var(--mono);
   font-size: var(--fs-2xs);
+  line-height: 18px;
+  color: var(--fg-subtle);
 }
 
 .loop-status-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.loop-status-head .row-gutter {
+  align-self: center;
+  margin-right: -8px;
+  padding-top: 0;
+}
+
+.loop-mark::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: var(--fg-subtle);
+}
+
+.loop-mark.tone-running::before {
+  background: var(--ok);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.loop-mark.tone-waiting::before {
+  background: var(--warn);
 }
 
 .loop-status-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
-  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--fg-muted);
   text-decoration: none;
 }
 
-.loop-status-title:hover {
+.loop-status-title:hover,
+.loop-status-done:hover {
   color: var(--fg);
 }
 
+.loop-status-state.tone-waiting {
+  color: var(--warn);
+}
+
+.loop-status-done {
+  flex: none;
+  color: var(--fg-subtle);
+  text-decoration: none;
+}
+
+.loop-status-trail {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .loop-status-head .icon-btn {
-  padding: 0 6px;
+  width: 18px;
+  height: 18px;
   line-height: 18px;
 }
 
 .loop-status-line {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
-}
-
-.loop-status-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--fg-subtle);
-}
-
-.loop-status-label .live-dot {
-  width: 6px;
-  height: 6px;
+  padding-left: 22px;
 }
 
 .loop-status-session {
@@ -4294,6 +4433,8 @@ th[aria-sort="descending"] .sort-btn {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font);
+  font-size: var(--fs-xs);
   color: var(--fg);
   text-decoration: none;
 }
@@ -4307,17 +4448,18 @@ th[aria-sort="descending"] .sort-btn {
 }
 
 .loop-status-attention {
-  margin-left: 4px;
   color: var(--warn);
   text-decoration: none;
 }
 
-.loop-status-attention:first-child {
-  margin-left: 0;
-}
-
 .loop-status-attention:hover {
   text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loop-mark.tone-running::before {
+    animation: none;
+  }
 }
 
 /* Work loop */

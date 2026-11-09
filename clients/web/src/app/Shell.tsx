@@ -182,6 +182,16 @@ function Sidebar() {
           ycc
         </Link>
         <span className="sidebar-top-actions">
+          <button
+            type="button"
+            className="btn ghost small icon-btn sidebar-search"
+            title={`Jump to anything, run any action (${PALETTE_LABEL})`}
+            aria-label="Open the command palette"
+            data-track="sidebar.palette"
+            onClick={() => togglePalette()}
+          >
+            <Icon name="search" size={15} />
+          </button>
           <Link
             to={paths.newSession(scope)}
             className="btn primary small"
@@ -192,18 +202,6 @@ function Sidebar() {
           </Link>
         </span>
       </div>
-      <button
-        type="button"
-        className="palette-trigger"
-        title={`Command palette: jump to anything, run any action (${PALETTE_LABEL})`}
-        aria-label="Open the command palette"
-        data-track="sidebar.palette"
-        onClick={() => togglePalette()}
-      >
-        <Icon name="search" size={14} />
-        <span className="palette-trigger-text">Jump to…</span>
-        <kbd>{PALETTE_LABEL}</kbd>
-      </button>
       <ProjectSwitcher />
       <LoopStatus scope={scope} />
       <div className="sidebar-heading">
@@ -240,11 +238,13 @@ function Sidebar() {
       </div>
       <NotificationPrompt />
       <HealthBanner />
+      {/* One row of labelled icons: the session list keeps the height. */}
       <div className="sidebar-nav">
         {PROJECT_SECTIONS.map((s) => {
           // Backlog, work loop, and workstreams ask for a project when unscoped; other sections need one.
           const to = sectionPath(s.key, scope);
           const badge = s.key === "loop" ? loopBadge : s.key === "workstreams" ? wsBadge : null;
+          const label = badge ? `${s.label}: ${badge.title}` : s.label;
           // Memory & plans covers the plan library's routes too.
           const plansActive = s.key === "memory" && /^\/p\/[^/]+\/plans(\/|$)/.test(location.pathname);
           return to ? (
@@ -252,54 +252,39 @@ function Sidebar() {
               key={s.key}
               to={to}
               className={({ isActive }) => `nav-item${isActive || plansActive ? " active" : ""}`}
+              title={label}
+              aria-label={label}
               data-track={`sidebar.${s.key}`}
             >
-              <Icon name={SECTION_ICONS[s.key]} />
-              <span className="nav-label">{s.label}</span>
-              {badge && (
-                <span className={`nav-badge tone-${badge.tone}`} title={badge.title} aria-label={`${s.label}: ${badge.title}`}>
-                  {badge.label}
-                </span>
-              )}
+              <Icon name={SECTION_ICONS[s.key]} size={17} />
+              {badge && <span className={`nav-dot tone-${badge.tone}`} aria-hidden="true" />}
             </NavLink>
           ) : (
-            <span key={s.key} className="nav-item disabled" title="Choose a project first">
-              <Icon name={SECTION_ICONS[s.key]} />
-              <span className="nav-label">{s.label}</span>
+            <span key={s.key} className="nav-item disabled" title={`${s.label}: choose a project first`} aria-label={`${s.label}: choose a project first`}>
+              <Icon name={SECTION_ICONS[s.key]} size={17} />
             </span>
           );
         })}
-        <div className="sidebar-foot">
-          <NavLink to={paths.settings()} className="nav-item" data-track="sidebar.settings">
-            <Icon name="settings" />
-            <span className="nav-label">Settings</span>
-          </NavLink>
-          <button
-            type="button"
-            className="btn ghost icon-btn"
-            onClick={() => openHelp()}
-            data-track="sidebar.help"
-            title="Keyboard shortcuts (?)"
-            aria-label="Keyboard shortcuts"
-          >
-            <Icon name="keyboard" />
-          </button>
-          {getToken() && (
-            <button
-              type="button"
-              className="btn ghost icon-btn"
-              title="Forget token and sign out of this daemon"
-              aria-label="Forget token"
-              data-track="sidebar.sign_out"
-              onClick={() => {
+        <span className="nav-sep" aria-hidden="true" />
+        <NavLink to={paths.settings()} className="nav-item" title="Settings" aria-label="Settings" data-track="sidebar.settings">
+          <Icon name="settings" size={17} />
+        </NavLink>
+        <MenuButton
+          label={<Icon name="more" size={17} />}
+          ariaLabel="More"
+          className="btn ghost nav-item nav-more"
+          items={[
+            { id: "help.open", label: "Keyboard shortcuts", shortcut: "?", onSelect: () => openHelp() },
+            !!getToken() && {
+              id: "auth.signOut",
+              label: "Forget token and sign out",
+              onSelect: () => {
                 qc.clear();
                 authStore.forgetToken();
-              }}
-            >
-              <Icon name="signOut" />
-            </button>
-          )}
-        </div>
+              },
+            },
+          ]}
+        />
       </div>
     </nav>
   );

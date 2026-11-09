@@ -9,7 +9,11 @@ import { useLoopSessionIds } from "../workloop/hooks";
 import { useReadMarks } from "./unread";
 import { filterSessions, isInboxSession, SESSION_FILTERS, type SessionFilter } from "./attention";
 import { setSidebarFilter, useSidebarFilter } from "./listFilter";
+import { Icon } from "../../ui/icons";
+import type { SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 import {
+  compactAge,
+  compactState,
   displayProject,
   displayTitle,
   lifecycleLabel,
@@ -60,6 +64,21 @@ export function SessionRowView({
   followUpPending?: boolean;
 }) {
   const s = row.session;
+  if (variant === "sidebar") {
+    return (
+      <SidebarRow
+        row={row}
+        showProject={showProject}
+        active={active}
+        now={now}
+        loopOwned={loopOwned}
+        unread={unread}
+        onMarkRead={onMarkRead}
+        onToggleFollowUp={onToggleFollowUp}
+        followUpPending={followUpPending}
+      />
+    );
+  }
   const lifecycle = lifecycleLabel(s);
   const project = displayProject(row);
   const chips = taskChipLabels(s);
@@ -80,18 +99,7 @@ export function SessionRowView({
             onClick={onMarkRead}
           />
         )}
-        <button
-          type="button"
-          className={`follow-up-flag${s.followUp ? " flagged" : ""}`}
-          aria-pressed={s.followUp}
-          aria-label={s.followUp ? `Clear follow-up on ${displayTitle(s)}` : `Flag ${displayTitle(s)} for follow-up`}
-          title={s.followUp ? `Flagged for follow-up${s.followUpAt ? ` since ${new Date(s.followUpAt).toLocaleString()}` : ""} — click to clear` : "Flag for follow-up"}
-          data-track="sessions.follow_up"
-          disabled={followUpPending}
-          onClick={onToggleFollowUp}
-        >
-          ⚑
-        </button>
+        <FollowUpFlag s={s} pending={followUpPending} onToggle={onToggleFollowUp} />
         <Link
           to={paths.session(row.project, s.sessionId)}
           className="session-row-link title-text"
@@ -123,6 +131,134 @@ export function SessionRowView({
         )}
         {variant === "page" && metadataItems(s).map((m) => <span key={m}>{m}</span>)}
         {when && <span className="when">{when}</span>}
+      </div>
+    </div>
+  );
+}
+
+function FollowUpFlag({ s, pending, onToggle }: { s: SessionSummary; pending: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`follow-up-flag${s.followUp ? " flagged" : ""}`}
+      aria-pressed={s.followUp}
+      aria-label={s.followUp ? `Clear follow-up on ${displayTitle(s)}` : `Flag ${displayTitle(s)} for follow-up`}
+      title={s.followUp ? `Flagged for follow-up${s.followUpAt ? ` since ${new Date(s.followUpAt).toLocaleString()}` : ""} — click to clear` : "Flag for follow-up"}
+      data-track="sessions.follow_up"
+      disabled={pending}
+      onClick={onToggle}
+    >
+      ⚑
+    </button>
+  );
+}
+
+/**
+ * A sidebar row, laid out like the iOS inbox so a column of them scans:
+ *
+ *     ▪ project · 0431 0432              ⚑ 13m
+ *       Title of the session, wrapping to at
+ *       most two lines
+ *
+ * The gutter holds the one attention mark (needs-answer bell, else the unread
+ * dot), the where/when line is quiet mono with the age (or a running/error
+ * state) right-aligned, and a row with nothing to say about where moves its
+ * age onto the title line.
+ */
+function SidebarRow({
+  row,
+  showProject,
+  active,
+  now,
+  loopOwned,
+  unread,
+  onMarkRead,
+  onToggleFollowUp,
+  followUpPending,
+}: {
+  row: FeedRow;
+  showProject: boolean;
+  active: boolean;
+  now: number;
+  loopOwned: boolean;
+  unread: boolean;
+  onMarkRead?: () => void;
+  onToggleFollowUp: () => void;
+  followUpPending: boolean;
+}) {
+  const s = row.session;
+  const project = showProject ? displayProject(row) : "";
+  const chips = taskChipLabels(s);
+  const ids = taskIds(s);
+  const state = compactState(s);
+  const age = compactAge(s.lastActivity || s.startedAt, now);
+  const asks = needsAnswer(s);
+  const hasLead = !!project || chips.length > 0 || loopOwned;
+  const trail = (
+    <span className="row-trail">
+      <FollowUpFlag s={s} pending={followUpPending} onToggle={onToggleFollowUp} />
+      {state ? (
+        <span className={`row-state tone-${state.tone}`}>{state.label}</span>
+      ) : (
+        age && <span className="when" title={new Date(s.lastActivity || s.startedAt).toLocaleString()}>{age}</span>
+      )}
+    </span>
+  );
+  return (
+    <div
+      className={`session-row variant-sidebar${active ? " active" : ""}${asks ? " needs" : ""}${unread ? " unread" : ""}${state?.tone === "running" ? " running" : ""}`}
+    >
+      <span className="row-gutter">
+        {asks ? (
+          <span className="row-needs" title="Needs your answer" aria-label="Needs your answer" role="img">
+            <Icon name="bell" size={12} />
+          </span>
+        ) : (
+          unread && (
+            <button
+              type="button"
+              className="unread-dot"
+              title="New agent activity — click to mark read"
+              aria-label={`Unread: mark ${displayTitle(s)} read`}
+              data-track="sessions.mark_read"
+              onClick={onMarkRead}
+            />
+          )
+        )}
+      </span>
+      <div className="row-main">
+        {hasLead && (
+          <div className="row-head">
+            <span className="row-where">
+              {project && <span className="project">{project}</span>}
+              {chips.map((c) =>
+                ids.includes(c) ? (
+                  <Link key={c} to={paths.task(row.project, c)} className="row-task" title={`Open task ${c}`} data-track="sessions.task_chip">
+                    {c}
+                  </Link>
+                ) : (
+                  <span key={c} className="row-task more" title={ids.slice(2).join(", ")}>
+                    {c}
+                  </span>
+                ),
+              )}
+              {loopOwned && <span className="row-loop" title="Started by the work loop">loop</span>}
+            </span>
+            {trail}
+          </div>
+        )}
+        <div className="row-title">
+          <Link
+            to={paths.session(row.project, s.sessionId)}
+            className="session-row-link title-text"
+            title={displayTitle(s)}
+            data-track="sessions.open"
+            aria-current={active ? "page" : undefined}
+          >
+            {displayTitle(s)}
+          </Link>
+          {!hasLead && trail}
+        </div>
       </div>
     </div>
   );

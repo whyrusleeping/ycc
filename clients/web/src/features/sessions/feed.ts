@@ -252,6 +252,16 @@ export function lifecycleTone(s: SessionSummary): string {
   return ["running", "paused", "error", "stopped"].includes(s.status.toLowerCase()) ? s.status.toLowerCase() : "idle";
 }
 
+/**
+ * The state a compact (sidebar) row shows in place of its age: only work in
+ * flight or something wrong. A waiting question is already the row's gutter
+ * bell and section, and stopped or idle sessions show when they last moved.
+ */
+export function compactState(s: SessionSummary): { label: string; tone: string } | null {
+  const tone = lifecycleTone(s);
+  return ["running", "background", "paused", "error"].includes(tone) ? { label: tone, tone } : null;
+}
+
 export function compactTokenCount(tokens: number): string | null {
   if (!(tokens > 0)) return null;
   const dec = (v: number) => {
@@ -293,4 +303,9 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   const d = Math.round(h / 24);
   if (d < 14) return `${d}d ago`;
   return new Date(t).toLocaleDateString();
+}
+
+/** relativeTime without the " ago" suffix, for right-aligned row ages. */
+export function compactAge(iso: string, now: number = Date.now()): string {
+  return relativeTime(iso, now).replace(/ ago$/, "");
 }

@@ -1,6 +1,7 @@
-// Ambient work-loop status at the top of the sidebar inbox: what each loop is
-// working on now and what it finished recently. Loop sessions stay out of the
-// personal inbox, so this is status only — no unread marks or notifications.
+// Ambient work-loop status at the top of the sidebar inbox: one quiet line per
+// loop (state, finished count, blocked/in-review attention) and, while it runs,
+// the task and session it is on now. Loop sessions stay out of the personal
+// inbox, so this is status only — no unread marks or notifications.
 import { useState } from "react";
 import { Link } from "react-router";
 import { useSessionFeed, useWorkLoops } from "../../api/queries";
@@ -19,7 +20,6 @@ import {
 } from "./model";
 
 const DISMISSED_KEY = "ycc.loopStatusDismissed";
-const SHOWN_DONE = 3;
 
 function readDismissed(): Set<string> {
   try {
@@ -63,66 +63,62 @@ export function LoopStatus({ scope }: { scope: string | null }) {
         ].filter(Boolean).join(" · ");
         const outcome = loop.outcome.trim();
         const failed = state === "finished" && !!outcome && isFailureOutcome(outcome);
+        const name = scope === null ? `${project} loop` : "Work loop";
         return (
           <section key={loop.loopId} className={`loop-status-card state-${state}`} aria-label={`Work loop${scope === null ? ` in ${project}` : ""}`}>
             <div className="loop-status-head">
-              {/* A routine outcome ("loop complete: …") repeats the state badge, so it is the title's tooltip; failures show inline. */}
+              <span className={`row-gutter loop-mark tone-${state}`} aria-hidden="true" />
+              {/* A routine outcome ("loop complete: …") is the title's tooltip; failures show inline. */}
               <Link
                 to={paths.loop(project)}
                 className="loop-status-title"
-                title={state === "finished" && outcome && !failed ? outcome : undefined}
+                title={state === "finished" && outcome && !failed ? outcome : `${name}: ${stateTitle(state).toLowerCase()}`}
                 data-track="sidebar.loop_status.open"
               >
-                <span className={`nav-badge tone-${state === "running" ? "live" : state === "waiting" ? "warn" : "idle"}`}>
-                  {stateTitle(state).toLowerCase()}
-                </span>
-                <span>Work loop{scope === null ? ` · ${project}` : ""}</span>
+                {name}
               </Link>
-              {state === "finished" && (
-                <button
-                  type="button"
-                  className="btn ghost small icon-btn"
-                  aria-label="Dismiss work loop status"
-                  title="Dismiss"
-                  data-track="sidebar.loop_status.dismiss"
-                  onClick={() => dismiss(loop.loopId)}
+              {state !== "running" && <span className={`loop-status-state tone-${state}`}>{stateTitle(state).toLowerCase()}</span>}
+              {done.length > 0 && (
+                <Link
+                  to={paths.loop(project)}
+                  className="loop-status-done"
+                  title={done.slice(0, 12).map((t) => `${t.id} ${t.title}`).join("\n") + (done.length > 12 ? `\n+${done.length - 12} more` : "")}
+                  data-track="sidebar.loop_status.done"
                 >
-                  ×
-                </button>
+                  {done.length} done
+                </Link>
               )}
+              <span className="loop-status-trail">
+                {attention && (
+                  <Link to={paths.loop(project)} className="loop-status-attention" data-track="sidebar.loop_status.attention">
+                    {attention}
+                  </Link>
+                )}
+                {state === "finished" && (
+                  <button
+                    type="button"
+                    className="btn ghost small icon-btn"
+                    aria-label="Dismiss work loop status"
+                    title="Dismiss"
+                    data-track="sidebar.loop_status.dismiss"
+                    onClick={() => dismiss(loop.loopId)}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
             </div>
             {state === "waiting" && <div className="loop-status-line muted">{waitingLine(loop)}</div>}
             {failed && <div className="loop-status-line error">{outcome}</div>}
             {current && (
               <div className="loop-status-line">
-                <span className="loop-status-label"><span className="live-dot" aria-hidden="true" /> Now</span>
-                {currentTask && <TaskLink project={project} id={currentTask} className="chip task-chip" inInspector />}
+                {currentTask && <TaskLink project={project} id={currentTask} className="row-task" inInspector />}
                 <Link to={paths.session(project, current)} className="loop-status-session" data-track="sidebar.loop_status.follow">
                   {currentRow ? displayTitle(currentRow.session) : "Live session"}
                 </Link>
               </div>
             )}
             {isActive(state) && !current && state !== "waiting" && <div className="loop-status-line muted">Between sessions…</div>}
-            {(done.length > 0 || attention) && (
-              <div className="loop-status-line">
-                {done.length > 0 && (
-                  <>
-                    <span className="loop-status-label">✓ Done</span>
-                    {done.slice(0, SHOWN_DONE).map((t) => (
-                      <TaskLink key={t.id} project={project} id={t.id} className="chip task-chip" title={`${t.id} ${t.title}`} inInspector />
-                    ))}
-                    {done.length > SHOWN_DONE && (
-                      <Link to={paths.loop(project)} className="muted">+{done.length - SHOWN_DONE}</Link>
-                    )}
-                  </>
-                )}
-                {attention && (
-                  <Link to={paths.loop(project)} className="loop-status-attention" data-track="sidebar.loop_status.attention">
-                    ⚠ {attention}
-                  </Link>
-                )}
-              </div>
-            )}
           </section>
         );
       })}

@@ -146,8 +146,8 @@ export function ProjectPicker({
           }
         }}
       >
+        {/* The current scope's counts are the list itself (and the heading's unread count); badges are for choosing. */}
         <span className="project-picker-name">{current?.label ?? "All projects"}</span>
-        <ActivityBadges activity={current?.activity} />
       </button>
       {open && (
         <ul

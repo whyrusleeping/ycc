@@ -20,8 +20,8 @@ phone layout; narrow windows remain usable but are not a design target. The shel
 regions:
 
 - a sidebar with the project switcher, the personal session inbox (meaningful state, needs-answer,
-  follow-up and unread markers), and navigation to Backlog, Work loop, Workstreams, Usage, Files,
-  Memory/Plans, and Settings;
+  follow-up and unread markers), and one row of icon links (labels as tooltips) to Backlog, Work
+  loop, Workstreams, Usage, Files, Memory/Plans, and Settings, so the inbox keeps the height;
 - a main pane showing the selected surface, typically a session transcript with its composer;
 - a closable, resizable inspector pane for contextual detail: task detail, commit or working-tree
   diffs, file contents, and expanded tool or reasoning rows, so detail opens beside the transcript
@@ -42,8 +42,11 @@ OFL) for chrome — navigation, labels, metadata, buttons, tool rows — with th
 prose and titles. Status is a coloured mono word or a small square marker, not a filled pill, and
 each row carries one attention signal. Lists show what a row is and when it last moved; model,
 context, and turn counts belong to the session header, and raw ids appear only where they are
-copied. Tokens live at the top of `src/styles.css` (palette, a seven-step type scale, radii); the
-iOS `Theme` mirrors the palette.
+copied. Sidebar session rows use the iOS inbox layout so a column of them scans: a leading gutter
+for the one attention mark (needs-answer bell, else unread dot), a quiet mono line with project and
+task ids and the age right-aligned (replaced by the state while running, paused, or in error), then
+a two-line title, bold when unread. Tokens live at the top of `src/styles.css` (palette, a
+seven-step type scale, radii); the iOS `Theme` mirrors the palette.
 
 Each colour has one role, on both clients:
 
