@@ -7,8 +7,10 @@
 // errors that point at an expired login (work loop, session). Mirrors iOS
 // AnthropicLoginView.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
+import { queryKeys, refreshHealth } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
 import { track } from "../../app/analytics";
 import { codeProblem, validLoginStart } from "./anthropic";
@@ -60,6 +62,7 @@ interface Attempt {
 }
 
 function LoginBody({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -148,6 +151,10 @@ function LoginBody({ onClose }: { onClose: () => void }) {
         track.submit("anthropic_login");
         setConnected(true);
       }
+      // On a daemon with no model yet the login set one up: every view of
+      // models and their health is stale now (re-checking is best effort).
+      void qc.invalidateQueries({ queryKey: queryKeys.modelsAll });
+      void refreshHealth(qc).catch(() => {});
     } catch (err) {
       if (gen === generation.current) fail(err, "Login could not be completed. Start a new login.", "anthropic_login.complete");
     } finally {
@@ -161,7 +168,8 @@ function LoginBody({ onClose }: { onClose: () => void }) {
       <div className="login-body">
         <div className="banner ok" role="status">
           <strong>Anthropic connected.</strong> Credentials were saved on the daemon; Anthropic OAuth models use them from their next
-          request. No model settings changed and no work loop was restarted.
+          request. If no model was set up yet, the daemon’s default model now uses this subscription; otherwise no model settings
+          changed. No work loop was restarted.
         </div>
         <div className="dialog-actions">
           <button type="button" className="btn primary" onClick={onClose} autoFocus>

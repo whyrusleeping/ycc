@@ -40,6 +40,10 @@ export function TokenEntry({ note }: { note?: string }) {
       >
         <h1 className="brand">ycc</h1>
         <p className="muted">Enter the daemon's access token to connect.</p>
+        <p className="muted small">
+          The daemon prints where it is when it starts: the <span className="mono">YCC_TOKEN</span> it was started with, or for a
+          daemon on this machine without one, the file <span className="mono">~/.local/state/ycc/daemon-token</span>.
+        </p>
         <input
           type="password"
           className="field"

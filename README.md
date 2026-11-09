@@ -119,7 +119,9 @@ an existing codebase it asks what you want to change next and documents only tha
 
 ### 4. Connect the clients
 
-- **Web:** open `http://<daemon-address>:8787` and paste the token.
+- **Web:** open `http://<daemon-address>:8787` and paste the token. A new daemon opens on a
+  **Get started** checklist: connect a model (a Claude subscription can be connected right there,
+  if you skipped `ycc login`), add a project, and start its onboarding session.
 - **iOS:** build [`clients/ios`](clients/ios) onto your phone: run `cd clients/ios && xcodegen
   generate`, open `Ycc.xcodeproj` in Xcode, choose your signing team, and run it. Then enter
   the daemon URL and token. The token is kept in the Keychain.

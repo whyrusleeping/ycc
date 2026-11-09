@@ -14,6 +14,7 @@ import { bannerLine, loopState } from "../features/workloop/model";
 import { WorkstreamsPage } from "../features/workstreams/WorkstreamsPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { FilesPage } from "../features/files/FilesPage";
+import { GetStarted } from "../features/onboarding/GetStarted";
 import { MemoryPage, PlansPage } from "../features/memory/MemoryPage";
 import { ProjectsPage } from "../features/projects/ProjectsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
@@ -23,10 +24,21 @@ import { paths } from "./paths";
 import { useScope } from "./scope";
 import { useDocumentTitle } from "./title";
 
-/** `/`: the daemon-wide Recent sessions page. */
+/** `/`: the daemon-wide Recent sessions page; on a daemon with no sessions yet, the Get started checklist. */
 export function HomePage() {
   const { setScope } = useScope();
   useEffect(() => setScope(null), [setScope]);
+  const { feed } = useSessionFeed(null);
+  if (feed && !feed.error && feed.rows.length === 0) {
+    return (
+      <div className="page">
+        <header className="page-head">
+          <h1>Get started</h1>
+        </header>
+        <GetStarted />
+      </div>
+    );
+  }
   return (
     <div className="page">
       <header className="page-head">

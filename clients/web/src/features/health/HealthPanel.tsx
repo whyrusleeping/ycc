@@ -5,17 +5,22 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { errorMessage } from "../../api/client";
-import { refreshHealth, useHealth } from "../../api/queries";
+import { refreshHealth, useHealth, useSessionFeed } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { track } from "../../app/analytics";
 import { relativeTime } from "../sessions/feed";
 import { healthBanner } from "./model";
 
-/** Shown only while a check is warn/fail; a failing GetHealth shows nothing. */
+/**
+ * Shown only while a check is warn/fail; a failing GetHealth shows nothing.
+ * A daemon with no sessions yet shows its Get started checklist instead, where
+ * an unconnected model is a setup step rather than a failure.
+ */
 export function HealthBanner() {
   const health = useHealth();
+  const { feed } = useSessionFeed(null);
   const banner = health.data ? healthBanner(health.data) : null;
-  if (!banner) return null;
+  if (!banner || (feed && feed.rows.length === 0)) return null;
   return (
     <Link
       to={paths.settings("health")}

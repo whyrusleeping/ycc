@@ -356,7 +356,7 @@ export function SessionList({
       {groups.length === 0 && (
         <div className="pad empty-list">
           <p className="muted">{followUpOnly ? "No sessions flagged for follow-up." : feed.rows.length === 0 ? "No sessions yet." : "No sessions match this view."}</p>
-          {feed.rows.length === 0 && !followUpOnly && (
+          {feed.rows.length === 0 && !followUpOnly && variant === "page" && (
             <Link to={paths.newSession(scope)} className="btn primary small" data-track="sessions.start_first">
               Start a session
             </Link>

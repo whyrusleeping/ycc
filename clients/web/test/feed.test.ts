@@ -30,7 +30,7 @@ describe("feed", () => {
       create(ProjectInfoSchema, { name: "b", path: "/w/b" }),
     ];
     expect(historyTargets(projects)).toEqual(["a", "b"]);
-    expect(historyTargets([])).toEqual([""]);
+    expect(historyTargets([])).toEqual([]);
   });
 
   it("merges projects most-recent first and routes rows to their project", () => {

@@ -35,11 +35,11 @@ export interface Feed {
 
 /**
  * The history queries a project list implies: one per distinct workspace
- * (aliases of the same path return the same logs). With no registered project
- * the daemon may still own its startup workspace; "" resolves it server-side.
+ * (aliases of the same path return the same logs). A daemon with no
+ * registered project has no history to list.
  */
 export function historyTargets(projects: ProjectInfo[]): string[] {
-  if (projects.length === 0) return [""];
+  if (projects.length === 0) return [];
   const seen = new Set<string>();
   const out: string[] = [];
   for (const p of projects) {

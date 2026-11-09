@@ -939,7 +939,9 @@ without making provider requests, and `refresh` re-runs every check first. Detai
 (error kind, HTTP status) and never include provider bodies or credentials.
 
 The web and iOS clients show a banner whenever any check is `warn` or `fail`. It opens a Health
-panel listing every check with its detail, suggested fix, and a re-check action.
+panel listing every check with its detail, suggested fix, and a re-check action. The web client
+omits the banner while the daemon has no sessions, when its Get started checklist (§19.1) covers
+model setup.
 
 ## 18. Client interaction model
 
@@ -1093,6 +1095,19 @@ points, and each leaves the same `ycc.toml`:
 - `ycc daemon` without a config runs the built-in Anthropic fallback. At startup it prints the web
   address, where the access token comes from (the generated token file or `YCC_TOKEN`), and what
   is missing: a usable coordinator model, or any project.
+
+The web home page of a daemon with no sessions is a Get started checklist:
+
+1. **Connect a model.** This step is done when the coordinator's health check passes, and the
+   checklist requests a fresh check rather than waiting for the first scheduled one. It offers the
+   in-browser Claude login (which sets up the fallback model, §13), the CLI commands for a ChatGPT
+   login or an API key, and Settings → Models.
+2. **Add a project.**
+3. **Start the first session.** For a project that needs onboarding this is the Onboard preset;
+   otherwise it is a new session in that project.
+
+Each step reads daemon state, so setup done from another client or the CLI counts. The ordinary
+session list replaces the checklist once any session exists.
 
 ### 19.2 Project onboarding
 

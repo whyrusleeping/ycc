@@ -2312,6 +2312,106 @@ pre.clamp {
   margin: 0;
 }
 
+/* Get started: first-run checklist on an empty daemon's home page */
+.get-started {
+  max-width: 760px;
+}
+
+.get-started-intro {
+  margin: 0 0 18px;
+  color: var(--fg-muted);
+}
+
+.get-started-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.get-started-step {
+  display: flex;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.get-started-mark {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  color: var(--fg-muted);
+}
+
+.get-started-step.done .get-started-mark {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.get-started-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.get-started-body h2 {
+  margin: 2px 0 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.get-started-step.done .get-started-body h2 {
+  color: var(--fg-muted);
+}
+
+.get-started-body > p {
+  margin: 0;
+}
+
+.get-started-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.get-started-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.get-started-option strong {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.get-started-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--fg-subtle);
+}
+
+.get-started-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* New session */
 .new-session {
   display: flex;
