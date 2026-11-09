@@ -1,6 +1,7 @@
 package event
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -372,4 +373,30 @@ func TestReduceClearsErrorOnRecovery(t *testing.T) {
 	if afterInput.Status != StatusRunning {
 		t.Fatalf("after user_input status = %q, want running", afterInput.Status)
 	}
+}
+
+// A log whose tail is out of order — another appender, or a range that came back
+// after being lost — must not make the writer reuse a number that is already in
+// the file: the reader keeps the first record per number, so a reused one would
+// bury this session's own new events.
+func TestOpenLogNumbersAboveAHighestSequenceNotTheLast(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	var out strings.Builder
+	for _, seq := range []int{1, 2, 3, 2} {
+		b, err := json.Marshal(Event{Seq: seq, TS: time.Unix(int64(seq), 0).UTC(), Actor: "agent", Type: ModelTurn})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.Write(b)
+		out.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(out.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := OpenLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	emit(t, l, 4, UserInput)
 }

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -290,8 +291,22 @@ func (s *Store) catchUpLocked(ctx context.Context, sessionID, logPath string, ma
 		if maxSeq >= 0 && int64(ev.Seq) > maxSeq {
 			break
 		}
+		if int64(ev.Seq) <= seq {
+			// The file is not append-ordered: another appender, a hand edit, or a range
+			// that came back after being lost. Keep the first event recorded for each
+			// number and drop the rest. The log remains the transcript of record, and
+			// the index stays total, so a damaged log costs events at worst, never the
+			// ability to open the session.
+			log.Printf("sessionview: %s: discarding out-of-order event seq %d (already indexed through %d)", sessionID, ev.Seq, seq)
+			consumed += lineBytes + 1
+			continue
+		}
 		if int64(ev.Seq) != seq+1 {
-			return State{}, fmt.Errorf("session view sequence discontinuity: got %d after %d", ev.Seq, seq)
+			// Events are missing: the log was truncated, restored from an older copy,
+			// or rewritten by something other than its writer. Survivors are still
+			// ordered and still apply, and seq stays a valid monotonic cursor, so index
+			// what is left instead of refusing every read of the session forever.
+			log.Printf("sessionview: %s: %d event(s) lost from the log (seq %d -> %d)", sessionID, int64(ev.Seq)-seq-1, seq, ev.Seq)
 		}
 		if err := applyEvent(ctx, tx, sessionID, &state, ev); err != nil {
 			return State{}, err
