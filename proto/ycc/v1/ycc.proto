@@ -607,6 +607,10 @@ message ModelConfig {
   optional double price_cache_write = 12;
   string auth = 13;            // credential mechanism: "" | "api-key" | "oauth"
   optional bool disabled = 14; // temporarily unavailable; omission preserves existing state
+  // Operator suitability advice shown to agents choosing a subagent model
+  // (spawn_agent's model catalog). Omission preserves the stored notes; an
+  // explicit empty string clears them.
+  optional string notes = 15;
 }
 
 // UpsertModel adds or replaces a logical model backend. The change

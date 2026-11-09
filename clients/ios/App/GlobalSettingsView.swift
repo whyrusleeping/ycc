@@ -311,6 +311,7 @@ private struct ModelEditorView: View {
     @State private var thinking = ""
     @State private var effort = ""
     @State private var thinkingDisplay = ""
+    @State private var notes = ""
     @State private var priceInput = ""
     @State private var priceOutput = ""
     @State private var priceCacheRead = ""
@@ -361,6 +362,17 @@ private struct ModelEditorView: View {
                 TextField("API key environment variable", text: $keyEnv)
                     .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
+            }
+
+            Section {
+                TextField(
+                    "When agents should pick this model, e.g. fast and cheap for read-only searches",
+                    text: $notes, axis: .vertical)
+                    .lineLimit(2...5)
+            } header: {
+                Text("Description for agents")
+            } footer: {
+                Text("Shown to agents choosing a subagent model.")
             }
 
             Section {
@@ -487,7 +499,7 @@ private struct ModelEditorView: View {
         ModelEditorDraft(
             name: name, isEnabled: isEnabled, backend: backend, auth: auth,
             baseURL: baseURL, modelID: modelID, keyEnv: keyEnv,
-            thinking: thinking, effort: effort, thinkingDisplay: thinkingDisplay,
+            thinking: thinking, effort: effort, thinkingDisplay: thinkingDisplay, notes: notes,
             priceInput: priceInput, priceOutput: priceOutput,
             priceCacheRead: priceCacheRead, priceCacheWrite: priceCacheWrite)
     }
@@ -521,6 +533,7 @@ private struct ModelEditorView: View {
         thinking = config.thinking
         effort = config.effort
         thinkingDisplay = config.thinkingDisplay
+        notes = config.notes
         if config.hasPriceInput { priceInput = String(config.priceInput) }
         if config.hasPriceOutput { priceOutput = String(config.priceOutput) }
         if config.hasPriceCacheRead { priceCacheRead = String(config.priceCacheRead) }

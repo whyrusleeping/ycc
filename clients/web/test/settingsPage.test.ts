@@ -94,6 +94,7 @@ describe("model drafts", () => {
       thinkingDisplay: "",
       auth: "api-key",
       disabled: false,
+      notes: "",
       priceInput: 3,
     });
     expect(upsertModelRequest(d).persist).toBe(true);
@@ -101,15 +102,17 @@ describe("model drafts", () => {
     expect(discoverRequest({ ...d, auth: "oauth" }).keyEnv).toBe("");
     // Explicit availability is always sent (omission would preserve the old state).
     expect(modelConfigPayload({ ...d, enabled: false }).disabled).toBe(true);
+    // Notes are always sent, trimmed, so clearing them reaches the daemon.
+    expect(modelConfigPayload({ ...d, notes: "  fast; cheap \n" }).notes).toBe("fast; cheap");
   });
 
   it("round-trips GetModelConfig records, including duplicates", () => {
-    const c = create(ModelConfigSchema, { name: "claude", backend: "anthropic", model: "claude-x", keyEnv: "ANTHROPIC_API_KEY", priceOutput: 15, disabled: true, auth: "api-key" });
+    const c = create(ModelConfigSchema, { name: "claude", backend: "anthropic", model: "claude-x", keyEnv: "ANTHROPIC_API_KEY", priceOutput: 15, disabled: true, auth: "api-key", notes: "Deep review" });
     const d = draftFromConfig(c);
-    expect(d).toMatchObject({ name: "claude", enabled: false, priceOutput: "15", priceInput: "" });
-    expect(modelConfigPayload(d)).toMatchObject({ name: "claude", model: "claude-x", priceOutput: 15, disabled: true });
+    expect(d).toMatchObject({ name: "claude", enabled: false, priceOutput: "15", priceInput: "", notes: "Deep review" });
+    expect(modelConfigPayload(d)).toMatchObject({ name: "claude", model: "claude-x", priceOutput: 15, disabled: true, notes: "Deep review" });
     expect(modelConfigPayload(d)).not.toHaveProperty("priceInput");
-    expect(draftFromConfig(c, true).name).toBe("claude-copy");
+    expect(draftFromConfig(c, true)).toMatchObject({ name: "claude-copy", notes: "Deep review" });
   });
 
   it("invalidates a test result only for request-shaping fields", () => {

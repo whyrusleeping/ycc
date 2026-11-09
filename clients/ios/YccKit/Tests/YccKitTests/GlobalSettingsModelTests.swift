@@ -82,7 +82,8 @@ final class GlobalSettingsModelTests: XCTestCase {
             baseURL: "  https://api.fireworks.ai/inference/v1  ",
             modelID: "  accounts/fireworks/models/glm-5p3  ",
             keyEnv: "  FIREWORKS_API_KEY  ", thinking: "adaptive", effort: "high",
-            thinkingDisplay: "summarized", priceInput: "1.4", priceOutput: "4.4",
+            thinkingDisplay: "summarized", notes: " \n Strong at deep code review; slow and expensive \n ",
+            priceInput: "1.4", priceOutput: "4.4",
             priceCacheRead: "0.26", priceCacheWrite: "not-a-price")
 
         XCTAssertTrue(draft.canSubmit)
@@ -96,6 +97,8 @@ final class GlobalSettingsModelTests: XCTestCase {
         XCTAssertEqual(config.thinking, "adaptive")
         XCTAssertEqual(config.effort, "high")
         XCTAssertEqual(config.thinkingDisplay, "summarized")
+        XCTAssertTrue(config.hasNotes)
+        XCTAssertEqual(config.notes, "Strong at deep code review; slow and expensive")
         XCTAssertTrue(config.disabled)
         XCTAssertTrue(config.hasDisabled)
         XCTAssertEqual(config.priceInput, 1.4)
@@ -107,9 +110,19 @@ final class GlobalSettingsModelTests: XCTestCase {
         presentationOnlyChange.name = "renamed"
         presentationOnlyChange.isEnabled = true
         presentationOnlyChange.priceInput = "9"
+        presentationOnlyChange.notes = "Fast and cheap for read-only searches"
         XCTAssertEqual(presentationOnlyChange.probeFingerprint, draft.probeFingerprint)
         presentationOnlyChange.effort = "low"
         XCTAssertNotEqual(presentationOnlyChange.probeFingerprint, draft.probeFingerprint)
+    }
+
+    func testEditorDraftExplicitlyClearsEmptyNotes() {
+        for notes in ["", " \n\t "] {
+            let config = ModelEditorDraft(notes: notes).modelConfig()
+            XCTAssertTrue(config.hasNotes)
+            XCTAssertEqual(config.notes, "")
+        }
+        XCTAssertTrue(ModelEditorDraft().modelConfig().hasNotes)
     }
 
     func testDisabledModelsRemainListedButAreNotEnabledChoices() async {

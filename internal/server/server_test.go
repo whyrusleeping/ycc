@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -757,6 +758,20 @@ func TestModelBackendRPCs(t *testing.T) {
 	}
 	if current, _ := reg.GetModel("gpt"); current.ContextWindow != 123456 || current.ContextSafeFraction != .7 || current.Notes != "Good for planning" || !reflect.DeepEqual(current.Modalities, []string{"text", "image"}) {
 		t.Fatalf("model edit discarded TOML-only capabilities: %+v", current)
+	}
+
+	// Current clients edit notes explicitly: set (trimmed) round-trips through
+	// GetModelConfig, and an explicit empty string clears them.
+	for _, tc := range []struct{ send, want string }{{"  Fast; good for searches \n", "Fast; good for searches"}, {"", ""}} {
+		if _, err := srv.UpsertModel(ctx, connect.NewRequest(&v1.UpsertModelRequest{Model: &v1.ModelConfig{
+			Name: "gpt", Backend: "openai", BaseUrl: "https://oai", Model: "gpt-4.1", KeyEnv: "OPENAI_API_KEY", Notes: proto.String(tc.send),
+		}})); err != nil {
+			t.Fatalf("UpsertModel(notes=%q): %v", tc.send, err)
+		}
+		got, err = srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"}))
+		if err != nil || got.Msg.Model.Notes == nil || got.Msg.Model.GetNotes() != tc.want {
+			t.Fatalf("notes after upsert %q = %v (err %v), want %q", tc.send, got.Msg.GetModel().Notes, err, tc.want)
+		}
 	}
 
 	// Removing a role-referenced model is rejected.

@@ -1,7 +1,7 @@
 // Add / edit / duplicate a logical model ([models.X] in ycc.toml): backend,
 // authentication, base URL, the key_env NAME (never a key), model id with
-// provider discovery, reasoning defaults, pricing, availability, and a live
-// connection test of the unsaved draft. Mirrors iOS ModelEditorView.
+// provider discovery, reasoning defaults, pricing, availability, agent-facing
+// notes, and a live connection test of the unsaved draft. Mirrors iOS ModelEditorView.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { DiscoverModelsResponse, TestModelResponse } from "../../gen/ycc/v1/ycc_pb";
@@ -266,6 +266,19 @@ function EditorForm({
       </label>
       <label className="field-label">
         <span>
+          Description for agents <span className="muted">(optional)</span>
+        </span>
+        <textarea
+          className="field"
+          rows={2}
+          value={d.notes}
+          placeholder="When to pick this model, e.g. fast and cheap; good for read-only searches"
+          onChange={(e) => set("notes", e.target.value)}
+        />
+        <span className="muted small">Shown to agents choosing a model for a subagent (first 160 characters).</span>
+      </label>
+      <label className="field-label">
+        <span>
           Base URL <span className="muted">(optional for hosted providers)</span>
         </span>
         <input
@@ -418,7 +431,7 @@ function EditorForm({
       {error && <p className="error settings-error" role="alert">{error}</p>}
       <div className="editor-actions">
         <span className="muted small" role={firstProblem ? "alert" : undefined}>
-          {firstProblem ?? "Saved to the daemon’s ycc.toml. Context window and capabilities stay TOML-only."}
+          {firstProblem ?? "Saved to the daemon’s ycc.toml. Context window and modalities stay TOML-only."}
         </span>
         <button type="button" className="btn" onClick={requestClose} disabled={saving}>
           Cancel

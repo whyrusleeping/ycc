@@ -57,6 +57,8 @@ export interface ModelDraft {
   priceOutput: string;
   priceCacheRead: string;
   priceCacheWrite: string;
+  /** Operator suitability advice shown to agents choosing a subagent model. */
+  notes: string;
 }
 
 export function emptyDraft(): ModelDraft {
@@ -75,6 +77,7 @@ export function emptyDraft(): ModelDraft {
     priceOutput: "",
     priceCacheRead: "",
     priceCacheWrite: "",
+    notes: "",
   };
 }
 
@@ -97,6 +100,7 @@ export function draftFromConfig(c: ModelConfig, duplicate = false): ModelDraft {
     priceOutput: price(c.priceOutput),
     priceCacheRead: price(c.priceCacheRead),
     priceCacheWrite: price(c.priceCacheWrite),
+    notes: c.notes ?? "",
   };
 }
 
@@ -211,6 +215,7 @@ export const MODEL_CONFIG_FIELDS = [
   "priceCacheWrite",
   "auth",
   "disabled",
+  "notes",
 ] as const;
 
 export interface ModelConfigPayload {
@@ -228,6 +233,7 @@ export interface ModelConfigPayload {
   priceCacheWrite?: number;
   auth: string;
   disabled: boolean;
+  notes: string;
 }
 
 /** The ModelConfig sent by Save (UpsertModel) and Test (TestModel). */
@@ -243,6 +249,7 @@ export function modelConfigPayload(d: ModelDraft): ModelConfigPayload {
     thinkingDisplay: d.thinkingDisplay,
     auth: d.auth,
     disabled: !d.enabled,
+    notes: d.notes.trim(),
   };
   const prices = [
     ["priceInput", d.priceInput],

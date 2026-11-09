@@ -40,6 +40,7 @@ const (
 	mbFieldPriceOut
 	mbFieldPriceCacheRead
 	mbFieldPriceCacheWrite
+	mbFieldNotes
 	mbNumFields
 )
 
@@ -69,7 +70,7 @@ var (
 func mbIsText(i int) bool {
 	switch i {
 	case mbFieldName, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv,
-		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite:
+		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite, mbFieldNotes:
 		return true
 	}
 	return false
@@ -103,6 +104,8 @@ func mbLabel(i int) string {
 		return "price c.read"
 	case mbFieldPriceCacheWrite:
 		return "price c.write"
+	case mbFieldNotes:
+		return "agent notes"
 	}
 	return ""
 }
@@ -128,6 +131,9 @@ func (m *model) mbNewInputs() {
 	m.mbInputs[mbFieldPriceOut].Placeholder = "$/Mtok (optional)"
 	m.mbInputs[mbFieldPriceCacheRead].Placeholder = "$/Mtok (optional)"
 	m.mbInputs[mbFieldPriceCacheWrite].Placeholder = "$/Mtok (optional)"
+	m.mbInputs[mbFieldNotes].Placeholder = "when agents should pick this model (optional)"
+	m.mbInputs[mbFieldNotes].CharLimit = 400
+	m.mbInputs[mbFieldNotes].SetWidth(60)
 }
 
 // mbStartAdd opens a blank "add connection" form. The backend defaults to
@@ -189,6 +195,7 @@ func (m *model) mbPrefill(cfg *v1.ModelConfig, mode int) {
 	m.mbInputs[mbFieldPriceOut].SetValue(fmtPrice(cfg.PriceOutput))
 	m.mbInputs[mbFieldPriceCacheRead].SetValue(fmtPrice(cfg.PriceCacheRead))
 	m.mbInputs[mbFieldPriceCacheWrite].SetValue(fmtPrice(cfg.PriceCacheWrite))
+	m.mbInputs[mbFieldNotes].SetValue(cfg.GetNotes())
 	// Preserve a loaded backend that isn't one of the built-in choices (e.g. "glm").
 	m.mbBackends = append([]string(nil), mbBackendList...)
 	m.mbBackendIdx = mbIndexOrAppend(&m.mbBackends, cfg.Backend)
@@ -509,9 +516,20 @@ func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
 	// Compute the logical name for each id. By default the name is the id itself.
 	names := mbModelNames(ids, m.mbFormMode, m.mbOrigName, m.mbOrigModel, explicitName)
 
+	// Notes describe one model, so they go only to the form's primary model: the
+	// edited one, or the sole id. Other siblings omit notes, which leaves an
+	// existing sibling's advice untouched and a new one without advice.
+	notes := strings.TrimSpace(m.mbInputs[mbFieldNotes].Value())
+	primary := func(i int) bool {
+		if m.mbFormMode == mbEdit {
+			return names[i] == m.mbOrigName
+		}
+		return len(ids) == 1
+	}
+
 	var cfgs []*v1.ModelConfig
 	for i, id := range ids {
-		cfgs = append(cfgs, &v1.ModelConfig{
+		cfg := &v1.ModelConfig{
 			Name:            names[i],
 			Backend:         backend,
 			BaseUrl:         backendURL,
@@ -526,7 +544,11 @@ func (m model) mbSubmitForm() (tea.Model, tea.Cmd) {
 			PriceOutput:     priceOut,
 			PriceCacheRead:  priceCacheRead,
 			PriceCacheWrite: priceCacheWrite,
-		})
+		}
+		if primary(i) {
+			cfg.Notes = proto.String(notes)
+		}
+		cfgs = append(cfgs, cfg)
 	}
 	m.mbErr, m.mbInfo = "", ""
 	return m, m.mbUpsertMany(cfgs)
@@ -717,6 +739,7 @@ func (m model) mbFormView() string {
 		mbFieldName, mbFieldBackend, mbFieldBaseURL, mbFieldModel, mbFieldKeyEnv, mbFieldAuth,
 		mbFieldThinking, mbFieldEffort, mbFieldDisplay,
 		mbFieldPriceIn, mbFieldPriceOut, mbFieldPriceCacheRead, mbFieldPriceCacheWrite,
+		mbFieldNotes,
 	}
 	for _, f := range order {
 		cursor := "  "

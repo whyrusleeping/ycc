@@ -1913,6 +1913,18 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   /// Clears the value of `disabled`. Subsequent reads from it will return its default value.
   public mutating func clearDisabled() {self._disabled = nil}
 
+  /// Operator suitability advice shown to agents choosing a subagent model
+  /// (spawn_agent's model catalog). Omission preserves the stored notes; an
+  /// explicit empty string clears them.
+  public var notes: String {
+    get {_notes ?? String()}
+    set {_notes = newValue}
+  }
+  /// Returns true if `notes` has been explicitly set.
+  public var hasNotes: Bool {self._notes != nil}
+  /// Clears the value of `notes`. Subsequent reads from it will return its default value.
+  public mutating func clearNotes() {self._notes = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1922,6 +1934,7 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   fileprivate var _priceCacheRead: Double? = nil
   fileprivate var _priceCacheWrite: Double? = nil
   fileprivate var _disabled: Bool? = nil
+  fileprivate var _notes: String? = nil
 }
 
 /// UpsertModel adds or replaces a logical model backend. The change
@@ -8203,7 +8216,7 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0\u{1}disabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0\u{1}disabled\0\u{1}notes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8225,6 +8238,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
       case 12: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheWrite) }()
       case 13: try { try decoder.decodeSingularStringField(value: &self.auth) }()
       case 14: try { try decoder.decodeSingularBoolField(value: &self._disabled) }()
+      case 15: try { try decoder.decodeSingularStringField(value: &self._notes) }()
       default: break
       }
     }
@@ -8277,6 +8291,9 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     try { if let v = self._disabled {
       try visitor.visitSingularBoolField(value: v, fieldNumber: 14)
     } }()
+    try { if let v = self._notes {
+      try visitor.visitSingularStringField(value: v, fieldNumber: 15)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8295,6 +8312,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs._priceCacheWrite != rhs._priceCacheWrite {return false}
     if lhs.auth != rhs.auth {return false}
     if lhs._disabled != rhs._disabled {return false}
+    if lhs._notes != rhs._notes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -227,12 +227,16 @@ func TestModelBackendsEditMultiID(t *testing.T) {
 	f := newFakeClient(&v1.ModelConfig{
 		Name: "claude", Backend: "anthropic",
 		BaseUrl: "https://api.anthropic.com", Model: "claude-opus-4-8", KeyEnv: "ANTHROPIC_API_KEY",
+		Notes: proto.String("Deep review"),
 	})
 	m := newBackendsModel(f)
 	m = runCmds(t, m, m.fetchModels)
 	m = drive(t, m, "e")
 	if m.mbFormMode != mbEdit {
 		t.Fatalf("mbFormMode=%d, want mbEdit", m.mbFormMode)
+	}
+	if got := m.mbInputs[mbFieldNotes].Value(); got != "Deep review" {
+		t.Fatalf("notes prefill = %q", got)
 	}
 	// Simulate fetching/typing several ids (the original id plus two more).
 	m.mbInputs[mbFieldModel].SetValue("claude-opus-4-8 claude-sonnet-4-5 claude-fable-5")
@@ -248,6 +252,10 @@ func TestModelBackendsEditMultiID(t *testing.T) {
 		names[u.Model] = u.Name
 		if u.BaseUrl != "https://api.anthropic.com" || u.KeyEnv != "ANTHROPIC_API_KEY" {
 			t.Errorf("sibling %q lost connection: base=%q key=%q", u.Model, u.BaseUrl, u.KeyEnv)
+		}
+		// Notes describe the edited model only; siblings omit them.
+		if wantNotes := u.Name == "claude"; (u.Notes != nil) != wantNotes || (wantNotes && u.GetNotes() != "Deep review") {
+			t.Errorf("%s notes = %v", u.Name, u.Notes)
 		}
 	}
 	// The edited model keeps its name for its own id; the extras are self-named.

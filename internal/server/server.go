@@ -970,6 +970,7 @@ func modelConfigToConfig(mc *v1.ModelConfig) config.Model {
 		KeyEnv:          mc.KeyEnv,
 		Auth:            mc.Auth,
 		Disabled:        mc.GetDisabled(),
+		Notes:           strings.TrimSpace(mc.GetNotes()),
 		Thinking:        mc.Thinking,
 		Effort:          mc.Effort,
 		ThinkingDisplay: mc.ThinkingDisplay,
@@ -991,6 +992,7 @@ func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
 		KeyEnv:          m.KeyEnv,
 		Auth:            m.Auth,
 		Disabled:        proto.Bool(m.Disabled),
+		Notes:           proto.String(m.Notes),
 		Thinking:        m.Thinking,
 		Effort:          m.Effort,
 		ThinkingDisplay: m.ThinkingDisplay,
@@ -1015,13 +1017,16 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if current, ok := s.mgr.GetModel(mc.Name); ok {
-		// Context budgets and operator capabilities are TOML-level model fields,
-		// not interactive connection-form fields. Preserve them when that form edits
+		// Context budgets and modalities are TOML-level model fields, not
+		// interactive connection-form fields. Preserve them when that form edits
 		// another part of the model record.
 		model.ContextWindow = current.ContextWindow
 		model.ContextSafeFraction = current.ContextSafeFraction
-		model.Notes = current.Notes
 		model.Modalities = current.Modalities
+		if mc.Notes == nil {
+			// Older clients do not send notes; keep the stored advice.
+			model.Notes = current.Notes
+		}
 		if mc.Disabled == nil {
 			// Older clients do not know the availability field. Preserve an existing
 			// disabled state when they edit another part of the full model record.

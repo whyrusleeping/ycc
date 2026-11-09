@@ -5199,8 +5199,12 @@ type ModelConfig struct {
 	PriceCacheWrite *float64               `protobuf:"fixed64,12,opt,name=price_cache_write,json=priceCacheWrite,proto3,oneof" json:"price_cache_write,omitempty"`
 	Auth            string                 `protobuf:"bytes,13,opt,name=auth,proto3" json:"auth,omitempty"`                // credential mechanism: "" | "api-key" | "oauth"
 	Disabled        *bool                  `protobuf:"varint,14,opt,name=disabled,proto3,oneof" json:"disabled,omitempty"` // temporarily unavailable; omission preserves existing state
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Operator suitability advice shown to agents choosing a subagent model
+	// (spawn_agent's model catalog). Omission preserves the stored notes; an
+	// explicit empty string clears them.
+	Notes         *string `protobuf:"bytes,15,opt,name=notes,proto3,oneof" json:"notes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ModelConfig) Reset() {
@@ -5329,6 +5333,13 @@ func (x *ModelConfig) GetDisabled() bool {
 		return *x.Disabled
 	}
 	return false
+}
+
+func (x *ModelConfig) GetNotes() string {
+	if x != nil && x.Notes != nil {
+		return *x.Notes
+	}
+	return ""
 }
 
 // UpsertModel adds or replaces a logical model backend. The change
@@ -13683,7 +13694,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x14coordinator_thinking\x18\x05 \x01(\tR\x13coordinatorThinking\x121\n" +
 	"\x14implementer_thinking\x18\x06 \x01(\tR\x13implementerThinking\x12-\n" +
 	"\x12reviewers_thinking\x18\a \x01(\tR\x11reviewersThinking\x12/\n" +
-	"\x13work_implementation\x18\b \x01(\tR\x12workImplementation\"\xa0\x04\n" +
+	"\x13work_implementation\x18\b \x01(\tR\x12workImplementation\"\xc5\x04\n" +
 	"\vModelConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +
@@ -13700,12 +13711,14 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x10price_cache_read\x18\v \x01(\x01H\x02R\x0epriceCacheRead\x88\x01\x01\x12/\n" +
 	"\x11price_cache_write\x18\f \x01(\x01H\x03R\x0fpriceCacheWrite\x88\x01\x01\x12\x12\n" +
 	"\x04auth\x18\r \x01(\tR\x04auth\x12\x1f\n" +
-	"\bdisabled\x18\x0e \x01(\bH\x04R\bdisabled\x88\x01\x01B\x0e\n" +
+	"\bdisabled\x18\x0e \x01(\bH\x04R\bdisabled\x88\x01\x01\x12\x19\n" +
+	"\x05notes\x18\x0f \x01(\tH\x05R\x05notes\x88\x01\x01B\x0e\n" +
 	"\f_price_inputB\x0f\n" +
 	"\r_price_outputB\x13\n" +
 	"\x11_price_cache_readB\x14\n" +
 	"\x12_price_cache_writeB\v\n" +
-	"\t_disabled\"Y\n" +
+	"\t_disabledB\b\n" +
+	"\x06_notes\"Y\n" +
 	"\x12UpsertModelRequest\x12)\n" +
 	"\x05model\x18\x01 \x01(\v2\x13.ycc.v1.ModelConfigR\x05model\x12\x18\n" +
 	"\apersist\x18\x02 \x01(\bR\apersist\"\x15\n" +

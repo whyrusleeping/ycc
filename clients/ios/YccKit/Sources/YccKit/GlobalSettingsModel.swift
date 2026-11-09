@@ -33,6 +33,7 @@ public struct ModelEditorDraft: Equatable, Sendable {
     public var thinking: String
     public var effort: String
     public var thinkingDisplay: String
+    public var notes: String
     public var priceInput: String
     public var priceOutput: String
     public var priceCacheRead: String
@@ -42,7 +43,7 @@ public struct ModelEditorDraft: Equatable, Sendable {
         name: String = "", isEnabled: Bool = true, backend: String = "anthropic",
         auth: String = "api-key", baseURL: String = "", modelID: String = "",
         keyEnv: String = "", thinking: String = "", effort: String = "",
-        thinkingDisplay: String = "", priceInput: String = "", priceOutput: String = "",
+        thinkingDisplay: String = "", notes: String = "", priceInput: String = "", priceOutput: String = "",
         priceCacheRead: String = "", priceCacheWrite: String = ""
     ) {
         self.name = name
@@ -55,6 +56,7 @@ public struct ModelEditorDraft: Equatable, Sendable {
         self.thinking = thinking
         self.effort = effort
         self.thinkingDisplay = thinkingDisplay
+        self.notes = notes
         self.priceInput = priceInput
         self.priceOutput = priceOutput
         self.priceCacheRead = priceCacheRead
@@ -67,8 +69,8 @@ public struct ModelEditorDraft: Equatable, Sendable {
             && !modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Identity for fields that alter the provider inference request. Availability
-    /// and pricing do not invalidate a successful connection test.
+    /// Identity for fields that alter the provider inference request. Availability,
+    /// pricing, and notes do not invalidate a successful connection test.
     public var probeFingerprint: String {
         [backend, auth, baseURL, modelID, keyEnv, thinking, effort, thinkingDisplay]
             .joined(separator: "\u{0}")
@@ -86,6 +88,7 @@ public struct ModelEditorDraft: Equatable, Sendable {
         config.thinking = thinking
         config.effort = effort
         config.thinkingDisplay = thinkingDisplay
+        config.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         if let value = Double(priceInput) { config.priceInput = value }
         if let value = Double(priceOutput) { config.priceOutput = value }
         if let value = Double(priceCacheRead) { config.priceCacheRead = value }
