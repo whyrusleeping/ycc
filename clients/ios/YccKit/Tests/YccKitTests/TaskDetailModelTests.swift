@@ -141,6 +141,21 @@ final class TaskDetailModelTests: XCTestCase {
         XCTAssertTrue(model.unauthorized)
     }
 
+    func testInReviewLoadListsRecentFocusedSessionsInAnyState() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "in_review"))
+        source.sessions = [
+            session("oldest", status: "idle", live: false, lastActivity: "2026-07-10T12:00:00Z"),
+            session("newest", status: "idle", live: false, lastActivity: "2026-07-15T12:00:00Z"),
+            session("other-task", tasks: ["9999"]),
+            session("mid", status: "error", live: false, lastActivity: "2026-07-13T12:00:00Z"),
+            session("older", status: "idle", live: false, lastActivity: "2026-07-11T12:00:00Z"),
+        ]
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+        XCTAssertEqual(model.reviewSessions.map(\.sessionID), ["newest", "mid", "older"])
+        XCTAssertTrue(model.activeSessions.isEmpty)
+    }
+
     func testLoadFindsOnlyLiveRunningOrPausedFocusedSessionsNewestFirst() async {
         let source = MockTaskDetailSource(detail: detail("0010", status: "in_progress"))
         source.sessions = [

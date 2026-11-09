@@ -158,9 +158,15 @@ export function TaskDetailView({
     useMemo<AppAction | null>(
       () =>
         canStart
-          ? { id: `task.startWork:${project}:${id}`, title: `Start work on task ${id}`, group: "Backlog", keywords: "session work", run: () => task && void latest.current.startWork(task) }
+          ? {
+              id: `task.startWork:${project}:${id}`,
+              title: `${liveStatus === "in_review" ? "Continue" : "Start"} work on task ${id}`,
+              group: "Backlog",
+              keywords: "session work",
+              run: () => task && void latest.current.startWork(task),
+            }
           : null,
-      [canStart, project, id, task],
+      [canStart, liveStatus, project, id, task],
     ),
   );
   useAction(
@@ -289,10 +295,18 @@ export function TaskDetailView({
         <>
           <TaskMeta project={project} task={task} header={header} blocked={blocked} inInspector={inInspector} />
           <FocusedSessions project={project} id={id} />
+          {task && status === "in_review" && (
+            // In review means the agent handed the task back to a person; say
+            // so, rather than offering "start" as the obvious next step.
+            <p className="muted small">
+              Waiting for your review. Check the notes below, the session that worked on it, and any uncommitted changes. Then set
+              the status to Done, or continue work to finish what’s left.
+            </p>
+          )}
           {task && status !== "done" && status !== "proposed" && (
             <div className="task-actions">
               <button type="button" className="btn small" disabled={starting} data-track="task.startWork" onClick={() => void startWork(task)}>
-                {starting ? "Starting…" : "Start work on this task"}
+                {starting ? "Starting…" : status === "in_review" ? "Continue work on this task" : "Start work on this task"}
               </button>
             </div>
           )}

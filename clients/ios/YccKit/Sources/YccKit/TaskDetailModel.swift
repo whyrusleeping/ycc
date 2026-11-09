@@ -8,8 +8,8 @@ import YccProto
 public protocol TaskDetailSource: Sendable {
     /// Fetch one task's full detail (frontmatter + markdown body).
     func getTask(project: String, id: String) async throws -> Ycc_V1_TaskDetail
-    /// List session-history rows so an in-progress task can link to the live
-    /// session currently focused on it.
+    /// List session-history rows so an in-progress or in-review task can link
+    /// to the sessions focused on it.
     func listSessionHistory(project: String, limit: Int32, cursor: String) async throws -> SessionHistoryPage
     /// Change a task's status; returns the refreshed detail.
     func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail
@@ -41,6 +41,9 @@ public final class TaskDetailModel {
     /// Live running/paused sessions whose durable task focus includes this task.
     /// Usually one, but retaining every match avoids hiding parallel workstreams.
     public private(set) var activeSessions: [Ycc_V1_SessionSummary] = []
+    /// For an in-review task, the most recent sessions focused on it (any
+    /// state), so the user can see what the agent did and what it left.
+    public private(set) var reviewSessions: [Ycc_V1_SessionSummary] = []
 
     public private(set) var isLoading = false
     /// Set while a status change is in flight (disables the picker).
@@ -141,15 +144,22 @@ public final class TaskDetailModel {
         TaskStatus(status: task?.status ?? "")
     }
 
+    /// Whether the detail screen links sessions for a task in `status`: the
+    /// live session of in-progress work, or the sessions whose work an
+    /// in-review task is waiting on.
+    static func showsSessions(_ status: TaskStatus) -> Bool {
+        status == .inProgress || status == .inReview
+    }
+
     /// (Re)load the task detail. Unauthorized bubbles up via ``unauthorized``.
     ///
-    /// Active-session discovery only matters for an in-progress task, but the
-    /// status is unknown until GetTask answers. On a remote link a second
-    /// serial round trip is the dominant cost, so the history lookup starts
-    /// concurrently with GetTask and is discarded (cancelled) when the task
-    /// turns out not to be in progress. A reload of a task already known not
-    /// to be in progress skips the speculation and fetches history only if
-    /// the status changed to in progress.
+    /// Session discovery only matters for an in-progress or in-review task,
+    /// but the status is unknown until GetTask answers. On a remote link a
+    /// second serial round trip is the dominant cost, so the history lookup
+    /// starts concurrently with GetTask and is discarded (cancelled) when the
+    /// task turns out to need no sessions. A reload of a task already known
+    /// to need none skips the speculation and fetches history only if the
+    /// status changed.
     public func load() async {
         isLoading = true
         defer { isLoading = false }
@@ -158,28 +168,34 @@ public final class TaskDetailModel {
         let taskID = taskID
         // A placeholder/cached status may be stale, so speculate until the
         // daemon has confirmed the task in this model.
-        let speculate = !hasLoaded || status == .inProgress
+        let speculate = !hasLoaded || Self.showsSessions(status)
         do {
             let detail: Ycc_V1_TaskDetail
             var history: Result<SessionHistoryPage, Error>?
             if speculate {
                 async let pending = Self.fetchHistory(source: source, project: project)
                 detail = try await source.getTask(project: project, id: taskID)
-                if TaskStatus(status: detail.status) == .inProgress {
+                if Self.showsSessions(TaskStatus(status: detail.status)) {
                     history = await pending
                 }
                 // Otherwise the unawaited lookup is cancelled at scope exit.
             } else {
                 detail = try await source.getTask(project: project, id: taskID)
-                if TaskStatus(status: detail.status) == .inProgress {
+                if Self.showsSessions(TaskStatus(status: detail.status)) {
                     history = await Self.fetchHistory(source: source, project: project)
                 }
             }
             install(detail)
             activeSessions = []
+            reviewSessions = []
             switch history {
             case .success(let page)?:
-                activeSessions = Self.activeSessions(for: taskID, in: page.sessions + page.pinned)
+                let rows = page.sessions + page.pinned
+                if status == .inReview {
+                    reviewSessions = Array(Self.focusedSessions(for: taskID, in: rows).prefix(3))
+                } else {
+                    activeSessions = Self.activeSessions(for: taskID, in: rows)
+                }
             case .failure(YccError.unauthorized)?:
                 throw YccError.unauthorized
             case .failure?, nil:
@@ -217,15 +233,24 @@ public final class TaskDetailModel {
         for taskID: String,
         in sessions: [Ycc_V1_SessionSummary]
     ) -> [Ycc_V1_SessionSummary] {
+        focusedSessions(for: taskID, in: sessions).filter { session in
+            session.live && (session.status == "running" || session.status == "paused")
+        }
+    }
+
+    /// Every session whose durable task focus includes `taskID`, in any state,
+    /// newest first.
+    public static func focusedSessions(
+        for taskID: String,
+        in sessions: [Ycc_V1_SessionSummary]
+    ) -> [Ycc_V1_SessionSummary] {
         let target = taskID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else { return [] }
         return sessions
             .filter { session in
-                session.live
-                    && (session.status == "running" || session.status == "paused")
-                    && session.focusTasks.contains {
-                        $0.trimmingCharacters(in: .whitespacesAndNewlines) == target
-                    }
+                session.focusTasks.contains {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines) == target
+                }
             }
             .sorted { lhs, rhs in
                 let left = SessionListModel.recencyDate(lhs)

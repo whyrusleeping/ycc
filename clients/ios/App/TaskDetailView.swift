@@ -6,7 +6,8 @@ import YccProto
 /// dependencies, ready/blocked,
 /// dates) plus the markdown `body`, a status picker driving `UpdateTask`, and a
 /// "Start work on this task" action that starts a work session (`StartSession`)
-/// and navigates into its live stream.
+/// and navigates into its live stream. Done and proposed tasks offer no start;
+/// in-review tasks explain the hand-back and offer "Continue work" instead.
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(HomeRouter.self) private var router
@@ -95,12 +96,24 @@ struct TaskDetailView: View {
                     .font(.title3.weight(.semibold))
                 metadata(task)
             }
-            Section {
-                if model.status == .inProgress, !model.activeSessions.isEmpty {
-                    activeSessionButtons
-                } else {
-                    startWorkButton(task)
+            switch model.status {
+            case .inProgress where !model.activeSessions.isEmpty:
+                Section { activeSessionButtons }
+            case .inReview:
+                // In review means the agent handed the task back to a person;
+                // say so, rather than offering "start" as the obvious next step.
+                Section {
+                    Text("Waiting for your review. Check the notes below, the session that worked on it, and any uncommitted changes. Then set the status to Done, or continue work to finish what’s left.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    reviewSessionButtons
+                    startWorkButton(task, title: "Continue work on this task")
                 }
+            case .done, .proposed:
+                // Finished, or not yet accepted: nothing to start (as on web).
+                EmptyView()
+            default:
+                Section { startWorkButton(task, title: "Start work on this task") }
             }
             if let errorMessage = model.errorMessage {
                 Section {
@@ -283,15 +296,33 @@ struct TaskDetailView: View {
         }
     }
 
+    /// Sessions that worked on an in-review task, so its outcome is one tap away.
     @ViewBuilder
-    private func startWorkButton(_ task: Ycc_V1_TaskDetail) -> some View {
+    private var reviewSessionButtons: some View {
+        ForEach(model.reviewSessions, id: \.sessionID) { session in
+            Button {
+                router.open(.session(
+                    id: session.sessionID, project: project,
+                    live: session.live,
+                    title: SessionListModel.displayTitle(for: session)))
+            } label: {
+                Label(
+                    "Open session · \(SessionListModel.displayTitle(for: session))",
+                    systemImage: "text.bubble")
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func startWorkButton(_ task: Ycc_V1_TaskDetail, title: String) -> some View {
         Button {
             startWork(task)
         } label: {
             if isStarting {
                 HStack { Spacer(); ProgressView(); Spacer() }
             } else {
-                Label("Start work on this task", systemImage: "play.circle.fill")
+                Label(title, systemImage: "play.circle.fill")
             }
         }
         .disabled(isStarting)
