@@ -4,7 +4,7 @@
 // the NAME of an environment variable or `ycc token` secrets entry that the
 // daemon resolves locally. No secret value has a field here, and payloads are
 // built from an allowlist so nothing else can ride along.
-import type { ModelConfig, ModelInfo } from "../../gen/ycc/v1/ycc_pb";
+import type { HealthCheck, ModelConfig, ModelInfo } from "../../gen/ycc/v1/ycc_pb";
 
 export const BACKENDS = [
   { value: "anthropic", title: "Anthropic" },
@@ -319,6 +319,31 @@ export function pricingLine(m: ModelInfo): string | null {
 /** Models sorted case-insensitively by name. */
 export function sortedModels(models: readonly ModelInfo[]): ModelInfo[] {
   return [...models].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
+export interface ModelStatus {
+  label: string;
+  tone: "ok" | "warn" | "fail" | "muted";
+}
+
+/**
+ * A model's row status from its GetHealth check. The daemon reports a model
+ * with no credential on its host as a "Not set up: …" failure: that is a setup
+ * step, not a breakage. Models the daemon doesn't probe have no check.
+ */
+export function modelStatus(check: HealthCheck | undefined): ModelStatus {
+  switch (check?.status) {
+    case "ok":
+      return { label: "working", tone: "ok" };
+    case "warn":
+      return { label: "degraded", tone: "warn" };
+    case "fail":
+      return check.detail.startsWith("Not set up") ? { label: "not set up", tone: "warn" } : { label: "failing", tone: "fail" };
+    case "pending":
+      return { label: "checking…", tone: "muted" };
+    default:
+      return { label: "not checked", tone: "muted" };
+  }
 }
 
 /**

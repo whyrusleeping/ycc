@@ -26,6 +26,7 @@ vi.mock("../src/api/queries", () => ({
   queryKeys: { models: (id: string) => ["models", id], sessionUsage: (project: string) => ["usage", project], reviewTiers: ["tiers"] },
   useModels: () => ({ data: models, isPending: false, isError: false }),
   useReviewTiers: () => ({ data: tiers, isPending: false, isError: false }),
+  useHealth: () => ({ data: [], isPending: false, isError: false }),
   useModes: () => ({ isPending: true }),
   useBudget: () => ({ isPending: true }),
 }));
@@ -70,7 +71,7 @@ async function change(select: HTMLSelectElement, value: string) {
   });
 }
 function button(label: string) {
-  return Array.from(container.querySelectorAll("button")).find((b) => b.textContent === label)!;
+  return Array.from(container.querySelectorAll("button")).find((b) => b.textContent === label || b.getAttribute("aria-label") === label)!;
 }
 async function render(session: boolean) {
   await act(() => root.render(<MemoryRouter>{session
@@ -120,11 +121,11 @@ it("applies the default tier only after explicit confirmation, retaining a faile
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Tier unavailable");
 });
 
-it.each([false, true])("keeps reasoning focus while saving and ignores repeated choices (session: %s)", async (session) => {
+it("keeps reasoning focus while saving and ignores repeated choices (session: true)", async () => {
   let resolve!: (value: object) => void;
   rpc.setThinking.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
-  await render(session);
-  const group = container.querySelector(`[aria-label="${session ? "Reasoning level" : "Coordinator reasoning"}"]`)!;
+  await render(true);
+  const group = container.querySelector('[aria-label="Reasoning level"]')!;
   const high = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "High")!;
   high.focus();
   await act(() => high.click());
@@ -136,4 +137,20 @@ it.each([false, true])("keeps reasoning focus while saving and ignores repeated 
   await act(async () => resolve({}));
   expect(high.getAttribute("aria-disabled")).toBe("false");
   expect(document.activeElement).toBe(high);
+});
+
+it("saves a daemon reasoning level once while keeping the select usable", async () => {
+  let resolve!: (value: object) => void;
+  rpc.setThinking.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+  await render(false);
+  const select = container.querySelector<HTMLSelectElement>('[aria-label="Main agent reasoning"]')!;
+  select.focus();
+  await change(select, "high");
+  expect(select.disabled).toBe(false);
+  expect(select.getAttribute("aria-disabled")).toBe("true");
+  expect(document.activeElement).toBe(select);
+  await change(select, "max");
+  expect(rpc.setThinking).toHaveBeenCalledExactlyOnceWith({ sessionId: "", role: "coordinator", level: "high" });
+  await act(async () => resolve({}));
+  expect(select.getAttribute("aria-disabled")).toBe("false");
 });

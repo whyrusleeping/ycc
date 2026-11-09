@@ -38,12 +38,15 @@ export function sendTestNotification() {
 export function NotificationControls() {
   const st = useNotifyState();
   const explain = (
-    <p className="muted small">
-      A notification appears when a session asks a question, finishes, or stops on an error while this tab is in the background or another
-      session is open — one per event, even with several tabs open — and clicking it opens that session. While hidden, the tab checks the
-      session list every 15 seconds (browsers may slow that to about once a minute for tabs hidden a long time). This setting is kept in this
-      browser only. The tab title always counts sessions waiting for an answer, e.g. “(2) ycc”.
-    </p>
+    <details className="muted small settings-more">
+      <summary>How notifications work</summary>
+      <p>
+        A notification appears when a session asks a question, finishes, or stops on an error while this tab is in the background or another
+        session is open — one per event, even with several tabs open — and clicking it opens that session. While hidden, the tab checks the
+        session list every 15 seconds (browsers may slow that to about once a minute for tabs hidden a long time). This setting is kept in this
+        browser only. The tab title always counts sessions waiting for an answer, e.g. “(2) ycc”.
+      </p>
+    </details>
   );
   switch (st.support) {
     case "unsupported":

@@ -139,9 +139,28 @@ export function tierBadge(t: ReviewTierInfo): { label: string; tone: "warn" | "m
   return { label: "custom", tone: "accent" };
 }
 
+/**
+ * What a tier is for, in the user's terms. The daemon's descriptions of the
+ * built-in tiers are written for the model choosing among them ("you, the
+ * coordinator, …"), so those get their own wording; custom tiers show theirs.
+ */
+export function tierPurpose(t: ReviewTierInfo): string {
+  if (t.builtin && !t.configured) {
+    switch (t.name) {
+      case "self-review":
+        return "For tiny, low-risk changes: the main agent checks its own work.";
+      case "standard":
+        return "For ordinary changes: one reviewer.";
+      case "comprehensive":
+        return "For large, risky, or hard-to-undo changes: every reviewer, in parallel.";
+    }
+  }
+  return t.description;
+}
+
 /** One-line reviewer line-up: "readability (claude · high), performance (gpt)". */
 export function tierSummary(t: ReviewTierInfo): string {
-  if (parseStrategy(t.strategy) === "self") return "Coordinator self-review — no reviewer agent";
+  if (parseStrategy(t.strategy) === "self") return "Main agent self-review — no reviewer agent";
   if (t.reviewers.length) {
     return t.reviewers
       .map((r) => {

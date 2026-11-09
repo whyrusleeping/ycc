@@ -6516,8 +6516,135 @@ button.chip-x {
 }
 
 .settings-subhead {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+/* Settings page sections: a readable title and one plain sentence. */
+.settings-page .settings-card-head h2 {
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.settings-card-intro {
+  margin: 0 0 14px;
+  max-width: 70ch;
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+}
+
+.settings-sub {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: 12px;
+}
+
+.settings-sub:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.settings-sub .settings-card-head {
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.settings-sub .settings-line + .settings-line {
+  margin-top: 10px;
+}
+
+.settings-more summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.settings-more p {
+  margin: 6px 0 0;
+}
+
+.role-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.role-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 10px 0;
+}
+
+.role-row + .role-row {
+  border-top: 1px solid var(--border);
+}
+
+.role-label .chip {
+  margin-left: 4px;
+}
+
+.role-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 14px;
+}
+
+.role-controls .settings-reviewers {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.role-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-pick select {
+  min-width: 200px;
+}
+
+.tier-default {
+  margin-bottom: 4px;
+}
+
+.reasoning-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-status {
   font-size: var(--fs-xs);
-  margin: 12px 0 6px;
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.model-status.tone-ok {
+  color: var(--ok);
+}
+
+.model-status.tone-warn {
+  color: var(--warn);
+}
+
+.model-status.tone-fail {
+  color: var(--error);
+}
+
+.model-status.tone-muted {
+  color: var(--fg-subtle);
 }
 
 .dialog.modal.model-editor-dialog,

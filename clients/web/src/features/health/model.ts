@@ -8,7 +8,9 @@ export function healthBanner(checks: readonly HealthCheck[]): { tone: HealthTone
   const bad = checks.filter((c) => c.status === "fail" || c.status === "warn");
   if (!bad.length) return null;
   bad.sort((a, b) => (a.status === b.status ? 0 : a.status === "fail" ? -1 : 1));
-  const word = (c: HealthCheck) => (c.id.startsWith("disk:") ? "low" : c.status === "fail" ? "failing" : "degraded");
+  // The daemon reports a model with no credential on its host as "Not set up".
+  const word = (c: HealthCheck) =>
+    c.id.startsWith("disk:") ? "low" : c.status === "fail" ? (c.detail.startsWith("Not set up") ? "not set up" : "failing") : "degraded";
   return {
     tone: bad[0].status === "fail" ? "fail" : "warn",
     text: bad.map((c) => `${c.label || c.id} ${word(c)}`).join(" · "),

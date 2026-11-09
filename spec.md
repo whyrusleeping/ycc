@@ -978,6 +978,11 @@ reinject the pixels.
 
 Settings expose logical models, role assignment, reasoning, work implementation, review tiers,
 and client-local presentation preferences. Daemon settings persist; local preferences do not.
+The web Settings page is ordered for someone setting ycc up: models (subscription logins and the
+model list with each model's health), which model does each job (roles, reasoning, and work
+implementation together), code review tiers, notifications, spending limits, and daemon status.
+Roles are labelled by what they do (the coordinator is the "main agent") with the configuration
+name alongside.
 The model editor distinguishes model-list discovery from testing the exact unsaved configuration
 with a small real inference request, showing progress and an inline success/provider error while
 warning that the probe may be billed. Changes whose prompt/tool shape is fixed at construction are

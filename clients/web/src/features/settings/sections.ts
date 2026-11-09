@@ -1,14 +1,14 @@
 // The Settings page's sections (its contents bar, deep links like
-// /settings#models, and the command palette's "Settings ›" entries).
+// /settings#models, and the command palette's "Settings ›" entries), in page
+// order: what a new user needs first (connecting models) comes first.
 export const SETTINGS_SECTIONS = [
-  { id: "health", title: "Health" },
-  { id: "accounts", title: "Accounts" },
-  { id: "notifications", title: "Notifications" },
-  { id: "roles", title: "Default roles" },
-  { id: "thinking", title: "Reasoning" },
-  { id: "work", title: "Work" },
-  { id: "reviews", title: "Review tiers" },
   { id: "models", title: "Models" },
-  { id: "modes", title: "Modes" },
-  { id: "budget", title: "Spend guard" },
+  { id: "roles", title: "Who does what" },
+  { id: "reviews", title: "Code review" },
+  { id: "notifications", title: "Notifications" },
+  { id: "budget", title: "Spending limits" },
+  { id: "health", title: "Status" },
 ] as const;
+
+/** Older section links that now land inside another section. */
+export const SECTION_ALIASES: Record<string, string> = { thinking: "roles", modes: "models" };
