@@ -26,6 +26,7 @@ type Log struct {
 	cond         *sync.Cond
 	path         string
 	f            logFile
+	source       os.FileInfo
 	events       []Event
 	seq          int
 	durableBytes int64
@@ -78,15 +79,18 @@ func enqueueTransient(sub *subscriber, ev Event) {
 // OpenLog opens (creating if needed) the JSONL log at path, loading any existing
 // events into memory so seq numbering and replay continue across restarts.
 func OpenLog(path string) (*Log, error) {
+	// The writer proves the path still names the file it opened, so pin an absolute
+	// one: a relative path would resolve somewhere else after a chdir.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	path = abs
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	if err := recoverTornTail(path); err != nil {
-		return nil, err
-	}
-	existing, err := readEvents(path)
-	if err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -98,14 +102,28 @@ func OpenLog(path string) (*Log, error) {
 	// otherwise usable durable log fail to open.
 	_ = os.Chmod(dir, 0o700)
 	_ = f.Chmod(0o600)
+	// The durable boundary is observed before the events are read, so a record that
+	// arrives from elsewhere in between is not counted as committed here without
+	// also being in memory; the next append's check then stops the log instead of
+	// numbering around it.
 	info, err := f.Stat()
 	if err != nil {
 		f.Close()
 		return nil, err
 	}
-	l := &Log{path: path, f: f, events: existing, durableBytes: info.Size(), subs: map[int]*subscriber{}}
-	if n := len(existing); n > 0 {
-		l.seq = existing[n-1].Seq
+	existing, err := readEvents(path)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	l := &Log{path: path, f: f, source: info, events: existing, durableBytes: info.Size(), subs: map[int]*subscriber{}}
+	// Numbering continues above the highest sequence in the file, not the last one.
+	// A log whose tail is out of order (another appender, a restored range) must
+	// never make this writer issue a number that already exists.
+	for _, ev := range existing {
+		if ev.Seq > l.seq {
+			l.seq = ev.Seq
+		}
 	}
 	l.cond = sync.NewCond(&l.mu)
 	return l, nil
@@ -366,6 +384,17 @@ func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 		l.mu.Unlock()
 		return unstamped
 	}
+	// The committed prefix is exactly durableBytes long because this log is the file's
+	// only appender, and it is the file at l.path because this process created or
+	// opened it there. A different size, or a different file now behind the path,
+	// means something outside this process truncated it or replaced it (a checkout
+	// restoring an older copy, a restore from backup, a second writer). Appending
+	// would then splice a record past a hole into a file no reader follows, so
+	// fail-stop as any other lost durability does, without rolling back bytes this
+	// log did not write.
+	if err := l.verifySourceLocked(l.durableBytes); err != nil {
+		return l.failRecord(err, unstamped)
+	}
 
 	// Do not advance l.seq until the append and fsync have both succeeded. Since
 	// failures are terminal, a failed candidate can never be reused by this log;
@@ -384,6 +413,11 @@ func (l *Log) Record(actor string, t Type, data map[string]any) Event {
 		appendErr = fmt.Errorf("append event: %w", err)
 	} else if n != len(line) {
 		appendErr = fmt.Errorf("append event: wrote %d of %d bytes: %w", n, len(line), io.ErrShortWrite)
+	} else if err := l.verifySourceLocked(l.durableBytes + int64(len(line))); err != nil {
+		// The record did not land in the file readers will open (the path was replaced
+		// while it was in flight). Nothing describes it, and neither file can be
+		// repaired from here, so leave both alone and stop.
+		return l.failRecord(err, unstamped)
 	} else if err := l.f.Sync(); err != nil {
 		appendErr = fmt.Errorf("sync event log: %w", err)
 	}
@@ -417,6 +451,34 @@ func (l *Log) rollbackLocked() error {
 		return err
 	}
 	return l.f.Sync()
+}
+
+// verifySourceLocked proves the path still names the file this log opened and
+// that the file is want bytes long. It runs before an append (want is the
+// committed boundary) and again after it (want includes the record just written),
+// because a rename or truncation during the append would leave this log's
+// descriptor on an orphaned file while readers follow the path.
+func (l *Log) verifySourceLocked(want int64) error {
+	info, err := os.Stat(l.path)
+	if err != nil {
+		return fmt.Errorf("event log persistence failed: %w", err)
+	}
+	if !os.SameFile(l.source, info) {
+		return fmt.Errorf("event log persistence failed: %s was replaced outside this process", l.path)
+	}
+	if info.Size() != want {
+		return fmt.Errorf("event log persistence failed: %s is %d bytes, expected %d: the file was modified outside this process", l.path, info.Size(), want)
+	}
+	return nil
+}
+
+// failRecord transitions the log into its terminal failed state from inside
+// Record, where mu is held and the caller must see an unstamped event.
+func (l *Log) failRecord(err error, unstamped Event) Event {
+	cb, failure := l.failLocked(err)
+	l.mu.Unlock()
+	invokeFailure(cb, failure)
+	return unstamped
 }
 
 // failLocked transitions the log into its terminal failed state and returns the

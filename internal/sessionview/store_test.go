@@ -661,3 +661,94 @@ func TestReviewSummaryKeepsVerdictAndSnapshot(t *testing.T) {
 		t.Errorf("summary kept a non-presentation key: %v", data)
 	}
 }
+
+// A log that is truncated and then appended past the hole (a working-tree
+// checkout restoring an older copy, a restore from backup) loses events. The
+// survivors are still ordered, so the session must remain openable for reading
+// and live tailing instead of failing every request on a missing seq forever.
+func TestIndexToleratesLostEventsBehindForwardGap(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+	complete := []event.Event{
+		ev(1, event.UserInput, map[string]any{"text": "one"}),
+		ev(2, event.ModelTurn, map[string]any{"text": "two"}),
+		ev(3, event.ModelTurn, map[string]any{"text": "three"}),
+	}
+	writeLog(t, logPath, complete)
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err = store.CatchUp(ctx, "s", logPath, -1); err != nil {
+		t.Fatal(err)
+	}
+
+	// The file is rolled back to its first event, then the live writer continues
+	// from sequence 5, leaving 2..4 unaccounted for.
+	writeLog(t, logPath, []event.Event{
+		complete[0],
+		ev(5, event.ModelTurn, map[string]any{"text": "five"}),
+		ev(6, event.SessionIdle, map[string]any{"report": "done"}),
+	})
+	state, err := store.CatchUp(ctx, "s", logPath, -1)
+	if err != nil {
+		t.Fatalf("catch-up over a forward gap: %v", err)
+	}
+	if state.IndexedThrough != 6 || state.Phase != "idle" {
+		t.Fatalf("state=%+v, want indexed through 6 and idle", state)
+	}
+	if _, err := store.Detail(ctx, "s", "seq-5"); err != nil {
+		t.Fatalf("detail for an event after the gap: %v", err)
+	}
+	// A client whose cursor fell inside the lost range resumes at the next
+	// surviving update rather than failing or replaying rows behind its cursor.
+	_, changed, _, err := store.ChangesSince(ctx, "s", logPath, -1, -1, 3)
+	if err != nil {
+		t.Fatalf("changes since a cursor inside the gap: %v", err)
+	}
+	if len(changed) == 0 {
+		t.Fatal("no updates after a cursor inside the gap")
+	}
+	for _, row := range changed {
+		if row.PositionSeq <= 3 {
+			t.Fatalf("replayed row %s at or behind the cursor: %+v", row.ID, row)
+		}
+	}
+}
+
+// Sequence numbers are the reader's ordering proof. A repeat means something other
+// than the session's writer appended to the log. The first event recorded for a
+// number wins and later ones are dropped, so the damaged log still opens: the
+// index is a presentation projection, while the log keeps every record.
+func TestIndexKeepsFirstEventForRepeatedSequence(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+	writeLog(t, logPath, []event.Event{
+		ev(1, event.UserInput, map[string]any{"text": "one"}),
+		ev(2, event.ModelTurn, map[string]any{"text": "two"}),
+		ev(2, event.ModelTurn, map[string]any{"text": "again"}),
+		ev(3, event.SessionIdle, map[string]any{"report": "done"}),
+	})
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state, err := store.CatchUp(ctx, "s", logPath, -1)
+	if err != nil {
+		t.Fatalf("catch-up over a repeated sequence: %v", err)
+	}
+	if state.IndexedThrough != 3 {
+		t.Fatalf("indexed through %d, want 3", state.IndexedThrough)
+	}
+	row, err := store.Detail(ctx, "s", "seq-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.Events[0].Data["text"]; got != "two" {
+		t.Fatalf("kept the later duplicate (seq-2 text=%v), want the first", got)
+	}
+}

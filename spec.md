@@ -126,13 +126,22 @@ external programs. Opening legacy state repairs these modes best-effort.
 Durable emission is fail-stop: once appending the event log fails, the session must not continue
 mutating state that can no longer be represented. A failed append or sync is rolled back to the
 last committed byte offset (truncation needs no free space), so disk exhaustion never leaves an
-unacknowledged record behind. An event is committed only once its full newline-terminated line is
-written and synced, so an unterminated final record is always an uncommitted torn append: readers
-ignore it, and opening the log for append first preserves it in an owner-only
-`events.jsonl.torn-<utc>` sidecar and then truncates it away (refusing to open, unmodified, if the
-sidecar cannot be written). Reopening a live session whose log has fail-stopped releases that
-instance and replays a fresh one from disk rather than requiring a daemon restart. Reopening
-replays model turns, tool calls and
+unacknowledged record behind. The log has one appender, so the committed boundary is both the
+expected size of the file and the identity of the file this process opened: a different size, or a
+different file now at that path (a working-tree checkout or a restore rewrites the log in place or
+replaces it), means something outside the process rewrote it, and emission fail-stops there too
+rather than appending a record past the hole or into a file no reader will follow. Readers face the
+reverse case, a log that already lost events or gained records from somewhere else: a forward
+sequence gap preserves ordering and leaves sequence numbers valid cursors, so indexing continues
+over the survivors and records the gap, and a repeated or backwards number keeps the first event
+recorded for it and drops the later ones. The log stays the transcript of record while the index
+stays total, because a presentation index must never be the reason a session cannot open.
+An event is committed only once its full newline-terminated line is written and synced, so an
+unterminated final record is always an uncommitted torn append: readers ignore it, and opening the
+log for append first preserves it in an owner-only `events.jsonl.torn-<utc>` sidecar and then
+truncates it away (refusing to open, unmodified, if the sidecar cannot be written). Reopening a
+live session whose log has fail-stopped releases that instance and replays a fresh one from disk
+rather than requiring a daemon restart. Reopening replays model turns, tool calls and
 results, user input, reasoning/provider state, focus, and lifecycle markers into a valid model
 history, then appends to the same log. Multimodal bytes are never embedded in events. User-sent
 pictures are retained as bounded, owner-only files beside the session log for authenticated client
