@@ -944,7 +944,9 @@ replacing its projection with the canonical saved response. Detailed command usa
 `docs/cli.md`, and the TUI ownership map is in `docs/tui-components.md`.
 
 Durable events render as a transcript with model/user turns prominent and tool, reasoning,
-review, and system detail foldable. Question plumbing is coalesced into one exchange. Scrolling
+review, and system detail foldable. Agents show pictures as markdown images naming workspace
+files (`![chart](.ycc/tmp/chart.png)`), which clients render inline through ReadFile; remote image
+URLs are never fetched. Question plumbing is coalesced into one exchange. Scrolling
 away from the live edge disables follow and exposes a jump-to-latest action; new events must not
 move the reader's viewport. In the iOS indexed transcript, explicitly loaded full row detail is
 retained for the open session across snapshots, paging, and repeated updates of the same row

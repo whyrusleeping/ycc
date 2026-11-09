@@ -142,6 +142,27 @@ extension FileReference {
     /// root-relative (recognized code spans).
     static let rootRelativeScheme = "ycc-file"
 
+    /// Classify a markdown image destination: an `http(s)` image (never
+    /// fetched — the renderer links it), a project file to read through the
+    /// daemon, or nil (other schemes such as `data:`, directories, escapes).
+    public static func classifyImage(_ source: String, context: FileLinkContext) -> FileLinkTarget? {
+        var text = source.trimmingCharacters(in: .whitespaces)
+        if let scheme = schemePrefix(text)?.lowercased() {
+            switch scheme {
+            case "http", "https":
+                return URL(string: text).map(FileLinkTarget.external)
+            case "file":
+                text = String(text.dropFirst("file:".count))
+                if text.hasPrefix("//") { text.removeFirst(2) }
+            default:
+                // `shot.png:3` parses with "scheme" `shot.png`: still a path.
+                guard scheme.contains(".") else { return nil }
+            }
+        }
+        guard let reference = fromLink(text, context: context), !reference.isDirectory else { return nil }
+        return .file(FileReference(path: reference.path))
+    }
+
     /// Parse an explicit markdown link destination. Anything that is not an
     /// external URL is treated as a path, relative to the context's base
     /// directory.

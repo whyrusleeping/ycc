@@ -84,6 +84,10 @@ root; explicit links resolve against the document's directory. A link from a tra
 sheet with its own navigation stack, so the transcript never loses its place; links inside a
 file push within whichever stack shows it. Links from a workstream session open that worktree's
 copy, with a visible note when the worktree has been reclaimed and the main checkout is shown.
+A line of only markdown images (`![alt](path)`) naming project files draws them inline through
+`ReadFile` (downsampled and height-capped; cached so a row scrolled back in keeps its height, and
+re-read once 15 s old since agents overwrite screenshot paths), and tapping one opens the viewer;
+remote images are never fetched and, like unreadable files, show as a linked "Image: alt".
 
 Transcript behavior follows the shared client contract in spec §18: durable rows, stable per-actor
 transient live tails for concurrent agents, no scroll jumps while reading history, structured

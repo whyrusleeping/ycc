@@ -136,6 +136,30 @@ final class MarkdownBlocksTests: XCTestCase {
         XCTAssertEqual(made, 1)
     }
 
+    func testImageOnlyLinesBecomeImageBlocks() {
+        let text = [
+            "Here is the screen:",
+            "![login screen](.ycc/tmp/login.png)",
+            "  ![a](docs/a.png \"title\") ![b](<shots/with space.png>)  ",
+            "inline ![c](c.png) stays prose",
+            "![d](d.png) trailing text",
+            "![empty]()",
+        ].joined(separator: "\n")
+        XCTAssertEqual(MarkdownBlocks.parse(text), [
+            .markdown("Here is the screen:"),
+            .image(alt: "login screen", source: ".ycc/tmp/login.png"),
+            .image(alt: "a", source: "docs/a.png"),
+            .image(alt: "b", source: "shots/with space.png"),
+            .markdown("inline ![c](c.png) stays prose\n![d](d.png) trailing text\n![empty]()"),
+        ])
+        XCTAssertEqual(MarkdownBlocks.parse("wrapped\n![x](x.png)\nafter", reflowsSoftBreaks: true), [
+            .markdown("wrapped"),
+            .image(alt: "x", source: "x.png"),
+            .markdown("after"),
+        ])
+        XCTAssertEqual(MarkdownBlocks.inlineMarkdown(in: [.image(alt: "x", source: "x.png")]), [])
+    }
+
     func testWarmupSplitsMarkdownRowsAndFeedsTheInlineRenderer() {
         final class Collector: @unchecked Sendable {
             let lock = NSLock()

@@ -7,7 +7,8 @@ import YccKit
 /// code blocks render monospaced in a card with a language label and a copy
 /// button, GFM pipe tables render in a horizontally scrollable grid, `#`
 /// headings render bold at a stepped size, `>` quotes get a rule, `---` becomes
-/// a divider, and `-`/`*` list markers become bullets. Everything else is parsed
+/// a divider, `-`/`*` list markers become bullets, and a line of only
+/// `![alt](path)` images shows them (``MarkdownImage``). Everything else is parsed
 /// as inline markdown (bold, italic, `code`, links) with soft line breaks
 /// preserved. Used for
 /// agent message bubbles in the session transcript and for backlog task bodies.
@@ -53,6 +54,8 @@ struct MarkdownText: View {
                     .fixedSize(horizontal: false, vertical: true)
                 case .rule:
                     Divider()
+                case .image(let alt, let source):
+                    MarkdownImage(alt: alt, source: source)
                 case .markdown(let md):
                     Text(rendered(md, fileLinks: fileLinkContext))
                         .frame(maxWidth: .infinity, alignment: .leading)

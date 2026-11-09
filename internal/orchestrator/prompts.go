@@ -60,6 +60,12 @@ risk-isolation, or evidenced context/resource boundary—not merely to give each
 review/commit cycle. Before splitting again, reassess how the next slice advances the parent's
 connected outcome and why it needs a separate task. Preserve the parent's original acceptance criteria.`
 
+// Clients render markdown images that name workspace files (read through ReadFile); remote
+// image URLs are never fetched (docs/design/web-client.md#rendering-safety).
+const imageGuidance = `To show the user an image (screenshot, chart, diagram), save it inside the workspace and embed it
+in your reply with markdown, e.g. ![login screen](.ycc/tmp/login.png). Clients render workspace
+images inline; remote image URLs are not fetched.`
+
 const backgroundGuidance = `Use background work to overlap independent tasks or run an intentional watcher, not to
 spawn then immediately wait. Reports arrive automatically in coordinator sessions; use wait
 when the result gates progress. Do not poll or kill live work just to finish. With nothing else
@@ -110,6 +116,8 @@ already accepted by the user stays todo; adjacent speculative work stays propose
 backlog task is not an instruction to change course.
 
 ` + projectDocsGuidance + `
+
+` + imageGuidance + `
 
 ` + backgroundGuidance
 
@@ -171,6 +179,8 @@ configured model and a self-contained prompt; agents default to read-only. After
 send_to_agent can retain context or replace it with a bounded fresh handoff containing evidence,
 unresolved questions, and verification requirements. Model and access level remain unchanged.
 
+` + imageGuidance + `
+
 ` + backgroundGuidance
 
 const pmModeSystem = `You manage planning, intake, design docs, and backlog; do not implement source code.
@@ -183,7 +193,9 @@ agreed docs/backlog state. Ask when intent matters; routine work needs no persis
 ` + projectDocsGuidance + `
 
 Promote memory into design only with user approval; never infer policy or authorization from notes.
-Follow docs/design/doc-style.md when present.`
+Follow docs/design/doc-style.md when present.
+
+` + imageGuidance
 
 // Presets are on-demand procedures, not permanent instructions for every turn.
 const onboardPresetPrompt = `Refresh or establish this project's design docs and backlog.

@@ -1,8 +1,9 @@
 import Foundation
 
 /// One block of agent-authored markdown, as rendered by the app's
-/// `MarkdownText`: fenced code, GFM pipe tables, headings, quotes, rules, and
-/// blank-line separated paragraph groups (which remain inline markdown).
+/// `MarkdownText`: fenced code, GFM pipe tables, headings, quotes, rules,
+/// standalone images, and blank-line separated paragraph groups (which remain
+/// inline markdown).
 public enum MarkdownBlock: Equatable, Sendable {
     /// A paragraph group: inline markdown with soft line breaks preserved and
     /// `-`/`*`/`+` list markers already normalised to bullets.
@@ -17,6 +18,10 @@ public enum MarkdownBlock: Equatable, Sendable {
     case table(MarkdownTable)
     /// `---`, `***` or `___` on its own line.
     case rule
+    /// A line holding only markdown images (`![alt](path)`), one block per
+    /// image: the destination as written, resolved by the renderer. Images
+    /// inside prose stay inline markdown (shown as their alt text).
+    case image(alt: String, source: String)
 }
 
 /// Pure block splitter for ``MarkdownBlock``. This used to run inside the
@@ -25,7 +30,7 @@ public enum MarkdownBlock: Equatable, Sendable {
 /// the transcript decode task rather than the main actor.
 public enum MarkdownBlocks {
     /// Split the text into fenced code blocks, tables, headings, quotes, rules,
-    /// and paragraph groups (blank-line separated). List markers are normalised
+    /// image-only lines, and paragraph groups (blank-line separated). List markers are normalised
     /// to bullets so `- item` reads as `• item` (the inline parser would
     /// otherwise show the raw dash).
     ///
@@ -104,6 +109,9 @@ public enum MarkdownBlocks {
             } else if let heading = headingParts(trimmed) {
                 flushProse()
                 result.append(.heading(level: heading.level, text: heading.text))
+            } else if let images = imageLine(trimmed) {
+                flushProse()
+                result.append(contentsOf: images)
             } else if trimmed.hasPrefix(">") {
                 flushParagraph()
                 quote.append(String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))
@@ -132,7 +140,7 @@ public enum MarkdownBlocks {
             case .table(let table):
                 strings.append(contentsOf: table.header)
                 for row in table.rows { strings.append(contentsOf: row) }
-            case .code, .rule:
+            case .code, .rule, .image:
                 break
             }
         }
@@ -179,6 +187,32 @@ public enum MarkdownBlocks {
         }
         return false
     }
+
+    /// A line made only of markdown images (whitespace-separated, each with an
+    /// optional title) → one ``MarkdownBlock/image(alt:source:)`` per image;
+    /// nil if anything else is on the line.
+    static func imageLine(_ line: String) -> [MarkdownBlock]? {
+        guard line.hasPrefix("![") else { return nil }
+        let ns = line as NSString
+        var images: [MarkdownBlock] = []
+        var location = 0
+        while location < ns.length {
+            guard let match = imagePattern.firstMatch(
+                in: line, options: .anchored,
+                range: NSRange(location: location, length: ns.length - location))
+            else { return nil }
+            var source = ns.substring(with: match.range(at: 2))
+            if source.hasPrefix("<") { source = String(source.dropFirst().dropLast()) }
+            guard !source.isEmpty else { return nil }
+            images.append(.image(alt: ns.substring(with: match.range(at: 1)), source: source))
+            location = match.range.location + match.range.length
+        }
+        return images.isEmpty ? nil : images
+    }
+
+    /// `![alt](dest)` / `![alt](<dest with spaces> "title")` plus trailing space.
+    private static let imagePattern = try! NSRegularExpression(
+        pattern: #"!\[([^\]]*)\]\(\s*(<[^>\n]*>|[^\s()]+)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)\s*"#)
 
     /// `# Title` → (1, "Title"); up to `######`. Returns nil for non-headings.
     static func headingParts(_ line: String) -> (level: Int, text: String)? {

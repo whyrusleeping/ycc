@@ -76,6 +76,25 @@ final class FileReferenceTests: XCTestCase {
                        .file(FileReference(path: "docs/remote-api.md")))
     }
 
+    func testImageClassification() {
+        let ctx = FileLinkContext(project: "ycc", sessionID: "s1", absoluteRoots: ["/home/me/code/ycc"])
+        func image(_ s: String, _ c: FileLinkContext? = nil) -> FileLinkTarget? {
+            FileReference.classifyImage(s, context: c ?? ctx)
+        }
+        XCTAssertEqual(image(".ycc/tmp/login.png"), .file(FileReference(path: ".ycc/tmp/login.png")))
+        XCTAssertEqual(image("./shots/a%20b.png?x=1"), .file(FileReference(path: "shots/a b.png")))
+        XCTAssertEqual(image("/home/me/code/ycc/docs/chart.png"), .file(FileReference(path: "docs/chart.png")))
+        XCTAssertEqual(image("file:///home/me/code/ycc/a.png"), .file(FileReference(path: "a.png")))
+        XCTAssertEqual(image("https://example.com/a.png"), .external(URL(string: "https://example.com/a.png")!))
+        XCTAssertEqual(image("img/a.png", FileLinkContext(project: "ycc", baseDirectory: "docs")),
+                       .file(FileReference(path: "docs/img/a.png")))
+        XCTAssertNil(image("data:image/png;base64,AAAA"))
+        XCTAssertNil(image("javascript:alert(1)"))
+        XCTAssertNil(image("/etc/a.png"))
+        XCTAssertNil(image("../a.png"))
+        XCTAssertNil(image("docs/"))
+    }
+
     func testCodeSpanLinkURLRoundTripsWithoutReapplyingBase() throws {
         let backlog = FileLinkContext(project: "ycc", baseDirectory: "backlog")
         for ref in [FileReference(path: "internal/a.go", lines: 4...9),
