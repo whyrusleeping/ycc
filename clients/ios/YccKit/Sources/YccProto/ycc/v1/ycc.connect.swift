@@ -239,6 +239,15 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `cancelAnthropicLogin`(request: Ycc_V1_CancelAnthropicLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CancelAnthropicLoginResponse>
 
+    @available(iOS 13, *)
+    func `beginOpenAilogin`(request: Ycc_V1_BeginOpenAILoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_BeginOpenAILoginResponse>
+
+    @available(iOS 13, *)
+    func `completeOpenAilogin`(request: Ycc_V1_CompleteOpenAILoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CompleteOpenAILoginResponse>
+
+    @available(iOS 13, *)
+    func `cancelOpenAilogin`(request: Ycc_V1_CancelOpenAILoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CancelOpenAILoginResponse>
+
     /// Best-effort provider-side subscription allowance.
     @available(iOS 13, *)
     func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse>
@@ -620,6 +629,21 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `beginOpenAilogin`(request: Ycc_V1_BeginOpenAILoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_BeginOpenAILoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/BeginOpenAILogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `completeOpenAilogin`(request: Ycc_V1_CompleteOpenAILoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CompleteOpenAILoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CompleteOpenAILogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `cancelOpenAilogin`(request: Ycc_V1_CancelOpenAILoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CancelOpenAILoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CancelOpenAILogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetSubscriptionUsage", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -788,6 +812,9 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let beginAnthropicLogin = Connect.MethodSpec(name: "BeginAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
             public static let completeAnthropicLogin = Connect.MethodSpec(name: "CompleteAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
             public static let cancelAnthropicLogin = Connect.MethodSpec(name: "CancelAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let beginOpenAilogin = Connect.MethodSpec(name: "BeginOpenAILogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let completeOpenAilogin = Connect.MethodSpec(name: "CompleteOpenAILogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let cancelOpenAilogin = Connect.MethodSpec(name: "CancelOpenAILogin", service: "ycc.v1.SessionService", type: .unary)
             public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)

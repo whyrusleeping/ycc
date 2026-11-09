@@ -51,6 +51,7 @@ type Server struct {
 	// before an empty SessionViewUpdate is sent (see sessionViewKeepalive).
 	viewKeepalive  time.Duration
 	anthropicLogin anthropicLoginState
+	openaiLogin    openaiLoginState
 	analytics      *uianalytics.Store // nil: usage events are validated and discarded
 	health         *health.Monitor    // nil: GetHealth reports no checks
 }

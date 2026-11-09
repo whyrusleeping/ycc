@@ -37,7 +37,7 @@ vi.mock("../src/app/analytics", () => ({ track: { action: vi.fn(), error: vi.fn(
 vi.mock("../src/app/intents", () => ({ useIntent: () => {} }));
 vi.mock("../src/features/settings/ModelEditor", () => ({ ModelEditorDialog: () => null }));
 vi.mock("../src/features/settings/TierEditor", () => ({ TierEditorDialog: () => null }));
-vi.mock("../src/features/settings/AnthropicLogin", () => ({ openAnthropicLogin: vi.fn() }));
+vi.mock("../src/features/settings/AnthropicLogin", () => ({ openAnthropicLogin: vi.fn(), openOpenAILogin: vi.fn() }));
 vi.mock("../src/features/notify/NotifyControls", () => ({ NotificationControls: () => null }));
 vi.mock("../src/features/health/HealthPanel", () => ({ HealthPanel: () => null }));
 

@@ -1,6 +1,7 @@
-// Pure Anthropic subscription-login helpers (mirrors YccKit AnthropicLoginModel):
-// validating the daemon's authorization URL before offering it, the pasted
-// code's shape, and when an error is worth a "Reconnect Anthropic" offer.
+// Pure subscription-login helpers (the Anthropic ones mirror YccKit
+// AnthropicLoginModel): validating the daemon's authorization URL before
+// offering it, the pasted code's shape, and when an error is worth a
+// "Reconnect Anthropic" offer.
 import type { WorkLoopInfo } from "../../gen/ycc/v1/ycc_pb";
 
 /**
@@ -29,6 +30,38 @@ export function codeProblem(code: string): string | null {
   const [c, state] = [v.slice(0, v.indexOf("#")), v.slice(v.indexOf("#") + 1)];
   if (!v.includes("#") || !c || !state) return "Paste the full code#state shown on Anthropic’s page.";
   if (/\s/.test(v)) return "The code has no spaces; paste it exactly as shown.";
+  return null;
+}
+
+/** Only offer OpenAI's own authorize page (https://auth.openai.com/oauth/authorize) for an unexpired attempt. */
+export function validOpenAILoginStart(
+  resp: { attemptId: string; authorizationUrl: string; expiresAtUnix: bigint | number },
+  now: number = Date.now(),
+): boolean {
+  if (!resp.attemptId) return false;
+  if (!(Number(resp.expiresAtUnix) * 1000 > now)) return false;
+  let u: URL;
+  try {
+    u = new URL(resp.authorizationUrl);
+  } catch {
+    return false;
+  }
+  return u.protocol === "https:" && u.hostname === "auth.openai.com" && u.pathname === "/oauth/authorize" && !u.username && !u.password && !u.port;
+}
+
+/**
+ * After signing in, OpenAI redirects the browser to http://localhost:1455/
+ * auth/callback?code=…&state=…, which usually fails to load; the daemon needs
+ * that whole address (the state binds it to this login).
+ */
+export function callbackProblem(pasted: string): string | null {
+  const v = pasted.trim();
+  if (!v) return null;
+  if (/\s/.test(v)) return "Paste the address exactly as shown, without spaces.";
+  const query = v.includes("?") ? v.slice(v.indexOf("?") + 1) : v;
+  const q = new URLSearchParams(query);
+  if (q.get("error")) return "OpenAI reported an error instead of a login; start a new login.";
+  if (!q.get("code") || !q.get("state")) return "Paste the whole address from the browser’s address bar (it contains code= and state=).";
   return null;
 }
 

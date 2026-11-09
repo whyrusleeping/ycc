@@ -30,7 +30,7 @@ import { Icon, type IconName } from "../ui/icons";
 import { gitSyncBadge, gitSyncTitle } from "../features/projects/model";
 import { ProjectPicker, type ProjectOption } from "../features/projects/ProjectPicker";
 import { ProjectDialogs, openAddProject, openRemoveProject, openRenameProject } from "../features/projects/ProjectDialogs";
-import { AnthropicLoginDialog, openAnthropicLogin } from "../features/settings/AnthropicLogin";
+import { AnthropicLoginDialog, openAnthropicLogin, openOpenAILogin } from "../features/settings/AnthropicLogin";
 import { SETTINGS_INTENT } from "../features/settings/SettingsPage";
 import { CommandPalette } from "../features/palette/Palette";
 import { HelpOverlay } from "../features/palette/HelpOverlay";
@@ -423,7 +423,11 @@ function useShellActions() {
     [navigate],
   );
   const anthropicLogin = useMemo<AppAction>(
-    () => ({ id: "settings.anthropicLogin", title: "Connect / reconnect Anthropic…", group: "Settings", run: () => openAnthropicLogin() }),
+    () => ({ id: "settings.anthropicLogin", title: "Connect / reconnect Claude subscription…", group: "Settings", run: () => openAnthropicLogin() }),
+    [],
+  );
+  const openaiLogin = useMemo<AppAction>(
+    () => ({ id: "settings.openaiLogin", title: "Connect / reconnect ChatGPT subscription…", group: "Settings", run: () => openOpenAILogin() }),
     [],
   );
   const openPlans = useMemo<AppAction | null>(
@@ -518,6 +522,7 @@ function useShellActions() {
   useAction(addModel);
   useAction(reviewTiers);
   useAction(anthropicLogin);
+  useAction(openaiLogin);
   useAction(startLoop);
   useAction(stopLoop);
   useAction(spawn);

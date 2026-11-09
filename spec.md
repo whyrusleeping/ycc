@@ -816,19 +816,23 @@ managed by `ycc token`; committed config stores only the key name. Model RPCs re
 `ANTHROPIC_OAUTH`, and `OPENAI_OAUTH` as API-key references. Credential-bearing custom base URLs
 must use HTTPS, except HTTP loopback endpoints (`localhost`, 127.0.0.0/8, ::1); Anthropic discovery
 is credential-bearing even without a key reference because it can use stored OAuth.
-Anthropic and OpenAI also support subscription OAuth through `ycc login`. Anthropic can also be connected from iOS via
-Settings → Provider accounts, or the stopped work-loop screen: authenticated begin/complete/cancel
-RPCs create a daemon-owned browser login and exchange the full pasted `code#state`. There is one
-pending attempt per daemon, valid for ten minutes; a new begin supersedes it, and submission
+Anthropic and OpenAI also support subscription OAuth through `ycc login`. Authenticated
+begin/complete/cancel RPCs also connect Claude or ChatGPT subscriptions from remote clients via
+a daemon-owned browser login. Anthropic exchanges the full pasted `code#state`; ChatGPT exchanges
+a pasted redirect URL or query containing both code and matching state (bare codes are rejected).
+ChatGPT uses the fixed `http://localhost:1455/auth/callback` redirect without binding that port on
+the daemon; the user copies the address-bar URL even if the browser cannot load it. Each provider
+has its own single pending attempt per daemon, valid for ten minutes; a new begin supersedes it, and submission
 consumes it even on failure. State must match before exchange. An in-flight exchange excludes a
 new begin; cancellation discards only the matching pending attempt, not submitted exchanges or
 stored credentials. Attempts are memory-only and do not survive daemon restart. URLs/codes are
 transient UI state, excluded from caches, session events, and diagnostics; provider errors are
 sanitized rather than echoed. Login changes no work-loop state, and no model settings except on a
 daemon still running the untouched built-in no-config fallback (no settings changed and no
-`ycc.toml` written since startup) whose model has no API key: there the
-fallback model switches to `auth = "oauth"` and the config is persisted, the same result as
-`ycc login anthropic` on a machine without a config. Saved
+`ycc.toml` written since startup) whose model has no API key: a Claude login switches the
+fallback model to `auth = "oauth"`; a ChatGPT login replaces it with an `openai` OAuth model
+named `chatgpt` using the default Codex model and assigns all roles to it. The config is
+persisted, rolling back in memory if persistence fails. Saved
 credentials apply to all projects on the daemon; reconnect never restarts unattended work.
 A refresh may persist its result only if the stored credential snapshot still matches the one
 it refreshed (an atomic cross-process compare-and-swap). A newer login or removal wins over
@@ -1100,8 +1104,8 @@ The web home page of a daemon with no sessions is a Get started checklist:
 
 1. **Connect a model.** This step is done when the coordinator's health check passes, and the
    checklist requests a fresh check rather than waiting for the first scheduled one. It offers the
-   in-browser Claude login (which sets up the fallback model, §13), the CLI commands for a ChatGPT
-   login or an API key, and Settings → Models.
+   in-browser Claude and ChatGPT logins (which set up the untouched fallback, §13), the CLI command
+   for an API key, and Settings → Models.
 2. **Add a project.**
 3. **Start the first session.** For a project that needs onboarding this is the Onboard preset;
    otherwise it is a new session in that project.

@@ -35,7 +35,7 @@ import {
   tierProblem,
   tierSummary,
 } from "../src/features/settings/tiers";
-import { codeProblem, loopNeedsAnthropicReconnect, needsAnthropicReconnect, validLoginStart } from "../src/features/settings/anthropic";
+import { callbackProblem, codeProblem, loopNeedsAnthropicReconnect, needsAnthropicReconnect, validLoginStart, validOpenAILoginStart } from "../src/features/settings/anthropic";
 
 const draft = (o: Partial<ModelDraft>): ModelDraft => ({ ...emptyDraft(), name: "stub3", backend: "openai", modelId: "stub-model-3", keyEnv: "YCC_E2E_KEY", ...o });
 
@@ -229,6 +229,23 @@ describe("Anthropic login", () => {
     expect(codeProblem("abc")).toMatch(/code#state/);
     expect(codeProblem("#def")).toMatch(/code#state/);
     expect(codeProblem("ab c#def")).toMatch(/spaces/);
+  });
+
+  it("only offers OpenAI's own unexpired authorize page", () => {
+    const openai = (o: Parameters<typeof start>[0]) => start({ authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=x", ...o });
+    expect(validOpenAILoginStart(openai({}), now)).toBe(true);
+    expect(validOpenAILoginStart(openai({ authorizationUrl: "https://auth.openai.com.evil.example/oauth/authorize" }), now)).toBe(false);
+    expect(validOpenAILoginStart(openai({ authorizationUrl: "http://auth.openai.com/oauth/authorize" }), now)).toBe(false);
+    expect(validOpenAILoginStart(openai({ expiresAtUnix: BigInt(now / 1000 - 1) }), now)).toBe(false);
+  });
+
+  it("needs the whole OpenAI redirect address, with code and state", () => {
+    expect(callbackProblem("")).toBeNull();
+    expect(callbackProblem("http://localhost:1455/auth/callback?code=abc&state=xyz")).toBeNull();
+    expect(callbackProblem("code=abc&state=xyz")).toBeNull();
+    expect(callbackProblem("abc")).toMatch(/whole address/);
+    expect(callbackProblem("http://localhost:1455/auth/callback?code=abc")).toMatch(/whole address/);
+    expect(callbackProblem("http://localhost:1455/auth/callback?error=access_denied")).toMatch(/error/);
   });
 
   it("offers a reconnect only for Anthropic login problems", () => {

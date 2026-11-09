@@ -61,6 +61,7 @@ export const VIEW_NAMES = [
   "add_project",
   "rename_project",
   "anthropic_login",
+  "openai_login",
   "model_editor",
   "tier_editor",
   "loop_start",

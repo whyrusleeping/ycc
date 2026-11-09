@@ -1,11 +1,12 @@
-// Anthropic subscription login, owned by the daemon (BeginAnthropicLogin /
-// CompleteAnthropicLogin / CancelAnthropicLogin): the browser opens
-// Anthropic's sign-in page, the user pastes the code#state it shows, and the
-// daemon exchanges and stores the tokens — they never reach this tab. The
-// authorization URL and the pasted code live only in this dialog's state
-// (never cached, logged, or put in a URL). Opened from Settings and from
-// errors that point at an expired login (work loop, session). Mirrors iOS
-// AnthropicLoginView.
+// Subscription logins owned by the daemon (Begin/Complete/Cancel
+// AnthropicLogin and OpenAILogin): the browser opens the provider's sign-in
+// page, the user pastes back what it ends on (Anthropic shows a code#state;
+// OpenAI redirects to a localhost:1455 address that usually fails to load),
+// and the daemon exchanges and stores the tokens — they never reach this tab.
+// The authorization URL and the pasted text live only in this dialog's state
+// (never cached, logged, or put in a URL). Opened from Settings, Get started,
+// and errors that point at an expired login (work loop, session). The
+// Anthropic flow mirrors iOS AnthropicLoginView.
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
@@ -13,44 +14,96 @@ import { authStore } from "../../api/auth";
 import { queryKeys, refreshHealth } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
 import { track } from "../../app/analytics";
-import { codeProblem, validLoginStart } from "./anthropic";
+import { callbackProblem, codeProblem, validLoginStart, validOpenAILoginStart } from "./anthropic";
+
+export type LoginProvider = "anthropic" | "openai";
+
+interface ProviderFlow {
+  title: string;
+  flow: string;
+  account: string;
+  begin: () => Promise<{ attemptId: string; authorizationUrl: string; expiresAtUnix: bigint }>;
+  complete: (attemptId: string, pasted: string) => Promise<unknown>;
+  cancel: (attemptId: string) => Promise<unknown>;
+  validStart: (resp: { attemptId: string; authorizationUrl: string; expiresAtUnix: bigint }) => boolean;
+  problem: (pasted: string) => string | null;
+  pasteLabel: string;
+  steps: string;
+}
+
+const FLOWS: Record<LoginProvider, ProviderFlow> = {
+  anthropic: {
+    title: "Connect Claude",
+    flow: "anthropic_login",
+    account: "Claude",
+    begin: () => client.beginAnthropicLogin({}),
+    complete: (attemptId, code) => client.completeAnthropicLogin({ attemptId, code }),
+    cancel: (attemptId) => client.cancelAnthropicLogin({ attemptId }),
+    validStart: validLoginStart,
+    problem: codeProblem,
+    pasteLabel: "Paste code#state",
+    steps: "Sign in with your Claude Pro or Max account, then paste the full code Anthropic’s page shows (code#state).",
+  },
+  openai: {
+    title: "Connect ChatGPT",
+    flow: "openai_login",
+    account: "ChatGPT",
+    begin: () => client.beginOpenAILogin({}),
+    complete: (attemptId, callback) => client.completeOpenAILogin({ attemptId, callback }),
+    cancel: (attemptId) => client.cancelOpenAILogin({ attemptId }),
+    validStart: validOpenAILoginStart,
+    problem: callbackProblem,
+    pasteLabel: "Paste the address",
+    steps:
+      "Sign in with your ChatGPT Plus or Pro account. Afterwards the browser goes to a localhost:1455 address that probably won’t load; that’s expected. Copy the whole address from the address bar and paste it here.",
+  },
+};
 
 let openSeq = 0;
-let isOpen = false;
+let openProvider: LoginProvider | null = null;
 const listeners = new Set<() => void>();
 function emit() {
   for (const l of listeners) l();
 }
 
-export function openAnthropicLogin() {
-  if (isOpen) return;
-  isOpen = true;
+export function openSubscriptionLogin(provider: LoginProvider) {
+  if (openProvider) return;
+  openProvider = provider;
   openSeq++;
   emit();
 }
 
-function closeAnthropicLogin() {
-  isOpen = false;
+export function openAnthropicLogin() {
+  openSubscriptionLogin("anthropic");
+}
+
+export function openOpenAILogin() {
+  openSubscriptionLogin("openai");
+}
+
+function closeLogin() {
+  openProvider = null;
   emit();
 }
 
-function useOpen(): { open: boolean; seq: number } {
-  const open = useSyncExternalStore(
+function useOpen(): { provider: LoginProvider | null; seq: number } {
+  const provider = useSyncExternalStore(
     (l) => {
       listeners.add(l);
       return () => listeners.delete(l);
     },
-    () => isOpen,
+    () => openProvider,
   );
-  return { open, seq: openSeq };
+  return { provider, seq: openSeq };
 }
 
 /** Host rendered once by the shell. */
 export function AnthropicLoginDialog() {
-  const { open, seq } = useOpen();
+  const { provider, seq } = useOpen();
+  const flow = FLOWS[provider ?? "anthropic"];
   return (
-    <Modal open={open} onClose={closeAnthropicLogin} title="Anthropic login" className="anthropic-login" view="anthropic_login" flow="anthropic_login">
-      {open && <LoginBody key={seq} onClose={closeAnthropicLogin} />}
+    <Modal open={provider !== null} onClose={closeLogin} title={flow.title} className="anthropic-login" view={flow.flow} flow={flow.flow}>
+      {provider && <LoginBody key={seq} flow={flow} onClose={closeLogin} />}
     </Modal>
   );
 }
@@ -61,7 +114,7 @@ interface Attempt {
   expiresAt: number;
 }
 
-function LoginBody({ onClose }: { onClose: () => void }) {
+function LoginBody({ flow, onClose }: { flow: ProviderFlow; onClose: () => void }) {
   const qc = useQueryClient();
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [code, setCode] = useState("");
@@ -75,7 +128,7 @@ function LoginBody({ onClose }: { onClose: () => void }) {
   const cancelPending = () => {
     const id = pending.current;
     pending.current = null;
-    if (id) void client.cancelAnthropicLogin({ attemptId: id }).catch(() => {});
+    if (id) void flow.cancel(id).catch(() => {});
   };
 
   // Closing the dialog (or leaving the page) drops this screen's pending attempt.
@@ -106,21 +159,21 @@ function LoginBody({ onClose }: { onClose: () => void }) {
     setConnected(false);
     setBusy(true);
     try {
-      const resp = await client.beginAnthropicLogin({});
+      const resp = await flow.begin();
       if (gen !== generation.current) {
-        void client.cancelAnthropicLogin({ attemptId: resp.attemptId }).catch(() => {});
+        void flow.cancel(resp.attemptId).catch(() => {});
         return;
       }
-      if (!validLoginStart(resp)) {
-        void client.cancelAnthropicLogin({ attemptId: resp.attemptId }).catch(() => {});
-        track.error("anthropic_login.begin", "invalid_start");
+      if (!flow.validStart(resp)) {
+        void flow.cancel(resp.attemptId).catch(() => {});
+        track.error(`${flow.flow}.begin`, "invalid_start");
         setError("The daemon returned an invalid or expired login. Update the daemon and try again.");
         return;
       }
       pending.current = resp.attemptId;
       setAttempt({ id: resp.attemptId, url: resp.authorizationUrl, expiresAt: Number(resp.expiresAtUnix) * 1000 });
     } catch (err) {
-      if (gen === generation.current) fail(err, "Couldn’t start the login.", "anthropic_login.begin");
+      if (gen === generation.current) fail(err, "Couldn’t start the login.", `${flow.flow}.begin`);
     } finally {
       if (gen === generation.current) setBusy(false);
     }
@@ -129,15 +182,15 @@ function LoginBody({ onClose }: { onClose: () => void }) {
   const complete = async () => {
     if (busy || !attempt) return;
     if (Date.now() >= attempt.expiresAt) {
-      track.error("anthropic_login.complete", "expired");
-      setError("This login expired. Start a new login and use its new code.");
+      track.error(`${flow.flow}.complete`, "expired");
+      setError("This login expired. Start a new login.");
       cancelPending();
       setAttempt(null);
       setCode("");
       return;
     }
     const pasted = code.trim();
-    if (!pasted || codeProblem(pasted)) return;
+    if (!pasted || flow.problem(pasted)) return;
     const gen = generation.current;
     // Every submit consumes the attempt (even an ambiguous failure): never retry it.
     pending.current = null;
@@ -146,9 +199,9 @@ function LoginBody({ onClose }: { onClose: () => void }) {
     setError(null);
     setBusy(true);
     try {
-      await client.completeAnthropicLogin({ attemptId: attempt.id, code: pasted });
+      await flow.complete(attempt.id, pasted);
       if (gen === generation.current) {
-        track.submit("anthropic_login");
+        track.submit(flow.flow);
         setConnected(true);
       }
       // On a daemon with no model yet the login set one up: every view of
@@ -156,20 +209,20 @@ function LoginBody({ onClose }: { onClose: () => void }) {
       void qc.invalidateQueries({ queryKey: queryKeys.modelsAll });
       void refreshHealth(qc).catch(() => {});
     } catch (err) {
-      if (gen === generation.current) fail(err, "Login could not be completed. Start a new login.", "anthropic_login.complete");
+      if (gen === generation.current) fail(err, "Login could not be completed. Start a new login.", `${flow.flow}.complete`);
     } finally {
       if (gen === generation.current) setBusy(false);
     }
   };
 
-  const problem = codeProblem(code);
+  const problem = flow.problem(code);
   if (connected) {
     return (
       <div className="login-body">
         <div className="banner ok" role="status">
-          <strong>Anthropic connected.</strong> Credentials were saved on the daemon; Anthropic OAuth models use them from their next
-          request. If no model was set up yet, the daemon’s default model now uses this subscription; otherwise no model settings
-          changed. No work loop was restarted.
+          <strong>{flow.account} connected.</strong> The daemon saved the login; models that use the {flow.account} subscription use it from
+          their next request. If no model was set up yet, the daemon set one up with it; otherwise no model settings changed. No work loop
+          was restarted.
         </div>
         <div className="dialog-actions">
           <button type="button" className="btn primary" onClick={onClose} autoFocus>
@@ -181,17 +234,13 @@ function LoginBody({ onClose }: { onClose: () => void }) {
   }
   return (
     <div className="login-body">
-      <p>
-        Sign in with your Claude subscription in the browser, then paste the full code Anthropic’s page shows (<span className="mono">code#state</span>
-        ).
-      </p>
+      <p>{flow.steps}</p>
       <p className="muted small">
-        This replaces the shared Anthropic subscription login for every project on this daemon. Access and refresh tokens stay on the
-        daemon.
+        This replaces the shared {flow.account} login for every project on this daemon. The tokens stay on the daemon.
       </p>
       <div className="login-step">
         <button type="button" className={`btn${attempt ? "" : " primary"}`} disabled={busy} onClick={() => void begin()}>
-          {attempt ? "Start a new login" : busy ? "Contacting daemon…" : "Sign in to Anthropic"}
+          {attempt ? "Start a new login" : busy ? "Contacting daemon…" : `Sign in to ${flow.account}`}
         </button>
       </div>
       {attempt && (
@@ -203,10 +252,10 @@ function LoginBody({ onClose }: { onClose: () => void }) {
           }}
         >
           <a className="btn primary login-link" href={attempt.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">
-            Open Anthropic sign-in page ↗
+            Open the {flow.account} sign-in page ↗
           </a>
           <label className="field-label">
-            Paste code#state
+            {flow.pasteLabel}
             <input
               type="password"
               className="field mono"
@@ -230,7 +279,7 @@ function LoginBody({ onClose }: { onClose: () => void }) {
         </form>
       )}
       {busy && !attempt && (
-        <p className="muted small">You can close this dialog while waiting; a submitted code may still finish saving on the daemon.</p>
+        <p className="muted small">You can close this dialog while waiting; a submitted login may still finish saving on the daemon.</p>
       )}
       {error && (
         <div className="banner warn" role="alert">

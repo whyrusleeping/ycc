@@ -304,7 +304,7 @@ func startupGuidance(o Options, mgr *session.Manager, usingTLS bool) []string {
 	if m, ok := mgr.GetModel(coord); ok {
 		if missing := config.MissingCredential(m); missing != "" {
 			if o.ConfigPath == "" {
-				lines = append(lines, "no model is set up yet: connect a Claude subscription from the app's Get started screen, "+
+				lines = append(lines, "no model is set up yet: connect a Claude or ChatGPT subscription from the app's Get started screen, "+
 					"or run `ycc login anthropic` (or `ycc login openai`) and restart the daemon")
 			} else {
 				lines = append(lines, fmt.Sprintf("coordinator model %q is not set up (%s); see Settings → Health in the app", coord, missing))

@@ -23,7 +23,7 @@ import { track } from "../../app/analytics";
 import { THINKING_LEVELS, parseThinking, roleModelChoices, type ThinkingLevel } from "../session/settings";
 import { budgetRows } from "../usage/model";
 import { WORK_IMPLEMENTATIONS } from "../workloop/model";
-import { openAnthropicLogin } from "./AnthropicLogin";
+import { openAnthropicLogin, openOpenAILogin } from "./AnthropicLogin";
 import { ModelEditorDialog, type EditorTarget } from "./ModelEditor";
 import { TierEditorDialog } from "./TierEditor";
 import { SETTINGS_SECTIONS as SECTIONS } from "./sections";
@@ -167,6 +167,18 @@ function AccountsSection() {
         </div>
         <button type="button" className="btn" data-track="settings.anthropicLogin" onClick={() => openAnthropicLogin()}>
           Connect / reconnect Anthropic…
+        </button>
+      </div>
+      <div className="settings-line">
+        <div>
+          <strong>ChatGPT subscription</strong>
+          <div className="muted small">
+            Sign in (or reconnect an expired login) for models using <span className="mono">auth = "oauth"</span> on the OpenAI backend.
+            The daemon runs the login and keeps the tokens.
+          </div>
+        </div>
+        <button type="button" className="btn" data-track="settings.openaiLogin" onClick={() => openOpenAILogin()}>
+          Connect / reconnect ChatGPT…
         </button>
       </div>
       <p className="muted small">

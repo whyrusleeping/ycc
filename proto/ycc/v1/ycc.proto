@@ -923,6 +923,22 @@ message CompleteAnthropicLoginResponse {}
 message CancelAnthropicLoginRequest { string attempt_id = 1; }
 message CancelAnthropicLoginResponse {}
 
+// Daemon-owned ChatGPT subscription login, independent of the Anthropic attempt.
+// The daemon never binds the localhost callback port; clients paste the redirect.
+message BeginOpenAILoginRequest {}
+message BeginOpenAILoginResponse {
+  string attempt_id = 1;
+  string authorization_url = 2; // sensitive, transient browser URL; do not log/cache
+  int64 expires_at_unix = 3;
+}
+message CompleteOpenAILoginRequest {
+  string attempt_id = 1;
+  string callback = 2; // pasted redirect URL or query with code and state; never log/echo
+}
+message CompleteOpenAILoginResponse {}
+message CancelOpenAILoginRequest { string attempt_id = 1; }
+message CancelOpenAILoginResponse {}
+
 // Provider-side subscription allowance. This is intentionally
 // separate from GetUsage: it is shared account quota, not ycc-local token spend.
 // No credential material crosses this boundary.
@@ -1555,6 +1571,9 @@ service SessionService {
   rpc BeginAnthropicLogin(BeginAnthropicLoginRequest) returns (BeginAnthropicLoginResponse);
   rpc CompleteAnthropicLogin(CompleteAnthropicLoginRequest) returns (CompleteAnthropicLoginResponse);
   rpc CancelAnthropicLogin(CancelAnthropicLoginRequest) returns (CancelAnthropicLoginResponse);
+  rpc BeginOpenAILogin(BeginOpenAILoginRequest) returns (BeginOpenAILoginResponse);
+  rpc CompleteOpenAILogin(CompleteOpenAILoginRequest) returns (CompleteOpenAILoginResponse);
+  rpc CancelOpenAILogin(CancelOpenAILoginRequest) returns (CancelOpenAILoginResponse);
 
   // Best-effort provider-side subscription allowance.
   rpc GetSubscriptionUsage(GetSubscriptionUsageRequest) returns (GetSubscriptionUsageResponse);

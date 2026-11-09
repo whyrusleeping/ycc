@@ -425,15 +425,21 @@ func jwtAccountID(idToken string) string {
 
 // Load reads persisted credentials from the secrets store.
 func Load() (creds *Credentials, ok bool) {
+	creds, _, ok = loadRaw()
+	return creds, ok
+}
+
+// Retain the exact credential snapshot for conditional refresh persistence.
+func loadRaw() (*Credentials, string, bool) {
 	raw, ok := secrets.Lookup(SecretsKey)
 	if !ok {
-		return nil, false
+		return nil, raw, false
 	}
 	var c Credentials
 	if err := json.Unmarshal([]byte(raw), &c); err != nil || (c.AccessToken == "" && c.RefreshToken == "") {
-		return nil, false
+		return nil, raw, false
 	}
-	return &c, true
+	return &c, raw, true
 }
 
 // Save persists credentials to the secrets store.
@@ -455,27 +461,45 @@ var mu sync.Mutex
 func AccessToken(ctx context.Context) (token, accountID string, err error) {
 	mu.Lock()
 	defer mu.Unlock()
-	creds, ok := Load()
-	if !ok {
-		return "", "", errors.New("no ChatGPT subscription credentials stored; run `ycc login openai`")
+	// A browser login must not wait for an old account's network refresh, nor
+	// may that refresh overwrite the new login (or resurrect removed credentials).
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		creds, raw, ok := loadRaw()
+		if !ok {
+			return "", "", errors.New("no ChatGPT subscription credentials stored; run `ycc login openai`")
+		}
+		if !creds.Expired(time.Now()) {
+			return creds.AccessToken, creds.AccountID, nil
+		}
+		fresh, err := Refresh(ctx, creds.RefreshToken)
+		if err != nil {
+			if _, current, _ := loadRaw(); current != raw {
+				continue
+			}
+			return "", "", fmt.Errorf("refreshing ChatGPT subscription token (re-run `ycc login openai` if this persists): %w", err)
+		}
+		// Refresh responses may omit the id_token; keep the previously-stored
+		// account id (it is stable for the account).
+		if fresh.AccountID == "" {
+			fresh.AccountID = creds.AccountID
+		}
+		if fresh.IDToken == "" {
+			fresh.IDToken = creds.IDToken
+		}
+		data, err := json.Marshal(fresh)
+		if err != nil {
+			return "", "", err
+		}
+		swapped, err := secrets.CompareAndSwap(SecretsKey, raw, string(data))
+		if err != nil {
+			return "", "", fmt.Errorf("persisting refreshed credentials: %w", err)
+		}
+		if swapped {
+			return fresh.AccessToken, fresh.AccountID, nil
+		}
 	}
-	if !creds.Expired(time.Now()) {
-		return creds.AccessToken, creds.AccountID, nil
-	}
-	fresh, err := Refresh(ctx, creds.RefreshToken)
-	if err != nil {
-		return "", "", fmt.Errorf("refreshing ChatGPT subscription token (re-run `ycc login openai` if this persists): %w", err)
-	}
-	// Refresh responses may omit the id_token; keep the previously-stored
-	// account id (it is stable for the account).
-	if fresh.AccountID == "" {
-		fresh.AccountID = creds.AccountID
-	}
-	if fresh.IDToken == "" {
-		fresh.IDToken = creds.IDToken
-	}
-	if err := Save(fresh); err != nil {
-		return "", "", fmt.Errorf("persisting refreshed credentials: %w", err)
-	}
-	return fresh.AccessToken, fresh.AccountID, nil
+	return "", "", errors.New("ChatGPT credentials changed repeatedly during refresh; retry the request")
 }

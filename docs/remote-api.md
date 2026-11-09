@@ -75,7 +75,7 @@ RPC request messages are limited to **32 MiB**, including after decompression;
 larger messages receive `resource_exhausted`. This accommodates four 5 MiB images
 base64-encoded in JSON plus message metadata.
 
-### Anthropic subscription login from a remote client
+### Subscription login from a remote client
 
 The iOS app exposes this under **Settings → Provider accounts → Connect / reconnect
 Anthropic**, and from a stopped work loop whose failure mentions Anthropic. It opens
@@ -84,15 +84,25 @@ dedicated secure field, **not chat**. Anthropic's registered callback is a provi
 code-display page, so this flow does not require an inbound connection to the daemon
 or an app URL callback.
 
-All three unary RPCs use the daemon bearer token:
+ChatGPT (Plus/Pro) login uses the same daemon-owned browser-and-paste lifecycle.
+The authorization redirect is fixed at `http://localhost:1455/auth/callback`; the
+daemon **does not bind port 1455**. Even if that page fails to load, the user copies
+the full address-bar URL and pastes it into the client's dedicated login field,
+never chat. Completion accepts that URL or its query, but requires both `code` and
+matching `state`; a bare code is rejected.
+
+All six unary RPCs use the daemon bearer token:
 
 | Method | Request | Response |
 |---|---|---|
 | `BeginAnthropicLogin` | `{}` | `attemptId`, `authorizationUrl`, `expiresAtUnix` |
 | `CompleteAnthropicLogin` | `attemptId`, `code` (full `code#state`) | `{}` after credentials are saved |
 | `CancelAnthropicLogin` | `attemptId` | `{}` |
+| `BeginOpenAILogin` | `{}` | `attemptId`, `authorizationUrl`, `expiresAtUnix` |
+| `CompleteOpenAILogin` | `attemptId`, `callback` (redirect URL or query with code and state) | `{}` after credentials are saved |
+| `CancelOpenAILogin` | `attemptId` | `{}` |
 
-Only one pending attempt is retained per daemon. It expires after ten minutes and
+Only one pending attempt **per provider** is retained per daemon. It expires after ten minutes and
 is invalidated by a new begin or daemon restart. Completion consumes a matching
 attempt **before** validating/exchanging the code, and validates the echoed state.
 It bounds provider exchange to 30 seconds and reports sanitized errors. A failed or
@@ -106,9 +116,14 @@ cache request/response bodies (including in reverse proxies or tunnel inspectors
 Use HTTPS or an encrypted private network. The daemon does not record login payloads
 in sessions or latency diagnostics, and access/refresh tokens never appear in RPC
 responses. Credentials are stored in the daemon's private machine-local secrets store
-and apply to **all projects** using Anthropic OAuth. Existing OAuth models pick up the
-new credentials without a daemon restart. Login does not change model configuration,
-role assignments, or loop state; the user explicitly restarts work when ready.
+and apply to **all projects** using that provider's OAuth. Existing OAuth models pick up
+the new credentials without a daemon restart. Login leaves chosen model configuration
+and role assignments alone. The only exception is an untouched built-in no-config
+fallback with no resolvable API key (no settings edits, no config written since startup):
+Claude login switches it to OAuth; ChatGPT login replaces the fallback `claude` entry
+with an `openai` OAuth model named `chatgpt`, using the default Codex model, and points
+all roles at it. Adoption is persisted, rolling back in memory on persistence failure.
+Login never changes loop state; the user explicitly restarts work when ready.
 
 ### Latency diagnostics
 

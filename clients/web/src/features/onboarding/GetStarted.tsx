@@ -13,7 +13,7 @@ import { queryKeys, refreshHealth, useHealth, useModels, useModes, useProjects }
 import { paths } from "../../app/paths";
 import { track } from "../../app/analytics";
 import { openAddProject } from "../projects/ProjectDialogs";
-import { openAnthropicLogin } from "../settings/AnthropicLogin";
+import { openAnthropicLogin, openOpenAILogin } from "../settings/AnthropicLogin";
 import { modelStep, onboardingTarget } from "./model";
 
 export function GetStarted() {
@@ -120,9 +120,10 @@ export function GetStarted() {
               </div>
               <div className="get-started-option">
                 <strong>ChatGPT Plus or Pro subscription</strong>
-                <span className="muted small">
-                  On the daemon’s machine run <code>ycc login openai</code>, then restart the daemon.
-                </span>
+                <span className="muted small">Sign in from here; the daemon keeps the login.</span>
+                <button type="button" className="btn primary small" data-track="get_started.connect_chatgpt" onClick={openOpenAILogin}>
+                  Connect ChatGPT…
+                </button>
               </div>
               <div className="get-started-option">
                 <strong>An API key</strong>

@@ -198,6 +198,15 @@ const (
 	// SessionServiceCancelAnthropicLoginProcedure is the fully-qualified name of the SessionService's
 	// CancelAnthropicLogin RPC.
 	SessionServiceCancelAnthropicLoginProcedure = "/ycc.v1.SessionService/CancelAnthropicLogin"
+	// SessionServiceBeginOpenAILoginProcedure is the fully-qualified name of the SessionService's
+	// BeginOpenAILogin RPC.
+	SessionServiceBeginOpenAILoginProcedure = "/ycc.v1.SessionService/BeginOpenAILogin"
+	// SessionServiceCompleteOpenAILoginProcedure is the fully-qualified name of the SessionService's
+	// CompleteOpenAILogin RPC.
+	SessionServiceCompleteOpenAILoginProcedure = "/ycc.v1.SessionService/CompleteOpenAILogin"
+	// SessionServiceCancelOpenAILoginProcedure is the fully-qualified name of the SessionService's
+	// CancelOpenAILogin RPC.
+	SessionServiceCancelOpenAILoginProcedure = "/ycc.v1.SessionService/CancelOpenAILogin"
 	// SessionServiceGetSubscriptionUsageProcedure is the fully-qualified name of the SessionService's
 	// GetSubscriptionUsage RPC.
 	SessionServiceGetSubscriptionUsageProcedure = "/ycc.v1.SessionService/GetSubscriptionUsage"
@@ -380,6 +389,9 @@ type SessionServiceClient interface {
 	BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error)
 	CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error)
 	CancelAnthropicLogin(context.Context, *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error)
+	BeginOpenAILogin(context.Context, *connect.Request[v1.BeginOpenAILoginRequest]) (*connect.Response[v1.BeginOpenAILoginResponse], error)
+	CompleteOpenAILogin(context.Context, *connect.Request[v1.CompleteOpenAILoginRequest]) (*connect.Response[v1.CompleteOpenAILoginResponse], error)
+	CancelOpenAILogin(context.Context, *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error)
 	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard: return the configured budget caps so the
@@ -777,6 +789,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("CancelAnthropicLogin")),
 			connect.WithClientOptions(opts...),
 		),
+		beginOpenAILogin: connect.NewClient[v1.BeginOpenAILoginRequest, v1.BeginOpenAILoginResponse](
+			httpClient,
+			baseURL+SessionServiceBeginOpenAILoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("BeginOpenAILogin")),
+			connect.WithClientOptions(opts...),
+		),
+		completeOpenAILogin: connect.NewClient[v1.CompleteOpenAILoginRequest, v1.CompleteOpenAILoginResponse](
+			httpClient,
+			baseURL+SessionServiceCompleteOpenAILoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CompleteOpenAILogin")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelOpenAILogin: connect.NewClient[v1.CancelOpenAILoginRequest, v1.CancelOpenAILoginResponse](
+			httpClient,
+			baseURL+SessionServiceCancelOpenAILoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CancelOpenAILogin")),
+			connect.WithClientOptions(opts...),
+		),
 		getSubscriptionUsage: connect.NewClient[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse](
 			httpClient,
 			baseURL+SessionServiceGetSubscriptionUsageProcedure,
@@ -971,6 +1001,9 @@ type sessionServiceClient struct {
 	beginAnthropicLogin    *connect.Client[v1.BeginAnthropicLoginRequest, v1.BeginAnthropicLoginResponse]
 	completeAnthropicLogin *connect.Client[v1.CompleteAnthropicLoginRequest, v1.CompleteAnthropicLoginResponse]
 	cancelAnthropicLogin   *connect.Client[v1.CancelAnthropicLoginRequest, v1.CancelAnthropicLoginResponse]
+	beginOpenAILogin       *connect.Client[v1.BeginOpenAILoginRequest, v1.BeginOpenAILoginResponse]
+	completeOpenAILogin    *connect.Client[v1.CompleteOpenAILoginRequest, v1.CompleteOpenAILoginResponse]
+	cancelOpenAILogin      *connect.Client[v1.CancelOpenAILoginRequest, v1.CancelOpenAILoginResponse]
 	getSubscriptionUsage   *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
 	getBudget              *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	notify                 *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
@@ -1280,6 +1313,21 @@ func (c *sessionServiceClient) CancelAnthropicLogin(ctx context.Context, req *co
 	return c.cancelAnthropicLogin.CallUnary(ctx, req)
 }
 
+// BeginOpenAILogin calls ycc.v1.SessionService.BeginOpenAILogin.
+func (c *sessionServiceClient) BeginOpenAILogin(ctx context.Context, req *connect.Request[v1.BeginOpenAILoginRequest]) (*connect.Response[v1.BeginOpenAILoginResponse], error) {
+	return c.beginOpenAILogin.CallUnary(ctx, req)
+}
+
+// CompleteOpenAILogin calls ycc.v1.SessionService.CompleteOpenAILogin.
+func (c *sessionServiceClient) CompleteOpenAILogin(ctx context.Context, req *connect.Request[v1.CompleteOpenAILoginRequest]) (*connect.Response[v1.CompleteOpenAILoginResponse], error) {
+	return c.completeOpenAILogin.CallUnary(ctx, req)
+}
+
+// CancelOpenAILogin calls ycc.v1.SessionService.CancelOpenAILogin.
+func (c *sessionServiceClient) CancelOpenAILogin(ctx context.Context, req *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error) {
+	return c.cancelOpenAILogin.CallUnary(ctx, req)
+}
+
 // GetSubscriptionUsage calls ycc.v1.SessionService.GetSubscriptionUsage.
 func (c *sessionServiceClient) GetSubscriptionUsage(ctx context.Context, req *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
 	return c.getSubscriptionUsage.CallUnary(ctx, req)
@@ -1506,6 +1554,9 @@ type SessionServiceHandler interface {
 	BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error)
 	CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error)
 	CancelAnthropicLogin(context.Context, *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error)
+	BeginOpenAILogin(context.Context, *connect.Request[v1.BeginOpenAILoginRequest]) (*connect.Response[v1.BeginOpenAILoginResponse], error)
+	CompleteOpenAILogin(context.Context, *connect.Request[v1.CompleteOpenAILoginRequest]) (*connect.Response[v1.CompleteOpenAILoginResponse], error)
+	CancelOpenAILogin(context.Context, *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error)
 	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard: return the configured budget caps so the
@@ -1899,6 +1950,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("CancelAnthropicLogin")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceBeginOpenAILoginHandler := connect.NewUnaryHandler(
+		SessionServiceBeginOpenAILoginProcedure,
+		svc.BeginOpenAILogin,
+		connect.WithSchema(sessionServiceMethods.ByName("BeginOpenAILogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCompleteOpenAILoginHandler := connect.NewUnaryHandler(
+		SessionServiceCompleteOpenAILoginProcedure,
+		svc.CompleteOpenAILogin,
+		connect.WithSchema(sessionServiceMethods.ByName("CompleteOpenAILogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCancelOpenAILoginHandler := connect.NewUnaryHandler(
+		SessionServiceCancelOpenAILoginProcedure,
+		svc.CancelOpenAILogin,
+		connect.WithSchema(sessionServiceMethods.ByName("CancelOpenAILogin")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceGetSubscriptionUsageHandler := connect.NewUnaryHandler(
 		SessionServiceGetSubscriptionUsageProcedure,
 		svc.GetSubscriptionUsage,
@@ -2147,6 +2216,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCompleteAnthropicLoginHandler.ServeHTTP(w, r)
 		case SessionServiceCancelAnthropicLoginProcedure:
 			sessionServiceCancelAnthropicLoginHandler.ServeHTTP(w, r)
+		case SessionServiceBeginOpenAILoginProcedure:
+			sessionServiceBeginOpenAILoginHandler.ServeHTTP(w, r)
+		case SessionServiceCompleteOpenAILoginProcedure:
+			sessionServiceCompleteOpenAILoginHandler.ServeHTTP(w, r)
+		case SessionServiceCancelOpenAILoginProcedure:
+			sessionServiceCancelOpenAILoginHandler.ServeHTTP(w, r)
 		case SessionServiceGetSubscriptionUsageProcedure:
 			sessionServiceGetSubscriptionUsageHandler.ServeHTTP(w, r)
 		case SessionServiceGetBudgetProcedure:
@@ -2426,6 +2501,18 @@ func (UnimplementedSessionServiceHandler) CompleteAnthropicLogin(context.Context
 
 func (UnimplementedSessionServiceHandler) CancelAnthropicLogin(context.Context, *connect.Request[v1.CancelAnthropicLoginRequest]) (*connect.Response[v1.CancelAnthropicLoginResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CancelAnthropicLogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) BeginOpenAILogin(context.Context, *connect.Request[v1.BeginOpenAILoginRequest]) (*connect.Response[v1.BeginOpenAILoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.BeginOpenAILogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CompleteOpenAILogin(context.Context, *connect.Request[v1.CompleteOpenAILoginRequest]) (*connect.Response[v1.CompleteOpenAILoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CompleteOpenAILogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CancelOpenAILogin(context.Context, *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CancelOpenAILogin is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {

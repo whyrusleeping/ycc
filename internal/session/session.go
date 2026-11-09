@@ -3600,6 +3600,9 @@ func (m *Manager) GetModel(name string) (config.Model, bool) { return m.reg.GetM
 // subscription login (see config.Registry.AdoptAnthropicLogin).
 func (m *Manager) AdoptAnthropicLogin() (bool, error) { return m.reg.AdoptAnthropicLogin() }
 
+// AdoptOpenAILogin points an untouched built-in fallback at the ChatGPT subscription.
+func (m *Manager) AdoptOpenAILogin() (bool, error) { return m.reg.AdoptOpenAILogin() }
+
 // DiscoverModels lists the model ids available from a backend connection for the
 // connection form. key_env is resolved locally; the secret
 // value never leaves the daemon.
