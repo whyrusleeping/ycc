@@ -135,6 +135,77 @@ describe("SessionController", () => {
     c.dispose();
   });
 
+  it("stops retrying a repeated server error, shows it, and retries by hand", async () => {
+    const broken = new ConnectError("sequence discontinuity at 6", Code.Internal);
+    const { api, subscribeCalls } = fakeApi({
+      live: true,
+      scripts: [
+        { updates: [], end: "error", error: broken },
+        { updates: [], end: "error", error: broken },
+        { updates: [], end: "error", error: broken },
+        { updates: [], end: "hang" },
+      ],
+    });
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "failed");
+    expect(c.getSnapshot().failure).toBe("sequence discontinuity at 6");
+    expect(subscribeCalls).toEqual([5n, 5n, 5n]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(subscribeCalls.length).toBe(3);
+    c.reconnect();
+    await until(() => c.getSnapshot().conn === "streaming");
+    expect(subscribeCalls).toEqual([5n, 5n, 5n, 5n]);
+    c.dispose();
+  });
+
+  it("keeps reconnecting through network drops and server errors that make progress", async () => {
+    const internal = () => ({ updates: [], end: "error" as const, error: new ConnectError("blip", Code.Internal) });
+    const durable = (seq: number) =>
+      create(SessionViewUpdateSchema, { seq: BigInt(seq), state: viewState(seq), upsertedRows: [protoRow(seq, `r${seq}`)] });
+    const { api, subscribeCalls } = fakeApi({
+      live: true,
+      scripts: [
+        { updates: [], end: "error", error: new ConnectError("Failed to fetch", Code.Unknown) },
+        { updates: [], end: "error" }, // unavailable
+        { updates: [], end: "error", error: new ConnectError("Failed to fetch", Code.Unknown) },
+        { updates: [], end: "error", error: new ConnectError("deadline", Code.DeadlineExceeded) },
+        internal(),
+        internal(),
+        { updates: [durable(6)], end: "error", error: new ConnectError("blip", Code.Internal) },
+        internal(),
+        { updates: [], end: "hang" },
+      ],
+    });
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => subscribeCalls.length >= 9 && c.getSnapshot().conn === "streaming");
+    expect(subscribeCalls).toEqual([5n, 5n, 5n, 5n, 5n, 5n, 5n, 6n, 6n]);
+    expect(c.getSnapshot().cursor).toBe(6);
+    c.dispose();
+  });
+
+  it("a failed read-only reload retries with a fresh snapshot", async () => {
+    const { api, raw } = fakeApi({
+      live: true,
+      scripts: [{ updates: [create(SessionViewUpdateSchema, {})], end: "error", error: new ConnectError("ended", Code.NotFound) }],
+    });
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    const broken = new ConnectError("index corrupt", Code.DataLoss);
+    raw.getSessionView
+      .mockImplementationOnce(raw.getSessionView.getMockImplementation()!)
+      .mockRejectedValueOnce(broken)
+      .mockRejectedValueOnce(broken)
+      .mockRejectedValueOnce(broken);
+    c.start();
+    await until(() => c.getSnapshot().conn === "failed");
+    expect(c.getSnapshot()).toMatchObject({ mode: "persisted", failure: "index corrupt" });
+    c.reconnect();
+    await until(() => c.getSnapshot().conn === "finished");
+    expect(raw.getSessionView).toHaveBeenCalledTimes(5);
+    c.dispose();
+  });
+
   it("routes a 401 to the unauthorized hook", async () => {
     const { api } = fakeApi({
       live: true,

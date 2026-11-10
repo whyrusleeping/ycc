@@ -92,9 +92,11 @@ export interface ControllerOptions {
   publishDelayMs?: number;
   sentEchoTimeoutMs?: number;
   controlAckTimeoutMs?: number;
+  /** Consecutive identical server errors before the stream stops retrying. */
+  serverErrorLimit?: number;
 }
 
-type Disposition = "transient" | "unauthorized" | "missing" | "cancelled" | "terminal";
+type Disposition = "transient" | "server" | "unauthorized" | "missing" | "cancelled" | "terminal";
 
 export function classify(err: unknown): Disposition {
   if (err instanceof DOMException && err.name === "AbortError") return "cancelled";
@@ -111,8 +113,18 @@ export function classify(err: unknown): Disposition {
     case Code.PermissionDenied:
     case Code.Unimplemented:
       return "terminal";
-    default:
+    // Network drops (fetch failures and broken bodies surface as Unknown),
+    // proxies and daemon restarts: always worth another try.
+    case Code.Unknown:
+    case Code.Unavailable:
+    case Code.DeadlineExceeded:
+    case Code.ResourceExhausted:
+    case Code.Aborted:
       return "transient";
+    // Internal, DataLoss and the rest come from the daemon itself and may
+    // fail the same way on every attempt.
+    default:
+      return "server";
   }
 }
 
@@ -173,6 +185,7 @@ export class SessionController {
       publishDelayMs: opts.publishDelayMs ?? 16,
       sentEchoTimeoutMs: opts.sentEchoTimeoutMs ?? 15_000,
       controlAckTimeoutMs: opts.controlAckTimeoutMs ?? 8_000,
+      serverErrorLimit: opts.serverErrorLimit ?? 3,
     };
     this.snapshot = this.buildSnapshot();
   }
@@ -245,7 +258,12 @@ export class SessionController {
   start() {
     if (this.disposed) return;
     if (this.loop) return;
-    this.runLoop(!this.installed);
+    this.runLoop(this.needsSnapshot());
+  }
+
+  /** Never installed, or a read-only reload that failed. */
+  private needsSnapshot() {
+    return !this.installed || (this.mode === "persisted" && this.conn === "failed");
   }
 
   /** Stop streaming; the projection stays for a quick re-open. */
@@ -268,9 +286,9 @@ export class SessionController {
 
   /** Resubscribe now (e.g. the tab became visible after a long sleep). */
   reconnect() {
-    if (this.mode === "persisted" || this.disposed) return;
+    if (this.disposed || (this.mode === "persisted" && this.conn !== "failed")) return;
     this.stop();
-    this.runLoop(!this.installed);
+    this.runLoop(this.needsSnapshot());
   }
 
   private current(gen: number) {
@@ -317,6 +335,10 @@ export class SessionController {
       let delay = this.opts.backoffInitialMs;
       let needSnapshot = snapshotFirst;
       let streamed = false;
+      // The same daemon-side error on consecutive attempts with nothing
+      // received in between is permanent: show it rather than spin.
+      let serverError = "";
+      let serverRepeats = 0;
       while (this.current(gen)) {
         try {
           if (needSnapshot) {
@@ -347,6 +369,8 @@ export class SessionController {
               this.projection.apply(fromEvent(update.transientEvent));
               this.publish(false);
             } else if (update.state) {
+              // Durable progress: an earlier server error did not recur.
+              serverRepeats = 0;
               this.projection.applyIndexed(
                 fromState(update.state),
                 update.upsertedRows.map(fromRow),
@@ -366,7 +390,15 @@ export class SessionController {
           return;
         } catch (err) {
           if (!this.current(gen)) return;
-          switch (classify(err)) {
+          let disposition = classify(err);
+          if (disposition === "server") {
+            const ce = ConnectError.from(err);
+            const key = `${ce.code}\u0000${ce.rawMessage}`;
+            serverRepeats = key === serverError ? serverRepeats + 1 : 1;
+            serverError = key;
+            disposition = serverRepeats >= this.opts.serverErrorLimit ? "terminal" : "transient";
+          }
+          switch (disposition) {
             case "cancelled":
               return;
             case "unauthorized":
@@ -406,9 +438,9 @@ export class SessionController {
                 return;
               }
               delay = Math.min(delay * 2, this.opts.backoffMaxMs);
-              // Resubscribe from the cursor; only a never-installed view
-              // needs a snapshot first.
-              needSnapshot = !this.installed;
+              // Resubscribe from the cursor; only a never-installed view or
+              // a snapshot load that failed (read-only reload) reloads first.
+              needSnapshot = needSnapshot || !this.installed;
           }
         }
       }
