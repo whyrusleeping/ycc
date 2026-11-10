@@ -2073,7 +2073,7 @@ pre.clamp {
 .quick-reply-edit {
   display: grid;
   grid-template-columns: 10rem 1fr auto;
-  align-items: end;
+  align-items: start;
   gap: 8px;
   width: 100%;
   margin: 0;
@@ -2081,8 +2081,17 @@ pre.clamp {
   border: none;
 }
 
+.quick-reply-row-actions {
+  align-self: center;
+}
+
 .quick-replies-form .dialog-actions {
   align-self: stretch;
+}
+
+.quick-reply-row-actions {
+  display: flex;
+  gap: 2px;
 }
 
 .btn.attach {

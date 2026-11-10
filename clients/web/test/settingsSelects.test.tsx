@@ -29,6 +29,7 @@ vi.mock("../src/api/queries", () => ({
   useHealth: () => ({ data: [], isPending: false, isError: false }),
   useModes: () => ({ isPending: true }),
   useBudget: () => ({ isPending: true }),
+  useQuickReplies: () => ({ isPending: true }),
 }));
 vi.mock("../src/features/session/useSession", () => ({
   useSessionController: () => ({}),

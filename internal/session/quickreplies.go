@@ -7,19 +7,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
-// QuickReply is a canned message a client offers as a one-gesture send.
-// ID is set only on built-ins.
+// QuickReply is a canned message a client offers as a one-gesture send. ID is
+// set only on default replies (and kept while they are edited).
 type QuickReply struct {
-	ID    string `json:"-"`
+	ID    string `json:"id,omitempty"`
 	Label string `json:"label"`
 	Text  string `json:"text"`
 }
 
-// BuiltinQuickReplies are offered in every project, ahead of its own replies.
-var BuiltinQuickReplies = []QuickReply{
+// DefaultQuickReplies is the daemon-wide list until the user first edits it.
+var DefaultQuickReplies = []QuickReply{
 	{ID: "go_ahead", Label: "Go ahead", Text: "Go ahead"},
 	{ID: "continue", Label: "Continue", Text: "Continue"},
 	{ID: "commit_push", Label: "Commit & push", Text: "Commit and push"},
@@ -39,6 +40,62 @@ type quickRepliesDoc struct {
 	Replies []QuickReply `json:"replies"`
 }
 
+// quickReplyStore holds the daemon-wide list: in a state file when the daemon
+// persists state, otherwise in memory.
+type quickReplyStore struct {
+	mu   sync.Mutex
+	path string
+	mem  []QuickReply
+	set  bool // mem holds an edited list (memory-only store)
+}
+
+// SetQuickRepliesFile persists the daemon-wide quick replies at path.
+func (m *Manager) SetQuickRepliesFile(path string) {
+	m.quickReplies.mu.Lock()
+	m.quickReplies.path = path
+	m.quickReplies.mu.Unlock()
+}
+
+// GlobalQuickReplies returns the daemon-wide list (the defaults until edited).
+func (m *Manager) GlobalQuickReplies() ([]QuickReply, error) {
+	s := &m.quickReplies
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.path == "" {
+		if !s.set {
+			return append([]QuickReply(nil), DefaultQuickReplies...), nil
+		}
+		return append([]QuickReply(nil), s.mem...), nil
+	}
+	replies, ok, err := readQuickReplies(s.path)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return append([]QuickReply(nil), DefaultQuickReplies...), nil
+	}
+	return replies, nil
+}
+
+// SetGlobalQuickReplies validates and replaces the daemon-wide list.
+func (m *Manager) SetGlobalQuickReplies(replies []QuickReply) ([]QuickReply, error) {
+	clean, err := cleanQuickReplies(replies, true)
+	if err != nil {
+		return nil, err
+	}
+	s := &m.quickReplies
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.path == "" {
+		s.mem, s.set = clean, true
+		return append([]QuickReply(nil), clean...), nil
+	}
+	if err := writeQuickReplies(s.path, clean); err != nil {
+		return nil, err
+	}
+	return clean, nil
+}
+
 // QuickReplies returns the project's own replies from its root workspace's
 // .ycc/quick-replies.json; a missing file means none.
 func (m *Manager) QuickReplies(project string) ([]QuickReply, error) {
@@ -46,23 +103,28 @@ func (m *Manager) QuickReplies(project string) ([]QuickReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(filepath.Join(workspace, ".ycc", quickRepliesFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var doc quickRepliesDoc
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("read quick replies: %w", err)
-	}
-	return doc.Replies, nil
+	replies, _, err := readQuickReplies(filepath.Join(workspace, ".ycc", quickRepliesFile))
+	return replies, err
 }
 
 // SetQuickReplies validates and replaces the project's own replies, returning
 // the stored (trimmed) list.
 func (m *Manager) SetQuickReplies(project string, replies []QuickReply) ([]QuickReply, error) {
+	clean, err := cleanQuickReplies(replies, false)
+	if err != nil {
+		return nil, err
+	}
+	workspace, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeQuickReplies(filepath.Join(workspace, ".ycc", quickRepliesFile), clean); err != nil {
+		return nil, err
+	}
+	return clean, nil
+}
+
+func cleanQuickReplies(replies []QuickReply, keepDefaultIDs bool) ([]QuickReply, error) {
 	if len(replies) > maxQuickReplies {
 		return nil, fmt.Errorf("%w: at most %d replies", ErrInvalidQuickReplies, maxQuickReplies)
 	}
@@ -77,23 +139,56 @@ func (m *Manager) SetQuickReplies(project string, replies []QuickReply) ([]Quick
 		case len(text) > maxQuickReplyTextLen:
 			return nil, fmt.Errorf("%w: the message for %q is longer than %d bytes", ErrInvalidQuickReplies, label, maxQuickReplyTextLen)
 		}
-		clean = append(clean, QuickReply{Label: label, Text: text})
+		id := ""
+		if keepDefaultIDs && isDefaultQuickReplyID(r.ID) {
+			id = r.ID
+		}
+		clean = append(clean, QuickReply{ID: id, Label: label, Text: text})
 	}
-	workspace, err := m.resolveProjectWorkspace(project)
+	return clean, nil
+}
+
+func isDefaultQuickReplyID(id string) bool {
+	for _, d := range DefaultQuickReplies {
+		if d.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// readQuickReplies reads a quick-replies file; ok is false when it is missing.
+func readQuickReplies(path string) (replies []QuickReply, ok bool, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	data, err := json.MarshalIndent(quickRepliesDoc{Replies: clean}, "", "  ")
+	var doc quickRepliesDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, false, fmt.Errorf("read quick replies: %w", err)
+	}
+	if doc.Replies == nil {
+		doc.Replies = []QuickReply{}
+	}
+	return doc.Replies, true, nil
+}
+
+// writeQuickReplies atomically replaces a quick-replies file.
+func writeQuickReplies(path string, replies []QuickReply) error {
+	data, err := json.MarshalIndent(quickRepliesDoc{Replies: replies}, "", "  ")
 	if err != nil {
-		return nil, err
+		return err
 	}
-	dir := filepath.Join(workspace, ".ycc")
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	f, err := os.CreateTemp(dir, ".quick-replies-*")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer os.Remove(f.Name())
 	_, writeErr := f.Write(data)
@@ -104,10 +199,7 @@ func (m *Manager) SetQuickReplies(project string, replies []QuickReply) ([]Quick
 		writeErr = closeErr
 	}
 	if writeErr != nil {
-		return nil, writeErr
+		return writeErr
 	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, quickRepliesFile)); err != nil {
-		return nil, err
-	}
-	return clean, nil
+	return os.Rename(f.Name(), path)
 }

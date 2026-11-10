@@ -3238,13 +3238,16 @@ func (x *MarkSessionsReadResponse) GetMarks() []*SessionReadMark {
 }
 
 // Quick replies: short canned messages clients offer as one-gesture sends on
-// an idle session. Built-ins come from the daemon so every client shows the
-// same set; a project adds its own after them.
+// an idle session. A daemon-wide list (edited in Settings) comes first, then
+// the project's own extras. Until it is first edited, the daemon-wide list is
+// the defaults (Go ahead, Continue, Commit & push).
 type QuickReply struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`       // stable id for built-ins (analytics); empty for project replies
-	Label         string                 `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"` // short button text
-	Text          string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`   // the message sent
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Stable id of a default reply (analytics), kept while it is edited;
+	// empty for replies the user added.
+	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Label         string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"` // short button text
+	Text          string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`   // the message sent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3300,6 +3303,8 @@ func (x *QuickReply) GetText() string {
 	return ""
 }
 
+// An empty project skips the project's replies when the daemon has no single
+// default project (e.g. the Settings editor).
 type GetQuickRepliesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -3346,7 +3351,7 @@ func (x *GetQuickRepliesRequest) GetProject() string {
 
 type GetQuickRepliesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Builtin       []*QuickReply          `protobuf:"bytes,1,rep,name=builtin,proto3" json:"builtin,omitempty"`
+	Global        []*QuickReply          `protobuf:"bytes,1,rep,name=global,proto3" json:"global,omitempty"`
 	Project       []*QuickReply          `protobuf:"bytes,2,rep,name=project,proto3" json:"project,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3382,9 +3387,9 @@ func (*GetQuickRepliesResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{55}
 }
 
-func (x *GetQuickRepliesResponse) GetBuiltin() []*QuickReply {
+func (x *GetQuickRepliesResponse) GetGlobal() []*QuickReply {
 	if x != nil {
-		return x.Builtin
+		return x.Global
 	}
 	return nil
 }
@@ -3396,13 +3401,15 @@ func (x *GetQuickRepliesResponse) GetProject() []*QuickReply {
 	return nil
 }
 
-// SetQuickReplies replaces the project's own replies (ids are ignored). Labels
-// and texts are trimmed and must be non-empty; at most 12 replies, labels up
-// to 32 characters, texts up to 4000 bytes.
+// SetQuickReplies replaces one list: the daemon-wide list when global is set,
+// otherwise the project's. Labels and texts are trimmed and must be non-empty;
+// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes. Only
+// a default reply's id is kept (daemon-wide list); other ids are dropped.
 type SetQuickRepliesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Replies       []*QuickReply          `protobuf:"bytes,2,rep,name=replies,proto3" json:"replies,omitempty"`
+	Global        bool                   `protobuf:"varint,3,opt,name=global,proto3" json:"global,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3451,9 +3458,16 @@ func (x *SetQuickRepliesRequest) GetReplies() []*QuickReply {
 	return nil
 }
 
+func (x *SetQuickRepliesRequest) GetGlobal() bool {
+	if x != nil {
+		return x.Global
+	}
+	return false
+}
+
 type SetQuickRepliesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       []*QuickReply          `protobuf:"bytes,1,rep,name=project,proto3" json:"project,omitempty"`
+	Replies       []*QuickReply          `protobuf:"bytes,1,rep,name=replies,proto3" json:"replies,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3488,9 +3502,9 @@ func (*SetQuickRepliesResponse) Descriptor() ([]byte, []int) {
 	return file_ycc_v1_ycc_proto_rawDescGZIP(), []int{57}
 }
 
-func (x *SetQuickRepliesResponse) GetProject() []*QuickReply {
+func (x *SetQuickRepliesResponse) GetReplies() []*QuickReply {
 	if x != nil {
-		return x.Project
+		return x.Replies
 	}
 	return nil
 }
@@ -14102,15 +14116,16 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12\x12\n" +
 	"\x04text\x18\x03 \x01(\tR\x04text\"2\n" +
 	"\x16GetQuickRepliesRequest\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\"u\n" +
-	"\x17GetQuickRepliesResponse\x12,\n" +
-	"\abuiltin\x18\x01 \x03(\v2\x12.ycc.v1.QuickReplyR\abuiltin\x12,\n" +
-	"\aproject\x18\x02 \x03(\v2\x12.ycc.v1.QuickReplyR\aproject\"`\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"s\n" +
+	"\x17GetQuickRepliesResponse\x12*\n" +
+	"\x06global\x18\x01 \x03(\v2\x12.ycc.v1.QuickReplyR\x06global\x12,\n" +
+	"\aproject\x18\x02 \x03(\v2\x12.ycc.v1.QuickReplyR\aproject\"x\n" +
 	"\x16SetQuickRepliesRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12,\n" +
-	"\areplies\x18\x02 \x03(\v2\x12.ycc.v1.QuickReplyR\areplies\"G\n" +
+	"\areplies\x18\x02 \x03(\v2\x12.ycc.v1.QuickReplyR\areplies\x12\x16\n" +
+	"\x06global\x18\x03 \x01(\bR\x06global\"G\n" +
 	"\x17SetQuickRepliesResponse\x12,\n" +
-	"\aproject\x18\x01 \x03(\v2\x12.ycc.v1.QuickReplyR\aproject\"\x86\x01\n" +
+	"\areplies\x18\x01 \x03(\v2\x12.ycc.v1.QuickReplyR\areplies\"\x86\x01\n" +
 	"\x1bGetSessionTranscriptRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +
@@ -15305,10 +15320,10 @@ var file_ycc_v1_ycc_proto_depIdxs = []int32{
 	46,  // 14: ycc.v1.ListSessionHistoryResponse.pinned:type_name -> ycc.v1.SessionSummary
 	50,  // 15: ycc.v1.MarkSessionsReadRequest.marks:type_name -> ycc.v1.SessionReadMark
 	50,  // 16: ycc.v1.MarkSessionsReadResponse.marks:type_name -> ycc.v1.SessionReadMark
-	53,  // 17: ycc.v1.GetQuickRepliesResponse.builtin:type_name -> ycc.v1.QuickReply
+	53,  // 17: ycc.v1.GetQuickRepliesResponse.global:type_name -> ycc.v1.QuickReply
 	53,  // 18: ycc.v1.GetQuickRepliesResponse.project:type_name -> ycc.v1.QuickReply
 	53,  // 19: ycc.v1.SetQuickRepliesRequest.replies:type_name -> ycc.v1.QuickReply
-	53,  // 20: ycc.v1.SetQuickRepliesResponse.project:type_name -> ycc.v1.QuickReply
+	53,  // 20: ycc.v1.SetQuickRepliesResponse.replies:type_name -> ycc.v1.QuickReply
 	0,   // 21: ycc.v1.GetSessionTranscriptResponse.events:type_name -> ycc.v1.Event
 	0,   // 22: ycc.v1.SessionPresentationRow.events:type_name -> ycc.v1.Event
 	61,  // 23: ycc.v1.SessionViewState.pending_questions:type_name -> ycc.v1.SessionViewQuestion

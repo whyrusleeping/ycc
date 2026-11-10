@@ -6,10 +6,16 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import type { DraftPicture } from "../attachments/attachments";
 import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
 import { track, type Attrs, type Via } from "../../app/analytics";
-import type { QuickReply } from "../../gen/ycc/v1/ycc_pb";
 
 const drafts = new Map<string, string>();
 const pictureDrafts = new Map<string, DraftPicture[]>();
+
+/** A quick reply as offered; `kind` (a default's id, `global` or `project`) is all analytics records. */
+export interface QuickReplyChip {
+  label: string;
+  text: string;
+  kind: string;
+}
 
 export interface ComposerHandle {
   setDraft: (text: string, pictures?: DraftPicture[]) => void;
@@ -29,7 +35,7 @@ export const Composer = forwardRef<
     /** Enum-valued analytics attrs for `composer.send` (e.g. the session phase). */
     sendAttrs?: Attrs;
     /** One-click replies offered while the draft is empty (omit to hide them). */
-    quickReplies?: readonly QuickReply[];
+    quickReplies?: readonly QuickReplyChip[];
     onEditQuickReplies?: () => void;
   }
 >(function Composer(
@@ -118,13 +124,13 @@ export const Composer = forwardRef<
         <div className="quick-replies" role="group" aria-label="Quick replies">
           {quickReplies.map((r, i) => (
             <button
-              key={r.id || `project-${i}`}
+              key={i}
               type="button"
               className="chip suggestion"
               title={r.text}
               onClick={() => {
                 // The kind, never the text: project replies are user-written.
-                track.action("composer.quick_reply", "click", { ...sendAttrs, kind: r.id || "project" });
+                track.action("composer.quick_reply", "click", { ...sendAttrs, kind: r.kind });
                 setQuickSent(true);
                 onSend(r.text, []);
               }}

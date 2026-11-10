@@ -3,7 +3,8 @@
 // RemoveModel / TestModel / DiscoverModels), which model does what (default
 // roles via SetRoleConfig, reasoning via SetThinking, and the work
 // implementation strategy), code review tiers (ListReviewTiers /
-// UpsertReviewTier / RemoveReviewTier / SetReviewDefault), this browser's
+// UpsertReviewTier / RemoveReviewTier / SetReviewDefault), the daemon-wide
+// quick replies (GetQuickReplies / SetQuickReplies), this browser's
 // notifications, the read-only spend caps, and daemon health. Model and tier
 // selects require Apply; changes persist to the daemon's ycc.toml; the daemon's
 // error is shown verbatim. Mirrors iOS GlobalSettingsView and ReviewTiersView.
@@ -12,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useLocation, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, useBudget, useHealth, useModels, useReviewTiers } from "../../api/queries";
+import { queryKeys, useBudget, useHealth, useModels, useQuickReplies, useReviewTiers } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { useIntent } from "../../app/intents";
 import type { ModelInfo } from "../../gen/ycc/v1/ycc_pb";
@@ -27,6 +28,7 @@ import { ModelEditorDialog, type EditorTarget } from "./ModelEditor";
 import { TierEditorDialog } from "./TierEditor";
 import { SECTION_ALIASES, SETTINGS_SECTIONS as SECTIONS } from "./sections";
 import { NotificationControls } from "../notify/NotifyControls";
+import { QuickRepliesForm } from "../quickReplies/QuickRepliesEditor";
 import { HealthPanel } from "../health/HealthPanel";
 import { draftFromConfig, modelStatus, pricingLine, rolesOf, sortedModels, toggleReviewer, upsertModelRequest } from "./models";
 import { draftFromTier, isRemovable, newTierDraft, tierBadge, tierPurpose, tierSummary, type TierDraft } from "./tiers";
@@ -121,6 +123,7 @@ export function SettingsPage() {
           <ReviewTiersSection models={models.data.models} />
         </>
       )}
+      <QuickRepliesSection />
       <Section id="notifications" title="Notifications" intro="Desktop notifications in this browser when a session needs you.">
         <NotificationControls />
       </Section>
@@ -134,6 +137,31 @@ export function SettingsPage() {
         onClose={() => setEditor(null)}
       />
     </div>
+  );
+}
+
+/** The daemon-wide quick replies (projects add extras from the Projects page). */
+function QuickRepliesSection() {
+  const replies = useQuickReplies("");
+  return (
+    <Section
+      id="quickReplies"
+      title="Quick replies"
+      intro={
+        <>
+          One-click messages above the composer (a swipe-in menu on iOS) when a session is idle. These apply to every project; a project can
+          add its own from the <Link to={paths.projects()}>Projects</Link> page.
+        </>
+      }
+    >
+      {replies.isPending ? (
+        <p className="muted">Loading…</p>
+      ) : replies.isError ? (
+        <p className="error" role="alert">{errorMessage(replies.error, "Couldn’t load quick replies.")}</p>
+      ) : (
+        <QuickRepliesForm scope={{ global: true }} initial={replies.data.global} emptyText="No quick replies: sessions won’t offer any." />
+      )}
+    </Section>
   );
 }
 

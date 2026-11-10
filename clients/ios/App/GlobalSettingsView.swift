@@ -45,6 +45,7 @@ struct GlobalSettingsView: View {
             rolesSection
             thinkingSection
             reviewTiersSection
+            quickRepliesSection
             modelsSection
         }
         .navigationTitle("Settings")
@@ -214,6 +215,18 @@ struct GlobalSettingsView: View {
             }
         } footer: {
             Text("Named review line-ups the coordinator picks per change — each reviewer slot with its own model, focus, and thinking level.")
+        }
+    }
+
+    private var quickRepliesSection: some View {
+        Section {
+            NavigationLink {
+                QuickRepliesSettingsView(client: client)
+            } label: {
+                Label("Quick replies", systemImage: "text.bubble")
+            }
+        } footer: {
+            Text("Canned messages offered in every session’s swipe-in menu.")
         }
     }
 

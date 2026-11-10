@@ -369,26 +369,33 @@ message MarkSessionsReadResponse {
 }
 
 // Quick replies: short canned messages clients offer as one-gesture sends on
-// an idle session. Built-ins come from the daemon so every client shows the
-// same set; a project adds its own after them.
+// an idle session. A daemon-wide list (edited in Settings) comes first, then
+// the project's own extras. Until it is first edited, the daemon-wide list is
+// the defaults (Go ahead, Continue, Commit & push).
 message QuickReply {
-  string id = 1;    // stable id for built-ins (analytics); empty for project replies
+  // Stable id of a default reply (analytics), kept while it is edited;
+  // empty for replies the user added.
+  string id = 1;
   string label = 2; // short button text
   string text = 3;  // the message sent
 }
+// An empty project skips the project's replies when the daemon has no single
+// default project (e.g. the Settings editor).
 message GetQuickRepliesRequest { string project = 1; }
 message GetQuickRepliesResponse {
-  repeated QuickReply builtin = 1;
+  repeated QuickReply global = 1;
   repeated QuickReply project = 2;
 }
-// SetQuickReplies replaces the project's own replies (ids are ignored). Labels
-// and texts are trimmed and must be non-empty; at most 12 replies, labels up
-// to 32 characters, texts up to 4000 bytes.
+// SetQuickReplies replaces one list: the daemon-wide list when global is set,
+// otherwise the project's. Labels and texts are trimmed and must be non-empty;
+// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes. Only
+// a default reply's id is kept (daemon-wide list); other ids are dropped.
 message SetQuickRepliesRequest {
   string project = 1;
   repeated QuickReply replies = 2;
+  bool global = 3;
 }
-message SetQuickRepliesResponse { repeated QuickReply project = 1; }
+message SetQuickRepliesResponse { repeated QuickReply replies = 1; } // the stored list
 
 // GetSessionTranscript returns the full event log for a session — live or
 // persisted on disk — so the session browser can render a read-only replayed

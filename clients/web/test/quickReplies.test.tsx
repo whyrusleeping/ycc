@@ -2,8 +2,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { create } from "@bufbuild/protobuf";
-import { QuickReplySchema } from "../src/gen/ycc/v1/ycc_pb";
 import type { SessionSnapshot } from "../src/features/session/controller";
 
 const track = vi.hoisted(() => ({ action: vi.fn() }));
@@ -13,8 +11,8 @@ const { Composer } = await import("../src/features/session/Composer");
 const { quickRepliesAllowed } = await import("../src/features/session/SessionView");
 
 const replies = [
-  create(QuickReplySchema, { id: "go_ahead", label: "Go ahead", text: "Go ahead" }),
-  create(QuickReplySchema, { label: "Deploy", text: "Deploy to prod following the runbook" }),
+  { kind: "go_ahead", label: "Go ahead", text: "Go ahead" },
+  { kind: "project", label: "Deploy", text: "Deploy to prod following the runbook" },
 ];
 
 let container: HTMLDivElement;

@@ -1955,6 +1955,7 @@ type Manager struct {
 	sessions          map[string]*Session
 	followUpMu        sync.Mutex
 	readMarkMu        sync.Mutex
+	quickReplies      quickReplyStore
 	historyCacheMu    sync.Mutex
 	historyCache      map[string]sessionSummaryCacheEntry
 	usageScans        *usage.Scanner // per-log usage reductions for UsageReport

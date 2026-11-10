@@ -1130,14 +1130,16 @@ public nonisolated struct Ycc_V1_MarkSessionsReadResponse: Sendable {
 }
 
 /// Quick replies: short canned messages clients offer as one-gesture sends on
-/// an idle session. Built-ins come from the daemon so every client shows the
-/// same set; a project adds its own after them.
+/// an idle session. A daemon-wide list (edited in Settings) comes first, then
+/// the project's own extras. Until it is first edited, the daemon-wide list is
+/// the defaults (Go ahead, Continue, Commit & push).
 public nonisolated struct Ycc_V1_QuickReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// stable id for built-ins (analytics); empty for project replies
+  /// Stable id of a default reply (analytics), kept while it is edited;
+  /// empty for replies the user added.
   public var id: String = String()
 
   /// short button text
@@ -1151,6 +1153,8 @@ public nonisolated struct Ycc_V1_QuickReply: Sendable {
   public init() {}
 }
 
+/// An empty project skips the project's replies when the daemon has no single
+/// default project (e.g. the Settings editor).
 public nonisolated struct Ycc_V1_GetQuickRepliesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1168,7 +1172,7 @@ public nonisolated struct Ycc_V1_GetQuickRepliesResponse: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var builtin: [Ycc_V1_QuickReply] = []
+  public var global: [Ycc_V1_QuickReply] = []
 
   public var project: [Ycc_V1_QuickReply] = []
 
@@ -1177,9 +1181,10 @@ public nonisolated struct Ycc_V1_GetQuickRepliesResponse: Sendable {
   public init() {}
 }
 
-/// SetQuickReplies replaces the project's own replies (ids are ignored). Labels
-/// and texts are trimmed and must be non-empty; at most 12 replies, labels up
-/// to 32 characters, texts up to 4000 bytes.
+/// SetQuickReplies replaces one list: the daemon-wide list when global is set,
+/// otherwise the project's. Labels and texts are trimmed and must be non-empty;
+/// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes. Only
+/// a default reply's id is kept (daemon-wide list); other ids are dropped.
 public nonisolated struct Ycc_V1_SetQuickRepliesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1188,6 +1193,8 @@ public nonisolated struct Ycc_V1_SetQuickRepliesRequest: Sendable {
   public var project: String = String()
 
   public var replies: [Ycc_V1_QuickReply] = []
+
+  public var global: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1199,7 +1206,7 @@ public nonisolated struct Ycc_V1_SetQuickRepliesResponse: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var project: [Ycc_V1_QuickReply] = []
+  public var replies: [Ycc_V1_QuickReply] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7081,7 +7088,7 @@ nonisolated extension Ycc_V1_GetQuickRepliesRequest: SwiftProtobuf.Message, Swif
 
 nonisolated extension Ycc_V1_GetQuickRepliesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetQuickRepliesResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}builtin\0\u{1}project\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}global\0\u{1}project\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7089,7 +7096,7 @@ nonisolated extension Ycc_V1_GetQuickRepliesResponse: SwiftProtobuf.Message, Swi
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.builtin) }()
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.global) }()
       case 2: try { try decoder.decodeRepeatedMessageField(value: &self.project) }()
       default: break
       }
@@ -7097,8 +7104,8 @@ nonisolated extension Ycc_V1_GetQuickRepliesResponse: SwiftProtobuf.Message, Swi
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.builtin.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.builtin, fieldNumber: 1)
+    if !self.global.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.global, fieldNumber: 1)
     }
     if !self.project.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.project, fieldNumber: 2)
@@ -7107,7 +7114,7 @@ nonisolated extension Ycc_V1_GetQuickRepliesResponse: SwiftProtobuf.Message, Swi
   }
 
   public static func ==(lhs: Ycc_V1_GetQuickRepliesResponse, rhs: Ycc_V1_GetQuickRepliesResponse) -> Bool {
-    if lhs.builtin != rhs.builtin {return false}
+    if lhs.global != rhs.global {return false}
     if lhs.project != rhs.project {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -7116,7 +7123,7 @@ nonisolated extension Ycc_V1_GetQuickRepliesResponse: SwiftProtobuf.Message, Swi
 
 nonisolated extension Ycc_V1_SetQuickRepliesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetQuickRepliesRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}replies\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}replies\0\u{1}global\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7126,6 +7133,7 @@ nonisolated extension Ycc_V1_SetQuickRepliesRequest: SwiftProtobuf.Message, Swif
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
       case 2: try { try decoder.decodeRepeatedMessageField(value: &self.replies) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.global) }()
       default: break
       }
     }
@@ -7138,12 +7146,16 @@ nonisolated extension Ycc_V1_SetQuickRepliesRequest: SwiftProtobuf.Message, Swif
     if !self.replies.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.replies, fieldNumber: 2)
     }
+    if self.global != false {
+      try visitor.visitSingularBoolField(value: self.global, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SetQuickRepliesRequest, rhs: Ycc_V1_SetQuickRepliesRequest) -> Bool {
     if lhs.project != rhs.project {return false}
     if lhs.replies != rhs.replies {return false}
+    if lhs.global != rhs.global {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7151,7 +7163,7 @@ nonisolated extension Ycc_V1_SetQuickRepliesRequest: SwiftProtobuf.Message, Swif
 
 nonisolated extension Ycc_V1_SetQuickRepliesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetQuickRepliesResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}replies\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7159,21 +7171,21 @@ nonisolated extension Ycc_V1_SetQuickRepliesResponse: SwiftProtobuf.Message, Swi
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.project) }()
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.replies) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.project.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.project, fieldNumber: 1)
+    if !self.replies.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.replies, fieldNumber: 1)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SetQuickRepliesResponse, rhs: Ycc_V1_SetQuickRepliesResponse) -> Bool {
-    if lhs.project != rhs.project {return false}
+    if lhs.replies != rhs.replies {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -196,14 +196,41 @@ public final class YccClient: Sendable {
         }
     }
 
-    /// The daemon's built-in quick replies followed by the project's own.
-    public func getQuickReplies(project: String) async throws -> [Ycc_V1_QuickReply] {
+    /// The replies a session offers: the daemon-wide list followed by the
+    /// project's extras.
+    public func getQuickReplies(project: String) async throws -> [QuickReplyChoice] {
+        let message = try await quickReplies(project: project)
+        return message.global.map { QuickReplyChoice(reply: $0, isGlobal: true) }
+            + message.project.map { QuickReplyChoice(reply: $0, isGlobal: false) }
+    }
+
+    /// The daemon-wide quick replies (the defaults until the user edits them).
+    public func getGlobalQuickReplies() async throws -> [Ycc_V1_QuickReply] {
+        try await quickReplies(project: "").global
+    }
+
+    /// Replace the daemon-wide quick replies, returning the stored (trimmed)
+    /// list. Send each existing reply's `id` back so edited defaults keep it.
+    public func setGlobalQuickReplies(_ replies: [Ycc_V1_QuickReply]) async throws -> [Ycc_V1_QuickReply] {
+        var request = Ycc_V1_SetQuickRepliesRequest()
+        request.global = true
+        request.replies = replies
+        let response = await generated.setQuickReplies(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.replies
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    private func quickReplies(project: String) async throws -> Ycc_V1_GetQuickRepliesResponse {
         var request = Ycc_V1_GetQuickRepliesRequest()
         request.project = project
         let response = await generated.getQuickReplies(request: request)
         switch response.result {
         case .success(let message):
-            return message.builtin + message.project
+            return message
         case .failure(let error):
             throw Self.map(error)
         }

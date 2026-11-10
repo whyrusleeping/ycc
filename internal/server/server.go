@@ -306,15 +306,21 @@ func quickRepliesProto(replies []session.QuickReply) []*v1.QuickReply {
 }
 
 func (s *Server) GetQuickReplies(_ context.Context, req *connect.Request[v1.GetQuickRepliesRequest]) (*connect.Response[v1.GetQuickRepliesResponse], error) {
-	replies, err := s.mgr.QuickReplies(req.Msg.Project)
+	global, err := s.mgr.GlobalQuickReplies()
 	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	replies, err := s.mgr.QuickReplies(req.Msg.Project)
+	// An empty project with no single default (e.g. the Settings editor)
+	// still gets the daemon-wide list.
+	if err != nil && !(req.Msg.Project == "" && errors.Is(err, session.ErrUnknownProject)) {
 		if errors.Is(err, session.ErrUnknownProject) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&v1.GetQuickRepliesResponse{
-		Builtin: quickRepliesProto(session.BuiltinQuickReplies),
+		Global:  quickRepliesProto(global),
 		Project: quickRepliesProto(replies),
 	}), nil
 }
@@ -322,16 +328,22 @@ func (s *Server) GetQuickReplies(_ context.Context, req *connect.Request[v1.GetQ
 func (s *Server) SetQuickReplies(_ context.Context, req *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error) {
 	in := make([]session.QuickReply, 0, len(req.Msg.Replies))
 	for _, r := range req.Msg.Replies {
-		in = append(in, session.QuickReply{Label: r.GetLabel(), Text: r.GetText()})
+		in = append(in, session.QuickReply{ID: r.GetId(), Label: r.GetLabel(), Text: r.GetText()})
 	}
-	stored, err := s.mgr.SetQuickReplies(req.Msg.Project, in)
+	var stored []session.QuickReply
+	var err error
+	if req.Msg.Global {
+		stored, err = s.mgr.SetGlobalQuickReplies(in)
+	} else {
+		stored, err = s.mgr.SetQuickReplies(req.Msg.Project, in)
+	}
 	if err != nil {
 		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrInvalidQuickReplies) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&v1.SetQuickRepliesResponse{Project: quickRepliesProto(stored)}), nil
+	return connect.NewResponse(&v1.SetQuickRepliesResponse{Replies: quickRepliesProto(stored)}), nil
 }
 
 // MarkSessionsRead advances the user's shared read marks. Unparseable stamps

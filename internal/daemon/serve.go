@@ -101,6 +101,7 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 		}
 		mgr.SetProjects(preg)
 		mgr.SetIDStateFile(docs.DefaultIDStateFile())
+		mgr.SetQuickRepliesFile(filepath.Join(filepath.Dir(project.StateFile()), "quick-replies.json"))
 		// The startup workspace is not a privileged "default"; register it as a
 		// normal named project so every RPC/UI uses the same project model. A
 		// daemon is often started from wherever the shell happens to be, so only

@@ -9,10 +9,10 @@ import YccProto
 /// tapping, and sliding back to the edge (or away from every row) cancels.
 /// The pick goes to `onPick`, which owns the undo window before sending.
 struct QuickReplyMenuModifier: ViewModifier {
-    let replies: [Ycc_V1_QuickReply]
+    let replies: [QuickReplyChoice]
     /// The session can take a quick reply now (idle, no question, empty draft).
     let isAvailable: Bool
-    let onPick: (Ycc_V1_QuickReply, UsageAnalytics.Via) -> Void
+    let onPick: (QuickReplyChoice, UsageAnalytics.Via) -> Void
 
     private struct Menu {
         var layout: QuickReplyMenuLayout
@@ -125,8 +125,8 @@ struct QuickReplyMenuModifier: ViewModifier {
             .accessibilityLabel("Quick replies")
             .accessibilityHint("Swipe in from the right edge, or use the actions to send a reply.")
             .accessibilityActions {
-                ForEach(Array(replies.enumerated()), id: \.offset) { index, reply in
-                    Button(reply.label) { pick(index, via: .menu) }
+                ForEach(Array(replies.enumerated()), id: \.offset) { index, choice in
+                    Button(choice.reply.label) { pick(index, via: .menu) }
                 }
             }
     }
@@ -146,7 +146,7 @@ struct QuickReplyMenuModifier: ViewModifier {
                     pick(index, via: .tap)
                 } label: {
                     QuickReplyRow(
-                        reply: replies[index], selected: menu.selection == index,
+                        reply: replies[index].reply, selected: menu.selection == index,
                         compact: frame.height < 48)
                 }
                 .buttonStyle(.plain)

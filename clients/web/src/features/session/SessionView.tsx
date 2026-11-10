@@ -284,7 +284,11 @@ export function SessionView({
   const quickReplyIdle = quickRepliesAllowed(snap);
   const quickReplyData = useQuickReplies(project, canCompose).data;
   const quickReplies = useMemo(
-    () => (quickReplyData ? [...quickReplyData.builtin, ...quickReplyData.project] : undefined),
+    () =>
+      quickReplyData && [
+        ...quickReplyData.global.map((r) => ({ label: r.label, text: r.text, kind: r.id || "global" })),
+        ...quickReplyData.project.map((r) => ({ label: r.label, text: r.text, kind: "project" })),
+      ],
     [quickReplyData],
   );
 

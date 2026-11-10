@@ -124,14 +124,14 @@ struct SessionView: View {
     @State private var workingChangesTarget: WorkingChangesTarget?
     /// Presents the file browser rooted at this session's workspace.
     @State private var showFiles = false
-    /// The daemon's built-in and this project's quick replies (empty: the
-    /// swipe menu is off, e.g. against a daemon without them).
-    @State private var quickReplies: [Ycc_V1_QuickReply] = []
+    /// The daemon-wide and this project's quick replies (empty: the swipe
+    /// menu is off, e.g. against a daemon without them).
+    @State private var quickReplies: [QuickReplyChoice] = []
     /// A picked quick reply waiting out its undo window before it is sent.
     @State private var pendingQuickReply: PendingQuickReply?
     private struct PendingQuickReply: Equatable {
         let id = UUID()
-        let reply: Ycc_V1_QuickReply
+        let choice: QuickReplyChoice
         let via: UsageAnalytics.Via
     }
     private static let quickReplyUndoSeconds: Double = 2
@@ -673,8 +673,8 @@ struct SessionView: View {
     }
 
     /// Hold a picked reply for the undo window, then send it.
-    private func queueQuickReply(_ reply: Ycc_V1_QuickReply, via: UsageAnalytics.Via) {
-        let pending = PendingQuickReply(reply: reply, via: via)
+    private func queueQuickReply(_ choice: QuickReplyChoice, via: UsageAnalytics.Via) {
+        let pending = PendingQuickReply(choice: choice, via: via)
         withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = pending }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(Self.quickReplyUndoSeconds * 1_000_000_000))
@@ -686,25 +686,24 @@ struct SessionView: View {
     private func sendPendingQuickReply() {
         guard let pending = pendingQuickReply else { return }
         withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = nil }
-        // The kind, never the text: project replies are user-written.
         Analytics.action("composer.quick_reply", via: pending.via, attrs: [
             "phase": composerPhase,
-            "kind": pending.reply.id.isEmpty ? "project" : pending.reply.id,
+            "kind": pending.choice.analyticsKind,
         ])
-        Task { await model.send(text: pending.reply.text, images: []) }
+        Task { await model.send(text: pending.choice.reply.text, images: []) }
     }
 
     private func quickReplyUndoBar(_ pending: PendingQuickReply) -> some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("Sending “\(pending.reply.label)”…")
+            Text("Sending “\(pending.choice.reply.label)”…")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
             Button("Undo") {
                 Analytics.action("composer.quick_reply_undo", attrs: [
-                    "kind": pending.reply.id.isEmpty ? "project" : pending.reply.id,
+                    "kind": pending.choice.analyticsKind,
                 ])
                 withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = nil }
             }
