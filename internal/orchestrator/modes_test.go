@@ -29,55 +29,6 @@ func depsFor(t *testing.T) *Deps {
 	}
 }
 
-func TestModesListed(t *testing.T) {
-	names := map[string]bool{}
-	for _, m := range Modes() {
-		names[m.Name] = true
-	}
-	// Exactly three modes: pm, chat, work — the former spec/backlog/feature/bug
-	// modes were collapsed into pm.
-	for _, want := range []string{"pm", "chat", "work"} {
-		if !names[want] {
-			t.Fatalf("mode %q missing from Modes()", want)
-		}
-	}
-	for _, gone := range []string{"spec", "backlog", "feature", "bug"} {
-		if names[gone] {
-			t.Fatalf("mode %q should have been removed (collapsed into pm)", gone)
-		}
-	}
-}
-
-func TestPresetsOpenPM(t *testing.T) {
-	want := map[string]bool{"onboard": false, "spec-doctor": false, "memory-groom": false}
-	for _, p := range Presets() {
-		if _, ok := want[p.Name]; !ok {
-			t.Fatalf("unexpected preset %q", p.Name)
-		}
-		want[p.Name] = true
-		if p.Mode != "pm" {
-			t.Fatalf("preset %q opens mode %q, want pm", p.Name, p.Mode)
-		}
-		if strings.TrimSpace(p.Prompt) == "" {
-			t.Fatalf("preset %q has no opening prompt", p.Name)
-		}
-	}
-	for name, seen := range want {
-		if !seen {
-			t.Fatalf("preset %q missing", name)
-		}
-	}
-	// The former spec/feature/bug/backlog framings were dropped as separate
-	// presets (they are just ordinary pm work); onboard and spec-doctor remain.
-	for _, p := range Presets() {
-		for _, gone := range []string{"spec", "feature", "bug", "backlog"} {
-			if p.Name == gone {
-				t.Fatalf("preset %q should have been removed", gone)
-			}
-		}
-	}
-}
-
 func TestBuildModeToolsets(t *testing.T) {
 	d := depsFor(t)
 	d.AgentModels = func() []ModelCatalogEntry { return []ModelCatalogEntry{{Name: "fast"}, {Name: "smart"}} }
@@ -318,8 +269,16 @@ func TestCreateTaskInProgress(t *testing.T) {
 }
 
 func TestSwitchToWorkSignalsModeChangeWithTask(t *testing.T) {
+	rec := &captureRec{}
 	d := depsFor(t)
-	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "do the thing"})
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	res, err := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "do the thing"})
+	if err != nil {
+		t.Fatalf("switch_to_work: %v", err)
+	}
+	if got := rec.focusTasks(); len(got) != 1 || got[0] != "0021" {
+		t.Fatalf("focus events = %v, want [0021]", got)
+	}
 	ctrl := tools.ControlOf(res)
 	if ctrl == nil || !ctrl.Stop || ctrl.Mode != "work" {
 		t.Fatalf("switch_to_work control = %+v", ctrl)
@@ -331,11 +290,19 @@ func TestSwitchToWorkSignalsModeChangeWithTask(t *testing.T) {
 }
 
 func TestSwitchToWorkRequiresApproval(t *testing.T) {
+	rec := &captureRec{}
 	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
 	d.Asker = declineAsker{}
-	res, _ := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"})
+	res, err := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"})
+	if err != nil {
+		t.Fatalf("switch_to_work: %v", err)
+	}
 	if ctrl := tools.ControlOf(res); ctrl != nil && ctrl.Mode == "work" {
 		t.Fatal("switch_to_work transitioned despite the user declining approval")
+	}
+	if got := rec.focusTasks(); len(got) != 0 {
+		t.Fatalf("declined hand-off emitted focus events %v", got)
 	}
 }
 
@@ -451,36 +418,6 @@ func (r *captureRec) focusTasks() []string {
 		}
 	}
 	return out
-}
-
-// The pm→work hand-off records a task_focus for the explicit target task so the
-// session is durably linked to it (spec §20.2).
-func TestSwitchToWorkEmitsTaskFocus(t *testing.T) {
-	rec := &captureRec{}
-	d := depsFor(t)
-	d.Emitter = event.NewEmitter(rec, "coordinator")
-
-	if _, err := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"}); err != nil {
-		t.Fatalf("switch_to_work: %v", err)
-	}
-	if got := rec.focusTasks(); len(got) != 1 || got[0] != "0021" {
-		t.Fatalf("focus events = %v, want [0021]", got)
-	}
-}
-
-// A declined hand-off must not record focus (work never starts).
-func TestSwitchToWorkDeclinedEmitsNoFocus(t *testing.T) {
-	rec := &captureRec{}
-	d := depsFor(t)
-	d.Emitter = event.NewEmitter(rec, "coordinator")
-	d.Asker = declineAsker{}
-
-	if _, err := switchToWork(d).Call(context.Background(), map[string]any{"task_id": "0021", "plan": "p"}); err != nil {
-		t.Fatalf("switch_to_work: %v", err)
-	}
-	if got := rec.focusTasks(); len(got) != 0 {
-		t.Fatalf("declined hand-off emitted focus events %v", got)
-	}
 }
 
 // The work coordinator records focus when it accepts a task (update_task→

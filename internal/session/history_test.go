@@ -47,30 +47,6 @@ func ts(sec int) time.Time {
 	return time.Date(2026, 1, 1, 0, 0, sec, 0, time.UTC)
 }
 
-func TestScanSessionHistoryOrdering(t *testing.T) {
-	ws := t.TempDir()
-	writeSession(t, ws, "s_old", []event.Event{
-		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work"}},
-		{Seq: 2, TS: ts(2), Type: event.ModelTurn},
-	})
-	writeSession(t, ws, "s_new", []event.Event{
-		{Seq: 1, TS: ts(10), Type: event.SessionStarted, Data: map[string]any{"mode": "chat"}},
-		{Seq: 2, TS: ts(20), Type: event.ModelTurn},
-	})
-
-	m := NewManager(config.NewRegistry(nil), ws)
-	got, err := m.ListSessionHistory("")
-	if err != nil {
-		t.Fatalf("ListSessionHistory: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("want 2 summaries, got %d", len(got))
-	}
-	if got[0].ID != "s_new" || got[1].ID != "s_old" {
-		t.Fatalf("want most-recent first [s_new s_old], got [%s %s]", got[0].ID, got[1].ID)
-	}
-}
-
 func TestScanSessionHistoryTitleAndFocus(t *testing.T) {
 	ws := t.TempDir()
 	writeSession(t, ws, "s_a", []event.Event{

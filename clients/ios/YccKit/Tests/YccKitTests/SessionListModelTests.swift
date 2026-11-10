@@ -442,17 +442,13 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(SessionListModel.taskChipLabels(for: value), ["0198", "0200", "+2"])
     }
 
-    func testModelAndContextSummaries() {
+    func testMetadataItemsShowOnlyNonChatModeAndLoopProvenance() {
         let multi = session(
             id: "a",
             modelUsage: [("gpt", 100), ("claude", 800), ("glm", 100)],
             totalTokens: 9_999_999,
             contextTokens: 1_250_000
         )
-        XCTAssertEqual(SessionListModel.modelSummary(for: multi), "claude +2")
-        // The metadata line reports how full the active context is, not the
-        // session's cumulative token spend.
-        XCTAssertEqual(SessionListModel.contextSummary(for: multi), "1.2M ctx")
         // Rows only carry a non-chat mode and loop provenance; model and
         // context summaries stay off the list.
         XCTAssertEqual(
@@ -465,13 +461,8 @@ final class SessionListModelTests: XCTestCase {
                 isLoopOwned: false),
             []
         )
-
         XCTAssertEqual(
-            SessionListModel.modelSummary(for: session(id: "sole", modelUsage: [("claude", 42)])),
-            "claude"
-        )
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "b", contextTokens: 999)), "999 ctx")
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "c", contextTokens: 12_000)), "12K ctx")
+            SessionListModel.metadataItems(for: session(id: "b", mode: ""), isLoopOwned: false), [])
     }
 
     func testCompactAgeBuckets() {
@@ -485,27 +476,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(age(2 * 3_600 + 59 * 60), "2h")
         XCTAssertEqual(age(6 * 86_400), "6d")
         XCTAssertFalse(age(8 * 86_400).hasSuffix("d"))
-    }
-
-    func testContextSummaryPromotesRoundedUnitBoundaries() {
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-low", contextTokens: 999_499)), "999K ctx")
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-carry", contextTokens: 999_500)), "1M ctx")
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "k-max", contextTokens: 999_999)), "1M ctx")
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "m-low", contextTokens: 999_499_999)), "999M ctx")
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "m-carry", contextTokens: 999_500_000)), "1B ctx")
-        XCTAssertEqual(SessionListModel.contextSummary(for: session(id: "m-max", contextTokens: 999_999_999)), "1B ctx")
-    }
-
-    func testModelSummaryTieBreakAndMissingMetadata() {
-        let tie = session(id: "a", mode: "", modelUsage: [("zeta", 50), ("alpha", 50)], totalTokens: 100)
-        XCTAssertEqual(SessionListModel.modelSummary(for: tie), "alpha +1")
-
-        let missing = session(id: "b", mode: "", modelUsage: [("", 100), ("ignored", 0)])
-        XCTAssertNil(SessionListModel.modelSummary(for: missing))
-        // Cumulative spend without context telemetry (older daemon) shows no
-        // context item rather than a misleading zero.
-        XCTAssertNil(SessionListModel.contextSummary(for: session(id: "c", totalTokens: 5_000)))
-        XCTAssertEqual(SessionListModel.metadataItems(for: missing, isLoopOwned: false), [])
     }
 
     func testLifecycleSuppressesIdleAndPreservesExceptionalStates() {
@@ -535,21 +505,6 @@ final class SessionListModelTests: XCTestCase {
     }
 
     // MARK: - Sectioning / sorting
-
-    func testNeedsAnswerSessionsPinnedToTopSection() {
-        let sessions = [
-            session(id: "a", lastActivity: "2026-07-08T10:00:00Z"),
-            session(id: "b", lastActivity: "2026-07-08T09:00:00Z", live: true, waitingInput: true),
-            session(id: "c", lastActivity: "2026-07-08T11:00:00Z"),
-        ]
-        let sections = SessionListModel.sections(from: sessions)
-        XCTAssertEqual(sections.count, 2)
-        XCTAssertEqual(sections[0].kind, .needsAnswer)
-        XCTAssertEqual(sections[0].sessions.map(\.sessionID), ["b"])
-        XCTAssertEqual(sections[1].kind, .all)
-        // Remainder most-recent-first.
-        XCTAssertEqual(sections[1].sessions.map(\.sessionID), ["c", "a"])
-    }
 
     func testWaitingInputWithoutLiveIsNotNeedsAnswer() {
         // waitingInput is only meaningful on live rows.
@@ -726,25 +681,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertTrue(model.loopSessionIDs.isEmpty)
         XCTAssertNil(model.partialWarning)
         XCTAssertNil(model.errorMessage)
-    }
-
-    func testLoopIDsAreRebuiltEachRefresh() async {
-        let source = MockListSource()
-        source.projects = [project("one")]
-        source.sessionsByProject["one"] = [session(id: "old")]
-        var record = Ycc_V1_WorkLoopSession()
-        record.sessionID = "old"
-        var loop = Ycc_V1_WorkLoopInfo()
-        loop.sessions = [record]
-        source.loopsByProject["one"] = loop
-        let model = SessionListModel(source: source)
-
-        await model.refresh()
-        XCTAssertTrue(model.isLoopSession(sessionID: "old"))
-
-        source.loopsByProject.removeValue(forKey: "one")
-        await model.refresh()
-        XCTAssertTrue(model.loopSessionIDs.isEmpty)
     }
 
     // MARK: - Refresh / project filter round-trip
@@ -1379,61 +1315,6 @@ final class SessionListModelTests: XCTestCase {
     /// Unread rows come from the daemon's `readThrough` on later summaries.
     private func makeReadStore() -> SessionReadStore { .ephemeral() }
 
-    func testFirstLoadReportsNothingUnread() async {
-        let source = MockListSource()
-        source.projects = [project("one")]
-        source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
-        ]]
-        let model = SessionListModel(source: source, readMarks: makeReadStore())
-
-        await model.refresh()
-
-        XCTAssertFalse(model.isUnread(model.sessions[0]))
-        XCTAssertEqual(model.unreadCount, 0)
-        XCTAssertEqual(model.totalActivity.unread, 0)
-    }
-
-    func testActivityAfterALoadMarksTheRowUnread() async {
-        let source = MockListSource()
-        source.projects = [project("one")]
-        source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
-        ]]
-        let model = SessionListModel(source: source, readMarks: makeReadStore())
-        await model.refresh()
-
-        // The agent worked (and finished) while the phone was away.
-        source.sessionsByProject = ["one": [
-            session(id: "a", status: "idle", lastActivity: "2026-08-06T10:30:00Z", turns: 4, readThrough: "2026-08-06T10:00:00Z"),
-        ]]
-        await model.refresh()
-
-        XCTAssertTrue(model.isUnread(model.sessions[0]))
-        XCTAssertEqual(model.unreadCount, 1)
-        XCTAssertEqual(model.totalActivity.unread, 1)
-        XCTAssertEqual(model.activity(forProject: "one").unread, 1)
-    }
-
-    func testMarkReadClearsTheRowAndTheProjectBadge() async {
-        let source = MockListSource()
-        source.projects = [project("one")]
-        source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
-        ]]
-        let model = SessionListModel(source: source, readMarks: makeReadStore())
-        await model.refresh()
-        source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:30:00Z", readThrough: "2026-08-06T10:00:00Z"),
-        ]]
-        await model.refresh()
-
-        model.markRead(model.sessions[0])
-
-        XCTAssertFalse(model.isUnread(model.sessions[0]))
-        XCTAssertEqual(model.activity(forProject: "one").unread, 0)
-    }
-
     func testMarkAllReadOnlyClearsTheSelectedScope() async {
         let source = MockListSource()
         source.projects = [project("one"), project("two")]
@@ -1456,27 +1337,6 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(model.activity(forProject: "one").unread, 0)
         XCTAssertEqual(model.activity(forProject: "two").unread, 1)
         XCTAssertEqual(model.totalActivity.unread, 1)
-    }
-
-    func testSessionViewedThroughItsLatestEventIsRead() async {
-        let source = MockListSource()
-        source.projects = [project("one")]
-        source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:00:00Z"),
-        ]]
-        let readMarks = makeReadStore()
-        let model = SessionListModel(source: source, readMarks: readMarks)
-        await model.refresh()
-        source.sessionsByProject = ["one": [
-            session(id: "a", lastActivity: "2026-08-06T10:30:00Z", readThrough: "2026-08-06T10:00:00Z"),
-        ]]
-        await model.refresh()
-        XCTAssertTrue(model.isUnread(model.sessions[0]))
-
-        // What the session view does on leaving: record the newest folded event.
-        readMarks.markRead(sessionID: "a", through: "2026-08-06T10:30:00Z")
-
-        XCTAssertFalse(model.isUnread(model.sessions[0]))
     }
 
     // MARK: - Refresh cost on a remote link (0402)

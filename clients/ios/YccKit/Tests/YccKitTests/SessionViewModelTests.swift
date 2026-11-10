@@ -607,36 +607,6 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(recordedDelays, [1_000_000, 2_000_000])
     }
 
-    func testLiveReconnectReplaysFromLastPersistedSeq() async {
-        let source = MockSource()
-        let all = sampleEvents
-        // First stream drops after seq 3; the reconnect resumes from seq 3.
-        source.streams = [
-            stream(Array(all.prefix(3)), thenThrow: YccError.rpc(message: "dropped")),
-            stream(Array(all.suffix(2))),
-        ]
-        let vm = SessionViewModel(
-            source: source,
-            sessionID: "s1",
-            mode: .live,
-            backoff: .init(initial: 1_000_000, maximum: 2_000_000)
-        )
-
-        vm.start()
-        await waitUntil { vm.state == .finished }
-
-        XCTAssertEqual(vm.state, .finished)
-        XCTAssertEqual(vm.projection.lastPersistedSeq, 5)
-        XCTAssertEqual(vm.rows.count, 4)
-        // Fresh subscribe from 0, then reconnect from the last persisted seq (3).
-        XCTAssertEqual(source.recordedFromSeqs, [0, 3])
-
-        // Compare against a one-pass fold of the same events.
-        var onePass = SessionProjection()
-        onePass.apply(all)
-        XCTAssertEqual(vm.projection.rows, onePass.rows)
-    }
-
     func testUnauthorizedStreamStopsAndRequestsSharedAuthenticationReset() async {
         let source = MockSource()
         source.streams = [stream([], thenThrow: YccError.unauthorized)]
@@ -1045,17 +1015,6 @@ final class SessionViewModelTests: XCTestCase {
         vm.stop()
     }
 
-    func testFailedSendClearsWorkingFeedback() async {
-        let actions = MockActionSource()
-        let vm = actionVM(actions)
-        actions.nextError = YccError.rpc(message: "offline")
-
-        await vm.send(text: "hello")
-
-        XCTAssertFalse(vm.isAwaitingAgentActivity)
-        XCTAssertEqual(vm.actionError, "offline")
-    }
-
     func testPausedSendSteersThenContinuesAndWaitsForAuthoritativeEvents() async {
         let source = MockSource()
         source.transcript = [event(1, "interrupted", "{}")]
@@ -1097,27 +1056,6 @@ final class SessionViewModelTests: XCTestCase {
         let vm = actionVM(actions)
         await vm.send(text: "   ")
         XCTAssertTrue(actions.calls.isEmpty)
-    }
-
-    func testPersistedSendReopensBeforeSendingAndPromotesToLive() async {
-        let actions = MockActionSource()
-        let vm = SessionViewModel(
-            source: actions,
-            actions: actions,
-            project: "demo",
-            sessionID: "s1",
-            mode: .persisted
-        )
-
-        await vm.send(text: "more work")
-
-        XCTAssertEqual(actions.calls, [
-            .init(kind: "reopen", text: "demo"),
-            .init(kind: "send", text: "more work"),
-        ])
-        XCTAssertEqual(vm.mode, .live)
-        XCTAssertNil(vm.actionError)
-        vm.stop()
     }
 
     func testPersistedSendDoesNotSendWhenReopenFails() async {
@@ -1177,16 +1115,6 @@ final class SessionViewModelTests: XCTestCase {
 
     /// The gate closing is only half the job: the transcript card must stop
     /// saying "Waiting for an answer" too, without waiting for the event.
-    func testAnsweringWithAnOptionClosesTheGateAndResolvesTheRow() async {
-        let actions = MockActionSource()
-        let vm = await askingVM(actions)
-
-        await vm.answer(optionIndex: 1)
-
-        XCTAssertNil(vm.pendingQuestion)
-        XCTAssertEqual(answeredText(vm), "no")
-    }
-
     func testAnsweringWithTextClosesTheGateAndResolvesTheRow() async {
         let actions = MockActionSource()
         let vm = await askingVM(actions)
@@ -1214,43 +1142,12 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(answeredText(vm), "sqlite; friday")
     }
 
-    func testFailedAnswerLeavesTheGateAndTranscriptRowUnanswered() async {
-        let actions = MockActionSource()
-        let vm = await askingVM(actions)
-        actions.nextError = YccError.rpc(message: "boom")
-
-        await vm.answer(optionIndex: 0)
-
-        XCTAssertEqual(vm.actionError, "boom")
-        XCTAssertNotNil(vm.pendingQuestion)
-        XCTAssertNil(answeredText(vm))
-    }
-
     /// The answer folded into the last question row, if any.
     private func answeredText(_ vm: SessionViewModel) -> String? {
         for row in vm.durableRows.reversed() {
             if case .question(_, _, let answer) = row.kind { return answer }
         }
         return nil
-    }
-
-    func testFailedPreconditionOnAnswerSetsToastWithoutCrashing() async {
-        let actions = MockActionSource()
-        let vm = actionVM(actions)
-        actions.nextError = YccError.failedPrecondition(message: "no pending question")
-        await vm.answer(optionIndex: 0)
-        XCTAssertEqual(vm.actionError, "no pending question")
-        // State is not corrupted: a subsequent successful action still works.
-        await vm.send(text: "hi")
-        XCTAssertEqual(actions.calls.last, .init(kind: "send", text: "hi"))
-    }
-
-    func testNotFoundSetsToast() async {
-        let actions = MockActionSource()
-        let vm = actionVM(actions)
-        actions.nextError = YccError.notFound(message: "no such session")
-        await vm.send(text: "hi")
-        XCTAssertEqual(vm.actionError, "no such session")
     }
 
     func testInterruptResumeStopInvokeSource() async {

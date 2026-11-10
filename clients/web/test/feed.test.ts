@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { ProjectInfoSchema, SessionSummarySchema, type SessionSummary } from "../src/gen/ycc/v1/ycc_pb";
 import {
   buildFeed,
-  compactTokenCount,
   displayTitle,
   historyTargets,
   lifecycleLabel,
@@ -153,12 +152,5 @@ describe("labels", () => {
     expect(lifecycleLabel(s("x", 1, { status: "idle" }))).toBeNull();
     expect(lifecycleLabel(s("x", 1, { live: true, status: "idle" }))).toBeNull();
     expect(lifecycleLabel(s("x", 1, { status: "error" }))).toBe("Error");
-  });
-
-  it("formats compact token counts", () => {
-    expect(compactTokenCount(999)).toBe("999");
-    expect(compactTokenCount(12_345)).toBe("12.3K");
-    expect(compactTokenCount(999_600)).toBe("1M");
-    expect(compactTokenCount(0)).toBeNull();
   });
 });

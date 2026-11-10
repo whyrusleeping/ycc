@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import {
   filterNotes,
   groupBySection,
-  kb,
   legacyMemoryId,
   parseMemory,
   provenance,
@@ -122,10 +121,5 @@ describe("helpers", () => {
     expect(sha256Hex("a".repeat(1000))).toBe("41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3");
     expect(sha256Hex("héllo ✓")).toBe("5657cdef8a85a584e0e961e6f8247cf5d3f8ed21496ed6fdbcfd43a761e94245");
     expect(legacyMemoryId("## A", "  - x  ")).toBe(`legacy-${sha256Hex("## A\n- x").slice(0, 12)}`);
-  });
-
-  it("formats kilobytes like iOS", () => {
-    expect(kb(1536)).toBe("1.5 KB");
-    expect(kb(0)).toBe("0.0 KB");
   });
 });

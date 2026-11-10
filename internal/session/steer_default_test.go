@@ -99,44 +99,6 @@ func TestSteerByDefaultOrderAndDrain(t *testing.T) {
 	}
 }
 
-// While paused, a mid-run/steer SendInput still buffers (queued echo) and drains
-// only on explicit Resume — now also emitting delivered events (§18.7 unchanged).
-func TestSteerPausedStillDrainsOnResume(t *testing.T) {
-	s, rec := newSteerSession()
-
-	if err := s.Interrupt(); err != nil {
-		t.Fatalf("Interrupt: %v", err)
-	}
-	done := make(chan []string, 1)
-	go func() {
-		msgs, _ := s.Checkpoint(context.Background())
-		done <- msgs
-	}()
-	waitStatus(t, s, event.StatusPaused)
-
-	if err := s.SendInput("hold"); err != nil {
-		t.Fatalf("SendInput: %v", err)
-	}
-	echo := lastEvent(rec, event.UserInput)
-	if echo == nil || echo.Data["queued"] != true {
-		t.Fatalf("paused echo not flagged queued: %+v", echo)
-	}
-
-	if err := s.Resume(); err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-	msgs := <-done
-	if len(msgs) != 1 || msgs[0] != "hold" {
-		t.Fatalf("corrections = %v, want [hold]", msgs)
-	}
-	if n := rec.count(event.UserInputDelivered); n != 1 {
-		t.Fatalf("delivered events = %d, want 1", n)
-	}
-	if rec.count(event.Interrupted) != 1 || rec.count(event.Resumed) != 1 {
-		t.Fatalf("interrupted/resumed counts = %d/%d, want 1/1", rec.count(event.Interrupted), rec.count(event.Resumed))
-	}
-}
-
 // Idle SendInput is unchanged: it goes via the idle queue with a plain echo (no
 // queued flag, no delivered event).
 func TestIdleSendInputUnchanged(t *testing.T) {
@@ -145,6 +107,11 @@ func TestIdleSendInputUnchanged(t *testing.T) {
 	if err := s.SendInput("go"); err != nil {
 		t.Fatalf("SendInput: %v", err)
 	}
+	// The echo is recorded exactly once, before the idle queue is drained.
+	echo := lastEvent(rec, event.UserInput)
+	if echo == nil || echo.Data["text"] != "go" || rec.count(event.UserInput) != 1 {
+		t.Fatalf("user_input echo = %+v, count = %d", echo, rec.count(event.UserInput))
+	}
 	select {
 	case input := <-s.messageCh:
 		if input.Text != "go" {
@@ -152,10 +119,6 @@ func TestIdleSendInputUnchanged(t *testing.T) {
 		}
 	default:
 		t.Fatal("idle input did not reach the idle queue")
-	}
-	echo := lastEvent(rec, event.UserInput)
-	if echo == nil {
-		t.Fatal("no echo recorded")
 	}
 	if _, ok := echo.Data["queued"]; ok {
 		t.Fatalf("idle echo carries queued flag: %+v", echo.Data)

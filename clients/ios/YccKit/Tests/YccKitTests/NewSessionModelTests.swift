@@ -112,6 +112,11 @@ final class NewSessionModelTests: XCTestCase {
 
         XCTAssertEqual(model.models.map(\.name), ["claude", "gpt"])
         XCTAssertEqual(model.selectedModel, "")
+
+        // Without a pick, start leaves the daemon's default in charge.
+        model.prompt = "go"
+        _ = await model.start()
+        XCTAssertEqual(source.startArgs?.coordinatorModel, "")
     }
 
     func testDisabledDefaultRequiresEnabledOverride() async {
@@ -145,19 +150,6 @@ final class NewSessionModelTests: XCTestCase {
         _ = await model.start()
 
         XCTAssertEqual(source.startArgs?.coordinatorModel, "gpt")
-    }
-
-    func testStartWithoutModelChoiceSendsEmptyOverride() async {
-        let source = MockNewSessionSource()
-        source.modes = [mode("work")]
-        source.models = modelList(["claude", "gpt"], coordinator: "claude")
-        let model = NewSessionModel(source: source, defaults: MockDefaults())
-        await model.load()
-        model.prompt = "go"
-
-        _ = await model.start()
-
-        XCTAssertEqual(source.startArgs?.coordinatorModel, "")
     }
 
     func testModelChoiceIsNotRemembered() async {

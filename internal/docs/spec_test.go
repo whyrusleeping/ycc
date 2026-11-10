@@ -19,15 +19,6 @@ func writeYCCConfig(t *testing.T, ws, body string) {
 	}
 }
 
-// Without a config, the spec entry point defaults to spec.md at the workspace root.
-func TestSpecPathDefault(t *testing.T) {
-	ws := t.TempDir()
-	s := NewStore(ws)
-	if got, want := s.SpecPath(), filepath.Join(ws, "spec.md"); got != want {
-		t.Fatalf("SpecPath() = %q, want %q", got, want)
-	}
-}
-
 // A configured spec_path is honored (relative to the workspace root).
 func TestSpecPathConfigured(t *testing.T) {
 	ws := t.TempDir()

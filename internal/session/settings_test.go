@@ -2,26 +2,16 @@ package session
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/config"
-	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
-
-// fakeTurner is a no-op backend (unused placeholder kept minimal).
-type fakeTurner struct{}
-
-func (fakeTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
-	return &gollama.ResponseMessageGenerate{}, nil
-}
 
 func testRegistry() *config.Registry {
 	return testRegistryWithIntegration("")
@@ -118,7 +108,6 @@ func TestSetRoleConfigRebuildsClients(t *testing.T) {
 	if c := s.deps.Reviewers[0].NewClient(); c == nil {
 		t.Fatal("reviewer NewClient returned nil")
 	}
-	_ = fakeTurner{}
 }
 
 func TestSetRoleConfigRemainsSessionLocal(t *testing.T) {
@@ -252,59 +241,6 @@ func TestSetThinkingUpdatesLoopAndSpecs(t *testing.T) {
 	// Unknown level rejected, override unchanged.
 	if err := s.SetThinking("", "bogus"); err == nil {
 		t.Fatal("expected error for unknown thinking level")
-	}
-}
-
-// A mode switch after SetThinking must produce a NEW coordinator loop that honors
-// the override (not the per-model config). buildLoop is the seam Manager.Start
-// uses on mode transitions; we install the same closure here and drive it.
-func TestSetThinkingHonoredByModeSwitchBuildLoop(t *testing.T) {
-	s, _ := newTestSession(t)
-	s.deps.Workspace = t.TempDir()
-	s.deps.Docs = docs.NewStore(s.deps.Workspace)
-
-	// Install a buildLoop equivalent to the production one (Manager.Start): it
-	// resolves coordinator reasoning through s.thinkingFor, so a session-wide
-	// override flows into the next mode's loop.
-	s.buildLoop = func(mode, prompt string) (*engine.Loop, error) {
-		reg, sys := orchestrator.BuildMode(mode, s.deps, false)
-		s.mu.Lock()
-		coord := s.coordinator
-		s.mu.Unlock()
-		client, model, err := s.reg.Build(coord)
-		if err != nil {
-			return nil, err
-		}
-		th := s.thinkingFor(coord)
-		loop := &engine.Loop{
-			Client: client, Model: model, System: sys, Tools: reg, Emitter: s.emitter,
-			Thinking: th.Thinking, Effort: th.Effort, ThinkingDisplay: th.ThinkingDisplay,
-		}
-		loop.Seed(prompt)
-		return loop, nil
-	}
-
-	// Sanity: with no override, the new loop uses the per-model config (default
-	// high effort for the ollama test models).
-	base, err := s.buildLoop("work", "go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if base.Effort != "high" {
-		t.Fatalf("pre-override mode-switch loop effort = %q, want config default high", base.Effort)
-	}
-
-	// Set a non-default override, then drive a mode switch.
-	if err := s.SetThinking("", "max"); err != nil {
-		t.Fatal(err)
-	}
-	next, err := s.buildLoop("work", "go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next.Thinking != "adaptive" || next.Effort != "max" || next.ThinkingDisplay != "summarized" {
-		t.Fatalf("mode-switch loop did not honor override: thinking=%q effort=%q display=%q",
-			next.Thinking, next.Effort, next.ThinkingDisplay)
 	}
 }
 

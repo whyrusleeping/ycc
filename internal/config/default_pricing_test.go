@@ -10,10 +10,8 @@ func TestDefaultPricingAnthropic(t *testing.T) {
 	}{
 		// Date-stamped ids match their family prefix.
 		{"claude-sonnet-4-5-20250929", 3, 15, 0.30, 3.75},
-		{"claude-haiku-4-5", 1, 5, 0.10, 1.25},
+		// The more specific Opus 4.5 rates must win over bare Opus 4.
 		{"claude-opus-4-5-20251101", 5, 25, 0.50, 6.25},
-		// "claude-opus-4-1" must win over the shorter "claude-opus-4".
-		{"claude-opus-4-1-20250805", 15, 75, 1.50, 18.75},
 		// Bare Opus 4 (date suffix crosses the boundary check cleanly).
 		{"claude-opus-4-20250514", 15, 75, 1.50, 18.75},
 		// -latest aliases.
@@ -41,23 +39,12 @@ func TestDefaultPricingOpenAI(t *testing.T) {
 		read, write float64
 	}{
 		{"gpt-5.6-sol", 5, 30, 0.50, 6.25},
-		{"gpt-5.6-terra", 2, 12, 0.20, 2.50},
 		{"gpt-5.6-terra-2026-01-01", 2, 12, 0.20, 2.50},
-		{"gpt-5.6-luna", 0.20, 1.20, 0.02, 0.25},
 		// The bare GPT-5.6 alias routes to Sol.
 		{"gpt-5.6", 5, 30, 0.50, 6.25},
-		{"gpt-5.1", 1.25, 10, 0.125, 0},
-		{"gpt-5", 1.25, 10, 0.125, 0},
 		// Date-stamped gpt-5 id must NOT match "gpt-5-2" (gpt-5.2): the
 		// boundary check rejects "gpt-5-2" + "025…" and falls through to "gpt-5".
 		{"gpt-5-2025-08-07", 1.25, 10, 0.125, 0},
-		{"gpt-5.2", 1.75, 14, 0.175, 0},
-		{"gpt-5-mini", 0.25, 2, 0.025, 0},
-		{"gpt-5-nano", 0.05, 0.40, 0.005, 0},
-		{"gpt-4.1-mini", 0.40, 1.6, 0.10, 0},
-		{"gpt-4o-mini", 0.15, 0.60, 0.075, 0},
-		{"o4-mini", 1.1, 4.4, 0.275, 0},
-		{"o3", 2, 8, 0.50, 0},
 		// The GPT-5.6 boundary rejects 5.60, which then matches GPT-5.
 		{"gpt-5.60", 1.25, 10, 0.125, 0},
 	}

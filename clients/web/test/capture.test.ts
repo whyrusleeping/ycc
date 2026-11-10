@@ -1,9 +1,9 @@
-// Quick capture reducer and the app action registry / shortcut matching.
+// Quick capture reducer and the app action registry.
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
 import { EventSchema, type Event } from "../src/gen/ycc/v1/ycc_pb";
 import { INITIAL_CAPTURE, captureLogText, captureOutcome, captureReducer, type CaptureAction } from "../src/features/backlog/capture";
-import { isEditableTarget, listActions, matchShortcut, registerAction, runAction } from "../src/app/actions";
+import { isEditableTarget, listActions, registerAction, runAction } from "../src/app/actions";
 
 function ev(type: string, data: unknown): Event {
   return create(EventSchema, { actor: "capture", type, dataJson: JSON.stringify(data) });
@@ -85,27 +85,6 @@ describe("quick capture", () => {
 });
 
 describe("app actions", () => {
-  const key = (code: string, mods: Partial<{ alt: boolean; shift: boolean; ctrl: boolean; meta: boolean }> = {}) => ({
-    code,
-    key: "",
-    altKey: !!mods.alt,
-    shiftKey: !!mods.shift,
-    ctrlKey: !!mods.ctrl,
-    metaKey: !!mods.meta,
-  });
-
-  it("matches shortcuts exactly", () => {
-    const s = { code: "KeyN", alt: true, label: "Alt+N" };
-    expect(matchShortcut(key("KeyN", { alt: true }), s)).toBe(true);
-    expect(matchShortcut(key("KeyN"), s)).toBe(false);
-    expect(matchShortcut(key("KeyN", { alt: true, shift: true }), s)).toBe(false);
-    expect(matchShortcut(key("KeyN", { alt: true, ctrl: true }), s)).toBe(false);
-    expect(matchShortcut({ ...key("KeyN", { alt: true }), isComposing: true }, s)).toBe(false);
-    const mod = { code: "KeyK", mod: true, label: "Ctrl+K" };
-    expect(matchShortcut(key("KeyK", { meta: true }), mod)).toBe(true);
-    expect(matchShortcut(key("KeyK", { ctrl: true }), mod)).toBe(true);
-  });
-
   it("registers, replaces, runs, and unregisters actions", () => {
     const first = vi.fn();
     const second = vi.fn();

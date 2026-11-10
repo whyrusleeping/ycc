@@ -3,6 +3,7 @@ package specdoctor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -136,15 +137,14 @@ func TestAmbiguousAndGlobsSkipped(t *testing.T) {
 }
 
 func TestSelfMentionNotResolved(t *testing.T) {
-	// A symbol mentioned ONLY in the docs must not resolve against its own mention.
+	// A symbol mentioned ONLY in the docs must not resolve against its own
+	// mention, so the doc itself must be on disk under root.
+	content := "This spec introduces the concept `OnlyInSpecSymbol` which appears nowhere in code.\n"
 	root := writeTree(t, map[string]string{
 		"real.go": "package x\n",
+		"spec.md": content,
 	})
-	spec := DocFile{
-		Path:    "spec.md",
-		Content: "This spec introduces the concept `OnlyInSpecSymbol` which appears nowhere in code.\n",
-	}
-	rep := Check(root, []DocFile{spec})
+	rep := Check(root, []DocFile{{Path: "spec.md", Content: content}})
 	if !hasRef(rep.Missing, "OnlyInSpecSymbol") {
 		t.Fatalf("symbol only in the docs should be flagged stale; missing=%v", rep.Missing)
 	}
@@ -178,24 +178,13 @@ func TestMarkdownCleanAndDirty(t *testing.T) {
 	root := writeTree(t, map[string]string{"go.mod": "module x\n", "internal/x.go": "package x\n"})
 
 	clean := Check(root, []DocFile{{Path: "spec.md", Content: "See `go.mod`.\n"}})
-	if out := clean.Markdown(); !contains(out, "resolve") {
+	if out := clean.Markdown(); !strings.Contains(out, "resolve") {
 		t.Fatalf("clean report should say references resolve:\n%s", out)
 	}
 
 	dirty := Check(root, []DocFile{{Path: "spec.md", Content: "See `internal/gone.md`.\n"}})
 	out := dirty.Markdown()
-	if !contains(out, "Stale references") || !contains(out, "internal/gone.md") || !contains(out, "line 1") {
+	if !strings.Contains(out, "Stale references") || !strings.Contains(out, "internal/gone.md") || !strings.Contains(out, "line 1") {
 		t.Fatalf("dirty report should list the stale ref with its line:\n%s", out)
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
-		}
-		return false
-	}())
 }

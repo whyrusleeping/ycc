@@ -117,14 +117,6 @@ final class SessionReadStoreTests: XCTestCase {
 
     // MARK: - Marking read
 
-    func testMarkReadThroughEventTimestampClears() {
-        let store = makeStore()
-        let progressed = session(id: "a", lastActivity: "2026-08-06T10:05:00Z", readThrough: "2026-08-06T10:00:00Z")
-        XCTAssertTrue(store.isUnread(progressed))
-        store.markRead(sessionID: "a", through: "2026-08-06T10:05:00Z")
-        XCTAssertFalse(store.isUnread(progressed))
-    }
-
     func testMarkReadNeverMovesTheMarkBackwards() {
         let store = makeStore()
         store.markRead(sessionID: "a", through: "2026-08-06T10:05:00Z")

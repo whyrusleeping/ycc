@@ -1,10 +1,10 @@
-// Notifications: which list changes are events, when to show one, the
-// shared dedupe ledger, and the tab title count. Also session-list keyboard
-// navigation, per-project attention counts, and toast collapsing.
+// Notifications: which list changes are events, when to show one, and the
+// shared dedupe ledger. Also session-list keyboard navigation, per-project
+// attention counts, and toast collapsing.
 import { create } from "@bufbuild/protobuf";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionSummarySchema, type SessionSummary } from "../src/gen/ycc/v1/ycc_pb";
-import { claimNotification, detectEvents, notificationText, shouldNotify, titleWithCount, NOTIFIED_KEY, type NotifyContext } from "../src/features/notify/policy";
+import { claimNotification, detectEvents, shouldNotify, NOTIFIED_KEY, type NotifyContext } from "../src/features/notify/policy";
 import type { KeyValueStorage } from "../src/features/sessions/readStore";
 import { adjacentSession, nextNeedsAnswer } from "../src/features/sessions/navigation";
 import { activityDescription, projectActivity } from "../src/features/sessions/activity";
@@ -110,17 +110,6 @@ describe("notification ledger", () => {
     const storage = new MemStorage();
     for (let i = 0; i < 400; i++) claimNotification(storage, `k${i}`, 1000);
     expect(JSON.parse(storage.getItem(NOTIFIED_KEY)!)).toHaveLength(300);
-  });
-});
-
-describe("notification text and title", () => {
-  it("names the event, session, and project", () => {
-    expect(notificationText("question", "Fix login", "alpha")).toEqual({ title: "Question: Fix login", body: "The agent is waiting for your answer · alpha" });
-    expect(notificationText("done", "Fix login", "").body).toBe("The agent finished and is idle");
-  });
-  it("prefixes the tab title with the needs-answer count", () => {
-    expect(titleWithCount("ycc", 2)).toBe("(2) ycc");
-    expect(titleWithCount("Backlog · ycc", 0)).toBe("Backlog · ycc");
   });
 });
 

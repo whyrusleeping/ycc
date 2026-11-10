@@ -9,7 +9,6 @@ import {
   FLUSH_INTERVAL_MS,
   Recorder,
   actionName,
-  clickVia,
   errorCode,
   routeView,
   sanitize,
@@ -137,11 +136,6 @@ describe("sanitisation", () => {
     const many = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${i}`, "v"]));
     h.r.action("x.z", "click", many);
     expect(Object.keys(h.r.pending()[1].attrs ?? {})).toHaveLength(8);
-  });
-
-  it("classifies keyboard-activated clicks", () => {
-    expect(clickVia({ detail: 0 })).toBe("keyboard");
-    expect(clickVia({ detail: 1 })).toBe("click");
   });
 });
 

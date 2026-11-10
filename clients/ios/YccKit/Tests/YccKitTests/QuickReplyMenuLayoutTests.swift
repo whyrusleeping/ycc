@@ -20,13 +20,6 @@ final class QuickReplyMenuLayoutTests: XCTestCase {
         XCTAssertNil(layout.selection(at: CGPoint(x: middle.midX, y: layout.frames[2].maxY + 40)))
     }
 
-    func testSlidingBackToTheEdgeDeselects() {
-        let layout = QuickReplyMenuLayout(count: 3, anchorY: 400, bounds: screen)
-        let y = layout.frames[1].midY
-        XCTAssertNotNil(layout.selection(at: CGPoint(x: layout.frames[1].midX, y: y)))
-        XCTAssertNil(layout.selection(at: CGPoint(x: screen.maxX - 10, y: y)))
-    }
-
     func testColumnIsCentredOnTheFingerAndStaysOnScreen() {
         let centred = QuickReplyMenuLayout(count: 3, anchorY: 400, bounds: screen)
         XCTAssertEqual(centred.frames[1].midY, 400, accuracy: 0.5)

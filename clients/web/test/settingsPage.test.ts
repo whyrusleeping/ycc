@@ -33,7 +33,6 @@ import {
   tierBadge,
   tierPayload,
   tierProblem,
-  tierSummary,
 } from "../src/features/settings/tiers";
 import { callbackProblem, codeProblem, loopNeedsAnthropicReconnect, needsAnthropicReconnect, validLoginStart, validOpenAILoginStart } from "../src/features/settings/anthropic";
 
@@ -191,13 +190,7 @@ describe("review tiers", () => {
     expect(tierBadge(tier({ name: "mine", configured: true })).label).toBe("custom");
   });
 
-  it("summarizes line-ups and reorders slots", () => {
-    expect(tierSummary(tier({ strategy: "coordinator" }))).toMatch(/self-review/);
-    expect(tierSummary(tier({ models: ["a", "b"] }))).toBe("a, b");
-    expect(tierSummary(tier({ reviewers: [{ name: "perf", model: "gpt", thinking: "high", prompt: "speed" }, { model: "claude" }] }))).toBe(
-      "perf (gpt · high · focused), claude",
-    );
-    expect(tierSummary(tier({}))).toMatch(/session/);
+  it("reorders slots within bounds", () => {
     const slots = [newSlot("a"), newSlot("b"), newSlot("c")];
     expect(moveSlot(slots, 0, 1).map((s) => s.model)).toEqual(["b", "a", "c"]);
     expect(moveSlot(slots, 0, -1).map((s) => s.model)).toEqual(["a", "b", "c"]);

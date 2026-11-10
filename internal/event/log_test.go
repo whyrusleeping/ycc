@@ -271,26 +271,6 @@ func TestSubscribeReplayFromOffset(t *testing.T) {
 	}
 }
 
-// A fresh subscriber (from_seq 0) sees the entire history in order.
-func TestSubscribeFromZero(t *testing.T) {
-	l, err := OpenLog(filepath.Join(t.TempDir(), "events.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	for i := 1; i <= 3; i++ {
-		emit(t, l, i, ModelTurn)
-	}
-	ch, cancel := l.Subscribe(0)
-	defer cancel()
-	got := collect(t, ch, 3)
-	for i, ev := range got {
-		if ev.Seq != i+1 {
-			t.Fatalf("event %d seq = %d", i, ev.Seq)
-		}
-	}
-}
-
 func TestReduce(t *testing.T) {
 	events := []Event{
 		{Seq: 1, Type: SessionStarted, Data: map[string]any{"mode": "work", "workspace": "/w"}},

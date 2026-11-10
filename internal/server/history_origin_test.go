@@ -14,6 +14,8 @@ import (
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
 
+// The origin/participation/waiting derivation is covered in internal/session;
+// this checks those summary fields survive the RPC proto mapping.
 func TestSessionOriginHistoryRPC(t *testing.T) {
 	ws := t.TempDir()
 	cases := []struct {
@@ -24,11 +26,7 @@ func TestSessionOriginHistoryRPC(t *testing.T) {
 	}{
 		{"s_user", session.OriginUser, true, false},
 		{"s_loop", session.OriginWorkLoop, false, false},
-		{"s_groom_engaged", session.OriginMemoryGroom, true, false},
-		{"s_legacy", "", false, false},
 		{"s_automatic_human_gate", session.OriginAutomation, false, true},
-		{"s_automatic_answered_gate", session.OriginAutomation, true, false},
-		{"s_automatic_ask_only", session.OriginAutomation, false, false},
 	}
 	for _, tc := range cases {
 		lg, err := event.OpenLog(filepath.Join(ws, ".ycc", "sessions", tc.id, "events.jsonl"))
@@ -37,21 +35,12 @@ func TestSessionOriginHistoryRPC(t *testing.T) {
 		}
 		lg.Record("coordinator", event.SessionStarted, map[string]any{"origin": tc.origin, "mode": "pm", "preset": "memory-groom"})
 		lg.Record("user", event.UserInput, map[string]any{"text": "canned opening", "opening": true})
-		switch tc.id {
-		case "s_automatic_human_gate", "s_automatic_answered_gate":
+		if tc.id == "s_automatic_human_gate" {
 			lg.Record("coordinator", event.ToolCall, map[string]any{"name": "start_work", "id": "confirm"})
 			lg.Record("coordinator", event.QuestionAsked, map[string]any{"question": "Start work?", "options": []string{"Yes", "No"}})
-			if tc.id == "s_automatic_answered_gate" {
-				lg.Record("coordinator", event.QuestionAnswered, map[string]any{"answer": "No", "confirmed": false})
-			}
-		case "s_automatic_ask_only":
-			lg.Record("coordinator", event.QuestionAsked, map[string]any{"question": "Assume?", "auto": true})
-		default:
+		} else {
 			lg.Record("coordinator", event.QuestionAsked, map[string]any{"question": "Assume?", "auto": true})
 			lg.Record("coordinator", event.QuestionAnswered, map[string]any{"auto": true, "answer": "automatic"})
-		}
-		if tc.id == "s_groom_engaged" {
-			lg.Record("coordinator", event.QuestionAnswered, map[string]any{"answers": []string{"real human answer"}})
 		}
 		if err := lg.Close(); err != nil {
 			t.Fatal(err)

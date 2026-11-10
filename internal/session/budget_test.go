@@ -90,25 +90,7 @@ func lastLogEvent(s *Session, t event.Type) *event.Event {
 	return nil
 }
 
-// (a) The ~80% warning fires exactly once even across repeated checkpoints.
-func TestBudgetWarningOnce(t *testing.T) {
-	s := newBudgetSession(t, false, budgetConfig(config.Budget{SessionTokens: 1000}, false))
-	s.spendTokens(800) // 80% of the token cap
-
-	if msgs := s.checkBudget(context.Background()); msgs != nil {
-		t.Fatalf("warning checkBudget returned msgs %v, want nil", msgs)
-	}
-	if n := countEvents(s, event.BudgetWarning); n != 1 {
-		t.Fatalf("budget_warning count = %d, want 1", n)
-	}
-	// A second check at the same spend must not re-warn.
-	s.checkBudget(context.Background())
-	if n := countEvents(s, event.BudgetWarning); n != 1 {
-		t.Fatalf("budget_warning count after re-check = %d, want 1", n)
-	}
-}
-
-// (b) An unattended breach injects the wrap-up instruction and records a
+// An unattended breach injects the wrap-up instruction and records a
 // budget_exceeded{action:"halt"} user-actor event, exactly once.
 func TestBudgetAutonomousHalt(t *testing.T) {
 	s := newBudgetSession(t, true, budgetConfig(config.Budget{SessionTokens: 1000}, false))
@@ -148,7 +130,7 @@ func TestBudgetAutonomousHalt(t *testing.T) {
 	}
 }
 
-// (c) An attended breach raises a Confirm gate; declining halts.
+// An attended breach raises a Confirm gate; declining halts.
 func TestBudgetAttendedConfirmDecline(t *testing.T) {
 	s := newBudgetSession(t, false, budgetConfig(config.Budget{SessionTokens: 1000}, false))
 	s.spendTokens(1000)
@@ -171,7 +153,7 @@ func TestBudgetAttendedConfirmDecline(t *testing.T) {
 	}
 }
 
-// (c) An attended breach confirmed with "yes" continues and does not re-ask.
+// An attended breach confirmed with "yes" continues and does not re-ask.
 func TestBudgetAttendedConfirmContinue(t *testing.T) {
 	s := newBudgetSession(t, false, budgetConfig(config.Budget{SessionTokens: 1000}, false))
 	s.spendTokens(1000)
@@ -201,8 +183,8 @@ func TestBudgetAttendedConfirmContinue(t *testing.T) {
 	}
 }
 
-// (d) An unpriced model never breaches a cost-only cap (no invented dollars), but
-// a token cap is still enforced.
+// An unpriced model never breaches a cost-only cap (no invented dollars); its
+// token cap is still enforced (TestBudgetAutonomousHalt).
 func TestBudgetUnpricedCostCapNoBreach(t *testing.T) {
 	s := newBudgetSession(t, true, budgetConfig(config.Budget{SessionCost: 1.0}, false))
 	s.spendTokens(10_000_000) // huge token spend, but the model is unpriced → $0
@@ -212,14 +194,6 @@ func TestBudgetUnpricedCostCapNoBreach(t *testing.T) {
 	}
 	if n := countEvents(s, event.BudgetExceeded); n != 0 {
 		t.Fatalf("budget_exceeded on unpriced cost cap = %d, want 0", n)
-	}
-}
-
-func TestBudgetTokenCapEnforcedUnpriced(t *testing.T) {
-	s := newBudgetSession(t, true, budgetConfig(config.Budget{SessionTokens: 1000}, false))
-	s.spendTokens(2000)
-	if msgs := s.checkBudget(context.Background()); len(msgs) != 1 {
-		t.Fatalf("token cap breach returned %d msgs, want 1", len(msgs))
 	}
 }
 
@@ -348,6 +322,11 @@ func TestIncrementalBudgetThresholdCrossingAfterRepeatedChecks(t *testing.T) {
 	}
 	if got := countEvents(s, event.BudgetWarning); got != 1 {
 		t.Fatalf("warnings at threshold = %d, want 1", got)
+	}
+	// A further check at the same spend must not re-warn.
+	s.checkBudget(context.Background())
+	if got := countEvents(s, event.BudgetWarning); got != 1 {
+		t.Fatalf("warnings after re-check = %d, want 1", got)
 	}
 
 	s.spendTokens(200)

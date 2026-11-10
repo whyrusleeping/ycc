@@ -872,20 +872,6 @@ func workLogContains(t *testing.T, store *docs.Store, id, want string) bool {
 	return strings.Contains(task.Body, want)
 }
 
-func TestReviewTierBlurbUsesCanonicalBuiltins(t *testing.T) {
-	blurb := reviewTierBlurb(&Deps{})
-	for _, name := range []string{"self-review", "standard", "comprehensive"} {
-		if !strings.Contains(blurb, "'"+name+"'") {
-			t.Errorf("fallback blurb does not name %q: %s", name, blurb)
-		}
-	}
-	for _, legacy := range []string{"'simple'", "'single-opus'", "'high-powered'"} {
-		if strings.Contains(blurb, legacy) {
-			t.Errorf("fallback blurb exposes legacy alias %q: %s", legacy, blurb)
-		}
-	}
-}
-
 // With a SelfReview ReviewPlan (the 'self-review' tier), spawn_reviewers spawns no
 // reviewer loop: it returns self-review guidance, records the tier in the work
 // log, and emits a review_tier_selected event.
@@ -910,12 +896,9 @@ func TestSpawnReviewersSelfReviewTier(t *testing.T) {
 			return ReviewPlan{Tier: "self-review", Requested: name, SelfReview: true}
 		},
 	}
-	res, err := spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "review_tier": "self-review"})
+	_, err = spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": "0001", "review_tier": "self-review"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(res.Content, "review this change yourself") {
-		t.Fatalf("self-review guidance missing:\n%s", res.Content)
 	}
 	// review_tier_selected emitted with self_review=true.
 	found := false

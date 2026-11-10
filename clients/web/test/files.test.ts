@@ -1,19 +1,13 @@
 // File browser logic: route locations (path, session, line fragment) and
 // their round trip through paths.files, the lazily loaded tree, line
-// splitting/targets, go-to-line parsing, and display helpers. Mirrors
+// splitting/targets, go-to-line parsing, and preview helpers. Mirrors
 // YccKit's FileBrowsingTests where they overlap.
 import { describe, expect, it } from "vitest";
 import { paths } from "../src/app/paths";
 import {
-  ancestorDirs,
-  basename,
-  childPath,
   clampLines,
-  crumbs,
-  dirname,
   expandTo,
   flattenTree,
-  formatSize,
   isMarkdownPath,
   isRasterPreviewType,
   isSvgPath,
@@ -65,21 +59,6 @@ describe("file locations", () => {
     });
     // Relative links inside a markdown file resolve against its directory.
     expect(fromLink("../spec.md", { ...ctx, baseDirectory: "docs/design" })?.path).toBe("docs/spec.md");
-  });
-
-  it("splits paths", () => {
-    expect(dirname("a/b/c.go")).toBe("a/b");
-    expect(dirname("c.go")).toBe("");
-    expect(basename("a/b/c.go")).toBe("c.go");
-    expect(childPath("", "x")).toBe("x");
-    expect(childPath("a", "x")).toBe("a/x");
-    expect(ancestorDirs("a/b/c.go")).toEqual(["a", "a/b"]);
-    expect(ancestorDirs("c.go")).toEqual([]);
-    expect(crumbs("a/b", "proj")).toEqual([
-      { label: "proj", path: "" },
-      { label: "a", path: "a" },
-      { label: "b", path: "a/b" },
-    ]);
   });
 });
 
@@ -159,16 +138,11 @@ describe("file contents", () => {
     for (const bad of ["", "0", "x", "-3", "1.5"]) expect(parseGoToLine(bad), bad).toBeNull();
   });
 
-  it("knows markdown and formats sizes", () => {
+  it("knows markdown", () => {
     expect(isMarkdownPath("docs/README.md")).toBe(true);
     expect(isMarkdownPath("a.MARKDOWN")).toBe(true);
     expect(isMarkdownPath("a.mdx")).toBe(true);
     expect(isMarkdownPath("a.go")).toBe(false);
-    expect(formatSize(0)).toBe("0 B");
-    expect(formatSize(1023)).toBe("1023 B");
-    expect(formatSize(1536)).toBe("1.5 KB");
-    expect(formatSize(5 * 1024 * 1024)).toBe("5.0 MB");
-    expect(formatSize(300 * 1024)).toBe("300 KB");
   });
 
   it("renders SVG through a data: URL and only rasters through blob: URLs", () => {

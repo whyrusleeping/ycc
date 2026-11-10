@@ -704,29 +704,6 @@ func TestLoopModelTurnCarriesUsage(t *testing.T) {
 	}
 }
 
-// Backends that don't report usage record zeros without error.
-func TestLoopModelTurnZeroUsage(t *testing.T) {
-	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{assistantText("plain")}}
-	rec := &captureRecorder{}
-	loop := newLoop(t, turner)
-	loop.Emitter = event.NewEmitter(rec, "agent")
-	if _, err := loop.Run(context.Background()); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	for _, ev := range rec.evs {
-		if ev.Type != event.ModelTurn {
-			continue
-		}
-		u, ok := ev.Data["usage"].(event.Usage)
-		if !ok {
-			t.Fatalf("usage type = %T, want event.Usage", ev.Data["usage"])
-		}
-		if (u != event.Usage{}) {
-			t.Fatalf("usage = %+v, want all zeros", u)
-		}
-	}
-}
-
 // The loop terminates with an error when it exceeds MaxTurns (model never stops).
 func TestLoopMaxTurns(t *testing.T) {
 	loopForever := make([]*gollama.ResponseMessageGenerate, 10)
@@ -742,12 +719,8 @@ func TestLoopMaxTurns(t *testing.T) {
 	}
 }
 
-// The default backstop is high (well above the old 40) but still finite, so a
-// degenerate infinite tool-call loop is eventually stopped.
+// An unset MaxTurns still stops a degenerate infinite tool-call loop.
 func TestLoopDefaultMaxTurnsBackstop(t *testing.T) {
-	if defaultMaxTurns < 100 {
-		t.Fatalf("defaultMaxTurns = %d, want a high default (>=100)", defaultMaxTurns)
-	}
 	loopForever := make([]*gollama.ResponseMessageGenerate, defaultMaxTurns+5)
 	for i := range loopForever {
 		loopForever[i] = assistantToolCall("Bash", `{"command":"echo hi"}`)

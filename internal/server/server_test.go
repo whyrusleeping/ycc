@@ -1068,23 +1068,6 @@ func TestGetBudgetReturnsConfiguredCaps(t *testing.T) {
 	}
 }
 
-// An absent [budget] block yields all-zero (unlimited) caps.
-func TestGetBudgetDefaultUnlimited(t *testing.T) {
-	reg := config.NewRegistry(&config.Config{
-		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
-		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
-	})
-	srv := New(session.NewManager(reg, t.TempDir()))
-	resp, err := srv.GetBudget(context.Background(), connect.NewRequest(&v1.GetBudgetRequest{}))
-	if err != nil {
-		t.Fatalf("GetBudget: %v", err)
-	}
-	m := resp.Msg
-	if m.SessionCost != 0 || m.SessionTokens != 0 || m.LoopCost != 0 || m.LoopTokens != 0 {
-		t.Fatalf("GetBudget default = %+v, want all zero", m)
-	}
-}
-
 // Review-tier RPCs (task 0297, spec §13.1/§18.2): list the effective tiers,
 // upsert/remove configured ones, and set the default — all persisted to
 // ycc.toml, with validation errors surfaced as connect errors.

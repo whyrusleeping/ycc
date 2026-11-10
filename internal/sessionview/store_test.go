@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/event"
-	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 func writeLog(t *testing.T, path string, events []event.Event) {
@@ -252,52 +250,6 @@ func TestAutoQuestionDoesNotExposeGateAndFoldsAnswer(t *testing.T) {
 	if len(state.Pending) != 0 || state.PendingRowID != "" || len(rows) != 1 || rows[0].ID != "seq-1" || rows[0].UpdatedSeq != 2 || len(rows[0].Events) != 2 || rows[0].Events[1].Data["auto"] != true {
 		t.Fatalf("answer state=%+v rows=%+v", state, rows)
 	}
-}
-
-// TestMeasureLargeLog records cold-index and warm-page costs when a real log is
-// explicitly supplied. It is skipped in ordinary test runs.
-func TestMeasureLargeLog(t *testing.T) {
-	logPath := os.Getenv("YCC_SESSION_VIEW_BENCH_LOG")
-	if logPath == "" {
-		t.Skip("set YCC_SESSION_VIEW_BENCH_LOG to measure a real session")
-	}
-	store, err := Open(filepath.Join(t.TempDir(), "view.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	ctx := context.Background()
-	sid := filepath.Base(filepath.Dir(logPath))
-	started := time.Now()
-	state, err := store.CatchUp(ctx, sid, logPath, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cold := time.Since(started)
-	started = time.Now()
-	state, err = store.CatchUp(ctx, sid, logPath, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rows, _, err := store.Page(ctx, sid, 0, DefaultRows, DefaultBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	warm := time.Since(started)
-	response := &v1.GetSessionViewResponse{State: &v1.SessionViewState{IndexedThroughSeq: state.IndexedThrough}}
-	for _, row := range rows {
-		encodedRow := &v1.SessionPresentationRow{Id: row.ID, PositionSeq: row.PositionSeq, UpdatedSeq: row.UpdatedSeq, HasDetail: row.HasDetail}
-		for _, ev := range row.Events {
-			data, _ := json.Marshal(ev.Data)
-			encodedRow.Events = append(encodedRow.Events, &v1.Event{Seq: int64(ev.Seq), Ts: ev.TS.Format(time.RFC3339Nano), Actor: ev.Actor, Type: string(ev.Type), DataJson: string(data)})
-		}
-		response.Rows = append(response.Rows, encodedRow)
-	}
-	encoded, err := proto.Marshal(response)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("events=%d cold_index=%s warm_first_page=%s rows=%d protobuf_payload=%d bytes", state.IndexedThrough, cold, warm, len(rows), len(encoded))
 }
 
 func TestIndexRebuildsWhenAuthoritativeLogChanges(t *testing.T) {

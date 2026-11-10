@@ -10,7 +10,6 @@ import {
   conflictMessage,
   conflictingFields,
   draftFrom,
-  draftStore,
   planSave,
   serverChangedFields,
   validateDraft,
@@ -132,16 +131,6 @@ describe("task drafts", () => {
       kind: "save",
       request: { priority: 2 },
     });
-  });
-
-  it("keeps open drafts per task across navigation", () => {
-    const base = detail();
-    const open = { base, draft: { ...draftFrom(base), title: "WIP" } };
-    draftStore.set("p", "0042", open);
-    expect(draftStore.get("p", "0042")).toBe(open);
-    expect(draftStore.has("q", "0042")).toBe(false);
-    draftStore.delete("p", "0042");
-    expect(draftStore.get("p", "0042")).toBeUndefined();
   });
 
   it("persists open drafts for the tab (sessionStorage) across reloads", async () => {

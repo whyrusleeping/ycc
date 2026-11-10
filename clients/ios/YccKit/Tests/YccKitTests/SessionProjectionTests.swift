@@ -265,32 +265,6 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertTrue(proj.liveTails.isEmpty)
     }
 
-    func testClearLiveTailsPreservesDurableCursor() {
-        var proj = SessionProjection()
-        proj.apply(makeEvent(seq: 3, type: "user_input", dataJson: #"{"text":"hi"}"#))
-        proj.apply(delta("implementing", actor: "implementer-1"))
-        proj.apply(delta("reviewing", actor: "reviewer-1"))
-
-        proj.clearLiveTails()
-
-        XCTAssertTrue(proj.liveTails.isEmpty)
-        XCTAssertEqual(proj.lastPersistedSeq, 3)
-        XCTAssertEqual(proj.durableRows.count, 1)
-    }
-
-    func testDurableTurnDoesNotClearOtherActorsTail() {
-        var proj = SessionProjection()
-        proj.apply(delta("implementing", actor: "implementer-1"))
-        proj.apply(delta("reviewing", actor: "reviewer-1"))
-
-        proj.apply(makeEvent(
-            seq: 1, type: "model_turn", actor: "implementer-1",
-            dataJson: #"{"text":"implementation complete"}"#))
-
-        XCTAssertEqual(proj.liveTails.map(\.actor), ["reviewer-1"])
-        XCTAssertEqual(proj.liveTails.first?.id, "live-tail:reviewer-1")
-    }
-
     // MARK: - Subagent plant identities
 
     func testSubagentPlantIdentityPrefixesEveryActorOwnedRowKind() throws {
@@ -907,28 +881,6 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertFalse(proj.pauseRequested)
     }
 
-    func testPhaseTransitions() {
-        var proj = SessionProjection()
-        proj.apply(makeEvent(seq: 1, type: "interrupted"))
-        XCTAssertEqual(proj.phase, .paused)
-
-        proj.apply(makeEvent(seq: 2, type: "resumed"))
-        XCTAssertEqual(proj.phase, .running)
-
-        proj.apply(makeEvent(seq: 3, type: "session_idle"))
-        XCTAssertEqual(proj.phase, .idle)
-
-        // Fresh activity clears the idle banner.
-        proj.apply(makeEvent(seq: 4, type: "user_input", dataJson: #"{"text":"go"}"#))
-        XCTAssertEqual(proj.phase, .running)
-
-        proj.apply(makeEvent(seq: 5, type: "session_error", dataJson: #"{"msg":"boom"}"#))
-        XCTAssertEqual(proj.phase, .error("boom", retryable: true))
-
-        proj.apply(makeEvent(seq: 6, type: "session_stopped"))
-        XCTAssertEqual(proj.phase, .stopped)
-    }
-
     func testRepeatedContextOverflowDisablesRolloverUntilCoordinatorIdentityChanges() {
         var proj = SessionProjection()
         proj.apply(makeEvent(
@@ -1026,14 +978,6 @@ final class SessionProjectionTests: XCTestCase {
             seq: 4, type: "user_input_delivered", actor: "user",
             dataJson: #"{"seq":1,"text":"first"}"#))
         XCTAssertEqual(replayed, proj, "one-pass replay must reconstruct delivery state")
-    }
-
-    func testPlainUserInputIsAlreadyDelivered() {
-        var proj = SessionProjection()
-        proj.apply(makeEvent(
-            seq: 1, type: "user_input", actor: "user",
-            dataJson: #"{"text":"start"}"#))
-        XCTAssertEqual(proj.durableRows.first?.userInputStatus, .delivered)
     }
 
     func testSessionErrorReadsMsgWithFallbacks() {

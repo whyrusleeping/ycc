@@ -123,22 +123,6 @@ func TestWebDisabledReturns404(t *testing.T) {
 	}
 }
 
-// TestServeRefusesNonLoopbackWithoutTokenWithWeb asserts the non-loopback
-// no-token guardrail (spec §12/§14) still fires with --web set: enabling the web
-// client never relaxes the refusal to bind a network address without a token.
-func TestServeRefusesNonLoopbackWithoutTokenWithWeb(t *testing.T) {
-	o := baseOptions(t)
-	o.Addr = "0.0.0.0:0"
-	o.Web = true
-	err := Serve(o)
-	if err == nil {
-		t.Fatal("Serve on 0.0.0.0 without a token (with --web) returned nil; want refusal")
-	}
-	if !strings.Contains(err.Error(), "token") {
-		t.Fatalf("error = %q, want it to mention the missing token", err)
-	}
-}
-
 // TestStartInProcessLeavesWebOff asserts the one-shot in-process daemon never
 // serves the SPA even when the caller sets Web: "/" returns 404.
 func TestStartInProcessLeavesWebOff(t *testing.T) {

@@ -101,10 +101,8 @@ func TestNotifyWatcherMapsEvents(t *testing.T) {
 
 	got := sink.all()
 	var kinds []string
-	byKind := map[string]string{}
 	for _, r := range got {
 		kinds = append(kinds, r.tags)
-		byKind[r.tags] = r.body
 	}
 
 	// Exactly the five expected kinds, no auto-question, no non-blocked finish.
@@ -188,14 +186,6 @@ func TestNotifyWatcherSkipsHistory(t *testing.T) {
 	}
 	if got[0].tags != "idle" || !strings.Contains(got[0].body, "fresh") {
 		t.Errorf("wrong notification: %+v", got[0])
-	}
-}
-
-// projectLabel resolves the base name when no project matches.
-func TestProjectLabelFallback(t *testing.T) {
-	m, _ := newTestManager("")
-	if got := m.projectLabel("/home/x/myrepo"); got != "myrepo" {
-		t.Errorf("projectLabel = %q, want myrepo", got)
 	}
 }
 

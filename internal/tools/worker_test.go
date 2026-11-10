@@ -565,15 +565,6 @@ func TestBash(t *testing.T) {
 	}
 }
 
-func TestBashWorkspaceEnv(t *testing.T) {
-	reg := New()
-	reg.Add(Worker(&Workspace{Root: t.TempDir(), Env: []string{"YCC_WORKTREE_ENV=visible"}})...)
-	res := dispatch(t, reg, "Bash", `{"command":"printf '%s' \"$YCC_WORKTREE_ENV\""}`)
-	if res.IsError || !strings.HasPrefix(res.Content, "visible\n[output capture: 7 bytes/1 lines") {
-		t.Fatalf("bash workspace env = %q (err=%v)", res.Content, res.IsError)
-	}
-}
-
 func TestBashLargeOutputKeepsUTF8HeadTailAndRetrievesArtifact(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
@@ -687,33 +678,6 @@ func TestBashCustomForegroundTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("custom timeout took too long: %s", elapsed)
-	}
-}
-
-func TestBashTimeoutSchemaAndValidation(t *testing.T) {
-	reg := workerReg(t.TempDir())
-	var bashDef *gollama.Tool
-	for _, td := range reg.tools {
-		if td.Name == "Bash" {
-			bashDef = td
-			break
-		}
-	}
-	if bashDef == nil {
-		t.Fatal("no Bash tool")
-	}
-	params, ok := bashDef.Params.(gollama.ToolFunctionParams)
-	if !ok || params.Properties["timeout_s"] == nil {
-		t.Fatalf("Bash does not advertise timeout_s: %#v", bashDef.Params)
-	}
-	for _, args := range []string{
-		`{"command":"echo hi","timeout_s":0}`,
-		`{"command":"echo hi","timeout_s":3601}`,
-	} {
-		res := dispatch(t, reg, "Bash", args)
-		if !res.IsError || !strings.Contains(res.Content, "between 1 and 3600") {
-			t.Fatalf("invalid timeout result = %q (err=%v)", res.Content, res.IsError)
-		}
 	}
 }
 

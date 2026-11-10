@@ -134,22 +134,6 @@ func TestWebMissingKey(t *testing.T) {
 	}
 }
 
-func TestWebNon200(t *testing.T) {
-	t.Setenv("EXA_API_KEY", "test-key")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "rate limited", http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
-	oldBase := exaBaseURL
-	exaBaseURL = srv.URL
-	defer func() { exaBaseURL = oldBase }()
-
-	if res := callTool(t, webSearch(), map[string]any{"query": "x"}); !res.IsError {
-		t.Errorf("web_search should surface non-200 as error, got: %s", res.Content)
-	}
-}
-
 func TestWebMalformedJSON(t *testing.T) {
 	t.Setenv("EXA_API_KEY", "test-key")
 

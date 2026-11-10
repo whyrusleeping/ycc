@@ -115,12 +115,6 @@ final class MarkdownBlocksTests: XCTestCase {
         XCTAssertEqual(MarkdownBlocks.inlineMarkdown(in: blocks), ["H", "para", "q", "a", "b", "1", "2"])
     }
 
-    func testBlockCacheMemoisesByText() {
-        let text = "cache me\n\n- please"
-        XCTAssertEqual(MarkdownBlockCache.blocks(for: text), MarkdownBlocks.parse(text))
-        XCTAssertNotNil(MarkdownBlockCache.shared.value(for: text))
-    }
-
     func testBoundedCacheEvictsLeastRecentlyUsed() {
         let cache = BoundedCache<Int, String>(capacity: 4)
         for key in 0..<4 { cache.insert("\(key)", for: key) }

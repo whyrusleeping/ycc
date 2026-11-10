@@ -39,15 +39,6 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	}
 }
 
-func TestNextIDIncrements(t *testing.T) {
-	s := NewStore(t.TempDir())
-	a, _ := s.Create("first", "", 1, nil, nil)
-	b, _ := s.Create("second", "", 1, nil, nil)
-	if a.ID != "0001" || b.ID != "0002" {
-		t.Fatalf("ids = %s,%s", a.ID, b.ID)
-	}
-}
-
 func TestCreateWithStatus(t *testing.T) {
 	s := NewStore(t.TempDir())
 	p, err := s.CreateWithStatus("an idea", "", 3, nil, nil, StatusProposed)

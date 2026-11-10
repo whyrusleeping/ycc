@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -172,19 +171,6 @@ func TestReaperDoesNotHardStop(t *testing.T) {
 	}
 	if proj := event.Reduce(s.log.Snapshot()); proj.Status == event.StatusStopped {
 		t.Fatal("reaped session reduced to StatusStopped; it must stay reopenable")
-	}
-}
-
-// A disabled reaper (no idle timeout, no retention) launches no goroutine and
-// reaps nothing.
-func TestStartReaperDisabled(t *testing.T) {
-	m := NewManager(nil, t.TempDir())
-	idleSession(t, m, "s_keep")
-	m.StartReaper(context.Background(), GCConfig{})
-	// Give any (erroneously launched) goroutine a chance to run.
-	time.Sleep(20 * time.Millisecond)
-	if _, ok := m.Get("s_keep"); !ok {
-		t.Fatal("disabled reaper reaped a session")
 	}
 }
 

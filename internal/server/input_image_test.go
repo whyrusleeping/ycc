@@ -91,16 +91,6 @@ func TestValidateInputImagesRejectsUnsupportedMismatchAndOversize(t *testing.T) 
 	}
 }
 
-func TestImagePayloadIsNotEventMetadata(t *testing.T) {
-	// Regression guard for the design boundary: callers derive only these safe
-	// fields for user_input events, never Base64.
-	image := struct{ MediaType, Filename, Base64 string }{"image/png", "photo.png", strings.Repeat("secret", 20)}
-	metadata := map[string]any{"media_type": image.MediaType, "filename": image.Filename}
-	if strings.Contains(metadata["filename"].(string), image.Base64) {
-		t.Fatal("payload leaked into metadata")
-	}
-}
-
 // StartSession accepts opening-prompt pictures (spec §12): the session starts,
 // its first user_input event carries picture metadata plus an opaque id (never
 // the bytes), and the authenticated attachment RPC returns the retained payload.
@@ -199,11 +189,9 @@ func TestStartSessionRejectsBadPromptImages(t *testing.T) {
 		many[i] = &v1.ImageAttachment{Data: data, MediaType: "image/png"}
 	}
 	for name, images := range map[string][]*v1.ImageAttachment{
-		"too many":    many,
-		"unsupported": {{Data: data, MediaType: "image/heic"}},
-		"mismatch":    {{Data: data, MediaType: "image/jpeg"}},
-		"empty":       {{MediaType: "image/png"}},
-		"nil":         {nil},
+		"too many": many,
+		"empty":    {{MediaType: "image/png"}},
+		"nil":      {nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, ws := newImageTestServer(t)

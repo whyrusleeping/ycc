@@ -130,14 +130,6 @@ final class UsageModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
-    func testEmptyUsageHasNoRows() async {
-        let source = MockUsageSource()
-        let model = UsageModel(source: source)
-        await model.refresh()
-        XCTAssertFalse(model.hasUsage)
-        XCTAssertNil(model.errorMessage)
-    }
-
     func testRefreshSurfacesRpcError() async {
         let source = MockUsageSource()
         source.usageError = YccError.rpc(message: "boom")

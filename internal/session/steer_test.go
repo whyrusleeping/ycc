@@ -169,7 +169,7 @@ func TestCancelPauseBeforeCheckpoint(t *testing.T) {
 
 // (b) pause → SendInput(correction) buffers; only Resume drains them in order.
 func TestSteerPauseCorrect(t *testing.T) {
-	s, _ := newSteerSession()
+	s, rec := newSteerSession()
 
 	if err := s.Interrupt(); err != nil {
 		t.Fatalf("Interrupt: %v", err)
@@ -187,6 +187,10 @@ func TestSteerPauseCorrect(t *testing.T) {
 	}
 	if err := s.SendInput("second correction"); err != nil {
 		t.Fatalf("SendInput: %v", err)
+	}
+	echo := lastEvent(rec, event.UserInput)
+	if echo == nil || echo.Data["queued"] != true {
+		t.Fatalf("paused echo not flagged queued: %+v", echo)
 	}
 
 	// Still blocked: no resume signaled yet.
@@ -207,6 +211,12 @@ func TestSteerPauseCorrect(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Checkpoint did not unblock on Resume")
+	}
+	if n := rec.count(event.UserInputDelivered); n != 2 {
+		t.Fatalf("delivered events = %d, want 2", n)
+	}
+	if rec.count(event.Interrupted) != 1 || rec.count(event.Resumed) != 1 {
+		t.Fatalf("interrupted/resumed counts = %d/%d, want 1/1", rec.count(event.Interrupted), rec.count(event.Resumed))
 	}
 }
 

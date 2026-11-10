@@ -264,30 +264,6 @@ func TestSpawnWorkstreamTraversalProjectIsConfined(t *testing.T) {
 	}
 }
 
-// TestSpawnWorkstreamSecondWriterRejected verifies the single-writer invariant:
-// a spawn targeting a path already recorded by an active workstream is refused
-// before any worktree is created.
-func TestSpawnWorkstreamSecondWriterRejected(t *testing.T) {
-	m, _ := newWorkstreamManager(t)
-
-	// Pre-add an active registry entry whose worktree path collides with the
-	// deterministic path the next spawn would use is hard (random id), so
-	// instead spawn once and then pre-register a conflicting entry using the
-	// same path shape and confirm Add rejects duplicates.
-	ws, s, err := m.SpawnWorkstream(SpawnWorkstreamConfig{Project: "demo"})
-	if err != nil {
-		t.Fatalf("first spawn: %v", err)
-	}
-	defer m.Stop(s.ID)
-
-	// A second active workstream for the same path must be rejected by the
-	// registry's single-writer guard.
-	dup := workstream.Workstream{ID: "ws_dup", Project: "demo", WorktreePath: ws.WorktreePath, Status: workstream.StatusActive}
-	if err := m.workstreams.Add(dup); err == nil {
-		t.Fatal("expected duplicate active worktree path to be rejected")
-	}
-}
-
 // TestReconcileWorkstreams verifies startup recovery marks a workstream whose
 // worktree directory has vanished as stale while leaving a live one active, and
 // that the change persists across a fresh registry Open.

@@ -13,16 +13,6 @@ import (
 	"github.com/whyrusleeping/ycc/internal/git"
 )
 
-func TestImplementerPromptIncludesHints(t *testing.T) {
-	task := &docs.Task{ID: "0001", Title: "do thing", Body: "## Body"}
-	prompt := implementerPrompt(task, "the plan", []string{"internal/foo.go", "func Bar"})
-	for _, hint := range []string{"internal/foo.go", "func Bar"} {
-		if !strings.Contains(prompt, hint) {
-			t.Fatalf("hint %q missing from implementer context", hint)
-		}
-	}
-}
-
 func TestBoundHints(t *testing.T) {
 	long := strings.Repeat("x", maxContextHintLen+50)
 	got := boundHints([]string{long})

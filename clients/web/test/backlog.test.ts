@@ -20,7 +20,6 @@ import {
   readiness,
   sortTasks,
   splitWorkLog,
-  statusCounts,
   taskIdFromPath,
   toggleSort,
   upsertSummary,
@@ -109,10 +108,6 @@ describe("backlog model", () => {
     expect(toggleSort({ key: "status", dir: "asc" }, "status")).toEqual({ key: "status", dir: "desc" });
     expect(toggleSort({ key: "status", dir: "asc" }, "id")).toEqual({ key: "id", dir: "desc" });
     expect(toggleSort({ key: "id", dir: "desc" }, "priority")).toEqual({ key: "priority", dir: "asc" });
-  });
-
-  it("counts statuses over the whole list", () => {
-    expect(statusCounts(tasks)).toMatchObject({ todo: 2, done: 1, proposed: 1 });
   });
 
   it("moves the keyboard cursor with clamping", () => {

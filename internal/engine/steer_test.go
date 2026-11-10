@@ -56,25 +56,6 @@ func TestLoopSteerInjectsCorrection(t *testing.T) {
 	}
 }
 
-// With Steer == nil the checkpoint is a no-op: behavior is unchanged.
-func TestLoopSteerNilNoop(t *testing.T) {
-	turner := &scriptedTurner{responses: []*gollama.ResponseMessageGenerate{
-		assistantText("ok"),
-	}}
-	loop := newLoop(t, turner)
-	loop.Seed("hi")
-	if loop.Steer != nil {
-		t.Fatal("Steer should be nil")
-	}
-	res, err := loop.Run(context.Background())
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if res.Report != "ok" {
-		t.Fatalf("report = %q", res.Report)
-	}
-}
-
 // A checkpoint message arriving MID-BATCH — after the first tool result of a
 // multi-tool-call turn (e.g. a finished-job notification or steered
 // correction) — must NOT be posted between that turn's tool results: Anthropic

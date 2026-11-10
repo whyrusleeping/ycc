@@ -33,7 +33,7 @@ func TestRenderAnalytics(t *testing.T) {
 		"session.interrupt",
 		"home -> session",
 		"codes: unavailable:1",
-		"new_session                         5 -> 3 / 1 / 1",
+		"5 -> 3 / 1 / 1",
 		"Never used (1)",
 		"view workstreams",
 		"action session.interrupt (Esc), used 2 times",

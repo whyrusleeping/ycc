@@ -1,4 +1,4 @@
-// Workstream logic: lifecycle and queue parsing, badges and tones, which
+// Workstream logic: lifecycle and queue parsing, badge precedence, which
 // actions a row offers, grouping, the sidebar indicator, merge-all, and the
 // spawn request. Mirrors YccKit's WorkstreamsModelTests where they overlap.
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
@@ -6,12 +6,9 @@ import { describe, expect, it } from "vitest";
 import { BacklogTaskSummarySchema, WorkstreamInfoSchema, type WorkstreamInfo } from "../src/gen/ycc/v1/ycc_pb";
 import {
   badgeTitle,
-  badgeTone,
-  branchLabel,
   buildSpawnRequest,
   canRetry,
   canSpawn,
-  commitSummary,
   groupWorkstreams,
   integrationState,
   isDiscardable,
@@ -21,7 +18,6 @@ import {
   mergeAllReady,
   pollInterval,
   spawnableTasks,
-  statusReason,
   taskPrompt,
   workstreamIndicator,
   workstreamStatus,
@@ -67,25 +63,6 @@ describe("badges", () => {
     expect(badgeTitle(ws("a", { status: "needs_attention", integrationState: "queued" }))).toBe("Needs attention");
     expect(badgeTitle(ws("a", { status: "merged" }))).toBe("Merged");
     expect(badgeTitle(ws("a", { status: "stale" }))).toBe("Stale");
-  });
-
-  it("maps tones", () => {
-    expect(badgeTone(ws("a"))).toBe("live");
-    expect(badgeTone(ws("a", { status: "ready", integrationState: "queued" }))).toBe("queue");
-    expect(badgeTone(ws("a", { status: "ready" }))).toBe("ready");
-    expect(badgeTone(ws("a", { status: "needs_attention" }))).toBe("attention");
-    expect(badgeTone(ws("a", { status: "merged" }))).toBe("done");
-    expect(badgeTone(ws("a", { status: "discarded" }))).toBe("muted");
-    expect(badgeTone(ws("a", { status: "stale" }))).toBe("warn");
-  });
-
-  it("labels commits, reasons, and branches", () => {
-    expect(commitSummary(ws("a"))).toBe("no commits");
-    expect(commitSummary(ws("a", { commitCount: 1n }))).toBe("1 commit");
-    expect(commitSummary(ws("a", { commitCount: 3n }))).toBe("3 commits");
-    expect(statusReason(ws("a", { statusReason: "  " }))).toBeNull();
-    expect(statusReason(ws("a", { statusReason: "verify failed" }))).toBe("verify failed");
-    expect(branchLabel(ws("a", { branch: "" }))).toBe("a");
   });
 });
 

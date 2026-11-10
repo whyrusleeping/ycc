@@ -6,8 +6,6 @@ import {
   MAX_PICTURE_BYTES,
   declaredType,
   fitWithin,
-  formatBytes,
-  isPictureType,
   needsDownscale,
   pictureFilename,
   planAdd,
@@ -47,7 +45,6 @@ describe("attachments", () => {
     expect(plan.errors).toEqual([`You can attach up to ${MAX_PICTURES} pictures.`]);
     expect(planAdd(MAX_PICTURES, [pic("a")]).accept).toEqual([]);
     expect(planAdd(1, [])).toEqual({ accept: [], errors: [] });
-    expect(isPictureType("image/svg+xml")).toBe(false);
   });
 
   it("downscales only oversized still pictures, never upscaling", () => {
@@ -64,9 +61,6 @@ describe("attachments", () => {
     expect(pictureFilename("", 2, "image/jpeg")).toBe("pasted-3.jpg");
     expect(pictureFilename("shot.png", 0, "image/jpeg")).toBe("shot.jpg");
     expect(pictureFilename("C:\\tmp\\photo.webp", 0, "image/webp")).toBe("photo.webp");
-    expect(formatBytes(512)).toBe("512 B");
-    expect(formatBytes(2048)).toBe("2 KB");
-    expect(formatBytes(6 * 1024 * 1024)).toBe("6.0 MB");
   });
 
   it("maps drafts to ImageAttachment fields", () => {

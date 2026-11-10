@@ -36,59 +36,6 @@ func (c *captureRecorder) count(t event.Type) int {
 	return n
 }
 
-func (c *captureRecorder) lastText(t event.Type) (string, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for i := len(c.events) - 1; i >= 0; i-- {
-		if c.events[i].Type == t {
-			s, _ := c.events[i].Data["text"].(string)
-			return s, true
-		}
-	}
-	return "", false
-}
-
-// SendInput must emit the user_input echo at the moment the prod is accepted,
-// not when the (possibly busy) run loop later dequeues it. Here we simulate a
-// busy loop by never draining the idle queue; the echo must still be recorded promptly
-// and exactly once.
-func TestSendInputEmitsEchoOnEnqueue(t *testing.T) {
-	rec := &captureRecorder{}
-	s := &Session{
-		ID:        "test",
-		emitter:   event.NewEmitter(rec, "coordinator"),
-		inter:     newInteraction(false, event.NewEmitter(rec, "coordinator")),
-		messageCh: make(chan engine.UserMessage, 4),
-	}
-
-	if err := s.SendInput("hello there"); err != nil {
-		t.Fatalf("SendInput: %v", err)
-	}
-
-	// The echo is recorded immediately, before any loop dequeues it.
-	if got, ok := rec.lastText(event.UserInput); !ok || got != "hello there" {
-		t.Fatalf("user_input echo = %q (ok=%v), want %q", got, ok, "hello there")
-	}
-	if n := rec.count(event.UserInput); n != 1 {
-		t.Fatalf("user_input recorded %d times, want exactly 1", n)
-	}
-
-	// The text is still queued for the loop to Post when it next goes idle.
-	select {
-	case input := <-s.messageCh:
-		if input.Text != "hello there" {
-			t.Fatalf("queued text = %q, want %q", input.Text, "hello there")
-		}
-	default:
-		t.Fatal("text was not enqueued onto the idle queue")
-	}
-
-	// Draining (the run loop's job) must not record a second echo.
-	if n := rec.count(event.UserInput); n != 1 {
-		t.Fatalf("user_input recorded %d times after dequeue, want 1", n)
-	}
-}
-
 // A buffer-full SendInput returns an error and records no echo.
 func TestSendInputBufferFullNoEcho(t *testing.T) {
 	rec := &captureRecorder{}

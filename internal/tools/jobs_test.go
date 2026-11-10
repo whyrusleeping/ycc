@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
@@ -416,19 +415,6 @@ func TestBackgroundRejectedWithoutRegistry(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("expected error result, got %q", res.Content)
 	}
-	// Bash without a registry does not advertise run_in_background at all.
-	var bashDef *gollama.Tool
-	for _, td := range reg.tools {
-		if td.Name == "Bash" {
-			bashDef = td
-		}
-	}
-	if bashDef == nil {
-		t.Fatal("no Bash tool")
-	}
-	if strings.Contains(bashDef.Description, "run_in_background") {
-		t.Fatal("Bash advertises run_in_background without a job registry")
-	}
 }
 
 func TestBackgroundBashTimeoutIsJobRuntimeLimit(t *testing.T) {
@@ -468,42 +454,5 @@ func TestBackgroundBashTimeoutIsJobRuntimeLimit(t *testing.T) {
 	killed := dispatch(t, reg, "kill_job", `{"job_id":"job_1"}`)
 	if killed.IsError || !strings.Contains(killed.Content, "already failed") {
 		t.Fatalf("kill_job after timeout = %q (err=%v)", killed.Content, killed.IsError)
-	}
-}
-
-func TestBackgroundBashTimeoutSchemaAndValidation(t *testing.T) {
-	reg, _, _ := jobsReg(t)
-	var bashDef *gollama.Tool
-	for _, td := range reg.tools {
-		if td.Name == "Bash" {
-			bashDef = td
-			break
-		}
-	}
-	if bashDef == nil {
-		t.Fatal("no Bash tool")
-	}
-	params, ok := bashDef.Params.(gollama.ToolFunctionParams)
-	if !ok {
-		t.Fatalf("Bash params type = %T", bashDef.Params)
-	}
-	timeout, ok := params.Properties["timeout_s"].(map[string]any)
-	if !ok || timeout["minimum"] != 1 || timeout["maximum"] != maxBashTimeoutSeconds ||
-		!strings.Contains(timeout["description"].(string), "background") {
-		t.Fatalf("background timeout schema = %#v", params.Properties["timeout_s"])
-	}
-	background, ok := params.Properties["run_in_background"].(map[string]any)
-	if !ok || background["type"] != "boolean" {
-		t.Fatalf("background schema = %#v", params.Properties["run_in_background"])
-	}
-
-	for _, args := range []string{
-		`{"command":"echo hi","timeout_s":0,"run_in_background":true}`,
-		`{"command":"echo hi","timeout_s":3601,"run_in_background":true}`,
-	} {
-		res := dispatch(t, reg, "Bash", args)
-		if !res.IsError || !strings.Contains(res.Content, "between 1 and 3600") {
-			t.Fatalf("invalid background timeout result = %q (err=%v)", res.Content, res.IsError)
-		}
 	}
 }

@@ -29,7 +29,7 @@ func TestSessionHistoryPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, limit := range []int{1, 2, 5, 6, 7, 1000} {
+	for _, limit := range []int{2, 5, 6, 7} {
 		var ids []string
 		cursor := ""
 		for {

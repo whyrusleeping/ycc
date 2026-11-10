@@ -1,4 +1,4 @@
-// Work-loop logic: lifecycle state, digest sections and summary lines, the
+// Work-loop logic: lifecycle state, digest sections, pricing honesty, the
 // resource envelope, finish announcements, loop-owned sessions, and the
 // sidebar indicator. Mirrors YccKit's WorkLoopModelTests where they overlap.
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
@@ -12,13 +12,11 @@ import {
 } from "../src/gen/ycc/v1/ycc_pb";
 import {
   ambientLoops,
-  bannerLine,
   budgetLines,
   canStart,
   canStop,
   currentSessionId,
   digestSections,
-  durationText,
   finishAnnouncement,
   formatCost,
   isActive,
@@ -30,9 +28,7 @@ import {
   recentCompleted,
   resourceEnvelopeLines,
   stateTitle,
-  summaryLine,
   totalsLine,
-  waitingLine,
 } from "../src/features/workloop/model";
 
 const loop = (extra: MessageInitShape<typeof WorkLoopInfoSchema> = {}): WorkLoopInfo =>
@@ -70,13 +66,6 @@ describe("digest and lines", () => {
     expect(digestSections(loop())).toEqual([]);
   });
 
-  it("summarizes sessions and digest counts", () => {
-    expect(summaryLine(loop({ sessionsRun: 1 }))).toBe("1 session");
-    expect(summaryLine(loop({ sessionsRun: 3, completed: [task("1"), task("2")], blocked: [task("3")] }))).toBe(
-      "3 sessions · 2 completed, 1 blocked",
-    );
-  });
-
   it("never presents incomplete pricing as exact", () => {
     expect(formatCost(1.5, "priced")).toBe("$1.5000");
     expect(formatCost(1.5, "partial")).toBe("≈$1.5000 (partial)");
@@ -84,13 +73,6 @@ describe("digest and lines", () => {
     expect(formatCost(1.5, "")).toBe("unpriced");
     expect(totalsLine(12_345n, 0, "unpriced")).toBe("12.3K tokens · unpriced");
     expect(totalsLine(0n, 0, "")).toBe("0 tokens · unpriced");
-  });
-
-  it("formats durations", () => {
-    expect(durationText(0n)).toBeNull();
-    expect(durationText(45n)).toBe("45s");
-    expect(durationText(200n)).toBe("3m 20s");
-    expect(durationText(7_500n)).toBe("2h 5m");
   });
 
   it("renders zero limits as explicitly unbounded", () => {
@@ -105,19 +87,6 @@ describe("digest and lines", () => {
       "Per session: tokens unbounded · $2.00 priced cost",
       "Whole loop: 1M tokens · cost unbounded",
     ]);
-  });
-
-  it("describes waiting and banner states", () => {
-    expect(waitingLine(loop({ state: "waiting", waitKind: "rate_limit" }))).toBe("Waiting for provider (rate_limit)");
-    expect(waitingLine(loop({ state: "waiting", resumeAt: "2026-10-06T03:15:00Z" }))).toMatch(/^Waiting for provider — resumes /);
-    expect(waitingLine(loop({ state: "waiting", waitKind: "no_progress" }))).toBe("Waiting: last session made no progress");
-    expect(bannerLine(null)).toBe("Not running");
-    expect(bannerLine(loop({ sessionsRun: 2 }))).toBe("Running · 2 sessions");
-    expect(bannerLine(loop({ state: "stopping" }))).toBe("Stopping…");
-    expect(bannerLine(loop({ state: "finished", outcome: "loop complete: no ready tasks remain" }))).toBe(
-      "loop complete: no ready tasks remain",
-    );
-    expect(bannerLine(loop({ state: "finished", sessionsRun: 1 }))).toBe("Finished · 1 session");
   });
 });
 

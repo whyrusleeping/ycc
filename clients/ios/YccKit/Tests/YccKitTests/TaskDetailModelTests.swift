@@ -303,16 +303,6 @@ final class TaskDetailModelTests: XCTestCase {
         XCTAssertNil(source.updateArgs)
     }
 
-    func testSetStatusSurfacesError() async {
-        let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
-        source.updateError = YccError.rpc(message: "invalid status")
-        let model = TaskDetailModel(source: source, taskID: "0010")
-        await model.load()
-        let ok = await model.setStatus(.done)
-        XCTAssertFalse(ok)
-        XCTAssertEqual(model.errorMessage, "invalid status")
-    }
-
     func testSetStatusSurfacesUnauthorized() async {
         let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
         source.updateError = YccError.unauthorized

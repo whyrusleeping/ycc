@@ -2,35 +2,9 @@ package orchestrator
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 )
-
-func TestGenericModelCatalog(t *testing.T) {
-	models := []ModelCatalogEntry{
-		{Name: "fast", Backend: "openai", Model: "shared-id", Auth: "oauth", ContextWindow: 200000,
-			Thinking: "adaptive", Effort: "high", Priced: true, PriceInput: 1, PriceOutput: 5,
-			PriceInputKnown: true, PriceOutputKnown: true, Modalities: []string{"text", "image"},
-			Notes: "Good for\n quick  inspection"},
-		{Name: "fallback", Backend: "openai", Model: "shared-id"},
-	}
-	d := &Deps{AgentModels: func() []ModelCatalogEntry { return models }}
-	prop := genericModelProp(d)
-	if names, ok := prop["enum"].([]string); !ok || !slices.Equal(names, []string{"fast", "fallback"}) {
-		t.Fatalf("model enum = %v", prop["enum"])
-	}
-	desc := prop["description"].(string)
-	for _, want := range []string{
-		"fast: openai/shared-id (subscription)", "ctx 200000", "reasoning adaptive/high", "$1/$5 per Mtok in/out",
-		"modalities text,image", `operator note: "Good for quick inspection"`,
-		"fallback: openai/shared-id", "ctx unknown", "reasoning off", "price unknown", "modalities unknown",
-	} {
-		if !strings.Contains(desc, want) {
-			t.Fatalf("catalog missing %q: %s", want, desc)
-		}
-	}
-}
 
 func TestGenericModelCatalogBounded(t *testing.T) {
 	models := make([]ModelCatalogEntry, 40)

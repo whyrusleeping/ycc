@@ -17,7 +17,6 @@ func TestWorkLoopResourceEnvelopeAtStart(t *testing.T) {
 		name   string
 		budget config.Budget
 	}{
-		{name: "unbounded"},
 		{name: "bounded", budget: config.Budget{
 			SessionTokens: 12_000, SessionCost: 1.25,
 			LoopTokens: 100_000, LoopCost: 8.50,

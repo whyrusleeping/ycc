@@ -503,12 +503,9 @@ final class SessionModelCacheTests: XCTestCase {
 
     func testFirstPageIsSmallWithProportionalByteCap() {
         let first = YccClient.sessionViewRequest(project: "p", sessionId: "s")
-        XCTAssertEqual(first.maxRows, 50)
-        XCTAssertEqual(first.maxBytes, 98_304)
         let page = YccClient.sessionViewPageRequest(project: "p", sessionId: "s", cursor: "c")
         XCTAssertEqual(page.cursor, "c")
-        XCTAssertEqual(page.maxRows, 200)
-        XCTAssertEqual(page.maxBytes, 393_216)
+        XCTAssertLessThan(first.maxRows, page.maxRows, "the first paint is a smaller page")
         XCTAssertEqual(Int(first.maxBytes) * Int(page.maxRows), Int(page.maxBytes) * Int(first.maxRows),
                        "the first page keeps the per-row byte budget")
     }

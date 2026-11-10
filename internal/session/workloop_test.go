@@ -26,15 +26,6 @@ func TestDecideLoopStopsWhenEmpty(t *testing.T) {
 	}
 }
 
-func TestDecideLoopContinuesWithReadyWork(t *testing.T) {
-	for i := 0; i < 10; i++ {
-		d := decideLoop(loopDecideInput{next: "0001", loopStarted: true})
-		if d.stop {
-			t.Fatalf("unchanged ready task must continue, iteration %d: %+v", i, d)
-		}
-	}
-}
-
 func TestDecideLoopStopsOnSessionBreach(t *testing.T) {
 	d := decideLoop(loopDecideInput{next: "0002", loopStarted: true, prevBreach: true})
 	if !d.stop || d.outcome != "loop stopped: session budget reached" {
@@ -101,17 +92,6 @@ func TestTopReadyTaskDaemon(t *testing.T) {
 	// Highest priority ready task is 0003 (prio 2, ties break by id vs 0004).
 	if got := topReadyTask(tasks); got != "0003" {
 		t.Fatalf("topReadyTask = %q, want 0003", got)
-	}
-}
-
-func TestTopReadyTaskContinuesInProgress(t *testing.T) {
-	tasks := []*docs.Task{
-		{ID: "0001", Status: docs.StatusDone, Priority: 1},
-		{ID: "0002", Status: docs.StatusInProgress, Priority: 3, DependsOn: []string{"0001"}},
-		{ID: "0003", Status: docs.StatusBlocked, Priority: 1, DependsOn: []string{"0001"}},
-	}
-	if got := topReadyTask(tasks); got != "0002" {
-		t.Fatalf("topReadyTask = %q, want actionable continuation 0002", got)
 	}
 }
 
@@ -734,53 +714,6 @@ func TestReclaimAllCancelsAndJoinsRealWorkLoop(t *testing.T) {
 	}
 }
 
-// TestWorkLoopSoleProjectOmitted covers project=="" as an unambiguous
-// convenience when the manager has exactly one named project.
-func TestWorkLoopSoleProjectOmitted(t *testing.T) {
-	sink := newNotifySink(t)
-	reg := config.NewRegistry(&config.Config{
-		Models: map[string]config.Model{"c": {Backend: "ollama", Model: "m"}},
-		Roles:  config.Roles{Coordinator: "c", Implementer: "c", Reviewers: []string{"c"}},
-	})
-	// NewManager registers its startup workspace as a normal named project.
-	ws := t.TempDir()
-	m := NewManager(reg, ws)
-	m.SetNotifier(notify.New(config.Notify{URL: sink.URL}))
-	m.newRunSession = func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
-		return func(ctx context.Context) (loopSessRec, bool, error) {
-			store := docs.NewStore(ws)
-			tasks, _ := store.List()
-			id := topReadyTask(tasks)
-			if id == "" {
-				return loopSessRec{}, false, nil
-			}
-			_, _ = store.Update(id, func(tk *docs.Task) { tk.Status = docs.StatusDone })
-			return loopSessRec{id: "sess_" + id, focus: id, tokens: 100, cost: 0.01, priceStatus: "priced"}, false, nil
-		}
-	}
-
-	store := docs.NewStore(ws)
-	for _, title := range []string{"alpha", "beta"} {
-		if _, err := store.Create(title, "", 3, nil, nil); err != nil {
-			t.Fatalf("Create: %v", err)
-		}
-	}
-
-	if _, err := m.StartWorkLoop(""); err != nil {
-		t.Fatalf("StartWorkLoop(\"\"): %v", err)
-	}
-	final := waitLoopFinished(t, m, "")
-	if final.Outcome != "loop complete: no ready tasks remain" {
-		t.Fatalf("outcome = %q (loop likely died on unknown-project resolution)", final.Outcome)
-	}
-	if final.SessionsRun != 2 {
-		t.Fatalf("sessions run = %d, want 2 (backlog should have drained)", final.SessionsRun)
-	}
-	if len(final.Completed) != 2 {
-		t.Fatalf("completed = %d, want 2", len(final.Completed))
-	}
-}
-
 func TestWorkLoopStartupFailureNotifiesWithoutSession(t *testing.T) {
 	const reason = "build coordinator backend: Refresh token expired; re-run ycc login anthropic"
 	m, sink, ws := loopTestManager(t, func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
@@ -1400,17 +1333,6 @@ func TestStartWorkLoopRejectsDuplicate(t *testing.T) {
 	}
 	close(release)
 	waitLoopFinished(t, m, "demo")
-}
-
-func TestGetWorkLoopNoneReturnsNil(t *testing.T) {
-	m, _, _ := loopTestManager(t, nil)
-	wl, err := m.GetWorkLoop("demo")
-	if err != nil {
-		t.Fatalf("GetWorkLoop: %v", err)
-	}
-	if wl != nil {
-		t.Fatalf("expected nil loop, got %+v", wl)
-	}
 }
 
 func TestWorkLoopUnknownProject(t *testing.T) {

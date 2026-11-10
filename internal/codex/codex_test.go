@@ -95,24 +95,12 @@ func TestBuildRequest(t *testing.T) {
 // The Codex backend rejects max_output_tokens ("Unsupported parameter"), so a
 // configured engine cap must never reach the wire.
 func TestBuildRequestMaxOutputTokens(t *testing.T) {
-	tests := []struct {
-		name    string
-		options *gollama.Options
-	}{
-		{name: "configured cap dropped", options: &gollama.Options{MaxTokens: 12_345}},
-		{name: "nil options"},
-		{name: "zero cap", options: &gollama.Options{}},
+	body, err := json.Marshal(buildRequest(gollama.RequestOptions{Model: "m", Options: &gollama.Options{MaxTokens: 12_345}}))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body, err := json.Marshal(buildRequest(gollama.RequestOptions{Model: "m", Options: tt.options}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(string(body), `"max_output_tokens"`) {
-				t.Fatalf("max_output_tokens must be omitted: %s", body)
-			}
-		})
+	if strings.Contains(string(body), `"max_output_tokens"`) {
+		t.Fatalf("max_output_tokens must be omitted: %s", body)
 	}
 }
 
@@ -188,6 +176,14 @@ func TestTurnStream(t *testing.T) {
 	}
 	if gotReq["store"] != false || gotReq["stream"] != true {
 		t.Errorf("store/stream = %v/%v", gotReq["store"], gotReq["stream"])
+	}
+	// Without a prompt-cache key neither the body field nor the affinity header
+	// is sent (the backend rejects some unknown/empty parameters).
+	if _, present := gotReq["prompt_cache_key"]; present {
+		t.Errorf("prompt_cache_key sent without a key: %v", gotReq["prompt_cache_key"])
+	}
+	if got := gotHdr.Get("session-id"); got != "" {
+		t.Errorf("session-id header sent without a key: %q", got)
 	}
 
 	// Response folding. Stream callbacks are full accumulated snapshots, not
@@ -593,35 +589,8 @@ func TestParseStreamFallsBackToItemText(t *testing.T) {
 }
 
 // The engine passes a per-loop prompt-cache routing key through ExtraBody; the
-// codex request forwards it as prompt_cache_key and omits the field otherwise
-// (the backend rejects some unknown/empty parameters, cf. max_output_tokens).
-func TestBuildRequestPromptCacheKey(t *testing.T) {
-	base := gollama.RequestOptions{Model: "gpt-5.3-codex", Messages: []gollama.Message{{Role: "user", Content: "hi"}}}
-
-	without, err := json.Marshal(buildRequest(base))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(without), "prompt_cache_key") {
-		t.Fatalf("prompt_cache_key must be omitted when unset: %s", without)
-	}
-
-	keyed := base
-	keyed.ExtraBody = map[string]any{PromptCacheKeyField: "s_abc/agent_4"}
-	var body map[string]any
-	raw, err := json.Marshal(buildRequest(keyed))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, &body); err != nil {
-		t.Fatal(err)
-	}
-	if got := body["prompt_cache_key"]; got != "s_abc/agent_4" {
-		t.Fatalf("prompt_cache_key = %v, want s_abc/agent_4", got)
-	}
-}
-
-// The key rides the wire on a live-shaped turn, not just through buildRequest.
+// codex request forwards it as prompt_cache_key and mirrors it in the
+// session-id affinity header.
 func TestTurnStreamSendsPromptCacheKey(t *testing.T) {
 	var gotReq map[string]any
 	var gotHdr http.Header
@@ -642,26 +611,5 @@ func TestTurnStreamSendsPromptCacheKey(t *testing.T) {
 	}
 	if got := gotHdr.Get("session-id"); got != "s_abc/coordinator" {
 		t.Fatalf("session-id header = %q, want the cache key", got)
-	}
-}
-
-// Without a key neither the body field nor the affinity header is sent.
-func TestTurnStreamNoPromptCacheKeyByDefault(t *testing.T) {
-	var gotReq map[string]any
-	var gotHdr http.Header
-	srv := codexStub(t, &gotReq, &gotHdr)
-	defer srv.Close()
-
-	c := New(srv.URL, testTokens("tok-1", "acct-1"))
-	if _, err := c.TurnCtx(context.Background(), gollama.RequestOptions{
-		Model: "gpt-5.3-codex", Messages: []gollama.Message{{Role: "user", Content: "hi"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, present := gotReq["prompt_cache_key"]; present {
-		t.Fatalf("prompt_cache_key sent without a key: %v", gotReq["prompt_cache_key"])
-	}
-	if got := gotHdr.Get("session-id"); got != "" {
-		t.Fatalf("session-id header sent without a key: %q", got)
 	}
 }

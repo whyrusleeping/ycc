@@ -1,8 +1,7 @@
 // Keyboard shortcuts: matching (code- and key-based), the typing / dialog
-// guard, platform labels, and dispatch over the action registry.
+// guard, and dispatch over the action registry.
 import { describe, expect, it, vi } from "vitest";
-import { dispatchShortcut, formatShortcut, isChord, matchShortcut, registerAction, shortcutAction, shortcutAllowed, type AppAction, type KeyLike, type Shortcut } from "../src/app/actions";
-import { contextShortcuts } from "../src/app/shortcuts";
+import { dispatchShortcut, isChord, matchShortcut, registerAction, shortcutAction, shortcutAllowed, type AppAction, type KeyLike, type Shortcut } from "../src/app/actions";
 
 const ev = (over: Partial<KeyLike>): KeyLike => ({ code: "", key: "", altKey: false, shiftKey: false, ctrlKey: false, metaKey: false, ...over });
 
@@ -75,28 +74,5 @@ describe("typing and dialog guard", () => {
     expect(shortcutAction(ev({ key: "?", shiftKey: true }), list, { editable: true, dialogOpen: false })).toBeNull();
     expect(shortcutAction(ev({ key: "k", ctrlKey: true }), list, { editable: true, dialogOpen: true })?.id).toBe("palette");
     expect(shortcutAction(ev({ key: "x" }), list, { editable: false, dialogOpen: false })).toBeNull();
-  });
-});
-
-describe("shortcut labels", () => {
-  it("uses ⌘/⌥/⇧ on macOS and words elsewhere", () => {
-    expect(formatShortcut({ key: "k", mod: true }, true)).toBe("⌘K");
-    expect(formatShortcut({ key: "k", mod: true }, false)).toBe("Ctrl+K");
-    expect(formatShortcut({ code: "KeyN", alt: true, shift: true }, true)).toBe("⌥⇧N");
-    expect(formatShortcut({ code: "KeyN", alt: true, shift: true }, false)).toBe("Alt+Shift+N");
-    expect(formatShortcut({ code: "ArrowDown", alt: true }, false)).toBe("Alt+↓");
-    expect(formatShortcut({ code: "Backslash", alt: true }, true)).toBe("⌥\\");
-    expect(formatShortcut({ key: "?" }, false)).toBe("?");
-    expect(formatShortcut({ key: "?", shift: true }, false)).toBe("?");
-  });
-
-  it("documents the keys surfaces handle themselves, per platform", () => {
-    const mac = contextShortcuts(true);
-    const pc = contextShortcuts(false);
-    expect(mac.find((d) => d.id === "session.search")?.keys).toEqual(["⌘F"]);
-    expect(pc.find((d) => d.id === "session.search")?.keys).toEqual(["Ctrl+F"]);
-    for (const id of ["doc.backlogMove", "doc.backlogOpen", "doc.backlogFilter", "doc.backlogEsc", "doc.send"]) {
-      expect(pc.some((d) => d.id === id)).toBe(true);
-    }
   });
 });

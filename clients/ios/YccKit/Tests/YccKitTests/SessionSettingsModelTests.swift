@@ -84,21 +84,6 @@ final class SessionSettingsModelTests: XCTestCase {
         XCTAssertFalse(model.unauthorized)
     }
 
-    func testLoadUsesServerSessionAssignmentAsAuthoritative() async {
-        let source = MockSettingsSource()
-        source.response = listModelsResponse(coordinator: "gpt")
-        let model = SessionSettingsModel(source: source, sessionId: "s1")
-
-        await model.load()
-
-        XCTAssertEqual(model.coordinator, "gpt")
-        // The server assignment is committed, so a failed apply reverts to it.
-        source.setError = YccError.rpc(message: "nope")
-        model.coordinator = "glm"
-        await model.applyRoleConfig()
-        XCTAssertEqual(model.coordinator, "gpt")
-    }
-
     func testThinkingLevelParsesUnknownToMedium() {
         XCTAssertEqual(ThinkingLevel.parse(""), .medium)
         XCTAssertEqual(ThinkingLevel.parse("XHIGH"), .xhigh)

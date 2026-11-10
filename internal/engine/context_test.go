@@ -335,6 +335,9 @@ func TestLoopContextTelemetryHandlesMissingLegacyUsage(t *testing.T) {
 		if ev.Type != event.ModelTurn {
 			continue
 		}
+		if usage, ok := ev.Data["usage"].(event.Usage); !ok || usage != (event.Usage{}) {
+			t.Fatalf("missing provider usage should record zeros: %#v", ev.Data["usage"])
+		}
 		if _, ok := ev.Data["input_tokens_measured"]; ok {
 			t.Fatalf("legacy zero usage presented as a measurement: %#v", ev.Data)
 		}

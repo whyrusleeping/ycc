@@ -15,7 +15,7 @@ import (
 // including session-worktree resolution and the fallback to the project root
 // once a workstream's worktree is reclaimed (task 0398).
 func TestFileRPCs(t *testing.T) {
-	client, mgr, proj, _ := newWorkstreamServer(t)
+	client, mgr, proj := newWorkstreamServer(t)
 	ctx := context.Background()
 
 	must := func(err error) {

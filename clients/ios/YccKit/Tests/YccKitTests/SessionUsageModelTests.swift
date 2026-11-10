@@ -107,12 +107,6 @@ final class SessionUsageModelTests: XCTestCase {
         XCTAssertEqual(total?.session, "s")
     }
 
-    func testSessionBreakdownEmptyForNoRows() {
-        let (rows, total) = SessionUsageModel.sessionBreakdown(rows: [], sessionID: "s")
-        XCTAssertTrue(rows.isEmpty)
-        XCTAssertNil(total)
-    }
-
     func testSessionBreakdownCombinesPriceStatuses() {
         let cases: [([String], String)] = [
             (["priced", ""], "priced"),

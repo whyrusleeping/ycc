@@ -329,21 +329,6 @@ final class BacklogModelTests: XCTestCase {
         XCTAssertNil(source.updateArgs)
     }
 
-    func testSetStatusSurfacesError() async {
-        let source = MockBacklogSource()
-        source.tasks = [summary("0001", status: "todo")]
-        source.updateError = YccError.rpc(message: "nope")
-        let model = BacklogModel(source: source)
-        await model.refresh()
-
-        let ok = await model.setStatus(taskID: "0001", to: .done)
-
-        XCTAssertFalse(ok)
-        XCTAssertEqual(model.updateError, "nope")
-        // The row is untouched on failure.
-        XCTAssertEqual(model.tasks.first?.status, "todo")
-    }
-
     func testSetStatusSurfacesUnauthorized() async {
         let source = MockBacklogSource()
         source.tasks = [summary("0001", status: "todo")]

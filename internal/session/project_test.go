@@ -9,31 +9,6 @@ import (
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
-// TestManagerProjectCRUD exercises the manager's project registry surface used by
-// the Add/List/Remove RPCs (spec §3.1).
-func TestManagerProjectCRUD(t *testing.T) {
-	m := NewManager(testRegistry(), t.TempDir())
-	m.SetProjects(project.NewMemory())
-
-	dir := t.TempDir()
-	p, err := m.AddProject(dir, "demo")
-	if err != nil {
-		t.Fatalf("AddProject: %v", err)
-	}
-	if p.Name != "demo" || p.Path != dir {
-		t.Fatalf("AddProject = %+v, want name=demo path=%s", p, dir)
-	}
-	if got := m.Projects(); len(got) != 1 || got[0].Name != "demo" {
-		t.Fatalf("Projects = %+v, want [demo]", got)
-	}
-	if err := m.RemoveProject("demo"); err != nil {
-		t.Fatalf("RemoveProject: %v", err)
-	}
-	if got := m.Projects(); len(got) != 0 {
-		t.Fatalf("Projects after remove = %+v, want empty", got)
-	}
-}
-
 // TestManagerRenameProject verifies the manager-level rename updates the project
 // registry and relabels the project's workstreams (spec §3.1).
 func TestManagerRenameProject(t *testing.T) {

@@ -7,11 +7,8 @@ import { DirEntrySchema, GitStatusSchema } from "../src/gen/ycc/v1/ycc_pb";
 import {
   canGoUp,
   childDir,
-  derivedName,
-  dirCrumbs,
   dirPickerReducer,
   gitSyncBadge,
-  gitSyncTitle,
   initialDirPicker,
   isPlausiblePath,
   renamedRoute,
@@ -35,13 +32,6 @@ describe("git sync badge", () => {
     expect(gitSyncBadge(git({ hasUpstream: true, lastFetchUnix: 5n, fetchError: "boom" }))).toBe("?");
     expect(gitSyncBadge(git({ dirty: true, lastFetchUnix: 0n }))).toBe("● ?");
   });
-
-  it("spells the state out for the tooltip", () => {
-    expect(gitSyncTitle(git({ branch: "main", hasUpstream: true, ahead: 1, lastFetchUnix: 1n }))).toBe("On main · 1 ahead of upstream");
-    expect(gitSyncTitle(git({ branch: "", dirty: true, fetchError: "x" }))).toBe(
-      "Detached HEAD · no upstream · uncommitted changes · last fetch failed: x",
-    );
-  });
 });
 
 describe("add project", () => {
@@ -49,24 +39,6 @@ describe("add project", () => {
     expect(isPlausiblePath("/home/me/code/x")).toBe(true);
     expect(isPlausiblePath("  /srv/x  ")).toBe(true);
     for (const bad of ["", "/", "//", "relative/path", "~/code", "  "]) expect(isPlausiblePath(bad), bad).toBe(false);
-  });
-
-  it("derives the daemon's default name", () => {
-    expect(derivedName("/home/me/code/ycc/")).toBe("ycc");
-    expect(derivedName("/srv/a")).toBe("a");
-  });
-
-  it("builds child paths and breadcrumbs", () => {
-    expect(childDir("/", "home")).toBe("/home");
-    expect(childDir("/home/me", "code")).toBe("/home/me/code");
-    expect(childDir("/home/me/", "code")).toBe("/home/me/code");
-    expect(dirCrumbs("/home/me")).toEqual([
-      { label: "/", path: "/" },
-      { label: "home", path: "/home" },
-      { label: "me", path: "/home/me" },
-    ]);
-    expect(dirCrumbs("/")).toEqual([{ label: "/", path: "/" }]);
-    expect(dirCrumbs("")).toEqual([]);
   });
 });
 

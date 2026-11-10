@@ -12,6 +12,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	// On macOS UserConfigDir uses HOME/Library; override both to be safe.
 	t.Setenv("HOME", dir)
 
+	// Without a file, Load yields the defaults rather than a zero Prefs.
+	if got := Load(); got != Default() {
+		t.Fatalf("Load without file = %+v, want %+v", got, Default())
+	}
 	p := Prefs{Theme: "light", Follow: false, AutoExpandLogs: true}
 	if err := Save(p); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -20,29 +24,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if got.Theme != "light" || got.Follow != false || got.AutoExpandLogs != true {
 		t.Fatalf("round trip = %+v", got)
 	}
-	// File lives under the user config dir.
-	if _, err := filepath.Abs(path()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLoadDefaultsWhenMissing(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("HOME", dir)
-	got := Load()
-	if got.Theme != "dark" || got.Follow != true || got.AutoExpandLogs != false {
-		t.Fatalf("defaults = %+v", got)
-	}
-	// Notification defaults: bell on, desktop off (task 0108).
-	if got.NotifyBell != true || got.NotifyDesktop != false {
-		t.Fatalf("notify defaults = %+v", got)
-	}
 }
 
 // TestLoadKeepsNotifyDefaultsWhenKeysAbsent verifies that a config file written
 // before the notify prefs existed still loads NotifyBell=true (Load unmarshals
-// over Default), while an explicit false in the file is honoured.
+// over Default), while an explicit false in the file is honoured (task 0108).
 func TestLoadKeepsNotifyDefaultsWhenKeysAbsent(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

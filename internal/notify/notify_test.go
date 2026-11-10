@@ -114,14 +114,21 @@ func TestPriorityDefaultForIdleAndDigest(t *testing.T) {
 	s := newSink(t)
 	n := New(config.Notify{URL: s.URL})
 	n.Send(KindIdle, "p", "s", "done")
-	n.Send(KindDigest, "p", "s", "loop finished")
+	n.Send(KindDigest, "p", "", "loop finished") // no session id: no deep link
 	n.Flush()
-	for _, r := range s.all() {
+	got := s.all()
+	if len(got) != 2 {
+		t.Fatalf("want 2 requests, got %d", len(got))
+	}
+	for _, r := range got {
 		if r.priority != "default" {
 			t.Errorf("priority = %q, want default", r.priority)
 		}
 		if r.auth != "" {
 			t.Errorf("auth = %q, want empty when unset", r.auth)
+		}
+		if r.tags == KindDigest && r.click != "" {
+			t.Errorf("digest click = %q, want empty (no session id supplied)", r.click)
 		}
 	}
 }
@@ -146,35 +153,6 @@ func TestEventMuting(t *testing.T) {
 	}
 	if got[0].tags != "question" {
 		t.Errorf("delivered wrong kind: %q", got[0].tags)
-	}
-}
-
-func TestClickHeaderDeepLink(t *testing.T) {
-	s := newSink(t)
-	n := New(config.Notify{URL: s.URL})
-	// A notification carrying a session id deep-links to the session; a send
-	// with no session id carries no Click header.
-	n.Send(KindQuestion, "proj", "abc123", "answer me")
-	n.Send(KindDigest, "proj", "", "loop finished")
-	n.Flush()
-	got := s.all()
-	if len(got) != 2 {
-		t.Fatalf("want 2 requests, got %d", len(got))
-	}
-	var question, digest capture
-	for _, r := range got {
-		switch r.tags {
-		case KindQuestion:
-			question = r
-		case KindDigest:
-			digest = r
-		}
-	}
-	if question.click != "ycc://session/abc123" {
-		t.Errorf("question click = %q, want ycc://session/abc123", question.click)
-	}
-	if digest.click != "" {
-		t.Errorf("digest click = %q, want empty (no session id supplied)", digest.click)
 	}
 }
 

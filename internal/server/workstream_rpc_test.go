@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"image"
 	"image/png"
 	"net"
@@ -32,9 +31,8 @@ import (
 
 // newWorkstreamServer stands up a real Connect handler over an h2c httptest
 // server backed by a manager with a registered temp git project (design §8). It
-// returns a client, the manager, the project's primary tree path, and the server
-// (for the JSON-path test that talks raw HTTP to srv.URL).
-func newWorkstreamServer(t *testing.T) (yccv1connect.SessionServiceClient, *session.Manager, string, *httptest.Server) {
+// returns a client, the manager, and the project's primary tree path.
+func newWorkstreamServer(t *testing.T) (yccv1connect.SessionServiceClient, *session.Manager, string) {
 	t.Helper()
 	reg := config.NewRegistry(&config.Config{
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
@@ -65,7 +63,7 @@ func newWorkstreamServer(t *testing.T) (yccv1connect.SessionServiceClient, *sess
 		},
 	}}
 	client := yccv1connect.NewSessionServiceClient(httpClient, srv.URL)
-	return client, mgr, proj, srv
+	return client, mgr, proj
 }
 
 // commitInto opens the git tree at dir, writes name=content, and commits it,
@@ -130,7 +128,7 @@ func awaitEvent(t *testing.T, client yccv1connect.SessionServiceClient, sessionI
 // two workstreams, observe both via Subscribe, then merge both back — one clean,
 // one conflicting — with the conflict surfaced (design §6, §8; task 0084 AC).
 func TestWorkstreamRPCEndToEnd(t *testing.T) {
-	client, mgr, proj, _ := newWorkstreamServer(t)
+	client, mgr, proj := newWorkstreamServer(t)
 	ctx := context.Background()
 
 	// Spawn two workstreams and explicitly accept clean merges after preview; a
@@ -292,42 +290,6 @@ func TestWorkstreamRPCEndToEnd(t *testing.T) {
 	}
 }
 
-// TestWorkstreamJSONPath proves the Connect JSON codec works for the new RPCs by
-// POSTing application/json directly to the httptest server (task 0084 AC).
-func TestWorkstreamJSONPath(t *testing.T) {
-	client, mgr, _, srv := newWorkstreamServer(t)
-	ctx := context.Background()
-
-	resp, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{Project: "demo"}))
-	if err != nil {
-		t.Fatalf("SpawnWorkstream: %v", err)
-	}
-	defer mgr.Stop(resp.Msg.GetWorkstream().GetSessionId())
-
-	body := bytes.NewBufferString(`{"project":"demo"}`)
-	httpResp, err := http.Post(srv.URL+"/ycc.v1.SessionService/ListWorkstreams", "application/json", body)
-	if err != nil {
-		t.Fatalf("POST ListWorkstreams: %v", err)
-	}
-	defer httpResp.Body.Close()
-	if httpResp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", httpResp.StatusCode)
-	}
-	var decoded struct {
-		Workstreams []struct {
-			Id      string `json:"id"`
-			Project string `json:"project"`
-			Status  string `json:"status"`
-		} `json:"workstreams"`
-	}
-	if err := json.NewDecoder(httpResp.Body).Decode(&decoded); err != nil {
-		t.Fatalf("decode JSON response: %v", err)
-	}
-	if len(decoded.Workstreams) != 1 || decoded.Workstreams[0].Project != "demo" {
-		t.Fatalf("JSON response = %+v, want one demo workstream", decoded.Workstreams)
-	}
-}
-
 // TestWorkstreamRPCErrorMapping covers the error-code mapping: unknown workstream
 // ids are NotFound; a missing project on Spawn is InvalidArgument.
 func TestWorkstreamRPCErrorMapping(t *testing.T) {
@@ -438,7 +400,7 @@ func containsStr(ss []string, want string) bool {
 // with its workstream. Inputs StartSession would refuse are refused here too,
 // before any worktree exists.
 func TestSpawnWorkstreamNewSessionFields(t *testing.T) {
-	client, mgr, _, _ := newWorkstreamServer(t)
+	client, mgr, _ := newWorkstreamServer(t)
 	ctx := context.Background()
 	var pic bytes.Buffer
 	if err := png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {

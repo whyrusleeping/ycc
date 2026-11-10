@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -210,72 +209,4 @@ func TestSearchCancellationAndUnavailableBackend(t *testing.T) {
 	if !missing.IsError || !strings.Contains(missing.Content, "ripgrep") || !strings.Contains(missing.Content, "install") {
 		t.Fatalf("missing backend is not actionable: error=%t content=%q", missing.IsError, missing.Content)
 	}
-}
-
-// This fixture comparison keeps the documented Search-versus-Bash+rg claims
-// reproducible: both operations must find the same references, while the log
-// records one-call round trips and actual response bytes for periodic review.
-func TestSearchRepresentativeComparison(t *testing.T) {
-	requireRipgrep(t)
-	root := t.TempDir()
-	for i := 0; i < 30; i++ {
-		writeSearchFixture(t, root, filepath.Join("src", "f"+strconv.Itoa(i)+".go"), fmt.Sprintf("package p\n// marker-%d\n", i))
-	}
-	literal := `$value 'quoted' [x].* 世界`
-	writeSearchFixture(t, root, "src/special.go", literal+"\n")
-
-	t.Run("quoting-sensitive literal", func(t *testing.T) {
-		searchResult := callSearch(t, context.Background(), root, map[string]any{
-			"pattern": literal, "path": "src", "glob": []any{"*.go"},
-		})
-		bashResult := callComparisonBash(t, root, "rg --line-number -F --sort path --glob '*.go' "+shellQuote(literal)+" src")
-		if !strings.Contains(searchResult.Content, "src/special.go:1:") || !strings.Contains(bashResult.Content, "src/special.go:1:") {
-			t.Fatalf("literal results disagree\nSearch:\n%s\nBash+rg:\n%s", searchResult.Content, bashResult.Content)
-		}
-		t.Logf("Search calls=1 bytes=%d; Bash+rg calls=1 bytes=%d", len(searchResult.Content), len(bashResult.Content))
-	})
-
-	t.Run("scoped regex matches", func(t *testing.T) {
-		searchResult := callSearch(t, context.Background(), root, map[string]any{
-			"pattern": `marker-[12][0-9]`, "mode": "regex", "path": "src", "glob": []any{"*.go"},
-		})
-		bashResult := callComparisonBash(t, root, "rg --line-number --sort path --glob '*.go' 'marker-[12][0-9]' src")
-		for i := 10; i < 30; i++ {
-			ref := fmt.Sprintf("src/f%d.go:2:", i)
-			if !strings.Contains(searchResult.Content, ref) || !strings.Contains(bashResult.Content, ref) {
-				t.Fatalf("results disagree for %s\nSearch:\n%s\nBash+rg:\n%s", ref, searchResult.Content, bashResult.Content)
-			}
-		}
-		t.Logf("Search calls=1 bytes=%d; Bash+rg calls=1 bytes=%d", len(searchResult.Content), len(bashResult.Content))
-	})
-
-	t.Run("per-file counts", func(t *testing.T) {
-		searchResult := callSearch(t, context.Background(), root, map[string]any{
-			"pattern": "marker-", "path": "src", "glob": []any{"*.go"}, "output": "count",
-		})
-		bashResult := callComparisonBash(t, root, "rg -F --count-matches --sort path --glob '*.go' 'marker-' src")
-		for i := 0; i < 30; i++ {
-			ref := fmt.Sprintf("src/f%d.go:1", i)
-			if !strings.Contains(searchResult.Content, ref) || !strings.Contains(bashResult.Content, ref) {
-				t.Fatalf("count results disagree for %s\nSearch:\n%s\nBash+rg:\n%s", ref, searchResult.Content, bashResult.Content)
-			}
-		}
-		t.Logf("Search calls=1 bytes=%d; Bash+rg calls=1 bytes=%d", len(searchResult.Content), len(bashResult.Content))
-	})
-}
-
-func callComparisonBash(t *testing.T, root, command string) *gollama.ToolResult {
-	t.Helper()
-	res, err := bash(&Workspace{Root: root}).Call(context.Background(), map[string]any{"command": command})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatal(res.Content)
-	}
-	return res
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

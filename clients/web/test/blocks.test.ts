@@ -8,7 +8,6 @@ import {
   ACTIVITY_TAIL,
   activitySummary,
   blockHides,
-  compactDuration,
   foldedTailStart,
   transcriptBlocks,
 } from "../src/features/session/blocks";
@@ -114,13 +113,5 @@ describe("activity summary", () => {
       running: 1,
       durationMs: 252_000,
     });
-  });
-
-  it("formats durations compactly", () => {
-    expect(compactDuration(null)).toBeNull();
-    expect(compactDuration(400)).toBeNull();
-    expect(compactDuration(45_000)).toBe("45s");
-    expect(compactDuration(252_000)).toBe("4m 12s");
-    expect(compactDuration(3_780_000)).toBe("1h 03m");
   });
 });

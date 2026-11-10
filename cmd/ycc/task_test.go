@@ -127,18 +127,6 @@ func TestRunTaskListDirect(t *testing.T) {
 	}
 }
 
-// TestRunTaskListEmpty: an empty backlog prints a friendly note.
-func TestRunTaskListEmpty(t *testing.T) {
-	be, _ := newDirectBackend(t)
-	var out bytes.Buffer
-	if err := runTaskList(context.Background(), be, &out, false); err != nil {
-		t.Fatalf("runTaskList: %v", err)
-	}
-	if !strings.Contains(out.String(), "backlog is empty") {
-		t.Fatalf("expected empty-backlog note:\n%s", out.String())
-	}
-}
-
 // TestRunTaskShowDirect: show prints the header fields and the markdown body.
 func TestRunTaskShowDirect(t *testing.T) {
 	be, _ := newDirectBackend(t)

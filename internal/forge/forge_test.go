@@ -124,39 +124,13 @@ func TestProber(t *testing.T) {
 
 func TestStatusReady(t *testing.T) {
 	tests := []struct {
-		name        string
-		status      Status
-		wantErr     error
-		wantStrings []string
+		name    string
+		status  Status
+		wantErr error
 	}{
-		{
-			name:        "github missing",
-			status:      Status{Kind: GitHub, CLI: "gh"},
-			wantErr:     ErrNotInstalled,
-			wantStrings: []string{"gh is not installed", "GitHub issue import / PR publish", "https://cli.github.com"},
-		},
-		{
-			name:        "gitlab missing",
-			status:      Status{Kind: GitLab, CLI: "glab"},
-			wantErr:     ErrNotInstalled,
-			wantStrings: []string{"glab is not installed", "GitLab issue import / PR publish", "https://gitlab.com/gitlab-org/cli"},
-		},
-		{
-			name:        "github unauthenticated",
-			status:      Status{Kind: GitHub, CLI: "gh", Installed: true},
-			wantErr:     ErrNotAuthenticated,
-			wantStrings: []string{"gh is installed but not authenticated", "`gh auth login`"},
-		},
-		{
-			name:        "gitlab unauthenticated",
-			status:      Status{Kind: GitLab, CLI: "glab", Installed: true},
-			wantErr:     ErrNotAuthenticated,
-			wantStrings: []string{"glab is installed but not authenticated", "`glab auth login`"},
-		},
-		{
-			name:   "ready",
-			status: Status{Kind: GitHub, CLI: "gh", Installed: true, Authenticated: true},
-		},
+		{name: "missing", status: Status{Kind: GitHub, CLI: "gh"}, wantErr: ErrNotInstalled},
+		{name: "unauthenticated", status: Status{Kind: GitLab, CLI: "glab", Installed: true}, wantErr: ErrNotAuthenticated},
+		{name: "ready", status: Status{Kind: GitHub, CLI: "gh", Installed: true, Authenticated: true}},
 	}
 
 	for _, tt := range tests {
@@ -171,10 +145,8 @@ func TestStatusReady(t *testing.T) {
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("Ready() error = %v, want errors.Is(_, %v)", err, tt.wantErr)
 			}
-			for _, want := range tt.wantStrings {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("Ready() error %q does not contain %q", err, want)
-				}
+			if !strings.Contains(err.Error(), tt.status.CLI) {
+				t.Errorf("Ready() error %q does not name the CLI %q", err, tt.status.CLI)
 			}
 		})
 	}

@@ -49,19 +49,11 @@ func TestDispatchAllowsExplicitEmptyDestructiveStrings(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
 
-	res := dispatch(t, reg, "Write", `{"file_path":"empty.txt","content":""}`)
-	if res.IsError {
-		t.Fatalf("empty Write content rejected: %s", res.Content)
-	}
-	if data, err := os.ReadFile(filepath.Join(root, "empty.txt")); err != nil || len(data) != 0 {
-		t.Fatalf("empty file = %q, err=%v", data, err)
-	}
-
 	path := filepath.Join(root, "edit.txt")
 	if err := os.WriteFile(path, []byte("remove me"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res = dispatch(t, reg, "Edit", `{"file_path":"edit.txt","old_string":"remove me","new_string":""}`)
+	res := dispatch(t, reg, "Edit", `{"file_path":"edit.txt","old_string":"remove me","new_string":""}`)
 	if res.IsError {
 		t.Fatalf("empty Edit replacement rejected: %s", res.Content)
 	}
@@ -150,6 +142,7 @@ func TestDispatchValidatesBoundsAndBooleanWithoutExecuting(t *testing.T) {
 	}{
 		{"below minimum", `{"command":"touch ran","timeout_s":0}`},
 		{"above maximum", `{"command":"touch ran","timeout_s":3601}`},
+		{"background below minimum", `{"command":"touch ran","run_in_background":true,"timeout_s":0}`},
 		{"string boolean", `{"command":"touch ran","run_in_background":"true"}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
