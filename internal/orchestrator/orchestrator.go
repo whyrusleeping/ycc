@@ -1747,7 +1747,9 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, l
 		if reason == "" {
 			reason = "(no reason given)"
 		}
-		d.Docs.AppendWorkLog(id, label+": BLOCKED — "+oneLine(reason))
+		// Recorded whole (on one line, so blockedReasonFromBody finds it):
+		// the reason is the decision request the next session resumes from.
+		d.Docs.AppendWorkLog(id, label+": BLOCKED — "+singleLine(reason))
 		changes, err := d.changeset(id)
 		if err != nil {
 			return tools.ErrResult("implementer blocked, but its changeset is unsafe to inspect: %v", err)
@@ -1776,11 +1778,8 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, l
 		msg += lifecycleNote
 		return tools.ErrResult("%s", msg)
 	}
-	d.Docs.AppendWorkLog(id, label+": "+oneLine(fullReport))
-	changes, err = d.changeset(id) // include the work-log update in the evidence snapshot
-	if err != nil {
-		return tools.ErrResult("implementer report recorded, but changeset inspection failed: %v", err)
-	}
+	// The report is not copied into the work log: the session log keeps it
+	// whole, and the coordinator records the outcome and evidence itself.
 	return tools.OkResult(reportWithDiff(changes, fullReport))
 }
 
@@ -2012,13 +2011,25 @@ func renderTask(t *docs.Task) string {
 		t.ID, t.Title, t.Status, t.Priority, strings.Join(t.DependsOn, ","), strings.Join(t.SpecRefs, ","), t.Body)
 }
 
-func oneLine(s string) string {
-	return truncate(strings.TrimSpace(strings.ReplaceAll(s, "\n", " ")), 200)
+// singleLine collapses whitespace runs (including newlines) to single spaces.
+func singleLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
+// oneLine renders s as a short single-line label, cut on a rune boundary.
+func oneLine(s string) string {
+	s = singleLine(s)
+	if len(s) <= 200 {
+		return s
+	}
+	return validUTF8Prefix(s, 200) + "…"
+}
+
+// truncate bounds s to n bytes, cutting on a rune boundary so the result
+// stays valid UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "\n…[truncated]"
+	return validUTF8Prefix(s, n) + "\n…[truncated]"
 }

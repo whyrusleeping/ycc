@@ -1,13 +1,15 @@
 ---
 id: "0529"
 title: Rune-safe truncation; stop clipped implementer reports in work logs
-status: todo
+status: done
 priority: 3
 created: "2026-11-10"
 updated: "2026-11-10"
 depends_on: []
 spec_refs: []
 ---
+
+## Description
 
 ## Description
 ## Why
@@ -27,4 +29,14 @@ The same `truncate` bounds injected memory (`modes.go`, `maxInjectedMemory`) and
 - New work-log entries from the implementer path contain no `…[truncated]` fragments.
 - `go test ./internal/orchestrator ./internal/docs` passes.
 
-## Work log
+## Acceptance criteria
+
+- Truncation never produces invalid UTF-8; a focused test covers a multi-byte boundary.
+- New work-log entries from the implementer path contain no `…[truncated]` fragments.
+- `go test ./internal/orchestrator ./internal/docs` passes.
+
+## Outcome
+
+truncate and oneLine now cut on a rune boundary (reusing validUTF8Prefix); oneLine stays single-line with a "…" suffix. Implementer success reports are no longer appended to the work log (the session log keeps them; the coordinator records outcomes). Blocked reasons are recorded whole on one line so blockedReasonFromBody still finds them. New truncate_test.go covers every multi-byte cut point and both work-log paths; go test ./internal/orchestrator ./internal/docs ./internal/session passes. Existing backlog files are left for backlog-groom.
+
+Commit: Rune-safe truncate/oneLine; stop copying clipped implementer reports into work logs (0529)
