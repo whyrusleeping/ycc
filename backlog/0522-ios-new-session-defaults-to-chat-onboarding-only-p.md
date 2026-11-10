@@ -1,7 +1,7 @@
 ---
 id: "0522"
 title: 'iOS: new session defaults to chat; onboarding-only PM entry; relocate maintenance presets'
-status: todo
+status: in_review
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -29,3 +29,5 @@ iOS counterpart of 0521. Today `App/NewSessionView.swift` shows a mode chip (pic
 ## Acceptance criteria
 
 ## Work log
+
+- 2026-11-10: Implemented. `YccClient.listModes` returns the whole `ListModesResponse`; `NewSessionModel` starts in `default_mode` (last-used mode no longer remembered; project still is), `suggestedPresets` is only onboarding-placed presets for a project needing onboarding, `isDefaultMode` drives the chip row (mode chip leads only for a non-default mode, else a trailing icon-only "Advanced: mode" chip). New `PresetPlacement` + `PresetActionsModel` (YccKit) and `presetActionButtons` (App): project overflow gets onboarding/Re-onboard + "Check docs against code"; backlog's sort menu became a ⋯ menu with Sort, "Groom the backlog", onboarding/Re-onboard. TaskDetail start (work) and MemoryView groom unchanged. Mac: `swift test` 587 passed; `xcodebuild test` (iPhone 18 Pro Max sim) succeeded. Sim checks against the sidebar-v2 harness (`fresh` un-onboarded, `ycc-demo` onboarded): screenshots in `.ycc/tmp/i0522/shots` (light/dark new session both kinds, advanced menu, onboarding applied, both project menus, backlog menus); "Check docs against code" started a pm spec-doctor session, a plain prompt started chat.

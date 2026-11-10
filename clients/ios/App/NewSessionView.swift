@@ -3,9 +3,12 @@ import YccKit
 import YccProto
 
 /// The "new session" composer is styled as a blank chat rather than a settings form: the prompt composer sits
-/// at the bottom with a send arrow (like the live session's input bar), a row of
-/// compact chips above it tucks away mode / project, and
-/// presets appear as tappable suggestion cards in the empty space. Sending calls
+/// at the bottom with a send arrow (like the live session's input bar), and a row of
+/// compact chips above it tucks away project and options. A new session starts in
+/// the daemon's default mode (chat); the mode choice sits behind a trailing
+/// advanced chip until a non-default mode is selected. The only suggestion card is
+/// project onboarding, for a project that needs it; other presets live where they
+/// apply (project overflow, backlog, memory). Sending calls
 /// `StartSession` and hands the new session id back to the parent, which
 /// navigates directly into the live streaming view (`Subscribe` from seq 0).
 struct NewSessionView: View {
@@ -106,9 +109,10 @@ struct NewSessionView: View {
 
     // MARK: - Empty space (preset suggestions)
 
-    /// The would-be transcript area of the blank chat. Presets render as
-    /// tappable suggestion cards (each picks a mode + seeds the composer);
-    /// with no presets it stays a quiet placeholder.
+    /// The would-be transcript area of the blank chat. The onboarding preset,
+    /// when the selected project needs it, renders as a tappable suggestion card
+    /// (picks its mode + seeds the composer); otherwise it stays a quiet
+    /// placeholder.
     private var suggestionArea: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -200,13 +204,17 @@ struct NewSessionView: View {
         }
     }
 
-    /// A compact, scrollable row of chips just above the composer: mode (with
-    /// its description as a subtitle in the menu), and — when
-    /// there is more than one project — the project.
+    /// A compact, scrollable row of chips just above the composer: the project,
+    /// the workstream toggle, the model when there is a choice, and the mode
+    /// (with its description as a subtitle in the menu). The mode chip leads
+    /// the row while a non-default mode is selected (e.g. after the onboarding
+    /// card); in the default mode it folds into a trailing icon-only chip.
     private var optionChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                modeChip
+                if !model.isDefaultMode {
+                    modeChip
+                }
                 // Always shown: the chip menu is also the home of the "Add
                 // project…" affordance, which must be reachable on
                 // a daemon with no registered projects yet.
@@ -220,6 +228,9 @@ struct NewSessionView: View {
                 }
                 if model.showsModelPicker {
                     modelChip
+                }
+                if model.isDefaultMode {
+                    advancedModeChip
                 }
             }
             .padding(.horizontal, 12)
@@ -281,25 +292,46 @@ struct NewSessionView: View {
     }
 
     private var modeChip: some View {
-        @Bindable var model = model
-        return Menu {
-            Picker("Mode", selection: $model.selectedMode) {
-                ForEach(model.modes, id: \.name) { mode in
-                    if mode.description_p.isEmpty {
-                        Text(mode.title.isEmpty ? mode.name : mode.title).tag(mode.name)
-                    } else {
-                        Label {
-                            Text(mode.title.isEmpty ? mode.name : mode.title)
-                            Text(mode.description_p)
-                        } icon: {
-                            EmptyView()
-                        }
-                        .tag(mode.name)
-                    }
-                }
-            }
+        Menu {
+            modePicker
         } label: {
             chipLabel(selectedModeTitle, systemImage: "circle.grid.2x2")
+        }
+    }
+
+    /// The mode choice while the draft is in the default mode: an icon-only
+    /// chip at the end of the row (the web's collapsed "Advanced: mode").
+    private var advancedModeChip: some View {
+        Menu {
+            modePicker
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .foregroundStyle(.primary)
+        }
+        .accessibilityLabel("Advanced: mode")
+        .accessibilityValue(selectedModeTitle)
+    }
+
+    private var modePicker: some View {
+        @Bindable var model = model
+        return Picker("Mode", selection: $model.selectedMode) {
+            ForEach(model.modes, id: \.name) { mode in
+                if mode.description_p.isEmpty {
+                    Text(mode.title.isEmpty ? mode.name : mode.title).tag(mode.name)
+                } else {
+                    Label {
+                        Text(mode.title.isEmpty ? mode.name : mode.title)
+                        Text(mode.description_p)
+                    } icon: {
+                        EmptyView()
+                    }
+                    .tag(mode.name)
+                }
+            }
         }
     }
 

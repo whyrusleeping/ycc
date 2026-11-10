@@ -77,6 +77,14 @@ session, backlog → task) push; task dependency references are lateral hops tha
 screen in place, so a blocked task leads directly to each blocker without growing the stack when
 dependencies cross-link. A deep link identifies a project/session but never carries credentials.
 
+New session starts in the daemon's default mode (chat, `ListModes` `default_mode`); the mode choice
+sits behind a trailing icon-only chip and moves to the front of the chip row once another mode is
+selected. The only suggestion card is the onboarding-placed preset, for a project that needs
+onboarding. The other presets appear where they apply, placed by `Preset.placement` rather than
+by name (spec §9): the project overflow menu has onboarding (re-onboard once onboarded) and the
+docs check, the backlog's overflow menu (which also holds the sort order) has backlog grooming and
+re-onboarding, and Memory keeps "Groom now". Starting from a backlog task still opens work mode.
+
 New session's **Separate workstream** chip (off for every new composer, like the web toggle) sends
 the same mode, model, applied preset, prompt, and pictures through `SpawnWorkstream` instead of
 `StartSession`, with an optional ready backlog task that stands in for an unwritten prompt, then

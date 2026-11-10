@@ -7,8 +7,8 @@ import YccProto
 /// an in-memory mock — no network, no simulator. ``YccClient`` is the production
 /// conformer. (Mirrors the ``SessionListSource`` pattern.)
 public protocol NewSessionSource: Sendable {
-    /// List the daemon's session modes + presets (drives the pickers).
-    func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset])
+    /// List the daemon's session modes, default mode and presets.
+    func listModes() async throws -> Ycc_V1_ListModesResponse
     /// List the daemon's registered projects (drives the project picker).
     func listProjects() async throws -> [Ycc_V1_ProjectInfo]
     /// Configured logical models + the current default role assignment
@@ -36,29 +36,24 @@ public protocol NewSessionSource: Sendable {
 
 extension YccClient: NewSessionSource {}
 
-/// Client-side memory of the last-used mode/project so a returning user
-/// gets sensible defaults.
+/// Client-side memory of the last-used project so a returning user gets a
+/// sensible default. The mode is deliberately not remembered: a new session
+/// starts in the daemon's default mode (chat) unless the user picks another.
 /// Abstracted behind a protocol so tests can stub it without touching
 /// `UserDefaults`.
 public protocol SessionDefaultsStore: AnyObject {
-    var lastMode: String? { get set }
     var lastProject: String? { get set }
 }
 
 /// The production ``SessionDefaultsStore``: `UserDefaults`-backed.
 public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
     private let defaults: UserDefaults
-    private static let modeKey = "ycc.newSession.mode"
     private static let projectKey = "ycc.newSession.project"
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
-    public var lastMode: String? {
-        get { defaults.string(forKey: Self.modeKey) }
-        set { defaults.set(newValue, forKey: Self.modeKey) }
-    }
     public var lastProject: String? {
         get { defaults.string(forKey: Self.projectKey) }
         set { defaults.set(newValue, forKey: Self.projectKey) }
@@ -68,9 +63,10 @@ public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
 /// Drives the "new session" flow: loads ``ListModes`` + ``ListProjects`` +
 /// ``ListModels``, holds the mode / project / model selections and the prompt
 /// draft, validates, and starts the session (returning its id so the view can
-/// navigate straight into the live stream). Last-used mode/project are remembered
-/// via an injectable ``SessionDefaultsStore``; the model pick is a per-session
-/// override and deliberately not remembered. `@MainActor` because it publishes
+/// navigate straight into the live stream). A new draft starts in the daemon's
+/// default mode; the last-used project is remembered via an injectable
+/// ``SessionDefaultsStore``; the model pick is a per-session override and
+/// deliberately not remembered. `@MainActor` because it publishes
 /// observable UI state; the source is injected so the logic is testable
 /// headlessly.
 @MainActor
@@ -78,7 +74,10 @@ public final class UserDefaultsSessionDefaults: SessionDefaultsStore {
 public final class NewSessionModel {
     /// Available modes (name/title/description) from the last successful load.
     public private(set) var modes: [Ycc_V1_Mode] = []
-    /// Available presets (mode + tailored opening prompt).
+    /// The mode a new draft starts in: the daemon's `default_mode` when it is
+    /// listed, else its first mode.
+    public private(set) var defaultMode: String = ""
+    /// Available presets (mode + tailored opening prompt + placement).
     public private(set) var presets: [Ycc_V1_Preset] = []
     /// Registered projects; drives the project picker.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
@@ -137,6 +136,7 @@ public final class NewSessionModel {
     /// composer renders its pickers and suggestions without a spinner.
     struct Catalog {
         var modes: [Ycc_V1_Mode]
+        var defaultMode: String
         var presets: [Ycc_V1_Preset]
         var models: Ycc_V1_ListModelsResponse?
     }
@@ -156,8 +156,7 @@ public final class NewSessionModel {
         self.defaults = defaults
         self.cache = cache
         self.cacheGeneration = cache?.generation ?? 0
-        // Recall last-used selections up front so the pickers open on them.
-        self.selectedMode = defaults.lastMode ?? ""
+        // Recall the last-used project up front so the picker opens on it.
         self.selectedProject = initialProject ?? defaults.lastProject ?? ""
         if let catalog = cache?.value(.newSessionCatalog, as: Catalog.self) {
             apply(catalog)
@@ -170,20 +169,22 @@ public final class NewSessionModel {
     /// The picker is useful only when there is a real choice.
     public var showsProjectPicker: Bool { projects.count > 1 }
 
-    /// Presets appropriate for the selected project's current state. The
-    /// onboarding card appears only when a project is selected and either needs
-    /// onboarding or came from an older daemon that omitted the status. It is
-    /// irrelevant without a project and disappears for established projects.
+    /// New session's only preset suggestions: the daemon's onboarding-placed
+    /// presets, for a selected project that needs onboarding (or whose older
+    /// daemon omitted the status). Other presets live where they apply (project
+    /// overflow, backlog, memory), not here.
     public var suggestedPresets: [Ycc_V1_Preset] {
-        let withoutOnboarding = presets.filter { $0.name != "onboard" }
-        guard let project = projects.first(where: { $0.name == selectedProject }) else {
-            return withoutOnboarding
+        guard let project = projects.first(where: { $0.name == selectedProject }),
+              !project.hasNeedsOnboarding || project.needsOnboarding else {
+            return []
         }
-        guard project.hasNeedsOnboarding else {
-            return presets
-        }
-        return project.needsOnboarding ? presets : withoutOnboarding
+        return PresetPlacement.presets(presets, at: [PresetPlacement.onboarding])
     }
+
+    /// True while the draft is in the default mode, so the composer can keep
+    /// the mode choice behind an advanced affordance; a preset or explicit pick
+    /// of another mode brings it into view.
+    public var isDefaultMode: Bool { selectedMode == defaultMode }
 
     /// The model chip is worth showing only when there is something to pick
     /// between (a single configured model leaves nothing to choose).
@@ -238,8 +239,8 @@ public final class NewSessionModel {
     }
 
     /// Load modes + the optional model list, plus projects when no app-level
-    /// project list is cached. Falls back to the first available mode when no
-    /// remembered mode is still valid, so the picker is never empty.
+    /// project list is cached. Selects the daemon's default mode when no valid
+    /// mode is selected yet, so the picker is never empty.
     /// Unauthorized bubbles up via ``unauthorized`` for the view to handle.
     /// `refreshProjects` forces `ListProjects` (e.g. right after the user
     /// registered a new project from the composer).
@@ -252,12 +253,14 @@ public final class NewSessionModel {
             async let modesCall = source.listModes()
             async let projectList = Self.projects(from: source, cached: cachedProjects)
             async let modelList = source.listModels()
-            let ((loadedModes, loadedPresets), loadedProjects) = try await (modesCall, projectList)
+            let (loadedModes, loadedProjects) = try await (modesCall, projectList)
             // The model picker is a convenience: a daemon that fails ListModels
             // must not block starting a session, so its failure is tolerated and
             // simply leaves the chip hidden.
             let loadedModels = try? await modelList
-            let catalog = Catalog(modes: loadedModes, presets: loadedPresets, models: loadedModels)
+            let catalog = Catalog(
+                modes: loadedModes.modes, defaultMode: loadedModes.defaultMode,
+                presets: loadedModes.presets, models: loadedModels)
             apply(catalog)
             apply(projects: loadedProjects)
             cache?.store(catalog, for: .newSessionCatalog, ifGeneration: cacheGeneration)
@@ -283,6 +286,9 @@ public final class NewSessionModel {
 
     private func apply(_ catalog: Catalog) {
         modes = catalog.modes
+        defaultMode = catalog.modes.contains(where: { $0.name == catalog.defaultMode })
+            ? catalog.defaultMode
+            : catalog.modes.first?.name ?? ""
         presets = catalog.presets
         let listedModels = catalog.models?.models ?? []
         models = listedModels.filter { !$0.disabled }
@@ -295,10 +301,10 @@ public final class NewSessionModel {
         if !selectedModel.isEmpty, !models.contains(where: { $0.name == selectedModel }) {
             selectedModel = ""
         }
-        // Keep a valid mode selected: honour the remembered one if it still
-        // exists, otherwise default to the first mode.
+        // Keep a valid mode selected: a choice already made (a preset, or an
+        // explicit pick) survives a reload; otherwise start in the default.
         if selectedMode.isEmpty || !catalog.modes.contains(where: { $0.name == selectedMode }) {
-            selectedMode = catalog.modes.first?.name ?? ""
+            selectedMode = defaultMode
         }
     }
 
@@ -436,10 +442,8 @@ public final class NewSessionModel {
     }
 
     private func rememberSelections() {
-        // Mode/project are sticky conveniences; the model choice deliberately is
-        // NOT — it is a one-off override for this session, so the next composer
-        // opens back on the daemon's configured default.
-        defaults.lastMode = selectedMode
+        // The project is a sticky convenience; the mode and model deliberately
+        // are NOT, so the next composer opens back on the daemon's defaults.
         defaults.lastProject = selectedProject
     }
 }

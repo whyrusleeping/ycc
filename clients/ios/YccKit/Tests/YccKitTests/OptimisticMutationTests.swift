@@ -1477,13 +1477,15 @@ private final class CatalogSource: NewSessionSource, @unchecked Sendable {
     private(set) var modeCalls = 0
     var projects: [Ycc_V1_ProjectInfo] = []
 
-    func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
+    func listModes() async throws -> Ycc_V1_ListModesResponse {
         modeCalls += 1
         var work = Ycc_V1_Mode()
         work.name = "work"
         var chat = Ycc_V1_Mode()
         chat.name = "chat"
-        return ([work, chat], [])
+        var response = Ycc_V1_ListModesResponse()
+        response.modes = [work, chat]
+        return response
     }
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
         projectCalls += 1
@@ -1502,7 +1504,6 @@ private final class CatalogSource: NewSessionSource, @unchecked Sendable {
 }
 
 private final class MemoryDefaults: SessionDefaultsStore {
-    var lastMode: String?
     var lastProject: String?
 }
 

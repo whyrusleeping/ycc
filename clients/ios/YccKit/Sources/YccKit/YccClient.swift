@@ -647,14 +647,14 @@ public final class YccClient: Sendable {
     // MARK: - Starting & resuming sessions
 
     /// Lists the daemon's session modes and presets (`ListModes`).
-    /// Modes carry a `name`/`title`/`description`; presets are home-menu entries
-    /// that start a `mode` with a tailored `opening_prompt`. Drives the new-session
-    /// mode/preset pickers.
-    public func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
+    /// Modes carry a `name`/`title`/`description`; `default_mode` is the mode a
+    /// new session starts in; presets start a `mode` with a tailored
+    /// `opening_prompt`, and their `placement` says where clients offer them.
+    public func listModes() async throws -> Ycc_V1_ListModesResponse {
         let response = await generated.listModes(request: Ycc_V1_ListModesRequest())
         switch response.result {
         case .success(let message):
-            return (message.modes, message.presets)
+            return message
         case .failure(let error):
             throw Self.map(error)
         }

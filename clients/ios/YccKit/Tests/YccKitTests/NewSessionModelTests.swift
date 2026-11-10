@@ -7,6 +7,7 @@ import YccProto
 /// the last start/resume arguments so the request round-trip is testable.
 private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable {
     var modes: [Ycc_V1_Mode] = []
+    var defaultMode = ""
     var presets: [Ycc_V1_Preset] = []
     var projects: [Ycc_V1_ProjectInfo] = []
     var models = Ycc_V1_ListModelsResponse()
@@ -21,9 +22,13 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
         images: [MessageImage])?
     private(set) var resumeArgs: (project: String, sessionId: String)?
 
-    func listModes() async throws -> (modes: [Ycc_V1_Mode], presets: [Ycc_V1_Preset]) {
+    func listModes() async throws -> Ycc_V1_ListModesResponse {
         if let modesError { throw modesError }
-        return (modes, presets)
+        var response = Ycc_V1_ListModesResponse()
+        response.modes = modes
+        response.defaultMode = defaultMode
+        response.presets = presets
+        return response
     }
 
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
@@ -80,7 +85,6 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
 
 /// An in-memory ``SessionDefaultsStore`` so recall/persist is testable.
 private final class MockDefaults: SessionDefaultsStore {
-    var lastMode: String?
     var lastProject: String?
 }
 
@@ -104,11 +108,12 @@ final class NewSessionModelTests: XCTestCase {
         return p
     }
 
-    private func preset(_ name: String) -> Ycc_V1_Preset {
+    private func preset(_ name: String, placement: String = "") -> Ycc_V1_Preset {
         var p = Ycc_V1_Preset()
         p.name = name
         p.title = name.capitalized
         p.mode = "pm"
+        p.placement = placement
         return p
     }
 
@@ -244,10 +249,34 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testLoadStartsInTheDaemonsDefaultMode() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat"), mode("work"), mode("pm")]
+        source.defaultMode = "work"
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+
+        await model.load()
+
+        XCTAssertEqual(model.defaultMode, "work")
+        XCTAssertEqual(model.selectedMode, "work")
+        XCTAssertTrue(model.isDefaultMode)
+        model.selectedMode = "pm"
+        XCTAssertFalse(model.isDefaultMode)
+    }
+
+    /// The only new-session suggestion is the onboarding-placed preset, for a
+    /// project that needs onboarding; other placements live elsewhere and the
+    /// preset's name plays no part.
     func testOnboardingSuggestionTracksSelectedProjectStatus() async {
         let source = MockNewSessionSource()
-        source.modes = [mode("pm")]
-        source.presets = [preset("onboard"), preset("spec-doctor")]
+        source.modes = [mode("chat"), mode("pm")]
+        source.defaultMode = "chat"
+        source.presets = [
+            preset("spec-doctor", placement: PresetPlacement.project),
+            preset("first-steps", placement: PresetPlacement.onboarding),
+            preset("backlog-groom", placement: PresetPlacement.backlog),
+            preset("unplaced"),
+        ]
         source.projects = [
             project("new", needsOnboarding: true),
             project("established", needsOnboarding: false),
@@ -257,15 +286,20 @@ final class NewSessionModelTests: XCTestCase {
 
         await model.load()
 
-        XCTAssertEqual(model.suggestedPresets.map(\.name), ["spec-doctor"])
+        XCTAssertEqual(model.suggestedPresets.map(\.name), [])
         model.selectedProject = "new"
-        XCTAssertEqual(model.suggestedPresets.map(\.name), ["onboard", "spec-doctor"])
+        XCTAssertEqual(model.suggestedPresets.map(\.name), ["first-steps"])
+
+        // Applying it switches to its mode, which brings the mode chip back.
+        model.apply(preset: model.suggestedPresets[0])
+        XCTAssertEqual(model.selectedMode, "pm")
+        XCTAssertFalse(model.isDefaultMode)
     }
 
     func testOnboardingSuggestionIsHiddenWithoutASelectedProject() async {
         let source = MockNewSessionSource()
         source.modes = [mode("pm")]
-        source.presets = [preset("onboard"), preset("spec-doctor")]
+        source.presets = [preset("onboard", placement: PresetPlacement.onboarding)]
         source.projects = [
             project("one", needsOnboarding: true),
             project("two", needsOnboarding: true),
@@ -275,13 +309,13 @@ final class NewSessionModelTests: XCTestCase {
         await model.load()
 
         XCTAssertEqual(model.selectedProject, "")
-        XCTAssertEqual(model.suggestedPresets.map(\.name), ["spec-doctor"])
+        XCTAssertEqual(model.suggestedPresets.map(\.name), [])
     }
 
     func testOnboardingSuggestionRemainsWhenOlderDaemonOmitsStatus() async {
         let source = MockNewSessionSource()
         source.modes = [mode("pm")]
-        source.presets = [preset("onboard")]
+        source.presets = [preset("onboard", placement: PresetPlacement.onboarding)]
         source.projects = [project("legacy")]
         let model = NewSessionModel(source: source, defaults: MockDefaults())
 
@@ -290,29 +324,27 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(model.suggestedPresets.map(\.name), ["onboard"])
     }
 
-    func testLoadRecallsRememberedSelections() async {
+    func testLoadRecallsRememberedProject() async {
         let defaults = MockDefaults()
-        defaults.lastMode = "pm"
         defaults.lastProject = "two"
         let source = MockNewSessionSource()
-        source.modes = [mode("work"), mode("pm")]
+        source.modes = [mode("chat"), mode("pm")]
+        source.defaultMode = "chat"
         source.projects = [project("one"), project("two")]
         let model = NewSessionModel(source: source, defaults: defaults)
 
         // Recalled before load, from the defaults store.
-        XCTAssertEqual(model.selectedMode, "pm")
         XCTAssertEqual(model.selectedProject, "two")
 
         await model.load()
 
-        // Still honoured after load because they exist.
-        XCTAssertEqual(model.selectedMode, "pm")
+        // Still honoured after load because it exists; the mode is the default.
         XCTAssertEqual(model.selectedProject, "two")
+        XCTAssertEqual(model.selectedMode, "chat")
     }
 
-    func testLoadDropsStaleRememberedModeAndProject() async {
+    func testLoadDropsStaleRememberedProject() async {
         let defaults = MockDefaults()
-        defaults.lastMode = "gone"
         defaults.lastProject = "gone"
         let source = MockNewSessionSource()
         source.modes = [mode("work"), mode("pm")]
@@ -321,7 +353,7 @@ final class NewSessionModelTests: XCTestCase {
 
         await model.load()
 
-        XCTAssertEqual(model.selectedMode, "work")   // fell back to first
+        XCTAssertEqual(model.selectedMode, "work")   // no daemon default: first
         XCTAssertEqual(model.selectedProject, "one")  // sole project auto-selected
     }
 
@@ -383,10 +415,11 @@ final class NewSessionModelTests: XCTestCase {
 
     // MARK: - Start
 
-    func testStartSendsTrimmedRequestAndRemembersSelections() async {
+    func testStartSendsTrimmedRequestAndRemembersProjectNotMode() async {
         let defaults = MockDefaults()
         let source = MockNewSessionSource()
         source.modes = [mode("work"), mode("pm")]
+        source.defaultMode = "work"
         source.projects = [project("one")]
         source.startedSessionId = "s_123"
         let model = NewSessionModel(source: source, defaults: defaults)
@@ -401,9 +434,12 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(source.startArgs?.project, "one")
         XCTAssertEqual(source.startArgs?.mode, "pm")
         XCTAssertEqual(source.startArgs?.prompt, "build a thing")
-        // Selections persisted for next time.
-        XCTAssertEqual(defaults.lastMode, "pm")
+        // The project is remembered for next time; the mode is not.
         XCTAssertEqual(defaults.lastProject, "one")
+        let next = NewSessionModel(source: source, defaults: defaults)
+        await next.load()
+        XCTAssertEqual(next.selectedMode, "work")
+        XCTAssertEqual(next.selectedProject, "one")
     }
 
     func testStartWithoutValidStateReturnsNil() async {
@@ -721,5 +757,89 @@ final class NewSessionModelTests: XCTestCase {
 
         XCTAssertNil(id)
         XCTAssertEqual(model.errorMessage, "project one already has 4 active workstreams")
+    }
+}
+
+// MARK: - Contextual preset actions (task 0522)
+
+private final class MockPresetSource: PresetActionSource, @unchecked Sendable {
+    var presets: [Ycc_V1_Preset] = []
+    var startError: Error?
+    private(set) var started: (project: String, preset: String, mode: String)?
+
+    func listModes() async throws -> Ycc_V1_ListModesResponse {
+        var response = Ycc_V1_ListModesResponse()
+        response.presets = presets
+        return response
+    }
+
+    func startPresetSession(project: String, preset: String, mode: String) async throws -> String {
+        started = (project, preset, mode)
+        if let startError { throw startError }
+        return "s_preset"
+    }
+}
+
+@MainActor
+final class PresetActionsModelTests: XCTestCase {
+    private func preset(_ name: String, _ placement: String, title: String = "") -> Ycc_V1_Preset {
+        var p = Ycc_V1_Preset()
+        p.name = name
+        p.title = title
+        p.mode = "pm"
+        p.placement = placement
+        return p
+    }
+
+    func testPlacesPresetsByPlacementInTheRequestedOrder() async {
+        let source = MockPresetSource()
+        source.presets = [
+            preset("onboard", PresetPlacement.onboarding),
+            preset("spec-doctor", PresetPlacement.project),
+            preset("memory-groom", PresetPlacement.memory),
+            preset("backlog-groom", PresetPlacement.backlog),
+        ]
+        let model = PresetActionsModel(source: source)
+
+        await model.load()
+
+        XCTAssertEqual(
+            model.presets(at: [PresetPlacement.onboarding, PresetPlacement.project]).map(\.name),
+            ["onboard", "spec-doctor"])
+        XCTAssertEqual(
+            model.presets(at: [PresetPlacement.backlog, PresetPlacement.onboarding]).map(\.name),
+            ["backlog-groom", "onboard"])
+    }
+
+    func testOnboardingActionReadsReOnboardForAnOnboardedProject() {
+        let onboard = preset("onboard", PresetPlacement.onboarding, title: "Onboard this project")
+        let docs = preset("spec-doctor", PresetPlacement.project, title: "Check docs against code")
+        XCTAssertEqual(PresetPlacement.actionLabel(onboard, needsOnboarding: true), "Onboard this project")
+        XCTAssertEqual(PresetPlacement.actionLabel(onboard, needsOnboarding: nil), "Onboard this project")
+        XCTAssertEqual(PresetPlacement.actionLabel(onboard, needsOnboarding: false), "Re-onboard")
+        XCTAssertEqual(PresetPlacement.actionLabel(docs, needsOnboarding: false), "Check docs against code")
+        XCTAssertEqual(PresetPlacement.actionLabel(preset("bare", PresetPlacement.project), needsOnboarding: nil), "bare")
+    }
+
+    func testStartSendsPresetAndModeAndSurfacesFailure() async {
+        let source = MockPresetSource()
+        let docs = preset("spec-doctor", PresetPlacement.project, title: "Check docs against code")
+        let model = PresetActionsModel(source: source)
+
+        let id = await model.start(docs, project: "one")
+        XCTAssertEqual(id, "s_preset")
+        XCTAssertEqual(source.started?.project, "one")
+        XCTAssertEqual(source.started?.preset, "spec-doctor")
+        XCTAssertEqual(source.started?.mode, "pm")
+
+        source.startError = YccError.rpc(message: "boom")
+        let failed = await model.start(docs, project: "one")
+        XCTAssertNil(failed)
+        XCTAssertEqual(model.errorMessage, "Couldn’t start Check docs against code: boom")
+        XCTAssertFalse(model.isStarting)
+
+        source.startError = YccError.unauthorized
+        _ = await model.start(docs, project: "one")
+        XCTAssertTrue(model.unauthorized)
     }
 }

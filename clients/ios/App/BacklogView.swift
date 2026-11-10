@@ -11,7 +11,9 @@ import YccProto
 /// - **List** — the compact sectioned list, for scanning a large backlog.
 ///
 /// Tapping a card opens the task detail; the card's move menu and the long-press
-/// context menu change status in place; the toolbar "+" opens quick capture. A
+/// context menu change status in place; the toolbar "+" opens quick capture, and
+/// the overflow menu holds the sort order plus the daemon's backlog-placed
+/// presets (grooming) and re-onboarding. A
 /// mid-screen `.unauthorized` failure routes back to the connect screen via
 /// ``AppModel/handleUnauthorized()``.
 struct BacklogView: View {
@@ -24,6 +26,8 @@ struct BacklogView: View {
     @State private var showCapture = false
     @State private var showLoopStartConfirmation = false
     @State private var showLoopStopConfirmation = false
+    /// Backlog grooming and re-onboarding, placed by the daemon (ListModes).
+    @State private var presetActions: PresetActionsModel?
     /// Board vs list, remembered across launches.
     @AppStorage("backlog.presentation") private var presentation: Presentation = .board
     /// Card/row ordering, shared by both presentations and remembered across launches.
@@ -69,7 +73,7 @@ struct BacklogView: View {
                 presentationToggle
             }
             ToolbarItem(placement: .topBarTrailing) {
-                sortControl
+                moreMenu
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showCapture = true } label: {
@@ -80,6 +84,7 @@ struct BacklogView: View {
         }
         )
         .task { await ensureLoaded() }
+        .presetActionAlerts(presetActions, app: app)
         .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
@@ -149,15 +154,29 @@ struct BacklogView: View {
         .disabled(model == nil)
     }
 
-    private var sortControl: some View {
+    /// Sort order, then the project's preset actions (groom the backlog,
+    /// onboard / re-onboard) when a single project is shown.
+    private var moreMenu: some View {
         Menu {
-            Picker("Sort", selection: $backlogSort) {
-                ForEach(BacklogSort.allCases) { sort in
-                    Text(sort.title).tag(sort)
+            Section("Sort") {
+                Picker("Sort", selection: $backlogSort) {
+                    ForEach(BacklogSort.allCases) { sort in
+                        Text(sort.title).tag(sort)
+                    }
+                }
+            }
+            if let model, !model.selectedProject.isEmpty, let presetActions {
+                Section {
+                    presetActionButtons(
+                        presetActions, project: model.selectedProject,
+                        placements: [PresetPlacement.backlog, PresetPlacement.onboarding],
+                        needsOnboarding: model.projects
+                            .first(where: { $0.name == model.selectedProject })?.needsOnboardingStatus,
+                        router: router)
                 }
             }
         } label: {
-            Label("Sort backlog", systemImage: "arrow.up.arrow.down")
+            Label("More backlog actions", systemImage: "ellipsis.circle")
         }
         .disabled(model == nil)
     }
@@ -459,7 +478,9 @@ struct BacklogView: View {
                 source: client, selectedProject: initialProject, cache: app.dataCache)
             backlogModel.sort = backlogSort
             model = backlogModel
+            presetActions = PresetActionsModel(source: client, cache: app.dataCache)
         }
+        Task { await presetActions?.load() }
         await model?.refresh()
     }
 }

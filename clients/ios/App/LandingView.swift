@@ -58,6 +58,9 @@ struct LandingView: View {
     /// with the list model for the same connection.
     @State private var health: HealthModel?
     @State private var showHealth = false
+    /// The project overflow's preset actions (onboarding, docs check), placed
+    /// by the daemon; created with the list model for the same connection.
+    @State private var presetActions: PresetActionsModel?
 
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
@@ -241,6 +244,7 @@ struct LandingView: View {
         } message: { message in
             Text(message)
         }
+        .presetActionAlerts(presetActions, app: app)
     }
 
     /// The lifecycle and change observers hung off the shell.
@@ -469,6 +473,16 @@ struct LandingView: View {
                     NavigationLink(value: HomeDestination.file(FileRoute(
                         project: project, reference: FileReference(path: "", isDirectory: true)))) {
                         Label("Files", systemImage: "folder")
+                    }
+                    if let presetActions {
+                        Section {
+                            presetActionButtons(
+                                presetActions, project: project,
+                                placements: [PresetPlacement.onboarding, PresetPlacement.project],
+                                needsOnboarding: model?.projects
+                                    .first(where: { $0.name == project })?.needsOnboardingStatus,
+                                router: router)
+                        }
                     }
                 } else {
                     // On the unscoped feed, Workstreams lists every
@@ -828,9 +842,12 @@ struct LandingView: View {
             modelCacheGeneration = app.dataCache.generation
             model = SessionListModel(source: client, readMarks: app.readMarks)
             health = HealthModel(source: client)
+            presetActions = PresetActionsModel(source: client, cache: app.dataCache)
         }
-        // Health is supplementary: never hold the session list up for it.
+        // Health and the preset actions are supplementary: never hold the
+        // session list up for them.
         Task { await health?.refresh() }
+        Task { await presetActions?.load() }
         // A new model has never refreshed, so this always loads it; a
         // re-appearing landing view reuses a fresh list.
         await model?.refreshIfStale()
