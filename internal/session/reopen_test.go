@@ -190,6 +190,60 @@ func TestReopenFromDisk(t *testing.T) {
 	}
 }
 
+// A work session whose history calls a tool work no longer offers
+// (schedule_watch is chat-only now) still reopens with that call and its result
+// replayed, while the rebuilt work toolset omits the tool.
+func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
+	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _ := filepath.Abs(ws)
+	id := "s_retired_tool"
+	events := []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work", "workspace": absWS}},
+		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "start the soak"}},
+		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "watching it"}},
+		{Seq: 4, TS: ts(4), Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "schedule_watch", "args": `{"name":"soak","brief":"check the soak","interval_minutes":30}`, "id": "call_watch",
+		}},
+		{Seq: 5, TS: ts(5), Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "schedule_watch", "id": "call_watch", "result": `Watch "soak" created`,
+		}},
+		{Seq: 6, TS: ts(6), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "watch soak covers it"}},
+		{Seq: 7, TS: ts(7), Type: event.SessionIdle, Data: map[string]any{"report": "watch soak covers it"}},
+	}
+	writeSession(t, ws, id, events)
+
+	m := NewManager(testRegistry(), ws)
+	sess, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer sess.Stop()
+
+	loop := sess.currentLoop()
+	got := loop.History()
+	if want := engine.ReplayHistory(events); !reflect.DeepEqual(got, want) {
+		t.Fatalf("history mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+	var called, answered bool
+	for _, msg := range got {
+		for _, call := range msg.ToolCalls {
+			called = called || call.Function.Name == "schedule_watch"
+		}
+		answered = answered || (msg.Role == "tool" && msg.ToolCallID == "call_watch" && msg.Content == `Watch "soak" created`)
+	}
+	if !called || !answered {
+		t.Fatalf("replayed history lost the schedule_watch call (%v) or its result (%v): %+v", called, answered, got)
+	}
+	for _, def := range loop.Tools.APIDefs() {
+		if def.Function != nil && def.Function.Name == "schedule_watch" {
+			t.Fatal("reopened work session offers schedule_watch")
+		}
+	}
+}
+
 func TestReopenAfterContextRolloverUsesDurablySelectedView(t *testing.T) {
 	ws := t.TempDir()
 	if _, err := git.Open(ws); err != nil {

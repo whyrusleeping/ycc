@@ -93,10 +93,12 @@ loop. Because a watch can act unattended, creation shows the definition and requ
 user's confirmation. Clients list each project's watches with latest status and next due time,
 show the report timeline, and keep watch run sessions out of the main recent-session list.
 
-Agents also propose a watch unprompted when a turn ends while external work they started keeps
-running. In the 2026-11-09 usage analysis, 24 owner messages were pure check-ins ("how's it
+Chat agents also propose a watch unprompted when a turn ends while external work they started
+keeps running. In the 2026-11-09 usage analysis, 24 owner messages were pure check-ins ("how's it
 going?"); 18 followed a turn that ended with a statement while a soak, replay, or backfill ran
 on. A background job does not need a watch, because its completion already wakes the session.
+Work sessions do not offer `schedule_watch`: work never called it, and its definition and
+guidance cost every work request about 2 KB.
 
 ## Rejected alternatives
 

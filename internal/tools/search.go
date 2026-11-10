@@ -45,25 +45,25 @@ var defaultSearchExcludes = []string{
 func search(ws *Workspace) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "Search",
-		Description: "Bounded ripgrep search with argv, not shell expansion. Returns path:line matches, files, or counts. " +
-			"Ignores hidden, ignored, generated/session paths by default. Continue the same query with returned next_offset.",
+		Description: "Bounded ripgrep (argv, no shell expansion): path:line matches, files, or counts. Skips " +
+			"hidden, ignored, generated and session paths by default; page with next_offset.",
 		Params: obj(map[string]any{
 			"pattern": strProp("text or regex"),
-			"path":    strProp("absolute or workspace-relative scope (default '.')"),
+			"path":    strProp("scope path (default '.')"),
 			"glob": map[string]any{
 				"type":        "array",
-				"description": "ripgrep include/exclude globs, passed verbatim",
+				"description": "include/exclude globs, passed to rg verbatim",
 				"items":       map[string]any{"type": "string"},
 			},
 			"mode":              map[string]any{"type": "string", "enum": []string{"literal", "regex"}, "description": "default literal"},
 			"output":            map[string]any{"type": "string", "enum": []string{"matches", "files", "count"}, "description": "default matches"},
-			"context":           map[string]any{"type": "integer", "minimum": 0, "maximum": maxSearchContext, "description": "lines around matches (default 0; matches only)"},
+			"context":           map[string]any{"type": "integer", "minimum": 0, "maximum": maxSearchContext, "description": "context lines (matches output only)"},
 			"limit":             map[string]any{"type": "integer", "minimum": 1, "maximum": maxSearchLimit, "description": "records per page (default 100)"},
 			"max_bytes":         map[string]any{"type": "integer", "minimum": 1024, "maximum": maxSearchBytes, "description": "record byte budget (default 32768)"},
-			"offset":            map[string]any{"type": "integer", "minimum": 0, "description": "next_offset from the prior page (default 0)"},
-			"include_ignored":   BoolProp("include ignored files (default false)"),
-			"include_hidden":    BoolProp("include hidden paths (default false)"),
-			"include_generated": BoolProp("include .ycc/node_modules/vendor/dist/build (default false; hidden still needs include_hidden)"),
+			"offset":            map[string]any{"type": "integer", "minimum": 0, "description": "prior page's next_offset"},
+			"include_ignored":   BoolProp("include ignored files"),
+			"include_hidden":    BoolProp("include hidden paths"),
+			"include_generated": BoolProp("include .ycc/node_modules/vendor/dist/build (hidden still needs include_hidden)"),
 		}, "pattern"),
 		Call: searchCall(ws),
 	}

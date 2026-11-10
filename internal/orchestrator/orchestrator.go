@@ -133,8 +133,8 @@ type Deps struct {
 	// WatchReport records a watch run's report (watch mode only) and returns a
 	// confirmation for the model.
 	WatchReport func(WatchReport) (string, error)
-	// ScheduleWatch creates a watch from a user-confirmed chat request. Nil
-	// hides schedule_watch.
+	// ScheduleWatch creates a watch from a user-confirmed chat request. Only
+	// chat offers schedule_watch, and nil hides it there.
 	ScheduleWatch func(context.Context, WatchSpec) (string, error)
 	Implementer   AgentSpec
 	Reviewers     []AgentSpec
@@ -443,9 +443,6 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	// background implementer/agent (or another session) is mid-run.
 	reg.Add(askUser(d), commitTool(d), updateTask(d),
 		createTask(d), remember(d), forget(d), tools.Finish())
-	if d.ScheduleWatch != nil {
-		reg.Add(scheduleWatch(d))
-	}
 	return reg
 }
 
@@ -1194,14 +1191,13 @@ func reviewTierBlurb(d *Deps) string {
 		tiers = d.ReviewTiers()
 	}
 	if len(tiers) == 0 {
-		return "Match review intensity to the change via the optional review_tier: 'self-review' (you, the " +
-			"coordinator, review the change yourself — NO reviewer agent is spawned; only for tiny, low-risk " +
-			"changes), 'standard' (one reviewer; the sensible default for ordinary changes), or " +
-			"'comprehensive' (all configured reviewers run in parallel — for large, risky, security-sensitive, " +
-			"or hard-to-reverse changes). Omit review_tier to use the configured default."
+		return "Match review_tier to the change: 'self-review' (you review it yourself; NO reviewer agent; only " +
+			"tiny, low-risk changes), 'standard' (one reviewer; ordinary changes), or 'comprehensive' (all " +
+			"configured reviewers in parallel; large, risky, security-sensitive, or hard-to-reverse changes). " +
+			"Omit it for the configured default."
 	}
 	var b strings.Builder
-	b.WriteString("Match review intensity to the change via the optional review_tier. Available tiers:")
+	b.WriteString("Match review_tier to the change. Tiers:")
 	for _, t := range tiers {
 		b.WriteString("\n- '" + t.Name + "'")
 		if t.Default {
@@ -1212,12 +1208,12 @@ func reviewTierBlurb(d *Deps) string {
 		}
 		switch {
 		case t.SelfReview:
-			b.WriteString(" [no reviewer agent is spawned — you review the change yourself]")
+			b.WriteString(" [no reviewer agent; you review the change yourself]")
 		case len(t.Reviewers) > 0:
 			b.WriteString(" [reviewers: " + strings.Join(t.Reviewers, ", ") + "]")
 		}
 	}
-	b.WriteString("\nOmit review_tier to use the default tier.")
+	b.WriteString("\nOmit review_tier for the default tier.")
 	return b.String()
 }
 
@@ -1234,15 +1230,15 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 	}
 	return &gollama.Tool{
 		Name: "spawn_reviewers",
-		Description: "Get independent reviews of the changes, running concurrently. " +
+		Description: "Get independent, concurrent reviews of the changes. " +
 			reviewTierBlurb(d) + " " +
-			"Returns each verdict (accept/revise) and findings; the chosen tier is recorded in session events. " +
-			"Pass background:true to run the review set as a background job (returns a job_id immediately; verdicts " +
-			"arrive via wait or automatically). Reviewers are read-only and run freely in parallel with other work.",
+			"Returns each verdict (accept/revise) and findings; the tier is recorded in session events. " +
+			"background:true returns a job_id at once; verdicts arrive automatically or via wait. Reviewers are " +
+			"read-only, so they may run alongside other work.",
 		Params: tools.Obj(map[string]any{
 			"task_id":     tools.StrProp("task id"),
-			"review_tier": tools.StrProp("review tier to use (" + tierNames + "); default is the configured default"),
-			"background":  tools.BoolProp("run the reviewers as a background job: return a job_id immediately instead of blocking; verdicts arrive automatically or via wait. Reviewers are read-only so this is always allowed"),
+			"review_tier": tools.StrProp("review tier (" + tierNames + "); omit for the configured default"),
+			"background":  tools.BoolProp("run the reviewers as a background job instead of blocking (always allowed)"),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -1517,20 +1513,20 @@ func askUser(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "ask_user",
 		Description: "Ask when human input is useful; unattended runs return guidance instead. Make each question " +
-			"self-contained with brief context, not a reference to unseen transcript. Use question/options for one, " +
-			"or questions[] for a batch; options render as choices with free text, and answers map to each question. " +
-			"Never request credential values: ask for the KEY_ENV name and direct the user to ycc token set <KEY_ENV>.",
+			"self-contained with brief context, not a reference to unseen transcript; options render as choices " +
+			"beside free text. Never request credential values: ask for the KEY_ENV name and direct the user to " +
+			"ycc token set <KEY_ENV>.",
 		Params: tools.Obj(map[string]any{
-			"question": tools.StrProp("the question for the user (single-question form)"),
-			"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices (single-question form)"),
+			"question": tools.StrProp("the question (single form)"),
+			"options":  tools.StrArrProp("suggested answers (single form)"),
 			"questions": map[string]any{
 				"type":        "array",
-				"description": "ask several questions at once; each item has its own question text and options",
+				"description": "batch form: several questions, each with its own options",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"question": tools.StrProp("the question for the user"),
-						"options":  tools.StrArrProp("optional suggested answers to offer as selectable choices"),
+						"question": tools.StrProp("the question"),
+						"options":  tools.StrArrProp("suggested answers"),
 					},
 					"required": []string{"question"},
 				},

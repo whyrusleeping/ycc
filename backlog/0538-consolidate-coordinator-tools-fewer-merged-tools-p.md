@@ -1,7 +1,7 @@
 ---
 id: "0538"
 title: 'Consolidate coordinator tools: fewer, merged tools per mode based on actual usage'
-status: todo
+status: done
 priority: 3
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -158,3 +158,17 @@ Projected result with items 1, 3, 4 and 5: chat 24→20, work 25→20, pm 22→1
 
 ### 2026-11-10 — owner decision (step 2 resolved)
 Approved: **item 4** (`schedule_watch` in chat only, not work, with a shorter description and guidance) and **a moderate part of item 8** (tighten the largest frequently used definitions, such as Search, spawn_reviewers, remember, ask_user and create_task, without going too far or changing behavior). Not approved: items 1, 2, 3 and 5; item 6 is moot; item 7 keeps the status quo. Acceptance is adjusted to this scope: work loses one tool (`schedule_watch`), so chat and pm keep their tool counts and must only get smaller definitions. Record each mode's count and size beside the baseline, and keep the replay criterion for old `schedule_watch` calls in work-mode history.
+
+### 2026-11-10 — implemented
+Work no longer offers `schedule_watch` or its guidance (chat keeps both, shortened). The descriptions of Search, spawn_reviewers, ask_user, create_task and remember were tightened without changing schemas or constraints. `TestReopenReplaysToolTheModeNoLongerOffers` (internal/session) reopens a work session whose history contains a `schedule_watch` call, and `TestScheduleWatchOfferedWithGuidance` checks that only chat offers it. Spec §9 and docs/design/watches.md are updated. `go test ./internal/...` passes.
+
+Measured with `BuildMode` and every hook set. The chat "before" is 19,242 B rather than 19,033 B because definitions changed after the baseline was recorded.
+
+| mode | tools | definition bytes | system prompt bytes |
+|---|---|---|---|
+| chat | 23 → 23 | 19,242 → 18,082 (−6.0%) | 4,697 → 4,581 |
+| work direct | 25 → 24 | 20,636 → 17,708 (−14.2%) | 6,435 → 5,767 |
+| work delegate | 27 → 26 | 22,884 → 19,956 (−12.8%) | 6,621 → 5,953 |
+| pm | 22 → 22 | 16,521 → 15,685 (−5.1%) | 2,840 → 2,840 |
+
+Per tool: Search 1,546 → 1,396; spawn_reviewers 1,384 → 1,068; remember 1,179 → 908; ask_user 1,172 → 936; create_task 1,138 → 959; schedule_watch 1,776 → 1,452.

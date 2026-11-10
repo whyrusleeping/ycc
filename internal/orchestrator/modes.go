@@ -139,9 +139,6 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		if d.WorkImplementation != "delegate" {
 			base, direct = coordinatorDirectSystem, true
 		}
-		if d.ScheduleWatch != nil {
-			base += "\n\n" + watchProposalGuidance
-		}
 		return CoordinatorTools(d, ws, direct), sys(base, unattended, d.Workspace)
 	}
 }
@@ -232,16 +229,15 @@ func memorySection(root string) string {
 func createTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "create_task",
-		Description: "Create a task and return its assigned id. Accepted work is todo or in_progress when starting now. " +
-			"Unaccepted ideas must be proposed; only user acceptance promotes them into the work pipeline. " +
-			"Write the task to the backlog-task rules in docs/design/doc-style.md when the project has that file.",
+		Description: "Create a backlog task; returns its id. Unaccepted ideas must be proposed: only user " +
+			"acceptance promotes them to work. Follow the backlog-task rules in docs/design/doc-style.md if present.",
 		Params: tools.Obj(map[string]any{
-			"title":       tools.StrProp("short task title"),
-			"description": tools.StrProp("description and acceptance criteria (markdown)"),
+			"title":       tools.StrProp("short title"),
+			"description": tools.StrProp("markdown description and acceptance criteria"),
 			"priority":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "description": "1 (highest) .. 5; default 3"},
-			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "initial status: 'todo' (default) for accepted work; 'in_progress' for accepted work starting now; 'proposed' for an idea awaiting the user's acceptance"},
-			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
-			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec refs: entry-point section title or path#Section"},
+			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "todo (default) or in_progress (starting now) for accepted work; proposed for unaccepted ideas"},
+			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "prerequisite task ids"},
+			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "entry-point spec section title or path#Section"},
 		}, "title"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			title, _ := tools.GetString(params, "title")
@@ -335,16 +331,14 @@ func workHandoffPrompt(taskID, plan string) string {
 func remember(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "remember",
-		Description: "Record a concise operational learning in memory.md. Classify actual user guidance, observations, " +
-			"inferences, and proposals honestly; memory is advisory, never design or authorization. Provenance is " +
-			"attached automatically, not invented in the note. To correct/merge notes, list their ids in supersedes: " +
-			"they leave prompts immediately (audit retained), so do not also forget them. Use forget only to retire " +
-			"notes without replacement.",
+		Description: "Record a concise operational learning in memory.md. Classify kind honestly; memory is " +
+			"advisory, never design or authorization. Provenance is attached automatically. To correct or merge " +
+			"notes use supersedes, not forget; use forget only to retire notes without replacement.",
 		Params: tools.Obj(map[string]any{
-			"note":       tools.StrProp("the learning to record, as a single concise sentence without a source citation"),
-			"category":   map[string]any{"type": "string", "enum": []string{"environment", "gotcha", "preference", "lesson"}, "description": "category (default 'lesson'): environment, gotcha, preference, or lesson"},
-			"kind":       map[string]any{"type": "string", "enum": []string{"user_guidance", "observation", "inference", "proposed_policy"}, "description": "claim kind (default inference): classify authority, not topic"},
-			"supersedes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "existing memory IDs this note corrects or merges; they are retired by this call"},
+			"note":       tools.StrProp("one concise sentence, no source citation"),
+			"category":   map[string]any{"type": "string", "enum": []string{"environment", "gotcha", "preference", "lesson"}, "description": "default lesson"},
+			"kind":       map[string]any{"type": "string", "enum": []string{"user_guidance", "observation", "inference", "proposed_policy"}, "description": "default inference; classify authority, not topic"},
+			"supersedes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "memory ids this note corrects or merges; this call retires them (audit kept)"},
 		}, "note"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			note, _ := tools.GetString(params, "note")
