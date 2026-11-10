@@ -4033,9 +4033,14 @@ type SessionViewState struct {
 	// that will resume it (session_idle.awaiting_jobs); present as active, not
 	// finished. Cleared by the next coordinator activity/lifecycle event, and
 	// false for sessions that are no longer live.
-	AwaitingJobs  bool `protobuf:"varint,14,opt,name=awaiting_jobs,json=awaitingJobs,proto3" json:"awaiting_jobs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	AwaitingJobs bool `protobuf:"varint,14,opt,name=awaiting_jobs,json=awaitingJobs,proto3" json:"awaiting_jobs,omitempty"`
+	// Identifies the daemon's current build of this session's index: zero until
+	// the index is first rebuilt (its log was replaced, truncated, or rewritten),
+	// then a new value per rebuild. Rows from another generation are not
+	// comparable; pass it to SubscribeSessionView as index_generation.
+	IndexGeneration int64 `protobuf:"varint,15,opt,name=index_generation,json=indexGeneration,proto3" json:"index_generation,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SessionViewState) Reset() {
@@ -4164,6 +4169,13 @@ func (x *SessionViewState) GetAwaitingJobs() bool {
 		return x.AwaitingJobs
 	}
 	return false
+}
+
+func (x *SessionViewState) GetIndexGeneration() int64 {
+	if x != nil {
+		return x.IndexGeneration
+	}
+	return 0
 }
 
 type GetSessionViewRequest struct {
@@ -4535,11 +4547,16 @@ func (x *GetSessionViewDetailResponse) GetRow() *SessionPresentationRow {
 }
 
 type SubscribeSessionViewRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	FromSeq       int64                  `protobuf:"varint,2,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	FromSeq   int64                  `protobuf:"varint,2,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
+	// The state.index_generation of the snapshot from_seq came from. When set
+	// and the index has been rebuilt since (now or during the stream), the
+	// daemon sends one update with index_rebuilt set and ends the stream. Unset
+	// keeps the legacy behaviour of streaming against the rebuilt index.
+	IndexGeneration *int64 `protobuf:"varint,3,opt,name=index_generation,json=indexGeneration,proto3,oneof" json:"index_generation,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SubscribeSessionViewRequest) Reset() {
@@ -4586,6 +4603,13 @@ func (x *SubscribeSessionViewRequest) GetFromSeq() int64 {
 	return 0
 }
 
+func (x *SubscribeSessionViewRequest) GetIndexGeneration() int64 {
+	if x != nil && x.IndexGeneration != nil {
+		return *x.IndexGeneration
+	}
+	return 0
+}
+
 type SessionViewUpdate struct {
 	state          protoimpl.MessageState    `protogen:"open.v1"`
 	Seq            int64                     `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
@@ -4593,8 +4617,11 @@ type SessionViewUpdate struct {
 	UpsertedRows   []*SessionPresentationRow `protobuf:"bytes,3,rep,name=upserted_rows,json=upsertedRows,proto3" json:"upserted_rows,omitempty"`
 	DeletedRowIds  []string                  `protobuf:"bytes,4,rep,name=deleted_row_ids,json=deletedRowIds,proto3" json:"deleted_row_ids,omitempty"`
 	TransientEvent *Event                    `protobuf:"bytes,5,opt,name=transient_event,json=transientEvent,proto3" json:"transient_event,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// The index was rebuilt: discard every row and resubscribe after installing
+	// a fresh GetSessionView snapshot. Only sent when index_generation was set.
+	IndexRebuilt  bool `protobuf:"varint,6,opt,name=index_rebuilt,json=indexRebuilt,proto3" json:"index_rebuilt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SessionViewUpdate) Reset() {
@@ -4660,6 +4687,13 @@ func (x *SessionViewUpdate) GetTransientEvent() *Event {
 		return x.TransientEvent
 	}
 	return nil
+}
+
+func (x *SessionViewUpdate) GetIndexRebuilt() bool {
+	if x != nil {
+		return x.IndexRebuilt
+	}
+	return false
 }
 
 // Session activity graph: the coordinator root, one node per subagent actor
@@ -14422,7 +14456,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"has_detail\x18\x05 \x01(\bR\thasDetail\"G\n" +
 	"\x13SessionViewQuestion\x12\x16\n" +
 	"\x06prompt\x18\x01 \x01(\tR\x06prompt\x12\x18\n" +
-	"\aoptions\x18\x02 \x03(\tR\aoptions\"\x87\x05\n" +
+	"\aoptions\x18\x02 \x03(\tR\aoptions\"\xb2\x05\n" +
 	"\x10SessionViewState\x12.\n" +
 	"\x13indexed_through_seq\x18\x01 \x01(\x03R\x11indexedThroughSeq\x120\n" +
 	"\x14last_event_timestamp\x18\x02 \x01(\tR\x12lastEventTimestamp\x12\x14\n" +
@@ -14438,7 +14472,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x0epending_row_id\x18\v \x01(\tR\fpendingRowId\x12>\n" +
 	"\x1bpending_questions_truncated\x18\f \x01(\bR\x19pendingQuestionsTruncated\x12'\n" +
 	"\x0fpause_requested\x18\r \x01(\bR\x0epauseRequested\x12#\n" +
-	"\rawaiting_jobs\x18\x0e \x01(\bR\fawaitingJobs\"\x88\x01\n" +
+	"\rawaiting_jobs\x18\x0e \x01(\bR\fawaitingJobs\x12)\n" +
+	"\x10index_generation\x18\x0f \x01(\x03R\x0findexGeneration\"\x88\x01\n" +
 	"\x15GetSessionViewRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +
@@ -14466,17 +14501,20 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x15\n" +
 	"\x06row_id\x18\x03 \x01(\tR\x05rowId\"P\n" +
 	"\x1cGetSessionViewDetailResponse\x120\n" +
-	"\x03row\x18\x01 \x01(\v2\x1e.ycc.v1.SessionPresentationRowR\x03row\"W\n" +
+	"\x03row\x18\x01 \x01(\v2\x1e.ycc.v1.SessionPresentationRowR\x03row\"\x9c\x01\n" +
 	"\x1bSubscribeSessionViewRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x19\n" +
-	"\bfrom_seq\x18\x02 \x01(\x03R\afromSeq\"\xfa\x01\n" +
+	"\bfrom_seq\x18\x02 \x01(\x03R\afromSeq\x12.\n" +
+	"\x10index_generation\x18\x03 \x01(\x03H\x00R\x0findexGeneration\x88\x01\x01B\x13\n" +
+	"\x11_index_generation\"\x9f\x02\n" +
 	"\x11SessionViewUpdate\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x03R\x03seq\x12.\n" +
 	"\x05state\x18\x02 \x01(\v2\x18.ycc.v1.SessionViewStateR\x05state\x12C\n" +
 	"\rupserted_rows\x18\x03 \x03(\v2\x1e.ycc.v1.SessionPresentationRowR\fupsertedRows\x12&\n" +
 	"\x0fdeleted_row_ids\x18\x04 \x03(\tR\rdeletedRowIds\x126\n" +
-	"\x0ftransient_event\x18\x05 \x01(\v2\r.ycc.v1.EventR\x0etransientEvent\"\xb6\x01\n" +
+	"\x0ftransient_event\x18\x05 \x01(\v2\r.ycc.v1.EventR\x0etransientEvent\x12#\n" +
+	"\rindex_rebuilt\x18\x06 \x01(\bR\findexRebuilt\"\xb6\x01\n" +
 	"\fActivitySpan\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x14\n" +
 	"\x05round\x18\x02 \x01(\x05R\x05round\x12\x16\n" +
@@ -15861,6 +15899,7 @@ func file_ycc_v1_ycc_proto_init() {
 		return
 	}
 	file_ycc_v1_ycc_proto_msgTypes[3].OneofWrappers = []any{}
+	file_ycc_v1_ycc_proto_msgTypes[72].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[85].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[87].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[118].OneofWrappers = []any{}

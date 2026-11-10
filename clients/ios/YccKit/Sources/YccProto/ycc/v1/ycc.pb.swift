@@ -1422,6 +1422,12 @@ public nonisolated struct Ycc_V1_SessionViewState: Sendable {
   /// false for sessions that are no longer live.
   public var awaitingJobs: Bool = false
 
+  /// Identifies the daemon's current build of this session's index: zero until
+  /// the index is first rebuilt (its log was replaced, truncated, or rewritten),
+  /// then a new value per rebuild. Rows from another generation are not
+  /// comparable; pass it to SubscribeSessionView as index_generation.
+  public var indexGeneration: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1447,30 +1453,36 @@ public nonisolated struct Ycc_V1_GetSessionViewRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Ycc_V1_GetSessionViewResponse: Sendable {
+public nonisolated struct Ycc_V1_GetSessionViewResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var state: Ycc_V1_SessionViewState {
-    get {_state ?? Ycc_V1_SessionViewState()}
-    set {_state = newValue}
+    get {_storage._state ?? Ycc_V1_SessionViewState()}
+    set {_uniqueStorage()._state = newValue}
   }
   /// Returns true if `state` has been explicitly set.
-  public var hasState: Bool {self._state != nil}
+  public var hasState: Bool {_storage._state != nil}
   /// Clears the value of `state`. Subsequent reads from it will return its default value.
-  public mutating func clearState() {self._state = nil}
+  public mutating func clearState() {_uniqueStorage()._state = nil}
 
-  public var rows: [Ycc_V1_SessionPresentationRow] = []
+  public var rows: [Ycc_V1_SessionPresentationRow] {
+    get {_storage._rows}
+    set {_uniqueStorage()._rows = newValue}
+  }
 
   /// opaque, empty when all earlier rows are included
-  public var earlierCursor: String = String()
+  public var earlierCursor: String {
+    get {_storage._earlierCursor}
+    set {_uniqueStorage()._earlierCursor = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _state: Ycc_V1_SessionViewState? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct Ycc_V1_GetSessionViewPageRequest: Sendable {
@@ -1555,9 +1567,24 @@ public nonisolated struct Ycc_V1_SubscribeSessionViewRequest: Sendable {
 
   public var fromSeq: Int64 = 0
 
+  /// The state.index_generation of the snapshot from_seq came from. When set
+  /// and the index has been rebuilt since (now or during the stream), the
+  /// daemon sends one update with index_rebuilt set and ends the stream. Unset
+  /// keeps the legacy behaviour of streaming against the rebuilt index.
+  public var indexGeneration: Int64 {
+    get {_indexGeneration ?? 0}
+    set {_indexGeneration = newValue}
+  }
+  /// Returns true if `indexGeneration` has been explicitly set.
+  public var hasIndexGeneration: Bool {self._indexGeneration != nil}
+  /// Clears the value of `indexGeneration`. Subsequent reads from it will return its default value.
+  public mutating func clearIndexGeneration() {self._indexGeneration = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _indexGeneration: Int64? = nil
 }
 
 public nonisolated struct Ycc_V1_SessionViewUpdate: @unchecked Sendable {
@@ -1597,6 +1624,13 @@ public nonisolated struct Ycc_V1_SessionViewUpdate: @unchecked Sendable {
   public var hasTransientEvent: Bool {_storage._transientEvent != nil}
   /// Clears the value of `transientEvent`. Subsequent reads from it will return its default value.
   public mutating func clearTransientEvent() {_uniqueStorage()._transientEvent = nil}
+
+  /// The index was rebuilt: discard every row and resubscribe after installing
+  /// a fresh GetSessionView snapshot. Only sent when index_generation was set.
+  public var indexRebuilt: Bool {
+    get {_storage._indexRebuilt}
+    set {_uniqueStorage()._indexRebuilt = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7588,7 +7622,7 @@ nonisolated extension Ycc_V1_SessionViewQuestion: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionViewState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0\u{3}index_generation\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7610,6 +7644,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
       case 12: try { try decoder.decodeSingularBoolField(value: &self.pendingQuestionsTruncated) }()
       case 13: try { try decoder.decodeSingularBoolField(value: &self.pauseRequested) }()
       case 14: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
+      case 15: try { try decoder.decodeSingularInt64Field(value: &self.indexGeneration) }()
       default: break
       }
     }
@@ -7658,6 +7693,9 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if self.awaitingJobs != false {
       try visitor.visitSingularBoolField(value: self.awaitingJobs, fieldNumber: 14)
     }
+    if self.indexGeneration != 0 {
+      try visitor.visitSingularInt64Field(value: self.indexGeneration, fieldNumber: 15)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -7676,6 +7714,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if lhs.pendingQuestionsTruncated != rhs.pendingQuestionsTruncated {return false}
     if lhs.pauseRequested != rhs.pauseRequested {return false}
     if lhs.awaitingJobs != rhs.awaitingJobs {return false}
+    if lhs.indexGeneration != rhs.indexGeneration {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7730,41 +7769,81 @@ nonisolated extension Ycc_V1_GetSessionViewResponse: SwiftProtobuf.Message, Swif
   public static let protoMessageName: String = _protobuf_package + ".GetSessionViewResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}rows\0\u{3}earlier_cursor\0")
 
+  fileprivate class _StorageClass {
+    var _state: Ycc_V1_SessionViewState? = nil
+    var _rows: [Ycc_V1_SessionPresentationRow] = []
+    var _earlierCursor: String = String()
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _state = source._state
+      _rows = source._rows
+      _earlierCursor = source._earlierCursor
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._state) }()
-      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.rows) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.earlierCursor) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._state) }()
+        case 2: try { try decoder.decodeRepeatedMessageField(value: &_storage._rows) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._earlierCursor) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._state {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if !self.rows.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.rows, fieldNumber: 2)
-    }
-    if !self.earlierCursor.isEmpty {
-      try visitor.visitSingularStringField(value: self.earlierCursor, fieldNumber: 3)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._state {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if !_storage._rows.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._rows, fieldNumber: 2)
+      }
+      if !_storage._earlierCursor.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._earlierCursor, fieldNumber: 3)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_GetSessionViewResponse, rhs: Ycc_V1_GetSessionViewResponse) -> Bool {
-    if lhs._state != rhs._state {return false}
-    if lhs.rows != rhs.rows {return false}
-    if lhs.earlierCursor != rhs.earlierCursor {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._state != rhs_storage._state {return false}
+        if _storage._rows != rhs_storage._rows {return false}
+        if _storage._earlierCursor != rhs_storage._earlierCursor {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7936,7 +8015,7 @@ nonisolated extension Ycc_V1_GetSessionViewDetailResponse: SwiftProtobuf.Message
 
 nonisolated extension Ycc_V1_SubscribeSessionViewRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SubscribeSessionViewRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}from_seq\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}from_seq\0\u{3}index_generation\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7946,24 +8025,33 @@ nonisolated extension Ycc_V1_SubscribeSessionViewRequest: SwiftProtobuf.Message,
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
       case 2: try { try decoder.decodeSingularInt64Field(value: &self.fromSeq) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self._indexGeneration) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.sessionID.isEmpty {
       try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
     }
     if self.fromSeq != 0 {
       try visitor.visitSingularInt64Field(value: self.fromSeq, fieldNumber: 2)
     }
+    try { if let v = self._indexGeneration {
+      try visitor.visitSingularInt64Field(value: v, fieldNumber: 3)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SubscribeSessionViewRequest, rhs: Ycc_V1_SubscribeSessionViewRequest) -> Bool {
     if lhs.sessionID != rhs.sessionID {return false}
     if lhs.fromSeq != rhs.fromSeq {return false}
+    if lhs._indexGeneration != rhs._indexGeneration {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7971,7 +8059,7 @@ nonisolated extension Ycc_V1_SubscribeSessionViewRequest: SwiftProtobuf.Message,
 
 nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionViewUpdate"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{1}state\0\u{3}upserted_rows\0\u{3}deleted_row_ids\0\u{3}transient_event\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{1}state\0\u{3}upserted_rows\0\u{3}deleted_row_ids\0\u{3}transient_event\0\u{3}index_rebuilt\0")
 
   fileprivate class _StorageClass {
     var _seq: Int64 = 0
@@ -7979,6 +8067,7 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
     var _upsertedRows: [Ycc_V1_SessionPresentationRow] = []
     var _deletedRowIds: [String] = []
     var _transientEvent: Ycc_V1_Event? = nil
+    var _indexRebuilt: Bool = false
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -7994,6 +8083,7 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
       _upsertedRows = source._upsertedRows
       _deletedRowIds = source._deletedRowIds
       _transientEvent = source._transientEvent
+      _indexRebuilt = source._indexRebuilt
     }
   }
 
@@ -8017,6 +8107,7 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
         case 3: try { try decoder.decodeRepeatedMessageField(value: &_storage._upsertedRows) }()
         case 4: try { try decoder.decodeRepeatedStringField(value: &_storage._deletedRowIds) }()
         case 5: try { try decoder.decodeSingularMessageField(value: &_storage._transientEvent) }()
+        case 6: try { try decoder.decodeSingularBoolField(value: &_storage._indexRebuilt) }()
         default: break
         }
       }
@@ -8044,6 +8135,9 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
       try { if let v = _storage._transientEvent {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
       } }()
+      if _storage._indexRebuilt != false {
+        try visitor.visitSingularBoolField(value: _storage._indexRebuilt, fieldNumber: 6)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -8058,6 +8152,7 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
         if _storage._upsertedRows != rhs_storage._upsertedRows {return false}
         if _storage._deletedRowIds != rhs_storage._deletedRowIds {return false}
         if _storage._transientEvent != rhs_storage._transientEvent {return false}
+        if _storage._indexRebuilt != rhs_storage._indexRebuilt {return false}
         return true
       }
       if !storagesAreEqual {return false}

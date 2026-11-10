@@ -30,7 +30,11 @@ public protocol SessionTranscriptSource: Sendable {
         project: String, sessionId: String, cursor: String, maxRows: Int32, maxBytes: Int32
     ) async throws -> Ycc_V1_GetSessionViewPageResponse
     func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow
-    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>
+    /// `indexGeneration` is the installed snapshot's `state.indexGeneration`; the
+    /// daemon answers an index rebuild with one `indexRebuilt` update.
+    func subscribeSessionView(
+        sessionId: String, fromSeq: Int64, indexGeneration: Int64
+    ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>
 
     /// Fetch a session's full event log for compatibility/read-only export clients.
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event]
@@ -58,7 +62,9 @@ public extension SessionTranscriptSource {
     func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
         throw YccError.rpc(message: "indexed session detail unavailable")
     }
-    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+    func subscribeSessionView(
+        sessionId: String, fromSeq: Int64, indexGeneration: Int64
+    ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
         AsyncThrowingStream { $0.finish(throwing: YccError.rpc(message: "indexed session stream unavailable")) }
     }
 }

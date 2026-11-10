@@ -113,6 +113,83 @@ describe("SessionController", () => {
     c.dispose();
   });
 
+  it("replaces every row with a fresh snapshot when the daemon rebuilt its index", async () => {
+    const { api, raw } = fakeApi({
+      live: true,
+      scripts: [
+        {
+          updates: [
+            create(SessionViewUpdateSchema, { seq: 7n, state: viewState(7), upsertedRows: [protoRow(7, "seven")] }),
+            create(SessionViewUpdateSchema, { indexRebuilt: true }),
+          ],
+        },
+        { updates: [], end: "hang" },
+      ],
+    });
+    raw.getSessionView.mockImplementationOnce(raw.getSessionView.getMockImplementation()!).mockResolvedValueOnce(
+      create(GetSessionViewResponseSchema, {
+        state: viewState(4, { indexGeneration: 9n }),
+        rows: [protoRow(2, "rebuilt two"), protoRow(4, "rebuilt four")],
+      }),
+    );
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => raw.subscribeSessionView.mock.calls.length >= 2);
+    await until(() => c.getSnapshot().conn === "streaming");
+    expect(raw.getSessionView).toHaveBeenCalledTimes(2);
+    const calls = raw.subscribeSessionView.mock.calls.map(([req]) => req as { fromSeq: bigint; indexGeneration: bigint });
+    expect(calls.map((r) => [r.fromSeq, r.indexGeneration])).toEqual([
+      [5n, 0n],
+      [4n, 9n],
+    ]);
+    const snap = c.getSnapshot();
+    expect(snap.cursor).toBe(4);
+    expect(snap.mode).toBe("live");
+    expect(snap.rows.map((r) => r.id)).toEqual(["seq-2", "seq-4"]);
+    c.dispose();
+  });
+
+  it("drops expanded and in-flight row details from before an index rebuild", async () => {
+    const detailed = (seq: number, text: string) => create(SessionPresentationRowSchema, { ...protoRow(seq, text), hasDetail: true });
+    let rebuild: () => void = () => {};
+    const rebuilt = new Promise<void>((r) => (rebuild = r));
+    const { api, raw } = fakeApi({ live: true, scripts: [{ updates: [], end: "hang" }] });
+    raw.subscribeSessionView.mockImplementationOnce(() =>
+      (async function* () {
+        await rebuilt;
+        yield create(SessionViewUpdateSchema, { indexRebuilt: true });
+      })(),
+    );
+    raw.getSessionView
+      .mockResolvedValueOnce(
+        create(GetSessionViewResponseSchema, { state: viewState(5), rows: [detailed(4, "four"), detailed(5, "five")] }),
+      )
+      .mockResolvedValueOnce(
+        create(GetSessionViewResponseSchema, {
+          state: viewState(5, { indexGeneration: 9n }),
+          rows: [detailed(4, "rebuilt four"), detailed(5, "rebuilt five")],
+        }),
+      );
+    let answerFour: (row: ReturnType<typeof protoRow>) => void = () => {};
+    raw.getSessionViewDetail
+      .mockResolvedValueOnce({ row: protoRow(5, "old full five") })
+      .mockReturnValueOnce(new Promise((r) => (answerFour = (row) => r({ row }))));
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    const texts = () => c.getSnapshot().rows.map((r) => (r.kind as { text?: string }).text);
+    c.start();
+    await until(() => c.getSnapshot().conn === "streaming");
+    await c.loadDetail("seq-5");
+    expect(texts()).toEqual(["four", "old full five"]);
+    const inFlight = c.loadDetail("seq-4");
+    rebuild();
+    await until(() => raw.subscribeSessionView.mock.calls.length >= 2 && c.getSnapshot().conn === "streaming");
+    expect(texts()).toEqual(["rebuilt four", "rebuilt five"]);
+    answerFour(protoRow(4, "old full four"));
+    await inFlight;
+    expect(texts()).toEqual(["rebuilt four", "rebuilt five"]);
+    c.dispose();
+  });
+
   it("renders a persisted-only session as a finite read-only view", async () => {
     const { api, raw } = fakeApi({ live: false, scripts: [{ updates: [] }] });
     const c = new SessionController(api, "p", "s1", hooks(), fast);

@@ -181,7 +181,7 @@ private final class IndexedGatedSource: SessionActionSource, SessionTranscriptSo
         _snapshotCount += 1
         lock.unlock()
     }
-    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+    func subscribeSessionView(sessionId: String, fromSeq: Int64, indexGeneration: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
         AsyncThrowingStream { continuation in
             lock.lock()
             self.continuation = continuation

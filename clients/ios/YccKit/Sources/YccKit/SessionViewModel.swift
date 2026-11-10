@@ -847,6 +847,7 @@ public final class SessionViewModel {
                         guard self.transcriptRevision == revision else { continue }
                         let unchanged = revalidating && self.hasCompletedInitialReplay
                             && snapshot.state.indexedThroughSeq == self.projection.lastPersistedSeq
+                            && snapshot.state.indexGeneration == self.projection.indexGeneration
                         revalidating = false
                         if probingLive {
                             probingLive = false
@@ -901,13 +902,17 @@ public final class SessionViewModel {
                     self.state = .streaming
                     let updates = self.source.subscribeSessionView(
                         sessionId: self.sessionID,
-                        fromSeq: self.projection.lastPersistedSeq)
+                        fromSeq: self.projection.lastPersistedSeq,
+                        indexGeneration: self.projection.indexGeneration)
                     // The daemon folds everything changed since a cached cursor
                     // into the first state update; an active session can have
                     // produced hundreds of rows while the screen was away.
                     var checkCatchUp = subscribedWithoutSnapshot
                     for try await update in updates {
                         guard self.isCurrent(generation), !Task.isCancelled else { return }
+                        // Before the backoff reset: a rebuild on every attempt
+                        // must not reload in a tight loop.
+                        if update.indexRebuilt { throw IndexRebuilt() }
                         delay = self.backoff.initial
                         // Idle-stream keepalives carry nothing to fold; enqueuing
                         // them would bump transcriptRevision and re-render.
@@ -928,6 +933,17 @@ public final class SessionViewModel {
                 } catch {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
                     self.publishPendingUpdates()
+                    if error is IndexRebuilt {
+                        // The daemon rebuilt its index: every installed row and
+                        // the cursor belong to the old build. Reinstall a full
+                        // snapshot (never a revalidation that could keep them).
+                        subscribedWithoutSnapshot = false
+                        revalidating = false
+                        self.state = .reconnecting
+                        do { try await self.sleep(delay) } catch { return }
+                        delay = min(delay * 2, self.backoff.maximum)
+                        continue
+                    }
                     if error is CursorCatchUpTooLarge {
                         // Too much to append to the eager transcript: take the
                         // bounded first page instead (the stream just ended).
@@ -975,6 +991,7 @@ public final class SessionViewModel {
     /// ``YccClient/initialViewRows``-sized), keeping the eager layout bounded.
     public nonisolated static let maxCursorCatchUpRows = 60
     private struct CursorCatchUpTooLarge: Error {}
+    private struct IndexRebuilt: Error {}
 
     /// Fetch and install a complete abbreviated row when a disclosure is opened.
     public func loadDetail(rowID: String) async {
@@ -984,10 +1001,22 @@ public final class SessionViewModel {
               !loadingDetailIDs.contains(rowID),
               loadedRowHasDetail || pendingStateNeedsDetail else { return }
         loadingDetailIDs.insert(rowID)
-        defer { loadingDetailIDs.remove(rowID) }
+        let indexGeneration = projection.indexGeneration
+        var refetch = false
+        defer {
+            loadingDetailIDs.remove(rowID)
+            if refetch { Task { [weak self] in await self?.loadDetail(rowID: rowID) } }
+        }
         do {
             let row = try await source.getSessionViewDetail(
                 project: project, sessionId: sessionID, rowId: rowID)
+            // Requested against an index build that has since been replaced: its
+            // row may share an id and version with different rebuilt content.
+            // A detail the new state still requires is fetched again.
+            guard projection.indexGeneration == indexGeneration else {
+                refetch = projection.needsIndexedPendingDetail(rowID: rowID)
+                return
+            }
             projection.installIndexedDetail(row)
             reconcileOptimisticState()
             transcriptRevision &+= 1
@@ -1940,5 +1969,5 @@ public extension Ycc_V1_SessionViewUpdate {
     /// The daemon sends an empty update every ~20 s on an otherwise quiet
     /// SubscribeSessionView stream so intermediaries (and URLSession) see
     /// traffic. It carries neither state nor a transient event: nothing to fold.
-    var isKeepalive: Bool { !hasState && !hasTransientEvent }
+    var isKeepalive: Bool { !hasState && !hasTransientEvent && !indexRebuilt }
 }

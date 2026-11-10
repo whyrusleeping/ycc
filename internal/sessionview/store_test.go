@@ -262,13 +262,19 @@ func TestIndexRebuildsWhenAuthoritativeLogChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err = store.CatchUp(ctx, "s", logPath, -1); err != nil {
+	first, err := store.CatchUp(ctx, "s", logPath, -1)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if first.Generation != 0 {
+		t.Fatalf("first build generation=%d, want 0", first.Generation)
 	}
 	// Same sequence count and nearly identical size: source metadata plus the
 	// indexed boundary must prevent an old row masquerading as current.
-	writeLog(t, logPath, []event.Event{ev(1, event.UserInput, map[string]any{"text": "one"}), ev(2, event.ModelTurn, map[string]any{"text": "new"})})
-	if _, err = store.CatchUp(ctx, "s", logPath, -1); err != nil {
+	newer := []event.Event{ev(1, event.UserInput, map[string]any{"text": "one"}), ev(2, event.ModelTurn, map[string]any{"text": "new"})}
+	writeLog(t, logPath, newer)
+	rebuilt, err := store.CatchUp(ctx, "s", logPath, -1)
+	if err != nil {
 		t.Fatal(err)
 	}
 	row, err := store.Detail(ctx, "s", "seq-2")
@@ -277,6 +283,22 @@ func TestIndexRebuildsWhenAuthoritativeLogChanges(t *testing.T) {
 	}
 	if got := row.Events[0].Data["text"]; got != "new" {
 		t.Fatalf("stale row text=%v", got)
+	}
+	// The rebuild starts a new generation that every later read reports; an
+	// ordinary append keeps it.
+	if rebuilt.Generation == 0 {
+		t.Fatal("rebuild kept generation 0")
+	}
+	if g, err := store.Generation(ctx, "s"); err != nil || g != rebuilt.Generation {
+		t.Fatalf("Generation=%d err=%v, want %d", g, err, rebuilt.Generation)
+	}
+	writeLog(t, logPath, append(newer, ev(3, event.ModelTurn, map[string]any{"text": "more"})))
+	appended, _, _, err := store.ChangesSince(ctx, "s", logPath, -1, -1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if appended.IndexedThrough != 3 || appended.Generation != rebuilt.Generation {
+		t.Fatalf("append: through=%d generation=%d, want 3 and %d", appended.IndexedThrough, appended.Generation, rebuilt.Generation)
 	}
 }
 

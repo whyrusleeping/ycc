@@ -714,6 +714,14 @@ snapshot, so there is no replay/live gap. Live indexing is capped by the log's p
 sequence/byte boundary and never consumes an unterminated tail. The SQLite index is versioned and
 rebuildable from JSONL; legacy transcript/export/model-replay APIs are unchanged.
 
+The daemon rebuilds a session's index from scratch when its log was replaced, truncated or
+rewritten. Rebuilt rows carry no tombstones for what a client already shows, so pass the snapshot's
+`state.indexGeneration` as `SubscribeSessionView.indexGeneration`. If the index has been rebuilt
+since that snapshot, or is rebuilt while the stream is open, the daemon sends one update with
+`indexRebuilt` set and ends the stream. The client then discards its rows, installs a fresh
+`GetSessionView` snapshot and subscribes again from it. A subscription that omits
+`indexGeneration` is never reset.
+
 ### Session activity
 
 `GetSessionActivity` returns the session's agent graph as a flat `nodes` list. The coordinator

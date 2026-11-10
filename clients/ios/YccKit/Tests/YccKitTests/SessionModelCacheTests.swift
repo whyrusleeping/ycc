@@ -86,7 +86,7 @@ private final class CachedSessionSource: SessionTranscriptSource, @unchecked Sen
             return _page
         }
     }
-    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+    func subscribeSessionView(sessionId: String, fromSeq: Int64, indexGeneration: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
         AsyncThrowingStream { continuation in
             let (id, error) = locked { () -> (Int, Error?) in
                 _fromSeqs[sessionId, default: []].append(fromSeq)

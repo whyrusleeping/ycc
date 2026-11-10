@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -66,6 +68,10 @@ type State struct {
 	AwaitingJobs bool       `json:"awaiting_jobs,omitempty"`
 	Pending      []Question `json:"pending,omitempty"`
 	PendingRowID string     `json:"pending_row_id,omitempty"`
+	// Generation identifies the current build of this session's index: zero
+	// until the first rebuild, then a fresh random value per rebuild. A client
+	// whose rows came from another generation must reinstall a snapshot.
+	Generation int64 `json:"-"`
 
 	// Reducer bookkeeping, not exposed on the wire.
 	OpenQuestionRowID string `json:"open_question_row_id,omitempty"`
@@ -166,6 +172,9 @@ CREATE TABLE IF NOT EXISTS activity_progress (
  summary TEXT NOT NULL, is_error INTEGER NOT NULL, row_id TEXT NOT NULL, PRIMARY KEY(session_id,seq)
 );
 CREATE INDEX IF NOT EXISTS activity_progress_actor ON activity_progress(session_id,actor,seq);
+CREATE TABLE IF NOT EXISTS generations (
+ session_id TEXT PRIMARY KEY, generation INTEGER NOT NULL
+);
 ` + fmt.Sprintf("PRAGMA user_version = %d;", schemaVersion))
 	return err
 }
@@ -219,6 +228,9 @@ func (s *Store) catchUpLocked(ctx context.Context, sessionID, logPath string, ma
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return State{}, err
 	}
+	if state.Generation, err = s.generationLocked(ctx, sessionID); err != nil {
+		return State{}, err
+	}
 	// Another request may already have indexed a later committed boundary than
 	// this caller captured. Validate and return that shared watermark rather than
 	// mistaking the caller's older byte cap for source truncation.
@@ -248,7 +260,14 @@ func (s *Store) catchUpLocked(ctx context.Context, sessionID, logPath string, ma
 		if !allowRebuild {
 			return State{}, errors.New("session view index source changed during rebuild")
 		}
-		if _, err := s.db.ExecContext(ctx, `DELETE FROM updates WHERE session_id=?; DELETE FROM rows WHERE session_id=?; DELETE FROM activity WHERE session_id=?; DELETE FROM activity_progress WHERE session_id=?; DELETE FROM sessions WHERE session_id=?`, sessionID, sessionID, sessionID, sessionID, sessionID); err != nil {
+		// Rows are rebuilt from scratch and no tombstones survive, so a new
+		// generation tells subscribers their incremental cursor is meaningless.
+		// It is recorded first: an interrupted rebuild must not leave the old one.
+		next := state.Generation
+		for next == state.Generation {
+			next = rand.Int64N(math.MaxInt64) + 1
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO generations(session_id,generation) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET generation=excluded.generation; DELETE FROM updates WHERE session_id=?; DELETE FROM rows WHERE session_id=?; DELETE FROM activity WHERE session_id=?; DELETE FROM activity_progress WHERE session_id=?; DELETE FROM sessions WHERE session_id=?`, sessionID, next, sessionID, sessionID, sessionID, sessionID, sessionID); err != nil {
 			return State{}, err
 		}
 		return s.catchUpLocked(ctx, sessionID, logPath, maxSeq, maxOffset, false)
@@ -341,6 +360,23 @@ ON CONFLICT(session_id) DO UPDATE SET indexed_seq=excluded.indexed_seq,indexed_o
 		return State{}, err
 	}
 	return state, nil
+}
+
+// Generation returns the session's current index generation (see
+// State.Generation) without catching up.
+func (s *Store) Generation(ctx context.Context, sessionID string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generationLocked(ctx, sessionID)
+}
+
+func (s *Store) generationLocked(ctx context.Context, sessionID string) (int64, error) {
+	var generation int64
+	err := s.db.QueryRowContext(ctx, `SELECT generation FROM generations WHERE session_id=?`, sessionID).Scan(&generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return generation, err
 }
 
 func fileIdentity(info os.FileInfo) (int64, int64) {

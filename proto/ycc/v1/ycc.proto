@@ -506,6 +506,11 @@ message SessionViewState {
   // finished. Cleared by the next coordinator activity/lifecycle event, and
   // false for sessions that are no longer live.
   bool awaiting_jobs = 14;
+  // Identifies the daemon's current build of this session's index: zero until
+  // the index is first rebuilt (its log was replaced, truncated, or rewritten),
+  // then a new value per rebuild. Rows from another generation are not
+  // comparable; pass it to SubscribeSessionView as index_generation.
+  int64 index_generation = 15;
 }
 message GetSessionViewRequest {
   string project = 1;
@@ -539,6 +544,11 @@ message GetSessionViewDetailResponse { SessionPresentationRow row = 1; }
 message SubscribeSessionViewRequest {
   string session_id = 1;
   int64 from_seq = 2;
+  // The state.index_generation of the snapshot from_seq came from. When set
+  // and the index has been rebuilt since (now or during the stream), the
+  // daemon sends one update with index_rebuilt set and ends the stream. Unset
+  // keeps the legacy behaviour of streaming against the rebuilt index.
+  optional int64 index_generation = 3;
 }
 message SessionViewUpdate {
   int64 seq = 1;
@@ -546,6 +556,9 @@ message SessionViewUpdate {
   repeated SessionPresentationRow upserted_rows = 3;
   repeated string deleted_row_ids = 4;
   Event transient_event = 5;
+  // The index was rebuilt: discard every row and resubscribe after installing
+  // a fresh GetSessionView snapshot. Only sent when index_generation was set.
+  bool index_rebuilt = 6;
 }
 
 // Session activity graph: the coordinator root, one node per subagent actor

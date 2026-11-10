@@ -156,6 +156,8 @@ export class SessionController {
   private failure: string | null = null;
   private mode: SessionMode = "unknown";
   private installed = false;
+  /** Index generation of the installed snapshot; the stream resets on a rebuild. */
+  private indexGeneration = 0n;
   private earlierCursor = "";
   private loadingEarlier = false;
   private earlierInFlight: Promise<boolean> | null = null;
@@ -314,6 +316,10 @@ export class SessionController {
             })
         : Promise.resolve(this.mode === "live"),
     ]);
+    if (snap.state!.indexGeneration !== this.indexGeneration) {
+      this.projection.forgetLoadedDetails();
+      this.indexGeneration = snap.state!.indexGeneration;
+    }
     this.projection.installIndexed(fromState(snap.state!), snap.rows.map(fromRow));
     this.earlierCursor = snap.earlierCursor;
     this.installed = true;
@@ -357,14 +363,26 @@ export class SessionController {
           this.setConn("streaming");
           this.publish();
           const updates = this.api.subscribeSessionView(
-            { sessionId: this.sessionId, fromSeq: BigInt(this.projection.lastPersistedSeq) },
+            {
+              sessionId: this.sessionId,
+              fromSeq: BigInt(this.projection.lastPersistedSeq),
+              indexGeneration: this.indexGeneration,
+            },
             { signal },
           );
+          let rebuilt = false;
           for await (const update of updates) {
             if (!this.current(gen)) return;
-            delay = this.opts.backoffInitialMs;
             streamed = true;
             if (this.mode !== "live") this.mode = "live";
+            if (update.indexRebuilt) {
+              // The daemon rebuilt its index: rows and cursor are from the old
+              // build, so replace them with a fresh snapshot and resubscribe
+              // (with backoff, should every attempt find another rebuild).
+              rebuilt = true;
+              break;
+            }
+            delay = this.opts.backoffInitialMs;
             if (update.transientEvent) {
               this.projection.apply(fromEvent(update.transientEvent));
               this.publish(false);
@@ -385,6 +403,19 @@ export class SessionController {
             // Neither: an idle-stream keepalive; nothing to fold.
           }
           if (!this.current(gen)) return;
+          if (rebuilt) {
+            this.projection.clearLiveTails();
+            needSnapshot = true;
+            this.setConn("reconnecting");
+            this.publish();
+            try {
+              await sleep(delay, signal);
+            } catch {
+              return;
+            }
+            delay = Math.min(delay * 2, this.opts.backoffMaxMs);
+            continue;
+          }
           // The daemon closed the log: the session ended.
           this.finishReadOnly();
           return;
@@ -507,9 +538,18 @@ export class SessionController {
     if (this.loadingDetail.has(rowId)) return;
     this.loadingDetail.add(rowId);
     this.publish();
+    const generation = this.indexGeneration;
+    let refetch = false;
     try {
       const resp = await this.api.getSessionViewDetail({ project: this.project, sessionId: this.sessionId, rowId });
       if (this.disposed || !resp.row) return;
+      if (generation !== this.indexGeneration) {
+        // Requested against an index build that has since been replaced: its
+        // row may share an id and version with different rebuilt content.
+        // A detail the new state still requires is fetched again.
+        refetch = this.projection.needsPendingDetail(rowId);
+        return;
+      }
       this.projection.installIndexedDetail(fromRow(resp.row));
       this.reconcile();
     } catch (err) {
@@ -517,6 +557,7 @@ export class SessionController {
     } finally {
       this.loadingDetail.delete(rowId);
       this.publish();
+      if (refetch) void this.loadDetail(rowId);
     }
   }
 

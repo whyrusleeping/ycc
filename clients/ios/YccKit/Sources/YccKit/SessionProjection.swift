@@ -179,6 +179,9 @@ public struct SessionProjection: Sendable, Equatable {
     /// Highest **persisted** seq folded so far — the reconnect resume cursor.
     /// Transient events (seq 0) never advance it.
     public private(set) var lastPersistedSeq: Int64 = 0
+    /// The daemon index build the installed indexed rows came from
+    /// (`SessionViewState.indexGeneration`); rows of another build don't merge.
+    public private(set) var indexGeneration: Int64 = 0
     /// RFC3339 timestamp of the newest durable event folded so far, in the
     /// *daemon's* clock. This is what the client records as "seen up to here"
     /// for unread tracking (``SessionReadStore``): comparing daemon stamps to
@@ -846,6 +849,12 @@ public struct SessionProjection: Sendable, Equatable {
         decoded: [TranscriptRow?]
     ) {
         applyIndexedState(state)
+        if state.indexGeneration != indexGeneration {
+            // A rebuilt index can reuse a row id and version for different
+            // content: expanded rows of the old build must not survive it.
+            indexedLoadedDetails.removeAll()
+            indexGeneration = state.indexGeneration
+        }
         durableRows = zip(rows, decoded).compactMap { encoded, row in
             decodeIndexedRowPreservingDetail(encoded, decoded: row)
         }

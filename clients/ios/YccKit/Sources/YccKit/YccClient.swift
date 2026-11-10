@@ -516,7 +516,7 @@ public final class YccClient: Sendable {
     }
 
     public func subscribeSessionView(
-        sessionId: String, fromSeq: Int64
+        sessionId: String, fromSeq: Int64, indexGeneration: Int64
     ) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
         let stream = generatedStreaming.subscribeSessionView()
         return AsyncThrowingStream { continuation in
@@ -525,6 +525,7 @@ public final class YccClient: Sendable {
                 var request = Ycc_V1_SubscribeSessionViewRequest()
                 request.sessionID = sessionId
                 request.fromSeq = fromSeq
+                request.indexGeneration = indexGeneration
                 do { try stream.send(request) }
                 catch { continuation.finish(throwing: Self.mapSessionTransport(error)); return }
                 for await result in stream.results() {

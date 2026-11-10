@@ -496,7 +496,7 @@ func presentationState(st sessionview.State) *v1.SessionViewState {
 		Phase: st.Phase, ErrorMessage: truncatePresentationString(st.ErrorMessage, 2048), ErrorRetryable: st.ErrorRetryable,
 		CoordinatorModel: truncatePresentationString(st.Coordinator, 256), ContextTokens: st.ContextTokens, HasContextTokens: st.HasContext,
 		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256), PauseRequested: st.PauseRequested,
-		AwaitingJobs: st.Phase == "idle" && st.AwaitingJobs}
+		AwaitingJobs: st.Phase == "idle" && st.AwaitingJobs, IndexGeneration: st.Generation}
 	pending := st.Pending
 	if len(pending) > 8 {
 		out.PendingQuestionsTruncated = true
@@ -665,15 +665,30 @@ func (s *Server) GetSessionViewDetail(ctx context.Context, req *connect.Request[
 
 // SubscribeSessionView hands off from an exact indexed snapshot sequence to the
 // durable log subscription. Durable events become row upserts/tombstones; only
-// transient live-tail events are still sent as raw events.
+// transient live-tail events are still sent as raw events. A client that names
+// its snapshot's index generation gets a reset instead of updates once the
+// index has been rebuilt, since rebuilt rows carry no tombstones for its view.
 func (s *Server) SubscribeSessionView(ctx context.Context, req *connect.Request[v1.SubscribeSessionViewRequest], stream *connect.ServerStream[v1.SessionViewUpdate]) error {
 	sess, ok := s.mgr.Get(req.Msg.SessionId)
 	if !ok {
 		return connect.NewError(connect.CodeNotFound, errNoSession)
 	}
-	store, logPath, _, _, err := s.sessionViewStore("", req.Msg.SessionId)
+	store, logPath, durableSeq, durableOffset, err := s.sessionViewStore("", req.Msg.SessionId)
 	if err != nil {
 		return sessionViewError(err)
+	}
+	checkGeneration := req.Msg.IndexGeneration != nil
+	generation := req.Msg.GetIndexGeneration()
+	reset := func() error { return stream.Send(&v1.SessionViewUpdate{IndexRebuilt: true}) }
+	if checkGeneration {
+		// Catch up first so a source change nobody has indexed yet is caught here.
+		st, err := store.CatchUpBounded(ctx, req.Msg.SessionId, logPath, durableSeq, durableOffset)
+		if err != nil {
+			return sessionViewError(err)
+		}
+		if st.Generation != generation {
+			return reset()
+		}
 	}
 	ch, cancel := sess.Log().Subscribe(int(req.Msg.FromSeq))
 	defer cancel()
@@ -685,6 +700,16 @@ func (s *Server) SubscribeSessionView(ctx context.Context, req *connect.Request[
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-keepalive.C:
+			// A quiet session can still be rebuilt by another client's read.
+			if checkGeneration {
+				current, err := store.Generation(ctx, req.Msg.SessionId)
+				if err != nil {
+					return sessionViewError(err)
+				}
+				if current != generation {
+					return reset()
+				}
+			}
 			if err := stream.Send(&v1.SessionViewUpdate{}); err != nil {
 				return err
 			}
@@ -709,6 +734,9 @@ func (s *Server) SubscribeSessionView(ctx context.Context, req *connect.Request[
 			st, rows, deleted, err := store.ChangesSince(ctx, req.Msg.SessionId, logPath, int64(durableSeq), durableOffset, delivered)
 			if err != nil {
 				return sessionViewError(err)
+			}
+			if checkGeneration && st.Generation != generation {
+				return reset()
 			}
 			out := &v1.SessionViewUpdate{Seq: st.IndexedThrough, State: presentationState(st), DeletedRowIds: deleted}
 			for _, row := range rows {

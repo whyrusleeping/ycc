@@ -243,13 +243,23 @@ private final class MockActionSource: SessionActionSource, SessionTranscriptSour
 
 /// An indexed live source whose SubscribeSessionView stream the test drives.
 private final class KeepaliveStreamSource: SessionTranscriptSource, @unchecked Sendable {
-    let view: Ycc_V1_GetSessionViewResponse
+    private var _view: Ycc_V1_GetSessionViewResponse
     private let lock = NSLock()
     private var continuation: AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>.Continuation?
+    private var _subscriptions: [(fromSeq: Int64, indexGeneration: Int64)] = []
 
-    init(view: Ycc_V1_GetSessionViewResponse) { self.view = view }
+    init(view: Ycc_V1_GetSessionViewResponse) { _view = view }
 
+    var view: Ycc_V1_GetSessionViewResponse {
+        get { lock.lock(); defer { lock.unlock() }; return _view }
+        set { lock.lock(); _view = newValue; lock.unlock() }
+    }
+    var subscriptions: [(fromSeq: Int64, indexGeneration: Int64)] {
+        lock.lock(); defer { lock.unlock() }; return _subscriptions
+    }
     var isSubscribed: Bool { lock.lock(); defer { lock.unlock() }; return continuation != nil }
+    /// Answers GetSessionViewDetail when set.
+    var detail: (@Sendable (String) async -> Ycc_V1_SessionPresentationRow)?
     func send(_ update: Ycc_V1_SessionViewUpdate) {
         lock.lock()
         let continuation = continuation
@@ -259,10 +269,15 @@ private final class KeepaliveStreamSource: SessionTranscriptSource, @unchecked S
 
     var supportsIndexedSessionView: Bool { true }
     func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse { view }
-    func subscribeSessionView(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+    func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
+        guard let detail else { throw YccError.notFound(message: "no detail") }
+        return await detail(rowId)
+    }
+    func subscribeSessionView(sessionId: String, fromSeq: Int64, indexGeneration: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
         AsyncThrowingStream { continuation in
             lock.lock()
             self.continuation = continuation
+            _subscriptions.append((fromSeq, indexGeneration))
             lock.unlock()
         }
     }
@@ -272,6 +287,30 @@ private final class KeepaliveStreamSource: SessionTranscriptSource, @unchecked S
     }
     func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
         AsyncThrowingStream { $0.finish() }
+    }
+}
+
+/// Holds a detail response until the test opens it.
+private final class DetailGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var opened = false
+    var isWaiting: Bool { lock.lock(); defer { lock.unlock() }; return waiter != nil }
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if opened { lock.unlock(); continuation.resume(); return }
+            waiter = continuation
+            lock.unlock()
+        }
+    }
+    func open() {
+        lock.lock()
+        opened = true
+        let waiter = waiter
+        self.waiter = nil
+        lock.unlock()
+        waiter?.resume()
     }
 }
 
@@ -1209,6 +1248,97 @@ final class SessionViewModelTests: XCTestCase {
         await waitUntil { vm.transcriptRevision != revision }
         XCTAssertEqual(vm.transcriptRevision, revision &+ 1)
         XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2", "seq-4"])
+        vm.stop()
+    }
+    func testIndexRebuildReinstallsSnapshotAndResubscribes() async {
+        func row(_ seq: Int64, _ text: String) -> Ycc_V1_SessionPresentationRow {
+            var r = Ycc_V1_SessionPresentationRow()
+            r.id = "seq-\(seq)"
+            r.positionSeq = seq
+            r.updatedSeq = seq
+            r.events = [event(seq, "model_turn", #"{"text":"\#(text)"}"#)]
+            return r
+        }
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 5
+        view.state.phase = "running"
+        view.rows = [row(3, "three"), row(5, "five")]
+        let source = KeepaliveStreamSource(view: view)
+        let vm = SessionViewModel(source: source, sessionID: "rebuilt", mode: .live,
+                                  backoff: .init(initial: 1_000_000, maximum: 1_000_000), publishInterval: 0)
+        vm.start()
+        await waitUntil { source.isSubscribed && vm.state == .streaming }
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-3", "seq-5"])
+
+        // The daemon rebuilt the index from a rewritten log: fewer rows, a
+        // lower watermark, and a new generation. The old rows must all go.
+        var rebuilt = Ycc_V1_GetSessionViewResponse()
+        rebuilt.state.indexedThroughSeq = 4
+        rebuilt.state.phase = "running"
+        rebuilt.state.indexGeneration = 9
+        rebuilt.rows = [row(2, "two"), row(4, "four")]
+        source.view = rebuilt
+        var reset = Ycc_V1_SessionViewUpdate()
+        reset.indexRebuilt = true
+        XCTAssertFalse(reset.isKeepalive)
+        source.send(reset)
+        await waitUntil { source.subscriptions.count >= 2 && vm.state == .streaming }
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2", "seq-4"])
+        XCTAssertEqual(source.subscriptions.map(\.fromSeq), [5, 4])
+        XCTAssertEqual(source.subscriptions.map(\.indexGeneration), [0, 9])
+        vm.stop()
+    }
+    func testIndexRebuildDropsExpandedAndInFlightDetails() async {
+        func row(_ seq: Int64, _ text: String, detail: Bool = true) -> Ycc_V1_SessionPresentationRow {
+            var r = Ycc_V1_SessionPresentationRow()
+            r.id = "seq-\(seq)"
+            r.positionSeq = seq
+            r.updatedSeq = seq
+            r.hasDetail_p = detail
+            r.events = [event(seq, "model_turn", #"{"text":"\#(text)"}"#)]
+            return r
+        }
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 5
+        view.state.phase = "running"
+        view.rows = [row(4, "four"), row(5, "five")]
+        let source = KeepaliveStreamSource(view: view)
+        let gate = DetailGate()
+        let oldFive = row(5, "old full five", detail: false)
+        let oldFour = row(4, "old full four", detail: false)
+        source.detail = { id in
+            if id == "seq-5" { return oldFive }
+            await gate.wait()
+            return oldFour
+        }
+        let vm = SessionViewModel(source: source, sessionID: "rebuilt-detail", mode: .live,
+                                  backoff: .init(initial: 1_000_000, maximum: 1_000_000), publishInterval: 0)
+        let texts = { vm.durableRows.map { row -> String in
+            if case .modelMessage(let text) = row.kind { return text }
+            return "?"
+        } }
+        vm.start()
+        await waitUntil { source.isSubscribed && vm.state == .streaming }
+        await vm.loadDetail(rowID: "seq-5")
+        XCTAssertEqual(texts(), ["four", "old full five"])
+        let inFlight = Task { await vm.loadDetail(rowID: "seq-4") }
+        await waitUntil { gate.isWaiting }
+
+        // Same ids and versions, different content: nothing of the old build stays.
+        var rebuilt = Ycc_V1_GetSessionViewResponse()
+        rebuilt.state.indexedThroughSeq = 5
+        rebuilt.state.phase = "running"
+        rebuilt.state.indexGeneration = 9
+        rebuilt.rows = [row(4, "rebuilt four"), row(5, "rebuilt five")]
+        source.view = rebuilt
+        var reset = Ycc_V1_SessionViewUpdate()
+        reset.indexRebuilt = true
+        source.send(reset)
+        await waitUntil { source.subscriptions.count >= 2 && vm.state == .streaming }
+        XCTAssertEqual(texts(), ["rebuilt four", "rebuilt five"])
+        gate.open()
+        await inFlight.value
+        XCTAssertEqual(texts(), ["rebuilt four", "rebuilt five"])
         vm.stop()
     }
 }

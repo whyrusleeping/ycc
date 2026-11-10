@@ -407,6 +407,14 @@ export class SessionProjection {
 
   // MARK: indexed presentation
 
+  /**
+   * Drop every expanded row: after an index rebuild an id and version can
+   * name different content, so details of the old build must not survive.
+   */
+  forgetLoadedDetails() {
+    this.indexedLoadedDetails.clear();
+  }
+
   /** Install a snapshot: daemon-reduced state plus the newest bounded page. */
   installIndexed(state: WireState, rows: WireRow[]) {
     this.applyIndexedState(state);
