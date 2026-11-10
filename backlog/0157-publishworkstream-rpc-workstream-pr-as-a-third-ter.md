@@ -1,10 +1,10 @@
 ---
 id: "0157"
 title: 'PublishWorkstream RPC: workstream → PR as a third terminal state (published)'
-status: proposed
+status: done
 priority: 4
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-11-10"
 depends_on:
     - "0155"
 spec_refs:
@@ -33,3 +33,4 @@ Add **publish** as a third workstream terminal state beside merge/discard: push 
 - [ ] Failure modes from doc §9 covered with specific errors (no gh, no remote, unrecognised host, no push rights, PR exists).
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner closed the forge workflow tasks (see 0156); the accepted design keeps PR publication out of ycc's first-class workflows.

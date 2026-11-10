@@ -1,10 +1,10 @@
 ---
 id: "0163"
 title: 'Spec update: record forge integration (import, publish, auth model)'
-status: proposed
+status: done
 priority: 4
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-11-10"
 depends_on:
     - "0156"
     - "0157"
@@ -21,3 +21,4 @@ Add a short §14.2 (or extend §6.2/§14.1) recording forge integration: `ycc ta
 - [ ] Spec sections updated to match shipped behaviour; spec-check passes.
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner closed the forge workflow tasks (see 0156); the spec and `docs/design/forge-integration.md` already describe the accepted boundary.

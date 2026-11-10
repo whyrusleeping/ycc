@@ -1,10 +1,10 @@
 ---
 id: "0158"
 title: 'plans/publish-pr.md runbook: session → PR behind a confirmation gate'
-status: proposed
+status: done
 priority: 4
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-11-10"
 depends_on:
     - "0155"
 spec_refs:
@@ -22,3 +22,4 @@ Write a committed `plans/publish-pr.md` runbook for shipping a plain (non-workst
 - [ ] Coordinator prompt mentions the runbook for "open a PR for this session" requests.
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner closed the forge workflow tasks (see 0156); the accepted design keeps PR publication out of ycc's first-class workflows.

@@ -1,10 +1,10 @@
 ---
 id: "0156"
 title: 'ycc task import <issue-url>: GitHub issue → backlog task (origin field, dedupe)'
-status: blocked
+status: done
 priority: 4
 created: "2026-07-06"
-updated: "2026-09-26"
+updated: "2026-11-10"
 depends_on:
     - "0155"
 spec_refs:
@@ -34,3 +34,4 @@ New `ycc task import <issue-url>` subcommand in cmd/ycc/task.go beside add/list/
 - Blocked pending an isolated clean task worktree/session, or resolution of these changes by their owners followed by a new baseline. Preserve the existing source/index state. Resume the original import, RPC/direct-backend, dedupe, actionable-error, and documentation criteria once isolation is available; none were dropped.
 - 2026-09-25: Unblocked. The dirty-baseline blocker is gone: the pre-existing staged/unstaged work was committed (5a0225b, 128d051) and the worktree is clean, so the changeset ownership guard no longer applies. No implementation happened while blocked; all acceptance criteria remain outstanding.
 - 2026-09-26: Blocked on a design conflict, not tooling. This task cites `docs/design/forge-integration.md` §5 ("Flow 1 — issues → backlog"), but the owner's documentation prune (c6907b1) rewrote that doc as "accepted foundation … issue import and PR publication are not public ycc workflows" / "ycc has no first-class issue-import or PR-publication workflow", and spec §8 now says forge access "is intentionally outside the public tool surface". Implementing `ycc task import` plus a new `origin` frontmatter/proto field would contradict the accepted design. Needed to unblock: the user either (a) confirms `ycc task import` is still wanted (and updates the forge doc/spec to allow it), or (b) closes/rescopes this task (e.g. only a documented `origin:` provenance convention for agent-driven imports). No implementation occurred; all criteria remain outstanding. The same conflict likely applies to proposed follow-ons 0157–0163.
+- 2026-11-10: Closed without implementation (owner chose option b). The accepted forge design (`docs/design/forge-integration.md` "Workflow boundaries") already says that when an agent turns an issue into a task, source provenance belongs in the task. No `ycc task import`, `origin` field or proto change will be built. The proposed follow-ons 0157–0163 were closed with it.

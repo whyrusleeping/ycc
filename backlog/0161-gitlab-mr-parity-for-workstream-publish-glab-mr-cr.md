@@ -1,10 +1,10 @@
 ---
 id: "0161"
 title: GitLab MR parity for workstream publish (glab mr create)
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-11-10"
 depends_on:
     - "0155"
     - "0157"
@@ -21,3 +21,4 @@ GitLab parity for workstream publish: `glab mr create --source-branch … --targ
 - [ ] PublishWorkstream against a GitLab remote opens an MR and records its URL; retry converges without duplicates.
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner closed the forge workflow tasks (see 0156); there is no PublishWorkstream to reach parity with.

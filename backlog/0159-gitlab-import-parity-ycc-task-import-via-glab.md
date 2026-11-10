@@ -1,10 +1,10 @@
 ---
 id: "0159"
 title: 'GitLab import parity: ycc task import via glab'
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-11-10"
 depends_on:
     - "0155"
     - "0156"
@@ -22,3 +22,4 @@ GitLab parity for issue import: add a `glab issue view --output json` adapter be
 - [ ] Shared import logic; only the fetch/parse adapter differs.
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner closed the forge workflow tasks (see 0156); there is no `ycc task import` to reach parity with.

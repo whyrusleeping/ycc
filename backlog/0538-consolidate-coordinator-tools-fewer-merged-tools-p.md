@@ -1,7 +1,7 @@
 ---
 id: "0538"
 title: 'Consolidate coordinator tools: fewer, merged tools per mode based on actual usage'
-status: blocked
+status: todo
 priority: 3
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -155,3 +155,6 @@ Projected result with items 1, 3, 4 and 5: chat 24→20, work 25→20, pm 22→1
 **Update 10:00Z:** commit 23ca1a5 reverted 0524, so chat no longer has `start_work`. The current chat baseline with all hooks set is 23 tools / 19,033 B (20,273 − 1,240), item 6 is moot, and the item 1+3+5 projection for chat becomes 23→19.
 
 **Blocked (2026-11-10, unattended session):** the owner must approve the list before implementation; the question was asked but no one was available to answer. To unblock, record which of items 1–5, 7 and 8 are approved, then set the task to todo. The baseline measurement can be re-run with a throwaway `BuildMode` test that sets `StartWork` and `ScheduleWatch` and sums `json.Marshal(reg.APIDefs())` per tool.
+
+### 2026-11-10 — owner decision (step 2 resolved)
+Approved: **item 4** (`schedule_watch` in chat only, not work, with a shorter description and guidance) and **a moderate part of item 8** (tighten the largest frequently used definitions, such as Search, spawn_reviewers, remember, ask_user and create_task, without going too far or changing behavior). Not approved: items 1, 2, 3 and 5; item 6 is moot; item 7 keeps the status quo. Acceptance is adjusted to this scope: work loses one tool (`schedule_watch`), so chat and pm keep their tool counts and must only get smaller definitions. Record each mode's count and size beside the baseline, and keep the replay criterion for old `schedule_watch` calls in work-mode history.

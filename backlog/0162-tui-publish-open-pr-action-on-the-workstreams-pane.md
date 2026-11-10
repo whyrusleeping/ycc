@@ -1,10 +1,10 @@
 ---
 id: "0162"
 title: 'TUI: publish (open PR) action on the Workstreams panel'
-status: proposed
+status: done
 priority: 5
 created: "2026-07-06"
-updated: "2026-07-06"
+updated: "2026-11-10"
 depends_on:
     - "0157"
 spec_refs:
@@ -21,3 +21,4 @@ TUI surface for publish: a "Publish (open PR)" action beside merge/discard on th
 - [ ] `workstream_published` renders in the session stream.
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner closed the forge workflow tasks (see 0156), and the TUI was retired in 6ce9e51.
