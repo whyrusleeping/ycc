@@ -51,9 +51,9 @@ struct ScopeChipBar: View {
 }
 
 /// A squared scope chip. Selected is inverted (primary fill, background-
-/// coloured label); unselected is a hairline outline. The trailing cue shows
-/// the loudest state only (question > unread > active) as a plain mono count
-/// or a small live square, so a chip stays compact.
+/// coloured label); unselected is a hairline outline. The trailing cue is a
+/// small live square while anything runs, plus one plain mono count for the
+/// loudest of question > unread, so a chip stays compact.
 private struct ScopeChip: View {
     let title: String
     var systemImage: String?
@@ -93,16 +93,20 @@ private struct ScopeChip: View {
         isSelected ? Color(.systemBackground) : color
     }
 
+    /// The live square always shows while work is in flight, so a project
+    /// that also has unread or waiting sessions doesn't look idle; the count
+    /// beside it is the loudest of question > unread.
     @ViewBuilder
     private var cue: some View {
+        if activity.active > 0 {
+            Rectangle()
+                .fill(cueColor(Theme.live))
+                .frame(width: 5, height: 5)
+        }
         if activity.needsAnswer > 0 {
             count(activity.needsAnswer, color: cueColor(Theme.attention))
         } else if activity.unread > 0 {
             count(activity.unread, color: cueColor(.accentColor))
-        } else if activity.active > 0 {
-            Rectangle()
-                .fill(cueColor(Theme.live))
-                .frame(width: 5, height: 5)
         }
     }
 
