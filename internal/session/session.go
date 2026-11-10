@@ -79,6 +79,9 @@ type Config struct {
 	// initial user_input event records only metadata plus opaque references;
 	// payloads are retained separately for transcript display.
 	Images []engine.Image
+	// PlanOnly starts a chat session with its plan-only guardrail on (see
+	// SetPlanOnly). Other modes reject it with ErrPlanOnlyMode.
+	PlanOnly bool
 }
 
 // Session is one running agent conversation backed by a persistent event log.
@@ -215,6 +218,14 @@ type Session struct {
 	corrections     []correction
 	resumeCh        chan struct{}
 	rolloverPending bool // explicit request accepted; idle input is queued until its durable view boundary
+
+	// Plan-only guardrail (chat only), guarded by planMu. planOnly is the
+	// user's current choice (plan_only_changed); planOnlyTold is what the
+	// coordinator's conversation was last told (plan_only_delivered). A
+	// checkpoint delivers a note whenever they differ.
+	planMu       sync.Mutex
+	planOnly     bool
+	planOnlyTold bool
 
 	// contextSummary is a test seam; nil uses the deterministic durable-evidence
 	// summary builder.
@@ -716,6 +727,11 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 			return nil, err
 		}
 		msgs = append(msgs, textMessages(notes)...)
+		plan, err := s.planOnlyNote()
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, textMessages(plan)...)
 		msgs = append(msgs, textMessages(s.checkBudget(ctx))...)
 		if err := s.logFailure(); err != nil {
 			return nil, fmt.Errorf("session event log failed: %w", err)
@@ -778,6 +794,11 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 		return nil, err
 	}
 	msgs = append(msgs, textMessages(notes)...)
+	plan, err := s.planOnlyNote()
+	if err != nil {
+		return nil, err
+	}
+	msgs = append(msgs, textMessages(plan)...)
 	msgs = append(msgs, textMessages(s.checkBudget(ctx))...)
 	if err := s.logFailure(); err != nil {
 		return nil, fmt.Errorf("session event log failed: %w", err)
@@ -1579,6 +1600,11 @@ func (s *Session) run() {
 		if s.handoff != nil {
 			s.emitter.Emit(event.WorkHandoff, s.handoff)
 		}
+		s.planMu.Lock()
+		if s.planOnly {
+			s.emitter.EmitAs("user", event.PlanOnlyChanged, map[string]any{"plan_only": true})
+		}
+		s.planMu.Unlock()
 		if s.startupNotice != "" {
 			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": s.startupNotice, "level": "warning"})
 		}
@@ -2385,6 +2411,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	if mode == "" {
 		mode = "work"
 	}
+	if cfg.PlanOnly && mode != "chat" {
+		return nil, ErrPlanOnlyMode
+	}
 	// The prompt is optional: an empty one (e.g. "work" mode with no suggested
 	// task) gets a sensible per-mode default so the agent has a starting point.
 	prompt := strings.TrimSpace(cfg.Prompt)
@@ -2430,6 +2459,12 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
 	s.startupNotice = startupNotice
 	s.handoff = cfg.handoff
+	if cfg.PlanOnly {
+		// run records plan_only_changed after session_started; the first
+		// checkpoint then tells the coordinator.
+		s.planOnly = true
+		s.deps.SetPlanOnly(true)
+	}
 	// Opening-prompt pictures must be retained and attached BEFORE the first loop
 	// is built: buildLoop consumes them so the seed message is multimodal.
 	s.promptImages = cfg.Images
@@ -3219,6 +3254,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	// Seed the spend-guard flags from the replayed log so a session that already
 	// crossed the warning/breach line does not re-fire or re-ask on reopen.
 	s.seedBudgetFromLog(events)
+	if mode == "chat" {
+		s.restorePlanOnly(events)
+	}
 
 	// Register atomically: re-check under the lock so a concurrent Reopen/Start
 	// that won the race keeps its live session. The loser closes its freshly

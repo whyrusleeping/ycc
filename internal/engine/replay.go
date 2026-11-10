@@ -348,6 +348,20 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
+		case event.PlanOnlyDelivered:
+			// The plan-only note enters at a Steer checkpoint like job_notified,
+			// with the same mid-batch deferral.
+			text := str(ev.Data, "text")
+			if text == "" {
+				continue
+			}
+			if batchOpen() {
+				deferredUser = append(deferredUser, text)
+				continue
+			}
+			repairDangling()
+			history = append(history, gollama.Message{Role: "user", Content: text})
+			assistantIdx = -1
 		case event.BudgetExceeded:
 			// A graceful spend-guard halt injects a wrap-up
 			// instruction as a USER-actor budget_exceeded event carrying "text".

@@ -1,7 +1,7 @@
 ---
 id: "0525"
 title: 'Chat: reversible "plan only" toggle mid-session (daemon + web)'
-status: todo
+status: done
 priority: 3
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -12,6 +12,7 @@ spec_refs:
 ---
 
 ## Description
+
 **Context (2026-11-11 mode review):** PM's no-code guardrail goes unused partly because it's chosen at session start, while intent changes partway through (think → decide → build), and leaving PM costs a session break. If a guardrail is wanted, it belongs inside the conversation and should be reversible (cf. Claude Code's plan mode). The owner accepted this as a TODO. Check actual use after it ships before investing more.
 
 **Scope**
@@ -26,6 +27,8 @@ spec_refs:
 - Web screenshot evidence (light/dark). Bundle rebuilt.
 - iOS parity is a follow-up, only if the web toggle gets used.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Chat sessions have a reversible plan-only guardrail: SetPlanOnly RPC and StartSession.plan_only (chat only). plan_only_changed is recorded at once (SessionViewState.plan_only, transcript row); Write/Edit outside spec/doc_globs/backlog/plans/memory.md are refused (symlink-resolved), spawned agents forced read-only, Bash soft. The model is told at the next turn boundary via a plan_only_delivered note that replay, reopen and rollover reproduce. Web: composer toggle, header marker, palette action, New session option; bundle rebuilt. Spec §9, remote-api.md, web-client.md updated. Go + web tests; light/dark screenshots in .ycc/tmp/planonly-shots/shots. iOS parity is a follow-up.
+
+Commit: Chat plan-only toggle: SetPlanOnly / StartSession.plan_only, Write/Edit gate to planning docs (symlink-aware), read-only subagents, replayable notes, web toggle + marker + New session option (0525)

@@ -116,6 +116,8 @@ export interface NewSessionDraft {
   taskId: string;
   /** Workstream only: the optional branch or commit to start from. */
   baseRef: string;
+  /** Start a chat with its plan-only guardrail on (see planOnlyApplies). */
+  planOnly: boolean;
 }
 
 export interface StartGate {
@@ -169,8 +171,17 @@ export function withMode<T extends Pick<NewSessionDraft, "mode" | "preset">>(
   return { ...draft, mode, preset: applied && applied.mode === mode ? draft.preset : "" };
 }
 
-/** The StartSession request for a draft. */
-export function buildStartRequest(draft: NewSessionDraft) {
+/** Plan only is offered for a chat in the project's tree, not for a workstream or another mode. */
+export function planOnlyOffered(draft: Pick<NewSessionDraft, "mode" | "workstream">): boolean {
+  return draft.mode === "chat" && !draft.workstream;
+}
+
+/** Whether the draft starts with plan only on. */
+export function planOnlyApplies(draft: Pick<NewSessionDraft, "mode" | "workstream" | "planOnly">): boolean {
+  return draft.planOnly && planOnlyOffered(draft);
+}
+
+function sessionChoices(draft: NewSessionDraft) {
   return {
     project: draft.project,
     mode: draft.mode,
@@ -179,6 +190,12 @@ export function buildStartRequest(draft: NewSessionDraft) {
     preset: draft.preset,
     images: toImageAttachments(draft.pictures),
   };
+}
+
+/** The StartSession request for a draft. */
+export function buildStartRequest(draft: NewSessionDraft) {
+  const req = sessionChoices(draft);
+  return planOnlyApplies(draft) ? { ...req, planOnly: true } : req;
 }
 
 /**
@@ -190,5 +207,5 @@ export function buildWorkstreamRequest(draft: NewSessionDraft, task?: { id: stri
   const taskId = draft.taskId.trim();
   let prompt = draft.prompt.trim();
   if (!prompt && taskId) prompt = task?.id === taskId ? taskPrompt(task) : `Work on backlog task ${taskId}`;
-  return { ...buildStartRequest(draft), prompt, taskId, baseRef: draft.baseRef.trim() };
+  return { ...sessionChoices(draft), prompt, taskId, baseRef: draft.baseRef.trim() };
 }

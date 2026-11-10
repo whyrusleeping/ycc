@@ -12,6 +12,7 @@ import {
   applyPreset,
   buildStartRequest,
   buildWorkstreamRequest,
+  planOnlyOffered,
   canStart,
   initialMode,
   initialProject,
@@ -42,6 +43,7 @@ const draft = (over: Partial<NewSessionDraft> = {}): NewSessionDraft => ({
   workstream: false,
   taskId: "",
   baseRef: "",
+  planOnly: false,
   ...over,
 });
 const gateOpts = { projectsRegistered: 3, defaultDisabled: false, starting: false, loadingPictures: false };
@@ -121,6 +123,15 @@ describe("new session", () => {
       preset: "spec-doctor",
       images: [{ data, mediaType: "image/jpeg", filename: "a.jpg" }],
     });
+  });
+
+  it("starts a chat in plan only, never another mode or a workstream", () => {
+    expect(buildStartRequest(draft({ prompt: "x", planOnly: true }))).toMatchObject({ mode: "chat", planOnly: true });
+    expect(buildStartRequest(draft({ prompt: "x" }))).not.toHaveProperty("planOnly");
+    expect(buildStartRequest(draft({ prompt: "x", mode: "pm", planOnly: true }))).not.toHaveProperty("planOnly");
+    expect(buildWorkstreamRequest(draft({ prompt: "x", workstream: true, planOnly: true }))).not.toHaveProperty("planOnly");
+    expect(planOnlyOffered(draft({ workstream: true }))).toBe(false);
+    expect(planOnlyOffered(draft({ mode: "work" }))).toBe(false);
   });
 
   it("builds a workstream request with the same session choices plus task and base", () => {

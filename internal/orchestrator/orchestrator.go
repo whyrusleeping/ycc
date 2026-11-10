@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/whyrusleeping/gollama"
@@ -181,6 +182,9 @@ type Deps struct {
 	// scoped to this session's direct mutations; delegated mutators use child tokens.
 	Ownership        *workspacelease.Service
 	CoordinatorToken *workspacelease.Token
+
+	// planOnly is a chat session's plan-only guardrail (see SetPlanOnly).
+	planOnly atomic.Bool
 
 	mu           sync.Mutex
 	impl         *engine.Loop

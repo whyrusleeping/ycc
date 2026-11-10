@@ -279,7 +279,7 @@ func (s *Session) performContextRollover(ctx context.Context, reason string) err
 		return fmt.Errorf("persist coordinator context rollover: %w", err)
 	}
 	loop.SetHistory(selected)
-	return nil
+	return s.replanAfterContextReset(loop)
 }
 
 // contextModelSwitchRequired folds the durable recovery gate. Once the bounded

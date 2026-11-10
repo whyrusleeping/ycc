@@ -96,6 +96,14 @@ const (
 	// branch? }; the work session records { task, from_session } after its
 	// session_started.
 	WorkHandoff Type = "work_handoff"
+	// PlanOnlyChanged records the user turning a chat session's plan-only
+	// guardrail on or off (data: { plan_only }). It is the durable session state:
+	// enforcement follows it from the next tool call.
+	PlanOnlyChanged Type = "plan_only_changed"
+	// PlanOnlyDelivered records the user-role note that tells the coordinator
+	// about the latest plan-only state, at the Steer checkpoint where it entered
+	// the conversation (data: { plan_only, text }), so replay places it exactly.
+	PlanOnlyDelivered Type = "plan_only_delivered"
 	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"

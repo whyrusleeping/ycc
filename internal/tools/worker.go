@@ -847,6 +847,11 @@ func writeFile(ws *Workspace) *gollama.Tool {
 			if err != nil {
 				return errResult("Write: %v", err), nil
 			}
+			if ws.WriteGate != nil {
+				if err := ws.WriteGate(abs); err != nil {
+					return errResult("Write: %v", err), nil
+				}
+			}
 			release, claim, err := ws.acquireFileWrite(ctx, abs)
 			if err != nil {
 				return errResult("Write: %v", err), nil
@@ -937,6 +942,11 @@ func editFile(ws *Workspace) *gollama.Tool {
 			abs, err := ws.resolve(fp)
 			if err != nil {
 				return errResult("Edit: %v", err), nil
+			}
+			if ws.WriteGate != nil {
+				if err := ws.WriteGate(abs); err != nil {
+					return errResult("Edit: %v", err), nil
+				}
 			}
 			release, claim, err := ws.acquireFileWrite(ctx, abs)
 			if err != nil {

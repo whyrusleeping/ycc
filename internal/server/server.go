@@ -114,9 +114,10 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 		CoordinatorModel: m.CoordinatorModel,
 		Preset:           m.Preset,
 		Images:           images,
+		PlanOnly:         m.PlanOnly,
 	})
 	if err != nil {
-		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) {
+		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) || errors.Is(err, session.ErrPlanOnlyMode) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		if errors.Is(err, session.ErrDisabledModel) {
@@ -496,7 +497,7 @@ func presentationState(st sessionview.State) *v1.SessionViewState {
 		Phase: st.Phase, ErrorMessage: truncatePresentationString(st.ErrorMessage, 2048), ErrorRetryable: st.ErrorRetryable,
 		CoordinatorModel: truncatePresentationString(st.Coordinator, 256), ContextTokens: st.ContextTokens, HasContextTokens: st.HasContext,
 		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256), PauseRequested: st.PauseRequested,
-		AwaitingJobs: st.Phase == "idle" && st.AwaitingJobs, IndexGeneration: st.Generation}
+		AwaitingJobs: st.Phase == "idle" && st.AwaitingJobs, IndexGeneration: st.Generation, PlanOnly: st.PlanOnly}
 	pending := st.Pending
 	if len(pending) > 8 {
 		out.PendingQuestionsTruncated = true
@@ -949,6 +950,21 @@ func (s *Server) Interrupt(_ context.Context, req *connect.Request[v1.InterruptR
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return connect.NewResponse(&v1.InterruptResponse{}), nil
+}
+
+// SetPlanOnly toggles a live chat session's plan-only guardrail.
+func (s *Server) SetPlanOnly(_ context.Context, req *connect.Request[v1.SetPlanOnlyRequest]) (*connect.Response[v1.SetPlanOnlyResponse], error) {
+	sess, ok := s.mgr.Get(req.Msg.SessionId)
+	if !ok {
+		return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+	}
+	if err := sess.SetPlanOnly(req.Msg.PlanOnly); err != nil {
+		if errors.Is(err, session.ErrPlanOnlyMode) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.SetPlanOnlyResponse{}), nil
 }
 
 // Resume continues a paused session (optionally after SendInput corrections),

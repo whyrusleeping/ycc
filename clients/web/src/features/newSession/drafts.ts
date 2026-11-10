@@ -12,6 +12,7 @@ const emptyDraft = (): NewSessionDraft => ({
   workstream: false,
   taskId: "",
   baseRef: "",
+  planOnly: false,
 });
 
 interface Snapshot {

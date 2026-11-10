@@ -726,3 +726,38 @@ func TestIndexKeepsFirstEventForRepeatedSequence(t *testing.T) {
 		t.Fatalf("kept the later duplicate (seq-2 text=%v), want the first", got)
 	}
 }
+
+// plan_only_changed drives state.plan_only and shows as a transcript row; the
+// model-facing plan_only_delivered note does not.
+func TestPlanOnlyStateAndRows(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	events := []event.Event{
+		ev(1, event.SessionStarted, map[string]any{"mode": "chat"}),
+		ev(2, event.PlanOnlyChanged, map[string]any{"plan_only": true}),
+		ev(3, event.PlanOnlyDelivered, map[string]any{"plan_only": true, "text": "[plan only: on] ..."}),
+	}
+	writeLog(t, path, events)
+	state, err := store.CatchUp(ctx, "s", path, -1)
+	if err != nil || !state.PlanOnly {
+		t.Fatalf("state = %+v, %v", state, err)
+	}
+	rows, _, err := store.Page(ctx, "s", 0, 10, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[1].ID != "seq-2" || rows[1].Events[0].Data["plan_only"] != true {
+		t.Fatalf("rows = %+v", rows)
+	}
+	events = append(events, ev(4, event.PlanOnlyChanged, map[string]any{"plan_only": false}))
+	writeLog(t, path, events)
+	if state, err = store.CatchUp(ctx, "s", path, -1); err != nil || state.PlanOnly {
+		t.Fatalf("after off: state = %+v, %v", state, err)
+	}
+}

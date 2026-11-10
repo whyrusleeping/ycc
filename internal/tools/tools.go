@@ -291,6 +291,9 @@ type Workspace struct {
 	// successful Write or Edit. Callers use it to surface document updates
 	// (e.g. an edit to spec.md) as events; it must not block.
 	OnWrite func(path string)
+	// WriteGate, if set, may refuse a Write or Edit of the resolved absolute
+	// path before anything is touched; its error is the tool's message.
+	WriteGate func(path string) error
 	// Jobs, when set, enables background jobs: Bash accepts run_in_background,
 	// and discovery/progress/result/wait/cancellation tools are added to Editing.
 	// Nil ⇒ background jobs are unavailable and

@@ -44,6 +44,8 @@ export interface WireState {
   pendingQuestionsTruncated: boolean;
   pauseRequested: boolean;
   awaitingJobs: boolean;
+  /** A chat session's plan-only guardrail is on. */
+  planOnly: boolean;
 }
 
 export function fromEvent(e: Event): WireEvent {
@@ -83,5 +85,6 @@ export function fromState(s: SessionViewState): WireState {
     pendingQuestionsTruncated: s.pendingQuestionsTruncated,
     pauseRequested: s.pauseRequested,
     awaitingJobs: s.awaitingJobs,
+    planOnly: s.planOnly,
   };
 }

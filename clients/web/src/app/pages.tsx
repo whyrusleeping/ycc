@@ -80,7 +80,7 @@ export function SessionPage() {
   useDocumentTitle(title);
   const focus = useMemo(() => (summary ? taskIds(summary) : []), [summary]);
   return (
-    <SessionView key={`${project}\u0000${sessionId}`} project={project} sessionId={sessionId} title={title} focusTasks={focus} />
+    <SessionView key={`${project}\u0000${sessionId}`} project={project} sessionId={sessionId} title={title} focusTasks={focus} mode={summary?.mode} />
   );
 }
 

@@ -39,6 +39,10 @@ export interface SessionSnapshot {
   pendingQuestion: PendingQuestion | null;
   awaitsAnswer: boolean;
   coordinatorModel: string;
+  /** The plan-only guardrail as shown: a requested change until the daemon confirms it. */
+  planOnly: boolean;
+  /** A plan-only change is on its way to the daemon. */
+  planOnlyPending: boolean;
   contextTokens: number | null;
   rolloverAvailable: boolean;
   cursor: number;
@@ -77,6 +81,7 @@ export type SessionApi = Pick<
   | "resume"
   | "stopSession"
   | "resumeSession"
+  | "setPlanOnly"
 >;
 
 export interface ControllerHooks {
@@ -171,6 +176,8 @@ export class SessionController {
   private control: { kind: ControlKind; acknowledged: boolean; token: number } | null = null;
   private controlToken = 0;
   private reopening = false;
+  /** A requested plan-only value the durable state does not show yet. */
+  private planOnlyRequest: { on: boolean; token: number } | null = null;
   private reopenCall: Promise<string | null> | null = null;
   private opts: Required<ControllerOptions>;
 
@@ -214,6 +221,8 @@ export class SessionController {
       pendingQuestion: p.pendingQuestion,
       awaitsAnswer: p.awaitsAnswer,
       coordinatorModel: p.coordinatorModel,
+      planOnly: this.planOnlyRequest?.on ?? p.planOnly,
+      planOnlyPending: this.planOnlyRequest !== null,
       contextTokens: p.contextTokens,
       rolloverAvailable: p.rolloverAvailable,
       cursor: p.lastPersistedSeq,
@@ -818,6 +827,39 @@ export class SessionController {
     return this.runControl("stop", "stop", () => this.api.stopSession({ sessionId: this.sessionId }));
   }
 
+  /**
+   * Turn the chat's plan-only guardrail on or off. The toggle shows the
+   * requested value until the durable state agrees (or a timeout passes); a
+   * persisted session is re-opened first, as for a send.
+   */
+  async setPlanOnly(on: boolean) {
+    if (this.planOnlyRequest) return;
+    const token = ++this.controlToken;
+    this.planOnlyRequest = { on, token };
+    this.publish();
+    const clear = () => {
+      if (this.planOnlyRequest?.token === token) this.planOnlyRequest = null;
+    };
+    const reopenError = await this.ensureLive();
+    if (reopenError !== null) {
+      clear();
+      this.publish();
+      return;
+    }
+    try {
+      await this.api.setPlanOnly({ sessionId: this.sessionId, planOnly: on });
+      this.reconcile();
+      setTimeout(() => {
+        clear();
+        this.publish();
+      }, this.opts.controlAckTimeoutMs);
+    } catch (err) {
+      clear();
+      this.reportActionError("plan only", err);
+    }
+    this.publish();
+  }
+
   private async runControl(kind: ControlKind, label: string, call: () => Promise<unknown>) {
     if (this.control && !this.control.acknowledged) return;
     const token = ++this.controlToken;
@@ -860,6 +902,7 @@ export class SessionController {
 
   private reconcile() {
     if (this.control?.acknowledged && this.controlSatisfied(this.control.kind)) this.control = null;
+    if (this.planOnlyRequest && this.projection.planOnly === this.planOnlyRequest.on) this.planOnlyRequest = null;
     if (this.answeredRowId && this.projection.pendingQuestion?.rowId !== this.answeredRowId) {
       this.answeredRowId = null;
     }

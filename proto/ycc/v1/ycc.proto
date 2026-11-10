@@ -38,6 +38,9 @@ message StartSessionRequest {
   // daemon uses it to apply an optional roles.presets model binding for this
   // session only; empty or unbound means the configured coordinator default.
   string preset = 8;
+  // plan_only starts a chat session with its plan-only guardrail on (see
+  // SetPlanOnly). Any other mode => InvalidArgument.
+  bool plan_only = 9;
 }
 message StartSessionResponse { string session_id = 1; }
 
@@ -217,6 +220,17 @@ message AnswerQuestionsResponse {}
 // at the next safe checkpoint without aborting a tool.
 message InterruptRequest { string session_id = 1; }
 message InterruptResponse {}
+// SetPlanOnly turns a live chat session's plan-only guardrail on or off. It is
+// recorded at once (plan_only_changed; SessionViewState.plan_only) and the
+// tools enforce it from their next call: Write/Edit outside the design docs,
+// backlog, plans and memory.md are refused and spawned agents run read-only.
+// The coordinator is told at its next turn boundary. Setting the current value
+// is a no-op. Non-chat session => FailedPrecondition; not live => NotFound.
+message SetPlanOnlyRequest {
+  string session_id = 1;
+  bool plan_only = 2;
+}
+message SetPlanOnlyResponse {}
 // Resume continues a paused session (optionally after SendInput corrections).
 // rollover asks the session run owner for a durable compact coordinator view at
 // the next safe full-tool-batch checkpoint (including while idle/errored).
@@ -511,6 +525,8 @@ message SessionViewState {
   // then a new value per rebuild. Rows from another generation are not
   // comparable; pass it to SubscribeSessionView as index_generation.
   int64 index_generation = 15;
+  // A chat session's plan-only guardrail is on (see SetPlanOnly).
+  bool plan_only = 16;
 }
 message GetSessionViewRequest {
   string project = 1;
@@ -1609,6 +1625,8 @@ service SessionService {
   // steered SendInput correction). Distinct from the hard Stop/terminate.
   rpc Interrupt(InterruptRequest) returns (InterruptResponse);
   rpc Resume(ResumeRequest) returns (ResumeResponse);
+  // SetPlanOnly toggles a live chat session's reversible plan-only guardrail.
+  rpc SetPlanOnly(SetPlanOnlyRequest) returns (SetPlanOnlyResponse);
 
   // StopSession hard-terminates a session: cancels its agent loop, closes its
   // event log, and removes it from the daemon (no resume). Distinct from

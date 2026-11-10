@@ -21,7 +21,8 @@ export type IconName =
   | "file"
   | "chevron"
   | "activity"
-  | "bell";
+  | "bell"
+  | "plan";
 
 const PATHS: Record<IconName, ReactNode> = {
   plus: <path d="M12 5v14M5 12h14" />,
@@ -114,6 +115,12 @@ const PATHS: Record<IconName, ReactNode> = {
   chevron: <path d="m9 6 6 6-6 6" />,
   /** Swimlanes: the session's agents and jobs over time. */
   activity: <path d="M4 6h9M8 12h12M4 18h6M15 18h5" />,
+  plan: (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3" />
+    </>
+  ),
   bell: (
     <>
       <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />

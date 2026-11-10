@@ -6,6 +6,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import type { DraftPicture } from "../attachments/attachments";
 import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
 import { track, type Attrs, type Via } from "../../app/analytics";
+import { Icon } from "../../ui/icons";
 
 const drafts = new Map<string, string>();
 const pictureDrafts = new Map<string, DraftPicture[]>();
@@ -37,9 +38,11 @@ export const Composer = forwardRef<
     /** One-click replies offered while the draft is empty (omit to hide them). */
     quickReplies?: readonly QuickReplyChip[];
     onEditQuickReplies?: () => void;
+    /** The chat's plan-only toggle (omit to hide it). */
+    planOnly?: { on: boolean; pending: boolean; onToggle: (on: boolean) => void };
   }
 >(function Composer(
-  { sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs, quickReplies, onEditQuickReplies },
+  { sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs, quickReplies, onEditQuickReplies, planOnly },
   ref,
 ) {
   const [text, setText] = useState(() => drafts.get(sessionKey) ?? "");
@@ -107,7 +110,7 @@ export const Composer = forwardRef<
 
   return (
     <form
-      className="composer"
+      className={`composer${planOnly?.on ? " plan-only" : ""}`}
       onSubmit={(e) => {
         e.preventDefault();
         submit("click");
@@ -159,6 +162,24 @@ export const Composer = forwardRef<
           disabled={disabled}
           full={draft.full}
         />
+        {planOnly && (
+          <button
+            type="button"
+            className={`btn ghost plan-toggle${planOnly.on ? " active" : ""}`}
+            aria-pressed={planOnly.on}
+            disabled={disabled || planOnly.pending}
+            title={
+              planOnly.on
+                ? "Plan only is on: the agent investigates and edits docs, backlog and plans, but not code. Click to let it implement."
+                : "Plan only: keep the agent to investigating, discussing and editing docs, backlog and plans until you turn it off"
+            }
+            data-track="composer.plan_only"
+            onClick={() => planOnly.onToggle(!planOnly.on)}
+          >
+            <Icon name="plan" size={14} />
+            <span className="btn-label">Plan only</span>
+          </button>
+        )}
         <textarea
           ref={area}
           rows={1}

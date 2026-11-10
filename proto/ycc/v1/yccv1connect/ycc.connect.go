@@ -110,6 +110,9 @@ const (
 	SessionServiceInterruptProcedure = "/ycc.v1.SessionService/Interrupt"
 	// SessionServiceResumeProcedure is the fully-qualified name of the SessionService's Resume RPC.
 	SessionServiceResumeProcedure = "/ycc.v1.SessionService/Resume"
+	// SessionServiceSetPlanOnlyProcedure is the fully-qualified name of the SessionService's
+	// SetPlanOnly RPC.
+	SessionServiceSetPlanOnlyProcedure = "/ycc.v1.SessionService/SetPlanOnly"
 	// SessionServiceStopSessionProcedure is the fully-qualified name of the SessionService's
 	// StopSession RPC.
 	SessionServiceStopSessionProcedure = "/ycc.v1.SessionService/StopSession"
@@ -331,6 +334,8 @@ type SessionServiceClient interface {
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
 	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
 	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
+	// SetPlanOnly toggles a live chat session's reversible plan-only guardrail.
+	SetPlanOnly(context.Context, *connect.Request[v1.SetPlanOnlyRequest]) (*connect.Response[v1.SetPlanOnlyResponse], error)
 	// StopSession hard-terminates a session: cancels its agent loop, closes its
 	// event log, and removes it from the daemon (no resume). Distinct from
 	// Interrupt's graceful pause.
@@ -616,6 +621,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceResumeProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("Resume")),
+			connect.WithClientOptions(opts...),
+		),
+		setPlanOnly: connect.NewClient[v1.SetPlanOnlyRequest, v1.SetPlanOnlyResponse](
+			httpClient,
+			baseURL+SessionServiceSetPlanOnlyProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetPlanOnly")),
 			connect.WithClientOptions(opts...),
 		),
 		stopSession: connect.NewClient[v1.StopSessionRequest, v1.StopSessionResponse](
@@ -1003,6 +1014,7 @@ type sessionServiceClient struct {
 	answerQuestions        *connect.Client[v1.AnswerQuestionsRequest, v1.AnswerQuestionsResponse]
 	interrupt              *connect.Client[v1.InterruptRequest, v1.InterruptResponse]
 	resume                 *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+	setPlanOnly            *connect.Client[v1.SetPlanOnlyRequest, v1.SetPlanOnlyResponse]
 	stopSession            *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
 	resumeSession          *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
 	listProjects           *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
@@ -1192,6 +1204,11 @@ func (c *sessionServiceClient) Interrupt(ctx context.Context, req *connect.Reque
 // Resume calls ycc.v1.SessionService.Resume.
 func (c *sessionServiceClient) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	return c.resume.CallUnary(ctx, req)
+}
+
+// SetPlanOnly calls ycc.v1.SessionService.SetPlanOnly.
+func (c *sessionServiceClient) SetPlanOnly(ctx context.Context, req *connect.Request[v1.SetPlanOnlyRequest]) (*connect.Response[v1.SetPlanOnlyResponse], error) {
+	return c.setPlanOnly.CallUnary(ctx, req)
 }
 
 // StopSession calls ycc.v1.SessionService.StopSession.
@@ -1538,6 +1555,8 @@ type SessionServiceHandler interface {
 	// steered SendInput correction). Distinct from the hard Stop/terminate.
 	Interrupt(context.Context, *connect.Request[v1.InterruptRequest]) (*connect.Response[v1.InterruptResponse], error)
 	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
+	// SetPlanOnly toggles a live chat session's reversible plan-only guardrail.
+	SetPlanOnly(context.Context, *connect.Request[v1.SetPlanOnlyRequest]) (*connect.Response[v1.SetPlanOnlyResponse], error)
 	// StopSession hard-terminates a session: cancels its agent loop, closes its
 	// event log, and removes it from the daemon (no resume). Distinct from
 	// Interrupt's graceful pause.
@@ -1819,6 +1838,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceResumeProcedure,
 		svc.Resume,
 		connect.WithSchema(sessionServiceMethods.ByName("Resume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetPlanOnlyHandler := connect.NewUnaryHandler(
+		SessionServiceSetPlanOnlyProcedure,
+		svc.SetPlanOnly,
+		connect.WithSchema(sessionServiceMethods.ByName("SetPlanOnly")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceStopSessionHandler := connect.NewUnaryHandler(
@@ -2229,6 +2254,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceInterruptHandler.ServeHTTP(w, r)
 		case SessionServiceResumeProcedure:
 			sessionServiceResumeHandler.ServeHTTP(w, r)
+		case SessionServiceSetPlanOnlyProcedure:
+			sessionServiceSetPlanOnlyHandler.ServeHTTP(w, r)
 		case SessionServiceStopSessionProcedure:
 			sessionServiceStopSessionHandler.ServeHTTP(w, r)
 		case SessionServiceResumeSessionProcedure:
@@ -2458,6 +2485,10 @@ func (UnimplementedSessionServiceHandler) Interrupt(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.Resume is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetPlanOnly(context.Context, *connect.Request[v1.SetPlanOnlyRequest]) (*connect.Response[v1.SetPlanOnlyResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetPlanOnly is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) StopSession(context.Context, *connect.Request[v1.StopSessionRequest]) (*connect.Response[v1.StopSessionResponse], error) {

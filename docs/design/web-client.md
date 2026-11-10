@@ -156,6 +156,11 @@ session. Starting from a backlog task starts work.
 New session's **Separate workstream** toggle (off for every new draft) sends the same mode, model,
 preset, prompt, and pictures through `SpawnWorkstream` instead of `StartSession`, with an optional
 backlog task and base ref, then opens the workstream's session.
+A chat (in the project's tree) can also start with **Plan only** on. In an open chat, the composer's
+**Plan only** toggle calls `SetPlanOnly` (re-opening a persisted session first, as a send does) and
+shows the requested value until the durable state confirms it; while it is on, the composer is
+outlined in the accent and the header shows a **plan only** marker. The palette offers the same
+toggle, and the transcript shows each change as a lifecycle line.
 An unsent new-session draft keeps its prompt, project, mode, model, preset, and picture previews in
 memory for the life of the tab, across route changes but not reload or tab closure. Reopening it
 through a project route (New session with a sidebar project selected, or switching that project

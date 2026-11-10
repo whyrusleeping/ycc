@@ -311,6 +311,7 @@ JSON="Content-Type: application/json"
 | [`SendInput`](#sendinput) | prod a session with a user message |
 | [`AnswerQuestion`](#answerquestion--answerquestions) / [`AnswerQuestions`](#answerquestion--answerquestions) | answer an `ask_user` gate |
 | [`Interrupt`](#interrupt--resume) / [`Resume`](#interrupt--resume) | graceful pause-to-steer / continue |
+| [`SetPlanOnly`](#setplanonly) | toggle a chat session's plan-only guardrail |
 | [`StopSession`](#stopsession) | hard-terminate a session |
 | [`ResumeSession`](#resumesession) | re-open a persisted session on its existing log |
 | [`ListBacklog`](#listbacklog) / [`GetTask`](#gettask) | browse the durable backlog |
@@ -837,6 +838,9 @@ curl -sS -H "$AUTH" -H "$JSON" \
   $B/ycc.v1.SessionService/StartSession
 ```
 
+`planOnly: true` starts a `chat` session with its plan-only guardrail on (see
+[`SetPlanOnly`](#setplanonly)); any other mode is `invalid_argument`.
+
 `images` attaches up to four pictures to the **opening prompt**, with exactly the
 same rules and validation as [`SendInput`](#sendinput) (`data` is standard base64
 in JSON, ≤5 MiB each, JPEG/PNG/GIF/WebP with the bytes verified against
@@ -1000,6 +1004,24 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc","rollover":true}' \
 ```
 
 Both return `{}`.
+
+### SetPlanOnly
+
+Turn a live `chat` session's reversible **plan-only** guardrail on or off. It is recorded at once
+as a `plan_only_changed` event (`{plan_only}`) and shown as `SessionViewState.planOnly`, and the
+session's tools enforce it from their next call: `Write`/`Edit` outside the design docs (spec entry
+point and `doc_globs`), backlog, plans and `memory.md` are refused, and spawned agents run
+read-only. `Bash` is not gated. The model is told at its next turn boundary by a user-role note,
+recorded as `plan_only_delivered` (`{plan_only, text}`) so replay places it exactly; a toggle undone
+before then tells it nothing. Setting the current value is a no-op. A session that is not live is
+`not_found` (reopen it first); a non-chat session is `failed_precondition`.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"sessionId":"s_doc","planOnly":true}' \
+  $B/ycc.v1.SessionService/SetPlanOnly
+```
+
+Returns `{}`.
 
 ### StopSession
 
@@ -1339,6 +1361,7 @@ Common `type` values (initial set; full table in spec §5.2):
 `review_submitted`, `decision_made`, `doc_updated`, `commit_made`, `work_handoff` (a chat's
 `start_work`: `{task, session, workstream?, branch?}` in the chat, `{task, from_session}` in the
 work session),
+`plan_only_changed` / `plan_only_delivered` (see [`SetPlanOnly`](#setplanonly)),
 `context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
 `session_reopened`, `log`, and the transient `turn_delta`.
 

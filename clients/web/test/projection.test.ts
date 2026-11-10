@@ -37,6 +37,7 @@ function state(through: number, extra: Partial<WireState> = {}): WireState {
     pendingQuestionsTruncated: false,
     pauseRequested: false,
     awaitingJobs: false,
+    planOnly: false,
     ...extra,
   };
 }
@@ -214,5 +215,21 @@ describe("pending questions", () => {
     p.installIndexedDetail(ask);
     expect(p.pendingQuestion?.questions).toHaveLength(2);
     expect(p.rows).toHaveLength(0); // the out-of-page row is not inserted
+  });
+});
+
+describe("plan only", () => {
+  it("follows plan_only_changed and indexed state; the model-facing note is no row", () => {
+    const p = new SessionProjection();
+    p.installIndexed(state(1), []);
+    p.applyIndexed(state(3, { planOnly: true }), [
+      row("seq-2", 2, 2, [ev(2, "plan_only_changed", { plan_only: true }, "user")]),
+      row("seq-3", 3, 3, [ev(3, "plan_only_delivered", { plan_only: true, text: "[plan only: on] …" }, "user")]),
+    ], []);
+    expect(p.planOnly).toBe(true);
+    expect(texts(p)).toEqual(["Plan only on: the agent investigates and edits docs, backlog and plans, not code"]);
+    p.apply(ev(4, "plan_only_changed", { plan_only: false }, "user"));
+    expect(p.planOnly).toBe(false);
+    expect(texts(p).at(-1)).toBe("Plan only off: the agent may implement");
   });
 });

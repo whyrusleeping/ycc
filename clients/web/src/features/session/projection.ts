@@ -79,6 +79,8 @@ export class SessionProjection {
   pauseRequested = false;
   awaitingJobs = false;
   coordinatorModel = "";
+  /** A chat session's plan-only guardrail (plan_only_changed). */
+  planOnly = false;
   contextTokens: number | null = null;
   rolloverAvailable = true;
 
@@ -371,6 +373,9 @@ export class SessionProjection {
         if (next && next !== this.coordinatorModel) this.rolloverAvailable = true;
         break;
       }
+      case "plan_only_changed":
+        this.planOnly = data.plan_only === true;
+        break;
       case "resumed":
       case "session_started":
         this.pauseRequested = false;
@@ -576,6 +581,7 @@ export class SessionProjection {
     this.contextTokens = state.hasContextTokens ? state.contextTokens : null;
     this.rolloverAvailable = state.rolloverAvailable;
     this.pauseRequested = state.pauseRequested;
+    this.planOnly = state.planOnly;
     switch (state.phase) {
       case "paused":
         this.phase = { kind: "paused" };
@@ -876,8 +882,13 @@ export function systemSummary(type: string, data: Data): string | null {
       const scope = !role || role === "all" ? "all roles" : role;
       return s("to") ? `Thinking (${scope}) → ${s("to")}` : "Thinking changed";
     }
+    case "plan_only_changed":
+      return data.plan_only === true
+        ? "Plan only on: the agent investigates and edits docs, backlog and plans, not code"
+        : "Plan only off: the agent may implement";
     case "user_input_delivered":
     case "job_notified":
+    case "plan_only_delivered":
       return null;
     case "commit_made": {
       const sha = s("sha");

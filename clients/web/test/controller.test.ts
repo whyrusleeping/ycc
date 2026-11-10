@@ -71,6 +71,7 @@ function fakeApi(opts: { live: boolean; scripts: Script[]; snapshotThrough?: num
     resume: vi.fn(async () => ({})),
     stopSession: vi.fn(async () => ({})),
     resumeSession: vi.fn(async () => ({})),
+    setPlanOnly: vi.fn(async () => ({})),
   };
   return { api: api as unknown as SessionApi, raw: api, subscribeCalls };
 }
@@ -402,6 +403,48 @@ describe("SessionController", () => {
     // History painted first; the live stream resumes from its cursor.
     expect(subscribeCalls).toEqual([5n]);
     expect(raw.getSessionView).toHaveBeenCalledTimes(1);
+    c.dispose();
+  });
+
+  it("shows a requested plan-only change until durable state confirms it", async () => {
+    const { api, raw } = fakeApi({
+      live: true,
+      scripts: [{ updates: [create(SessionViewUpdateSchema, { seq: 6n, state: viewState(6, { planOnly: true }) })], end: "hang" }],
+    });
+    let release!: () => void;
+    raw.subscribeSessionView.mockImplementationOnce((_req: unknown, callOpts?: { signal?: AbortSignal }) =>
+      (async function* () {
+        await new Promise<void>((r) => (release = r));
+        yield create(SessionViewUpdateSchema, { seq: 6n, state: viewState(6, { planOnly: true }) });
+        await new Promise((_, reject) =>
+          callOpts?.signal?.addEventListener("abort", () => reject(new ConnectError("aborted", Code.Canceled))),
+        );
+      })(),
+    );
+    const c = new SessionController(api, "p", "s1", hooks(), fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "streaming");
+    expect(c.getSnapshot().planOnly).toBe(false);
+    await c.setPlanOnly(true);
+    expect(raw.setPlanOnly).toHaveBeenCalledWith({ sessionId: "s1", planOnly: true });
+    expect(c.getSnapshot()).toMatchObject({ planOnly: true, planOnlyPending: true });
+    release();
+    await until(() => !c.getSnapshot().planOnlyPending);
+    expect(c.getSnapshot().planOnly).toBe(true);
+    c.dispose();
+  });
+
+  it("re-opens a persisted session before changing plan only, and reverts the toggle on failure", async () => {
+    const { api, raw } = fakeApi({ live: false, scripts: [{ updates: [], end: "hang" }] });
+    raw.setPlanOnly.mockRejectedValueOnce(new ConnectError("plan only applies to chat sessions", Code.FailedPrecondition));
+    const h = hooks();
+    const c = new SessionController(api, "p", "s1", h, fast);
+    c.start();
+    await until(() => c.getSnapshot().conn === "finished");
+    await c.setPlanOnly(true);
+    expect(raw.resumeSession.mock.invocationCallOrder[0]).toBeLessThan(raw.setPlanOnly.mock.invocationCallOrder[0]);
+    expect(c.getSnapshot()).toMatchObject({ planOnly: false, planOnlyPending: false });
+    expect(h.onError).toHaveBeenCalledWith(expect.stringContaining("Plan only failed"), expect.anything());
     c.dispose();
   });
 

@@ -152,6 +152,12 @@ func spawnAgent(d *Deps) *gollama.Tool {
 				return tools.ErrResult("spawn_agent: %v", err), nil
 			}
 			requestedMutating := tools.GetBool(params, "mutating", false)
+			planOnlyNote := ""
+			if requestedMutating && d.PlanOnly() {
+				// Plan only forces subagents read-only.
+				requestedMutating = false
+				planOnlyNote = " Plan-only mode is on, so mutating=true was ignored: the agent may inspect but not edit."
+			}
 			readOnly := !requestedMutating && genericReadOnlyEnforced()
 			mutates := !readOnly
 			concurrent := ""
@@ -206,7 +212,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			return tools.OkResult(fmt.Sprintf("started %s subagent %s as background job %s using model %s. "+
 				"Do not poll it; its report arrives automatically, or call wait([%q]) when it gates your next step. "+
 				"After this turn completes, continue it with send_to_agent(agent_id=%q, prompt=..., context_mode='retain'|'fresh').%s",
-				kind, agentID, job.ID(), model, job.ID(), agentID, subagentContextNote("fresh", 1, contextTokens, 0)) + concurrent), nil
+				kind, agentID, job.ID(), model, job.ID(), agentID, subagentContextNote("fresh", 1, contextTokens, 0)) + planOnlyNote + concurrent), nil
 		},
 	}
 }
@@ -252,6 +258,10 @@ func sendToAgent(d *Deps) *gollama.Tool {
 					return tools.ErrResult("send_to_agent: mutating agent %s is still running or unwinding as %s; wait for actual completion, stop it with kill_job, or use a separate workstream", agentID, jobID), nil
 				}
 				return tools.ErrResult("send_to_agent: agent %s is still running as %s; wait for it to finish before sending a follow-up", agentID, jobID), nil
+			}
+			if h.writeAccess && d.PlanOnly() {
+				d.mu.Unlock()
+				return tools.ErrResult("send_to_agent: %s can edit the workspace and plan-only mode is on; spawn a read-only agent instead, or ask the user to turn plan only off", agentID), nil
 			}
 			priorTokens := h.loop.ContextTokensEstimate()
 			nextLoop := h.loop

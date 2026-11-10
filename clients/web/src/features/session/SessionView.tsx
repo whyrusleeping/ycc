@@ -173,12 +173,15 @@ export function SessionView({
   sessionId,
   title,
   focusTasks = [],
+  mode,
 }: {
   project: string;
   sessionId: string;
   title: string;
   /** Backlog tasks the session is focused on (from its history summary). */
   focusTasks?: readonly string[];
+  /** The session's mode from its history summary, when known. */
+  mode?: string;
 }) {
   const controller = useSessionController(project, sessionId);
   const snap = useSessionSnapshot(controller);
@@ -206,7 +209,9 @@ export function SessionView({
       [showSearch],
     ),
   );
-  useSessionActions(controller, snap, project, sessionId);
+  // Plan only is a chat guardrail; a session showing it on can always turn it off.
+  const planOnlyToggle = mode === "chat" || snap.planOnly;
+  useSessionActions(controller, snap, project, sessionId, planOnlyToggle);
   useAction(
     useMemo<AppAction>(
       () => ({
@@ -300,6 +305,12 @@ export function SessionView({
           <h1 title={title}>{title}</h1>
           <div className="session-meta">
             {status && <span className={`status status-${status.tone}`}>{status.text}</span>}
+            {snap.planOnly && (
+              <span className="chip plan-only-chip" title="Plan only: the agent investigates and edits docs, backlog and plans, but not code">
+                <Icon name="plan" size={12} />
+                Plan only
+              </span>
+            )}
             {project && <span>{project}</span>}
             {focusTasks.map((id) => {
               const open = inspector.item?.kind === "task" && inspector.item.taskId === id && inspector.item.project === project;
@@ -455,6 +466,11 @@ export function SessionView({
             onSend={(t, pictures) => void controller.send(t, pictures)}
             quickReplies={quickReplyIdle ? quickReplies : undefined}
             onEditQuickReplies={() => openQuickReplies(project)}
+            planOnly={
+              planOnlyToggle
+                ? { on: snap.planOnly, pending: snap.planOnlyPending, onToggle: (on) => void controller.setPlanOnly(on) }
+                : undefined
+            }
           />
         )
       )}
@@ -469,7 +485,13 @@ export function SessionView({
 }
 
 /** Register the open session's actions (palette) for its current state. */
-function useSessionActions(controller: SessionController, snap: SessionSnapshot, project: string, sessionId: string) {
+function useSessionActions(
+  controller: SessionController,
+  snap: SessionSnapshot,
+  project: string,
+  sessionId: string,
+  planOnlyToggle: boolean,
+) {
   const inspector = useInspector();
   const navigate = useNavigate();
   const live = snap.mode === "live" && snap.conn !== "finished" && snap.conn !== "failed";
@@ -482,6 +504,7 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
     retry: live && idle && phase === "error" && snap.phase.kind === "error" && snap.phase.retryable,
     rollover: live && idle && snap.rolloverAvailable && phase !== "paused" && phase !== "stopped",
     stop: live && idle && phase !== "stopped",
+    planOnly: planOnlyToggle && !snap.planOnlyPending,
   };
   const g = "Session";
   useAction(
@@ -524,6 +547,22 @@ function useSessionActions(controller: SessionController, snap: SessionSnapshot,
           ? { id: "session.stop", title: "Stop this session…", group: g, keywords: "terminate kill end", run: () => requestIntent(stopIntentKey(sessionId), "stop") }
           : null,
       [can.stop, sessionId],
+    ),
+  );
+  const planOnlyOn = snap.planOnly;
+  useAction(
+    useMemo(
+      () =>
+        can.planOnly
+          ? {
+              id: "session.planOnly",
+              title: planOnlyOn ? "Turn plan only off (let the agent implement)" : "Turn plan only on (no code edits)",
+              group: g,
+              keywords: "plan mode guardrail docs",
+              run: () => void controller.setPlanOnly(!planOnlyOn),
+            }
+          : null,
+      [can.planOnly, planOnlyOn, controller],
     ),
   );
   useAction(

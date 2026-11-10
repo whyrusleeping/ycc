@@ -110,6 +110,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `resume`(request: Ycc_V1_ResumeRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ResumeResponse>
 
+    /// SetPlanOnly toggles a live chat session's reversible plan-only guardrail.
+    @available(iOS 13, *)
+    func `setPlanOnly`(request: Ycc_V1_SetPlanOnlyRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetPlanOnlyResponse>
+
     /// StopSession hard-terminates a session: cancels its agent loop, closes its
     /// event log, and removes it from the daemon (no resume). Distinct from
     /// Interrupt's graceful pause.
@@ -486,6 +490,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `setPlanOnly`(request: Ycc_V1_SetPlanOnlyRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetPlanOnlyResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SetPlanOnly", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `stopSession`(request: Ycc_V1_StopSessionRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_StopSessionResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/StopSession", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -808,6 +817,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let answerQuestions = Connect.MethodSpec(name: "AnswerQuestions", service: "ycc.v1.SessionService", type: .unary)
             public static let interrupt = Connect.MethodSpec(name: "Interrupt", service: "ycc.v1.SessionService", type: .unary)
             public static let resume = Connect.MethodSpec(name: "Resume", service: "ycc.v1.SessionService", type: .unary)
+            public static let setPlanOnly = Connect.MethodSpec(name: "SetPlanOnly", service: "ycc.v1.SessionService", type: .unary)
             public static let stopSession = Connect.MethodSpec(name: "StopSession", service: "ycc.v1.SessionService", type: .unary)
             public static let resumeSession = Connect.MethodSpec(name: "ResumeSession", service: "ycc.v1.SessionService", type: .unary)
             public static let listProjects = Connect.MethodSpec(name: "ListProjects", service: "ycc.v1.SessionService", type: .unary)

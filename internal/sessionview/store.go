@@ -65,7 +65,9 @@ type State struct {
 	PauseRequested bool   `json:"pause_requested"`
 	// AwaitingJobs qualifies Phase "idle": the coordinator's last report left
 	// delegated work that will resume it (session_idle.awaiting_jobs).
-	AwaitingJobs bool       `json:"awaiting_jobs,omitempty"`
+	AwaitingJobs bool `json:"awaiting_jobs,omitempty"`
+	// PlanOnly is a chat session's plan-only guardrail (plan_only_changed).
+	PlanOnly     bool       `json:"plan_only,omitempty"`
 	Pending      []Question `json:"pending,omitempty"`
 	PendingRowID string     `json:"pending_row_id,omitempty"`
 	// Generation identifies the current build of this session's index: zero
@@ -514,6 +516,8 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 	case event.QuestionAnswered:
 		st.Pending = nil
 		st.PendingRowID = ""
+	case event.PlanOnlyChanged:
+		st.PlanOnly, _ = ev.Data["plan_only"].(bool)
 	}
 
 	if ev.Type == event.SessionIdle {
@@ -604,7 +608,7 @@ func classifyRow(st *State, ev event.Event) (string, int64, bool, bool) {
 		}
 		return id, 0, true, true
 	case event.SessionIdle:
-	case event.JobNotified:
+	case event.JobNotified, event.PlanOnlyDelivered:
 		return "", 0, false, false
 	}
 	st.LastRowID = seqID
@@ -689,6 +693,8 @@ var presentationKeys = map[string]bool{
 	// reviewed snapshot to GetWorkingChanges from page summaries.
 	"reviewer": true, "logical_model": true, "verdict": true, "round": true,
 	"findings": true, "findings_by_severity": true, "reviewed_snapshot_id": true,
+	// plan_only_changed: clients label the row on or off.
+	"plan_only": true,
 }
 
 func compactPresentationData(in map[string]any) map[string]any {

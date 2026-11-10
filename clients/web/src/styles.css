@@ -2101,6 +2101,34 @@ pre.clamp {
   border-radius: var(--radius);
 }
 
+/* Plan only: a composer toggle and a header marker, in the accent while on. */
+.btn.plan-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 8px;
+  font-size: var(--fs-xs);
+  border-radius: var(--radius);
+}
+
+.btn.plan-toggle.active,
+.btn.plan-toggle.active:hover:not(:disabled) {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-strong) 16%, transparent);
+}
+
+.composer.plan-only .composer-row {
+  border-color: var(--accent);
+}
+
+.plan-only-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Pictures: staged drafts and transcript thumbnails */
 .picture-strip {
   display: flex;

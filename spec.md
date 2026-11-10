@@ -737,6 +737,20 @@ reports how it ended, its commits and its final report. Killing the job stops tr
 still commits its own inline work (above); the hand-off is for work the user wants independently
 reviewed.
 
+Chat has a reversible **plan only** toggle, for the stretch of a conversation that should think and
+decide before building; pm's guardrail went unused partly because it had to be chosen at session
+start. The user turns it on or off at any point (`SetPlanOnly`), or starts a chat with it on. The
+change is recorded at once (`plan_only_changed`, shown in the session state and transcript) and
+the tools enforce it from their next call: `Write`/`Edit` outside the design docs (spec entry point
+and doc globs), backlog, plans and `memory.md` are refused with a message saying so, including when a
+symlink would redirect an allowed path elsewhere, and spawned agents run read-only (a follow-up to an
+agent started with write access is refused). `Bash` stays available, so as in pm that part is a
+prompt boundary. The coordinator learns of each change at its next turn boundary from a short
+user-role note, recorded as `plan_only_delivered` where it entered the conversation so replay and
+reopen reproduce it; a context rollover re-posts the note while plan only is on. Turning it off keeps
+the context and tells the model it may now implement. `start_work` stays available, since its
+hand-off is separately user-confirmed. Only chat sessions take the toggle.
+
 ### 9.1 Unattended work loop
 
 The daemon repeatedly starts fresh work sessions while ready tasks remain. It skips proposed,

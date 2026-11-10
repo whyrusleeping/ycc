@@ -87,6 +87,10 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// session only; empty or unbound means the configured coordinator default.
   public var preset: String = String()
 
+  /// plan_only starts a chat session with its plan-only guardrail on (see
+  /// SetPlanOnly). Any other mode => InvalidArgument.
+  public var planOnly: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -655,6 +659,36 @@ public nonisolated struct Ycc_V1_InterruptRequest: Sendable {
 }
 
 public nonisolated struct Ycc_V1_InterruptResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// SetPlanOnly turns a live chat session's plan-only guardrail on or off. It is
+/// recorded at once (plan_only_changed; SessionViewState.plan_only) and the
+/// tools enforce it from their next call: Write/Edit outside the design docs,
+/// backlog, plans and memory.md are refused and spawned agents run read-only.
+/// The coordinator is told at its next turn boundary. Setting the current value
+/// is a no-op. Non-chat session => FailedPrecondition; not live => NotFound.
+public nonisolated struct Ycc_V1_SetPlanOnlyRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  public var planOnly: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SetPlanOnlyResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1427,6 +1461,9 @@ public nonisolated struct Ycc_V1_SessionViewState: Sendable {
   /// then a new value per rebuild. Rows from another generation are not
   /// comparable; pass it to SubscribeSessionView as index_generation.
   public var indexGeneration: Int64 = 0
+
+  /// A chat session's plan-only guardrail is on (see SetPlanOnly).
+  public var planOnly: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5096,7 +5133,7 @@ nonisolated extension Ycc_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._Messag
 
 nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartSessionRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{1}preset\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{1}preset\0\u{3}plan_only\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5111,6 +5148,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
       case 6: try { try decoder.decodeSingularStringField(value: &self.coordinatorModel) }()
       case 7: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.preset) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.planOnly) }()
       default: break
       }
     }
@@ -5138,6 +5176,9 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if !self.preset.isEmpty {
       try visitor.visitSingularStringField(value: self.preset, fieldNumber: 8)
     }
+    if self.planOnly != false {
+      try visitor.visitSingularBoolField(value: self.planOnly, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5149,6 +5190,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if lhs.coordinatorModel != rhs.coordinatorModel {return false}
     if lhs.images != rhs.images {return false}
     if lhs.preset != rhs.preset {return false}
+    if lhs.planOnly != rhs.planOnly {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6250,6 +6292,60 @@ nonisolated extension Ycc_V1_InterruptResponse: SwiftProtobuf.Message, SwiftProt
   }
 
   public static func ==(lhs: Ycc_V1_InterruptResponse, rhs: Ycc_V1_InterruptResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetPlanOnlyRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetPlanOnlyRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}plan_only\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.planOnly) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if self.planOnly != false {
+      try visitor.visitSingularBoolField(value: self.planOnly, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetPlanOnlyRequest, rhs: Ycc_V1_SetPlanOnlyRequest) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.planOnly != rhs.planOnly {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetPlanOnlyResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetPlanOnlyResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetPlanOnlyResponse, rhs: Ycc_V1_SetPlanOnlyResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -7622,7 +7718,7 @@ nonisolated extension Ycc_V1_SessionViewQuestion: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionViewState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0\u{3}index_generation\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0\u{3}index_generation\0\u{3}plan_only\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7645,6 +7741,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
       case 13: try { try decoder.decodeSingularBoolField(value: &self.pauseRequested) }()
       case 14: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
       case 15: try { try decoder.decodeSingularInt64Field(value: &self.indexGeneration) }()
+      case 16: try { try decoder.decodeSingularBoolField(value: &self.planOnly) }()
       default: break
       }
     }
@@ -7696,6 +7793,9 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if self.indexGeneration != 0 {
       try visitor.visitSingularInt64Field(value: self.indexGeneration, fieldNumber: 15)
     }
+    if self.planOnly != false {
+      try visitor.visitSingularBoolField(value: self.planOnly, fieldNumber: 16)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -7715,6 +7815,7 @@ nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProto
     if lhs.pauseRequested != rhs.pauseRequested {return false}
     if lhs.awaitingJobs != rhs.awaitingJobs {return false}
     if lhs.indexGeneration != rhs.indexGeneration {return false}
+    if lhs.planOnly != rhs.planOnly {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

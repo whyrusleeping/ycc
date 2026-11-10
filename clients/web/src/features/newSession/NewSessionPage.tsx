@@ -30,6 +30,8 @@ import {
   initialMode,
   initialProject,
   modelChoices,
+  planOnlyApplies,
+  planOnlyOffered,
   projectChoices,
   promptIsOptional,
   presetNeedsConfirmation,
@@ -141,6 +143,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         pictures: pictures.pictures.length > 0,
         model: draft.model ? "override" : "default",
         workstream: draft.workstream,
+        plan_only: planOnlyApplies(full),
       });
       if (draft.project) lastViewedProject.set(draft.project);
       draftStore.clear();
@@ -382,6 +385,22 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               />
               <Icon name="workstreams" size={13} />
               Separate workstream
+            </label>
+          )}
+          {planOnlyOffered(draft) && (
+            <label className="chip-toggle" title="The agent investigates, discusses and edits docs, backlog and plans, but not code, until you turn plan only off in the session">
+              <input
+                type="checkbox"
+                checked={draft.planOnly}
+                disabled={starting}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  track.action("new_session.plan_only", "click", { on });
+                  setDraft((d) => ({ ...d, planOnly: on }));
+                }}
+              />
+              <Icon name="plan" size={13} />
+              Plan only
             </label>
           )}
         </div>

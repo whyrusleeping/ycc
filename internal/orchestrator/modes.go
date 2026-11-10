@@ -100,6 +100,7 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 	switch mode {
 	case "chat":
 		policy := d.Docs.ChatFinishedWork()
+		ws.WriteGate = d.planOnlyWriteGate
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
 			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d), chatCommitTool(d, policy))
