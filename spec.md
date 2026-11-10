@@ -792,6 +792,11 @@ Attended agents ask only when input is useful and wait for the answer. Unattende
 an explicit execution context: ordinary questions are auto-answered with guidance to choose a
 reversible assumption or block the task, so background work cannot wait forever.
 
+When work cannot continue without the user's yes/no or pick-one decision, chat, pm, and work
+agents ask it through `ask_user` with concrete options rather than ending a reply on a prose
+question or an open-ended offer. Only `ask_user` marks the session as waiting, sends a question
+notification, and lets clients answer by choosing an option.
+
 High-impact operations use dedicated confirmation gates rather than ordinary questions. Starting
 a pm-to-work handoff requires explicit acceptance. Gate/manual workstream integration requires
 per-workstream acceptance; configured auto integration is pre-authorized to use only its

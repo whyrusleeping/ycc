@@ -50,3 +50,14 @@ A nonzero `run_error` fails the run even when repository state happens to match.
 Correctness and absence of unintended changes come before efficiency. Compare repeated runs rather than choosing guidance from a single sample. Shorten or remove production guidance only when the corresponding variant preserves pass rate and mutation safety while improving round trips or volume. Provider differences are expected: batching is measured but not assumed possible for every call, and the harness does not declare one tool-call syntax universally best.
 
 This suite measures isolated task behavior, not daemon lifecycle, full orchestrator delegation policy, reviewer quality, user-interface rendering, or broad historical cohort trends. The deterministic `investigate` evidence handoff and `atomic_edit` mutation are evaluation-only tools. The optional `delegate_implementation` boundary does run a second paid model loop, but omits the production orchestrator's worktree, review, and commit lifecycle. The rollover scenario replays captured engine events into a fresh loop/client, but does not exercise daemon persistence or automatic context summarization. Broader event-log cohort analytics remain separate scope.
+
+## Production prompt checks
+
+A few paid checks run the production mode prompts and tools rather than eval variants. They are Go tests behind the `liveeval` build tag. `TestLiveDecisionAsksWithOptions` runs the attended chat prompt on two turns that end needing the user's go-ahead or choice, and on one control turn that needs no decision. The go-ahead turns pass only if the agent calls `ask_user` with at least two options; the control turn passes only if it asks nothing. Every final reply must not end on a question.
+
+```sh
+YCC_LIVE_MODELS=claude,sol YCC_LIVE_REPEATS=2 \
+  go test -tags liveeval -run TestLiveDecisionAsksWithOptions -v ./internal/orchestrator
+```
+
+`YCC_LIVE_CONFIG` overrides the default user `ycc.toml`. Each run is a fresh temporary workspace; the stub `ask_user` records the question and declines.

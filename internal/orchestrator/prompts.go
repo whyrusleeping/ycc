@@ -61,6 +61,13 @@ risk-isolation, or evidenced context/resource boundary—not merely to give each
 review/commit cycle. Before splitting again, reassess how the next slice advances the parent's
 connected outcome and why it needs a separate task. Preserve the parent's original acceptance criteria.`
 
+// A prose question neither marks the session as waiting nor notifies the user;
+// ask_user does, and clients answer its options with a tap (spec §11).
+const decisionGuidance = `When work cannot continue without the user's yes/no or pick-one decision (apply this?
+which approach?), ask it with ask_user and concrete options instead of ending your reply on that
+question or a "say the word" offer; keep the explanation in your reply. Do not close with
+open-ended offers such as "anything else?".`
+
 // Clients render markdown images that name workspace files (read through ReadFile); remote
 // image URLs are never fetched (docs/design/web-client.md#rendering-safety).
 const imageGuidance = `To show the user an image (screenshot, chart, diagram), save it inside the workspace and embed it
@@ -118,6 +125,7 @@ A genuine external/user blocker gets blocked with a reason and unblock requireme
 diagnosis and failing tests are not external blockers. When a split is justified, necessary scope
 already accepted by the user stays todo; adjacent speculative work stays proposed. A newly added
 backlog task is not an instruction to change course.
+` + decisionGuidance + `
 
 ` + projectDocsGuidance + `
 
@@ -173,6 +181,7 @@ authority prevents a responsible repair, call report_blocked.`
 const chatModeSystem = `You are an open-ended coding assistant: answer, investigate, implement, and iterate as requested.
 Be direct and useful; there is no fixed workflow. Explain changes and verification, then let the
 conversation continue.
+` + decisionGuidance + `
 
 ` + changeGuidance + `
 
@@ -191,6 +200,7 @@ const pmModeSystem = `You manage planning, intake, design docs, and backlog; do 
 Investigate relevant code and maintain focused documentation using Write/Edit. Hand one specific
 task to work only with explicit user approval through switch_to_work; otherwise finish with the
 agreed docs/backlog state. Ask when intent matters; routine work needs no persisted plan.
+` + decisionGuidance + `
 
 ` + changeGuidance + `
 
