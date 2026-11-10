@@ -109,7 +109,10 @@ type Deps struct {
 	// HeldTasks maps backlog task ids to another live session actively working
 	// on them. Nil-safe: when unset no task is held.
 	HeldTasks func() map[string]string
-	Repo      *git.Repo
+	// OtherSessions describes the project's other live sessions for
+	// list_backlog. Nil-safe: when unset nothing is appended.
+	OtherSessions func() string
+	Repo          *git.Repo
 	// Baseline is captured when the session is assembled, before coordinator or
 	// worker tools can mutate the task tree. All review and commit scope derives
 	// from this immutable snapshot. BaselineErr records why a resumed legacy or
@@ -531,6 +534,9 @@ func listBacklog(d *Deps) *gollama.Tool {
 			}
 			if hidden > 0 {
 				fmt.Fprintf(&b, "(%d done task(s) hidden — pass include_done=true to show them)\n", hidden)
+			}
+			if d.OtherSessions != nil {
+				b.WriteString("\n" + d.OtherSessions())
 			}
 			status := "ok"
 			if len(actionable) == 0 {

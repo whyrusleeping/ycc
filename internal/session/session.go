@@ -2899,6 +2899,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
 	deps.HeldTasks = func() map[string]string { return m.heldTasks(absWS, id) }
+	deps.OtherSessions = func() string { return m.otherSessionsNote(absWS, id) }
 	if mode == watchMode {
 		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
 	} else if !unattended && m.watchSchedulerRunning() {

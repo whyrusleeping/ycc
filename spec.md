@@ -716,7 +716,10 @@ blocked, in-review, dependency-blocked, and done tasks, and ready tasks held by 
 in the same workspace. A session holds every task it has focused while it is mid-turn, paused, or
 waiting on its own background work or a question; once it is idle between turns, an in_progress
 task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
-actionable, and a loop whose only ready work is held finishes saying which sessions hold it rather
+actionable and end with the project's other live sessions (mode, state such as running or idle
+since a time, focused tasks, running jobs), so agents choose from daemon state rather than
+inferring parallel work from commit times or processes. A loop whose only ready work is held
+finishes saying which sessions hold it rather
 than starting sessions that would decline to collide. Unchanged task metadata after a session
 is not a stop condition, and there is no fixed retry count for unfinished ready work. A completed
 session that neither commits nor changes any backlog file (status, body or work log, creation or

@@ -1026,6 +1026,37 @@ func TestWorkLoopSkipsTaskHeldByActiveSession(t *testing.T) {
 	}
 }
 
+// A work session's backlog view names the project's other live sessions and
+// distinguishes one still working on a task from one idle since its last turn,
+// whose earlier focus is not held. Its own session is left out.
+func TestOtherSessionsNoteSeparatesWorkingFromIdle(t *testing.T) {
+	m, _, ws := loopTestManager(t, nil)
+	if got := m.otherSessionsNote(ws, "s_self"); !strings.Contains(got, "none is live") {
+		t.Fatalf("no sessions: %q", got)
+	}
+	add := func(id, mode string) *Session {
+		s := newStopSession(t)
+		s.ID, s.Workspace, s.Mode = id, ws, mode
+		m.mu.Lock()
+		m.sessions[id] = s
+		m.mu.Unlock()
+		return s
+	}
+	add("s_self", "work")
+	chat := add("s_chat", "chat")
+	chat.emitter.Emit(event.TaskFocus, map[string]any{"task": "0567"})
+
+	got := m.otherSessionsNote(ws, "s_self")
+	if strings.Contains(got, "s_self") || !strings.Contains(got, "- s_chat (chat, running) working on 0567\n") {
+		t.Fatalf("working: %q", got)
+	}
+	chat.setStatus(event.StatusIdle)
+	got = m.otherSessionsNote(ws, "s_self")
+	if !strings.Contains(got, "(chat, idle since ") || !strings.Contains(got, " earlier focus 0567 (not held)\n") {
+		t.Fatalf("idle: %q", got)
+	}
+}
+
 func TestWorkLoopRetryableFailureWaitsThenResumes(t *testing.T) {
 	var m *Manager
 	var ws string

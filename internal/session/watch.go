@@ -1255,49 +1255,9 @@ func (m *Manager) watchRunContext(primary string, rec watchRecord, scheduled tim
 // tell what it must not act on.
 func (m *Manager) watchActivitySnapshot(primary string) string {
 	var b strings.Builder
-	sessions := m.List()
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
-	n := 0
-	for _, s := range sessions {
-		if m.primaryTreeFor(s.Workspace) != primary {
-			continue
-		}
-		n++
-		if n == 1 {
-			b.WriteString("Live sessions:\n")
-		}
-		status, awaiting := s.StatusWithJobContinuation()
-		state := string(status)
-		if s.PendingQuestion() {
-			state = "waiting on a user question"
-		} else if awaiting {
-			state = "waiting on its background work"
-		}
-		kind := s.Mode
-		if s.Mode == watchMode {
-			kind = "watch run"
-		}
-		fmt.Fprintf(&b, "- %s (%s, %s)", s.ID, kind, state)
-		if tasks := focusTasks(s.Log().Snapshot()); len(tasks) > 0 {
-			b.WriteString(" tasks " + strings.Join(tasks, ", "))
-		}
-		if s.Workspace != primary {
-			b.WriteString(" in worktree " + s.Workspace)
-		}
-		b.WriteString("\n")
-		jn := 0
-		for _, j := range s.JobInfos() {
-			if j.Status != jobs.Running {
-				continue
-			}
-			if jn++; jn > 10 {
-				b.WriteString("    … more running jobs\n")
-				break
-			}
-			fmt.Fprintf(&b, "    job %s (%s, since %s): %s\n", j.ID, j.Kind, j.Started.Format(time.RFC3339), clipText(j.Label, 200))
-		}
-	}
-	if n == 0 {
+	if lines := m.liveSessionLines(primary, ""); lines != "" {
+		b.WriteString("Live sessions:\n" + lines)
+	} else {
 		b.WriteString("No other live sessions.\n")
 	}
 	label := m.projectLabel(primary)
@@ -1326,6 +1286,75 @@ func (m *Manager) watchActivitySnapshot(primary string) string {
 		}
 	}
 	return b.String()
+}
+
+// liveSessionLines lists the live sessions of project primary except exclude,
+// one line each with mode, state, focused tasks and running jobs. Only a session
+// that is still working holds its focused tasks; an idle one's are past focus.
+func (m *Manager) liveSessionLines(primary, exclude string) string {
+	primary = canonicalPath(primary)
+	sessions := m.List()
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
+	var b strings.Builder
+	for _, s := range sessions {
+		if s.ID == exclude || canonicalPath(m.primaryTreeFor(s.Workspace)) != primary {
+			continue
+		}
+		evs := s.Log().Snapshot()
+		kind := s.Mode
+		if s.Mode == watchMode {
+			kind = "watch run"
+		}
+		fmt.Fprintf(&b, "- %s (%s, %s)", s.ID, kind, sessionActivityState(s, evs))
+		if tasks := focusTasks(evs); len(tasks) > 0 {
+			if s.activelyWorking() {
+				b.WriteString(" working on " + strings.Join(tasks, ", "))
+			} else {
+				b.WriteString(" earlier focus " + strings.Join(tasks, ", ") + " (not held)")
+			}
+		}
+		if canonicalPath(s.Workspace) != primary {
+			b.WriteString(" in worktree " + s.Workspace)
+		}
+		b.WriteString("\n")
+		jn := 0
+		for _, j := range s.JobInfos() {
+			if j.Status != jobs.Running {
+				continue
+			}
+			if jn++; jn > 10 {
+				b.WriteString("    … more running jobs\n")
+				break
+			}
+			fmt.Fprintf(&b, "    job %s (%s, since %s): %s\n", j.ID, j.Kind, j.Started.Format(time.RFC3339), clipText(j.Label, 200))
+		}
+	}
+	return b.String()
+}
+
+// sessionActivityState describes what a live session is doing now; an idle
+// session reports when its log last changed.
+func sessionActivityState(s *Session, evs []event.Event) string {
+	status, awaiting := s.StatusWithJobContinuation()
+	switch {
+	case s.PendingQuestion():
+		return "waiting on a user question"
+	case awaiting || (status == event.StatusIdle && s.hasLiveJobs()):
+		return "waiting on its background work"
+	case status == event.StatusIdle && len(evs) > 0:
+		return "idle since " + evs[len(evs)-1].TS.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	return string(status)
+}
+
+// otherSessionsNote is the work-selection view of the project's other live
+// sessions, appended to list_backlog.
+func (m *Manager) otherSessionsNote(absWS, exclude string) string {
+	lines := m.liveSessionLines(m.primaryTreeFor(absWS), exclude)
+	if lines == "" {
+		return "Other sessions in this project: none is live (daemon state).\n"
+	}
+	return "Other live sessions in this project (daemon state):\n" + lines
 }
 
 // scheduleWatchFromChat is the schedule_watch hook; the tool has already
