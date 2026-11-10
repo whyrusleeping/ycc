@@ -1,10 +1,10 @@
 ---
 id: "0475"
 title: 'iOS: session Activity view (agent/job tree, timeline, drill-down)'
-status: in_review
+status: done
 priority: 2
 created: "2026-10-21"
-updated: "2026-10-21"
+updated: "2026-11-10"
 depends_on:
     - "0473"
 spec_refs: []
@@ -21,3 +21,4 @@ iOS should get an Activity view similar to the web client's, adapted for a phone
 - The app builds and its tests pass on the Mac mini.
 
 ## Work log
+- 2026-11-10: Owner-requested simulator review with a scripted mock that spawns subagents and a background job. The tree, live refresh, agent detail with filtered transcript, and job output (running, finished, lost) all work. PASS. The tree's progress line said "1 turns"; fixed to "1 turn". Screenshots in .ycc/tmp/ios-review/C/shots/.

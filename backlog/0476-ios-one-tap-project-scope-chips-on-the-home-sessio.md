@@ -1,10 +1,10 @@
 ---
 id: "0476"
 title: 'iOS: one-tap project scope chips on the home session list'
-status: in_review
+status: done
 priority: 3
 created: "2026-10-22"
-updated: "2026-10-22"
+updated: "2026-11-10"
 depends_on: []
 spec_refs: []
 ---
@@ -21,3 +21,4 @@ Usage analytics showed the drawer is mostly a project switcher (66 opens → 53 
 - Out of scope: restoring the last scope on launch (undecided).
 
 ## Work log
+- 2026-11-10: Owner-requested simulator review: the chip row carries the drawer cues, selection is instant and scrolls into view, and order follows recency. PASS on screen. The review found that the analytics missed the via chip/drawer criterion. Fixed: chip taps record `scope.select` with `from=chip` and `pos`; the drawer records `scope.select from=drawer` and keeps `drawer.select_project` (`from` is the attrs key the analytics design already uses; `via` is the input method).

@@ -46,11 +46,12 @@ struct HealthBanner: View {
                 .foregroundStyle(healthStatusColor(check.status))
         }
         var text = shown.dropFirst().reduce(shown.first ?? Text("")) { line, next in
-            Text("\(line)\(Text(" · ").foregroundStyle(.secondary))\(next)")
+            Text("\(line)\(Text(" · ").foregroundStyle(Color(.secondaryLabel)))\(next)")
         }
         let more = alerting.count - Self.shownLimit
         if more > 0 {
-            text = Text("\(text)\(Text(" +\(more) more").foregroundStyle(.secondary))")
+            // Explicit secondaryLabel: `.secondary` inside a Button label takes the accent tint.
+            text = Text("\(text)\(Text(" +\(more) more").foregroundStyle(Color(.secondaryLabel)))")
         }
         return text
     }

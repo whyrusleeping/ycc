@@ -107,7 +107,7 @@ struct GlobalSettingsView: View {
                             .foregroundStyle(health.alerting.contains { HealthModel.severity(of: $0) == .fail }
                                 ? Theme.danger : Theme.attention)
                     } else if !health.checks.isEmpty {
-                        Text("No problems").foregroundStyle(.secondary)
+                        Text("No problems").foregroundStyle(Color(.secondaryLabel))
                     }
                 }
             }

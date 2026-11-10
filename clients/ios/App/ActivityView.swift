@@ -267,7 +267,7 @@ private struct ActivityTreeRowView: View {
             }
             if node.turns > 0 || node.totalTokens > 0 {
                 Text("·")
-                Text("\(node.turns) turns, \(ActivityGraph.formatTokens(node.totalTokens)) tok")
+                Text("\(node.turns == 1 ? "1 turn" : "\(node.turns) turns"), \(ActivityGraph.formatTokens(node.totalTokens)) tok")
                     .monospacedDigit()
             }
         }

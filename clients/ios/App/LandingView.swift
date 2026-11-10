@@ -323,6 +323,7 @@ struct LandingView: View {
                 model: model,
                 onSelectProject: { project in
                     Analytics.action("drawer.select_project")
+                    Analytics.action("scope.select", attrs: ["from": "drawer"])
                     // Filtering is client-side over the aggregate load, so this
                     // is instant — no refetch, no spinner.
                     model.selectedProject = project
@@ -368,7 +369,7 @@ struct LandingView: View {
             .topBar {
                 if let model, model.showsProjectFilter {
                     ScopeChipBar(model: model) { project, position in
-                        Analytics.action("scope.select", attrs: ["pos": String(position)])
+                        Analytics.action("scope.select", attrs: ["from": "chip", "pos": String(position)])
                         // Client-side filter over the aggregate load: instant.
                         model.selectedProject = project
                     }
