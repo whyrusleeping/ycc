@@ -91,11 +91,6 @@ const (
 	// is established (data: { task: "0007", title?: "…" }); subsequent
 	// model_turns are attributed to the most recent focus by the projection.
 	TaskFocus Type = "task_focus"
-	// WorkHandoff records a user-approved chat hand-off of one task to a new
-	// work session (start_work). The chat records { task, session, workstream?,
-	// branch? }; the work session records { task, from_session } after its
-	// session_started.
-	WorkHandoff Type = "work_handoff"
 	// PlanOnlyChanged records the user turning a chat session's plan-only
 	// guardrail on or off (data: { plan_only }). It is the durable session state:
 	// enforcement follows it from the next tool call.

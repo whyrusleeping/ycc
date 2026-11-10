@@ -726,19 +726,6 @@ prompt uses the preset's own opening prompt. A pm-to-work
 handoff requires explicit approval and carries the selected task and planning context. Mode
 transitions are recorded; clients start sessions and otherwise project the daemon-owned state.
 
-Chat hands a task to the pipeline without ending. Its `start_work` tool takes one actionable task
-(todo or in progress, dependencies done, not held by another live session) and a bounded handoff:
-the decisions, constraints and verification expected. After a real user confirmation, which is
-never auto-answered, it starts an attended work session pinned to that task with the handoff in
-its opening prompt. The session runs in the chat's worktree, or in a separate workstream when the
-chat or another session has uncommitted edits the task may touch. A workstream starts from the
-committed HEAD, so its task file must be committed first. Only attended chats offer the
-tool. Both sessions record a `work_handoff` event. The chat continues and tracks the work session
-as a background job (§7.3): when that session finishes, goes idle, errors or is stopped, the job
-reports how it ended, its commits and its final report. Killing the job stops tracking only. Chat
-still commits its own inline work (above); the hand-off is for work the user wants independently
-reviewed.
-
 Chat has a reversible **plan only** toggle, for the stretch of a conversation that should think and
 decide before building; pm's guardrail went unused partly because it had to be chosen at session
 start. The user turns it on or off at any point (`SetPlanOnly`), or starts a chat with it on. The
@@ -750,8 +737,7 @@ agent started with write access is refused). `Bash` stays available, so as in pm
 prompt boundary. The coordinator learns of each change at its next turn boundary from a short
 user-role note, recorded as `plan_only_delivered` where it entered the conversation so replay and
 reopen reproduce it; a context rollover re-posts the note while plan only is on. Turning it off keeps
-the context and tells the model it may now implement. `start_work` stays available, since its
-hand-off is separately user-confirmed. Only chat sessions take the toggle.
+the context and tells the model it may now implement. Only chat sessions take the toggle.
 
 ### 9.1 Unattended work loop
 

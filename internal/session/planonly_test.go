@@ -15,12 +15,48 @@ import (
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
 )
+
+// stubRegistry configures one OpenAI-compatible "stub" model at url for every role.
+func stubRegistry(t *testing.T, url string) *config.Registry {
+	t.Helper()
+	t.Setenv("YCC_STUB_TEST_KEY", "x")
+	cfgPath := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf(`[models.stub]
+backend = "openai"
+base_url = %q
+model = "stub-model"
+key_env = "YCC_STUB_TEST_KEY"
+
+[roles]
+coordinator = "stub"
+implementer = "stub"
+reviewers = ["stub"]
+`, url)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config.NewRegistry(cfg)
+}
+
+func eventsOf(s *Session, typ event.Type) []event.Event {
+	var out []event.Event
+	for _, ev := range s.Log().Snapshot() {
+		if ev.Type == typ {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
 
 // planOnlyStub is a scripted OpenAI-compatible chat model. For each new user
 // request "<name>" it writes <name>.go and plans/<name>.md in one tool batch,

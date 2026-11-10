@@ -58,12 +58,6 @@ type Config struct {
 	// loopContinuation is daemon-generated context, seeded separately from the
 	// opening user input so a prior model report is never echoed as user intent.
 	loopContinuation string
-	// targetTask, when set, is the one task a work session's startup preload
-	// reads, instead of an id recognized in the prompt.
-	targetTask string
-	// handoff, when set, is recorded as a work_handoff event right after
-	// session_started (a chat's start_work hand-off: { task, from_session }).
-	handoff map[string]any
 	// Project, when set, names a registered project whose workspace is used,
 	// overriding Workspace.
 	Project string
@@ -111,7 +105,6 @@ type Session struct {
 	startupNotice    string
 	loopContinuation string // startup-only synthetic context, recorded for replay
 	startupPreload   orchestrator.ExplicitTaskPreload
-	handoff          map[string]any // startup-only work_handoff record (Config.handoff)
 	buildLoop        func(mode, prompt string) (*engine.Loop, error)
 
 	// promptImages are pictures attached to the OPENING prompt. The bytes seed the
@@ -1597,9 +1590,6 @@ func (s *Session) run() {
 			// picked at StartSession.
 			"coordinator": coord,
 		})
-		if s.handoff != nil {
-			s.emitter.Emit(event.WorkHandoff, s.handoff)
-		}
 		s.planMu.Lock()
 		if s.planOnly {
 			s.emitter.EmitAs("user", event.PlanOnlyChanged, map[string]any{"plan_only": true})
@@ -2458,7 +2448,6 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.preset = cfg.Preset
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
 	s.startupNotice = startupNotice
-	s.handoff = cfg.handoff
 	if cfg.PlanOnly {
 		// run records plan_only_changed after session_started; the first
 		// checkpoint then tells the coordinator.
@@ -2481,14 +2470,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		loop.Seed(cfg.loopContinuation)
 	}
 	// Seed a named task's get_task result after the opening user message, without
-	// loading the full backlog or guessing when the id is ambiguous or stale. A
-	// hand-off names its task explicitly, so its handoff text may cite others.
+	// loading the full backlog or guessing when the id is ambiguous or stale.
 	if mode == "work" {
-		preloadText := prompt
-		if cfg.targetTask != "" {
-			preloadText = cfg.targetTask
-		}
-		s.startupPreload = orchestrator.BuildExplicitTaskPreload(s.ctx, preloadText, s.deps, loop.Tools)
+		s.startupPreload = orchestrator.BuildExplicitTaskPreload(s.ctx, prompt, s.deps, loop.Tools)
 		if s.startupPreload.TaskID != "" {
 			history := loop.History()
 			history = append(history, s.startupPreload.History...)
@@ -2530,9 +2514,6 @@ type SpawnWorkstreamConfig struct {
 	CoordinatorModel string
 	Preset           string
 	Images           []engine.Image
-	// targetTask and handoff pass through to the session Config (chat hand-off).
-	targetTask string
-	handoff    map[string]any
 }
 
 // SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
@@ -2689,8 +2670,6 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		CoordinatorModel: cfg.CoordinatorModel,
 		Preset:           cfg.Preset,
 		Images:           cfg.Images,
-		targetTask:       cfg.targetTask,
-		handoff:          cfg.handoff,
 	}, false)
 	if err != nil {
 		cleanup()
@@ -2961,13 +2940,6 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	} else if !unattended && m.watchSchedulerRunning() {
 		deps.ScheduleWatch = func(_ context.Context, spec orchestrator.WatchSpec) (string, error) {
 			return m.scheduleWatchFromChat(absWS, spec)
-		}
-	}
-	// Chat hand-off to the work pipeline needs a human to confirm, so only
-	// attended sessions get it (BuildMode offers start_work in chat mode only).
-	if mode != watchMode && !unattended {
-		deps.StartWork = func(_ context.Context, h orchestrator.WorkHandoff) (orchestrator.StartedWork, error) {
-			return m.startWorkHandoff(absWS, id, h)
 		}
 	}
 

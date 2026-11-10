@@ -109,10 +109,6 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 			reg.Add(scheduleWatch(d))
 			base += "\n\n" + watchProposalGuidance
 		}
-		if d.StartWork != nil {
-			reg.Add(startWork(d))
-			base += "\n\n" + workHandoffGuidance
-		}
 		return reg, sys(base, unattended, d.Workspace)
 	case "watch":
 		// One scheduled watch run. Questions are real (the run parks while the
