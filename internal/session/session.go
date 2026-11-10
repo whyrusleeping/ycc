@@ -2028,6 +2028,11 @@ type Manager struct {
 	// startMemoryGroom, when non-nil, replaces the real groom session launcher
 	// (test seam).
 	startMemoryGroom func(primary string, status docs.MemoryStatus) (*Session, error)
+	// backlogGrooms maps a primary tree to its live automatic backlog groom
+	// (backloggroom.go); it shares groomMu, groomWG and groomCtx with memory
+	// grooms. startBacklogGroom is its launcher test seam.
+	backlogGrooms     map[string]string
+	startBacklogGroom func(primary, prompt string) (*Session, error)
 
 	// Watches (watch.go). watchMu serializes all watch file I/O and guards the
 	// in-memory run state; it may be held while a run session starts.
@@ -2091,6 +2096,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		gitSyncCtx:        gitSyncCtx,
 		gitSyncCancel:     gitSyncCancel,
 		grooms:            map[string]string{},
+		backlogGrooms:     map[string]string{},
 		groomCtx:          groomCtx,
 		groomCancel:       groomCancel,
 	}
@@ -2293,6 +2299,9 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 		// A project whose memory is already over budget is groomed even if no
 		// agent writes to it; the scheduler's cooldown bounds this.
 		m.memoryPressure(s.Workspace, s.ID)
+		// Backlog churn since the last groom is likewise checked when work
+		// starts, so a project nobody uses is never groomed.
+		m.maybeGroomBacklog(s.Workspace)
 	}
 	return s, err
 }

@@ -206,7 +206,7 @@ func (m *Manager) startMemoryGroomSession(primary string, status docs.MemoryStat
 // ReclaimAll via groomWG.
 func (m *Manager) watchMemoryGroom(primary string, s *Session, st MemoryGroomState) {
 	defer m.groomWG.Done()
-	outcome := m.awaitMemoryGroom(s)
+	outcome := m.awaitGroom(s)
 
 	st.LastFinished = time.Now()
 	st.Outcome = outcome
@@ -222,7 +222,9 @@ func (m *Manager) watchMemoryGroom(primary string, s *Session, st MemoryGroomSta
 	m.groomMu.Unlock()
 }
 
-func (m *Manager) awaitMemoryGroom(s *Session) string {
+// awaitGroom waits for an automatic (memory or backlog) groom session to end,
+// reclaims it, and returns its outcome.
+func (m *Manager) awaitGroom(s *Session) string {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	timer := time.NewTimer(memoryGroomTimeout)

@@ -24,6 +24,12 @@ type specConfig struct {
 	// An edit to any matching file — or to the entry point — is treated as a docs
 	// edit (IsDoc) and fires doc_updated.
 	DocGlobs []string `toml:"doc_globs"`
+	// Backlog holds per-project backlog maintenance switches.
+	Backlog struct {
+		// AutoGroom (default true) lets the daemon schedule unattended
+		// backlog-groom runs for this project; false opts the project out.
+		AutoGroom *bool `toml:"auto_groom"`
+	} `toml:"backlog"`
 }
 
 // defaultSpecPath is the workspace-relative spec entry point when none is
@@ -47,7 +53,14 @@ func loadSpecConfig(workspaceRoot string) specConfig {
 		cfg.SpecPath = p
 	}
 	cfg.DocGlobs = raw.DocGlobs
+	cfg.Backlog = raw.Backlog
 	return cfg
+}
+
+// BacklogAutoGroom reports whether the project allows daemon-scheduled backlog
+// grooming ([backlog] auto_groom in .ycc/config.toml; default true).
+func (s *Store) BacklogAutoGroom() bool {
+	return s.cfg.Backlog.AutoGroom == nil || *s.cfg.Backlog.AutoGroom
 }
 
 // cleanRelPath normalizes a configured workspace-relative path to a clean slash

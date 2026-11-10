@@ -594,6 +594,8 @@ type Config struct {
 	GC GC `toml:"gc,omitempty"`
 	// Memory configures project-memory maintenance.
 	Memory Memory `toml:"memory,omitempty"`
+	// Backlog configures daemon-wide backlog maintenance.
+	Backlog Backlog `toml:"backlog,omitempty"`
 	// Budget configures optional spend caps that turn the existing usage/cost
 	// telemetry into an enforced guard. All fields
 	// default to 0 (unlimited) — absent config preserves today's behaviour.
@@ -717,6 +719,14 @@ type GC struct {
 // active prompt memory crosses its soft budget. Set auto_groom = false to leave
 // grooming entirely to users.
 type Memory struct {
+	AutoGroom *bool `toml:"auto_groom,omitempty"`
+}
+
+// Backlog configures backlog maintenance. AutoGroom, on by default, lets the
+// daemon start unattended backlog-groom sessions after enough backlog churn;
+// false disables them for every project (a project can also opt out with
+// [backlog] auto_groom = false in its .ycc/config.toml).
+type Backlog struct {
 	AutoGroom *bool `toml:"auto_groom,omitempty"`
 }
 
@@ -1049,6 +1059,14 @@ func (r *Registry) MemoryAutoGroom() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Memory.AutoGroom == nil || *r.cfg.Memory.AutoGroom
+}
+
+// BacklogAutoGroom reports whether daemon-scheduled backlog grooming is enabled
+// daemon-wide (backlog.auto_groom; default true).
+func (r *Registry) BacklogAutoGroom() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cfg.Backlog.AutoGroom == nil || *r.cfg.Backlog.AutoGroom
 }
 
 // GC returns the configured GC interval, idle timeout, and log retention as

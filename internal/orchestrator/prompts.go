@@ -296,6 +296,40 @@ Finish with size before/after and what was retired, merged, or proposed.`, activ
 		docs.MemorySoftBudget, memoryGroomSteps, memoryGroomBudgetStep)
 }
 
+// backlogGroomFollowUpTitle titles the single standing proposed task an
+// unattended backlog groom files (or updates) for decisions it cannot settle.
+const backlogGroomFollowUpTitle = "Backlog groom: decisions needed"
+
+// BacklogAutoGroomPrompt opens an unattended backlog groom. batch lists the
+// changed tasks to review first; deferred counts changed tasks left for a later
+// run.
+func BacklogAutoGroomPrompt(changed int, batch []string, deferred int) string {
+	first := "none: fill the batch with the oldest tasks with no \"groom:\" work-log entry"
+	if len(batch) > 0 {
+		first = strings.Join(batch, ", ")
+	}
+	later := ""
+	if deferred > 0 {
+		later = fmt.Sprintf(" %d more changed tasks wait for the next run; leave them.", deferred)
+	}
+	return fmt.Sprintf(`Unattended backlog groom: %d tasks were created or changed since the last groom.
+Treat these as the named tasks, in order: %s.%s Fill any room left in the batch with the oldest
+tasks with no "groom:" work-log entry. Skip in_progress tasks: a work session owns them.
+
+%s
+
+Unattended limits: no one is waiting, so ask nothing. Apply only fixes: debris, glosses and
+pointers for insider references, run-together text re-derived from evidence, and stale or
+contradictory state that evidence settles. Everything else is a flag: unsettled contradictions,
+inherited authority and unsourced decisions, near-duplicates, and summaries for huge work logs. Never
+change a task's status or meaning without settling evidence, and never promote proposed work.
+Put every flag in one proposed task titled %q: if one is still proposed, rewrite its
+description (keep flags that still apply, drop resolved ones) instead of filing another. For each
+flag give the task id, the problem, the evidence, and the decision needed. File nothing when there
+are no flags. End the report with "Flagged for the user: N (task <id>)" or "Flagged for the user: none".`,
+		changed, first, later, backlogGroomPresetPrompt, backlogGroomFollowUpTitle)
+}
+
 const unattendedGuidance = `UNATTENDED: no human is waiting. Make reversible assumptions and report them; do not ask to
 unblock ordinary judgement. A genuine user/external blocker gets blocked with its unblock requirement.
 Keep diagnosing unmet criteria; failed-test evidence, a commit, or an accepted review is not completion.

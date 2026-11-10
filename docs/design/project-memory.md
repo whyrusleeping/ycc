@@ -69,7 +69,8 @@ continue their task; the groom's own writes are not re-reported. The unattended 
 merges, and tightens notes, and files design promotions as proposed tasks rather than editing the
 spec. `memory.auto_groom = false` in `ycc.toml` disables scheduling. Clients show active size
 against the budget, any running groom, and a one-tap "groom now" (the memory-groom preset started by
-name). Prompt injection also has an independent truncation bound.
+name). Prompt injection also has an independent truncation bound. Unattended backlog grooming
+reuses this scheduling pattern, triggered by backlog churn rather than size (spec §6.2).
 
 A correction names the contradicted entry ID. Prompt rendering excludes the superseded entry while
 both records remain in the committed file as a concise audit trail; raw `memory.md` may therefore

@@ -1,7 +1,7 @@
 ---
 id: "0531"
 title: Periodic unattended backlog grooming
-status: todo
+status: done
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -11,6 +11,8 @@ spec_refs:
     - docs/design/project-memory.md#Automatic grooming
     - docs/design/watches.md
 ---
+
+## Description
 
 ## Description
 ## Why
@@ -29,4 +31,15 @@ The user asked for periodic background backlog grooming (2026-11-10, this sessio
 - Web and iOS show the last groom result and offer "groom now". UI may be split out if it's large.
 - A scratch-daemon run against a copied backlog shows one bounded unattended run and a correct follow-up report.
 
-## Work log
+## Acceptance criteria
+
+- Scheduling, cooldown, batching and the disable switch are implemented and covered where they could regress: the one-per-project bound, cooldown persistence, and the disable switch.
+- The spec describes the trigger and the limits of unattended runs.
+- Web and iOS show the last groom result and offer "groom now". UI may be split out if it's large.
+- A scratch-daemon run against a copied backlog shows one bounded unattended run and a correct follow-up report.
+
+## Outcome
+
+At session start, if 10+ non-in_progress tasks changed since the last finished groom, the daemon starts one unattended backlog-groom pm run in the primary tree (internal/session/backloggroom.go). Limits: one per project, a persisted 24h cooldown (.ycc/backlog-groom.json), batches of 15. A finished run acknowledges only tasks that gained a groom: entry. Runs make fix-class edits only and put flags in one standing proposed task. [backlog] auto_groom switches it off per project (.ycc/config.toml) or daemon-wide (ycc.toml). Spec §6.2 documents it. Tests cover the per-project bound, cooldown persistence, the switches and baselines. Two real opus runs on a copied backlog fixed the planted issues, rewrote the single follow-up task instead of duplicating it, and skipped the in_progress task. The web/iOS UI is split into 0533. sol accepted.
+
+Commit: Daemon-scheduled unattended backlog grooming on churn: one per project, persisted 24h cooldown, bounded batches, per-project/daemon switches (0531)
