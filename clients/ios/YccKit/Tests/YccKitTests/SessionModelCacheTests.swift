@@ -631,6 +631,89 @@ final class SessionModelCacheTests: XCTestCase {
         presentation.end()
     }
 
+    // MARK: - Resume catch-up signal (0459: unread reopen of a cached session)
+
+    func testColdOpenIsNotAResumeCatchUp() async {
+        let source = CachedSessionSource(view: view(through: 20, rows: [10, 20]))
+        let model = makeModel(source)
+        let presentation = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        XCTAssertFalse(model.isCatchingUpAfterResume)
+        XCTAssertEqual(model.resumeCatchUpCount, 0)
+        presentation.end()
+    }
+
+    func testCursorResumeCatchUpEndsOnceItsUpdateIsApplied() async {
+        let source = CachedSessionSource(view: view(through: 20, rows: [10, 20]))
+        let model = makeModel(source)
+        var presentation = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        presentation.end()
+        await waitUntil { source.activeStreams == 0 }
+
+        presentation = show(model)
+        XCTAssertTrue(model.isCatchingUpAfterResume, "the cached rows are shown before catching up")
+        await waitUntil { source.activeStreams == 1 }
+        XCTAssertTrue(model.isCatchingUpAfterResume, "subscribing alone is not caught up")
+        XCTAssertEqual(model.resumeCatchUpCount, 0)
+
+        // The reply that landed while the screen was away.
+        source.send(update(through: 24, upserting: [24], phase: "idle"))
+        await waitUntil { model.resumeCatchUpCount == 1 }
+        XCTAssertEqual(model.resumeCatchUpCount, 1)
+        XCTAssertFalse(model.isCatchingUpAfterResume)
+        XCTAssertEqual(model.durableRows.last?.id, "seq-24", "signalled only once the catch-up is visible")
+
+        // Later live updates are not catch-ups.
+        source.send(update(through: 25, upserting: [25]))
+        await waitUntil { model.durableRows.count == 4 }
+        XCTAssertEqual(model.resumeCatchUpCount, 1)
+        presentation.end()
+    }
+
+    func testKeepaliveEndsCursorResumeCatchUpWithNothingNew() async {
+        let source = CachedSessionSource(view: view(through: 20, rows: [10, 20]))
+        let model = makeModel(source)
+        var presentation = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        presentation.end()
+        await waitUntil { source.activeStreams == 0 }
+
+        presentation = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        source.send(Ycc_V1_SessionViewUpdate())
+        await waitUntil { model.resumeCatchUpCount == 1 }
+        XCTAssertFalse(model.isCatchingUpAfterResume)
+        XCTAssertEqual(model.durableRows.map(\.id), ["seq-10", "seq-20"])
+        presentation.end()
+    }
+
+    func testRevalidatingResumeCatchUpEndsWithItsSnapshot() async {
+        let source = CachedSessionSource(view: view(through: 20, rows: [10, 20]))
+        let clock = TestClock()
+        let model = makeModel(source, clock: clock)
+        var presentation = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        presentation.end()
+        await waitUntil { source.activeStreams == 0 }
+
+        source.view = view(through: 30, rows: [20, 30])
+        clock.advance(600)
+        presentation = show(model)
+        await waitUntil { model.resumeCatchUpCount == 1 }
+        XCTAssertFalse(model.isCatchingUpAfterResume)
+        XCTAssertEqual(model.durableRows.last?.id, "seq-30")
+
+        // Leaving mid catch-up ends it too: nothing is left waiting.
+        presentation.end()
+        await waitUntil { source.activeStreams == 0 }
+        presentation = show(model)
+        XCTAssertTrue(model.isCatchingUpAfterResume)
+        presentation.end()
+        XCTAssertFalse(model.isCatchingUpAfterResume)
+        XCTAssertEqual(model.resumeCatchUpCount, 2)
+    }
+
     func testTransientDropOfCursorResumeRevalidatesKeepingLoadedPages() async {
         let source = CachedSessionSource(
             view: view(through: 20, rows: [10, 20], earlierCursor: "older"), page: earlierPage())

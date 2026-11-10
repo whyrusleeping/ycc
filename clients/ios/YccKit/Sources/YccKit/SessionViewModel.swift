@@ -204,6 +204,19 @@ public final class SessionViewModel {
     /// positioning it after replay. Unlike state/row count, this never resets on
     /// reconnect, paging, or a successful empty snapshot followed by live events.
     public private(set) var hasCompletedInitialReplay = false
+    /// True while a cached (parked) transcript that is being shown again has
+    /// not yet caught up with the daemon: from the resume until its
+    /// revalidating snapshot or first cursor catch-up update is applied, a
+    /// keepalive shows there was nothing to catch up, or the stream ends.
+    /// A screen positioned against the cached rows meanwhile may re-check
+    /// them (e.g. for an unread reply) when ``resumeCatchUpCount`` advances.
+    @ObservationIgnored public private(set) var isCatchingUpAfterResume = false
+    /// Bumped each time a resume catch-up ends (see ``isCatchingUpAfterResume``).
+    /// A counter rather than the flag's edge, so an observer never misses a
+    /// catch-up that started and ended between two renders.
+    public private(set) var resumeCatchUpCount = 0
+    /// The cursor catch-up update is queued; the next publish applies it.
+    @ObservationIgnored private var endsResumeCatchUpOnPublish = false
     /// Set when transcript loading or subscription discovers that the saved
     /// credentials are no longer accepted. The app observes this and routes the
     /// failure through its shared authentication-reset path.
@@ -704,6 +717,7 @@ public final class SessionViewModel {
             return
         }
         let recent = clock() - parkedAt <= resumeWindow
+        isCatchingUpAfterResume = true
         switch mode {
         case .live:
             // Set synchronously so the chrome never shows a parked `.idle`
@@ -784,6 +798,15 @@ public final class SessionViewModel {
         // Unpublished updates belong to the cancelled subscription. The next
         // subscribe starts from the last *applied* seq and receives them again.
         pendingUpdates.removeAll()
+        endResumeCatchUp()
+    }
+
+    /// See ``isCatchingUpAfterResume``.
+    private func endResumeCatchUp() {
+        endsResumeCatchUpOnPublish = false
+        guard isCatchingUpAfterResume else { return }
+        isCatchingUpAfterResume = false
+        resumeCatchUpCount &+= 1
     }
 
     /// Re-establish the live stream from the last persisted seq — call on app
@@ -908,6 +931,8 @@ public final class SessionViewModel {
                             // too, and must not re-download history each time.
                             if initialInstall { self.prefetchEarlierPage() }
                         }
+                        // A resumed cached transcript now matches the daemon.
+                        self.endResumeCatchUp()
                     }
                     // A persisted load that finishes after the session was
                     // re-opened streams from its own snapshot instead of being
@@ -933,15 +958,26 @@ public final class SessionViewModel {
                         delay = self.backoff.initial
                         // Idle-stream keepalives carry nothing to fold; enqueuing
                         // them would bump transcriptRevision and re-render.
-                        guard !update.isKeepalive else { continue }
+                        // Before any catch-up update, one also shows that
+                        // nothing changed since the cached cursor.
+                        guard !update.isKeepalive else {
+                            if checkCatchUp {
+                                checkCatchUp = false
+                                self.endResumeCatchUp()
+                            }
+                            continue
+                        }
                         if update.hasState { serverErrors.reset() }
+                        var endsCatchUp = false
                         if checkCatchUp, update.hasState {
                             checkCatchUp = false
                             if update.upsertedRows.count > Self.maxCursorCatchUpRows {
                                 throw CursorCatchUpTooLarge()
                             }
+                            endsCatchUp = true
                         }
                         self.enqueue(.indexed(update))
+                        if endsCatchUp { self.endsResumeCatchUpOnPublish = true }
                     }
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
                     self.publishPendingUpdates()
@@ -1228,6 +1264,7 @@ public final class SessionViewModel {
     private func clearStreamTask(generation: UInt64) {
         guard isCurrent(generation) else { return }
         streamTask = nil
+        endResumeCatchUp()
     }
 
     private func clearTransientPresentation() {
@@ -1836,6 +1873,7 @@ public final class SessionViewModel {
         for rowID in Set(truncatedPendingRowIDs) where projection.needsIndexedPendingDetail(rowID: rowID) {
             Task { [weak self] in await self?.loadDetail(rowID: rowID) }
         }
+        if endsResumeCatchUpOnPublish { endResumeCatchUp() }
     }
 
     /// Decode indexed payloads without blocking MainActor layout or stream handling.

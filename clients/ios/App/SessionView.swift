@@ -41,6 +41,10 @@ struct SessionView: View {
     /// leaving can advance it. The initial pin uses it to open an unread
     /// session at the agent's newest reply instead of the live edge.
     @State private var openReadMark: String?
+    /// Set when the initial pin ran over a cached transcript that had not yet
+    /// caught up with the daemon (the model's ``SessionViewModel/resumeCatchUpCount``
+    /// at that moment): the unread reply may only arrive with the catch-up.
+    @State private var unreadRecheckAfterCatchUp: Int?
     /// User drags opt out of follow mode while the follow-state reconciler
     /// resumes it once the live edge is visible and dragging has gone quiet.
     /// Corrective scrolls keep a following transcript pinned through late layout.
@@ -209,6 +213,11 @@ struct SessionView: View {
                     .task(id: model.hasCompletedInitialReplay) { [ready = model.hasCompletedInitialReplay] in
                         guard ready else { return }
                         await pinInitialTranscript(proxy: proxy)
+                    }
+                    .onChange(of: model.resumeCatchUpCount) { _, count in
+                        guard let baseline = unreadRecheckAfterCatchUp, count > baseline else { return }
+                        unreadRecheckAfterCatchUp = nil
+                        Task { await pinUnreadReplyAfterCatchUp(proxy: proxy) }
                     }
                 if !isFollowingLatest {
                     jumpToLatestPill(proxy: proxy)
@@ -1063,6 +1072,12 @@ struct SessionView: View {
             await pinUnreadReply(reply, proxy: proxy)
             return
         }
+        // A cached model shown again starts from its old rows (and phase); the
+        // reply that made the session unread may only land with the resume's
+        // catch-up, which re-checks for it.
+        if openReadMark != nil, model.isParked || model.isCatchingUpAfterResume {
+            unreadRecheckAfterCatchUp = model.resumeCatchUpCount
+        }
         // A yield alone is not a layout barrier for hundreds of newly mounted
         // rows. Make bounded initial-only corrections as text layout settles.
         // Live revision tokens must not cancel these; user scrollback must.
@@ -1088,6 +1103,19 @@ struct SessionView: View {
                 model.noteFirstDisplay()
             }
         }
+    }
+
+    /// The resume catch-up of a cached transcript has landed after the
+    /// initial pin: open at the unread reply it brought, as a cold open would
+    /// have, unless the reader has scrolled or the session is running.
+    @MainActor
+    private func pinUnreadReplyAfterCatchUp(proxy: ScrollViewProxy) async {
+        guard dragActivity.last == .distantPast, isFollowingLatest, !isBrowsingEarlier else { return }
+        if case .running = model.phase { return }
+        guard let mark = openReadMark,
+              let reply = SessionReadStore.unreadReplyRowID(
+                  in: model.visibleDurableRows, after: mark) else { return }
+        await pinUnreadReply(reply, proxy: proxy)
     }
 
     /// Open at the top of an unread reply. This is scrollback like a paged-in
