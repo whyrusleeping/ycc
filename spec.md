@@ -935,7 +935,9 @@ provider-shaped pixel/tile formulas, while undecodable or remote media use byte-
 model tokenizers, image detail/resizing, and document page processing can differ substantially.
 Roles select a coordinator, implementer, and reviewer models. Several logical
 models may share one endpoint/credential while selecting different model ids. Config is discovered workspace-first and otherwise from the user config directory; the
-active files are not merged. Optional `[transport]` fields `stream_idle_seconds` and
+active files are not merged. Optional `[transport]` fields `response_header_seconds` (default 60:
+a streaming model request that gets no response headers in time fails as a retryable stall),
+`stream_idle_seconds` and
 `total_timeout_seconds` override the respective registry defaults; omitted fields keep their
 default and explicit zero disables that limit. Values must be non-negative. `[retry]`
 `partial_max_attempts` overrides the default partial-output cap; zero means use `max_attempts`

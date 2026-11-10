@@ -17,16 +17,35 @@ var (
 	ErrTotalTimeout  = errors.New("provider total timeout")
 )
 
-// Policy separates the total request budget from SSE read inactivity. Zero disables
-// either limit; caller cancellation always remains effective.
+// Policy separates the total request budget from SSE read inactivity and from the
+// wait for a streaming request's response headers. Zero disables any limit; caller
+// cancellation always remains effective.
 type Policy struct {
-	StreamIdle time.Duration
-	Total      time.Duration
+	// ResponseHeader bounds how long a request marked with ExpectStream may wait
+	// for response headers. Streaming providers answer promptly and then send
+	// events, so a request that gets no headers at all has stalled; it must not
+	// wait out Total.
+	ResponseHeader time.Duration
+	StreamIdle     time.Duration
+	Total          time.Duration
 }
 
-// DefaultPolicy tolerates silent high-effort reasoning for five minutes while
-// allowing progressing turns up to one hour. Anthropic SSE ping frames reset idle.
-func DefaultPolicy() Policy { return Policy{StreamIdle: 5 * time.Minute, Total: time.Hour} }
+// DefaultPolicy fails a streaming request that gets no response within a minute,
+// tolerates silent high-effort reasoning for five minutes once the stream is
+// open, and allows progressing turns up to one hour. Anthropic SSE ping frames
+// reset idle.
+func DefaultPolicy() Policy {
+	return Policy{ResponseHeader: time.Minute, StreamIdle: 5 * time.Minute, Total: time.Hour}
+}
+
+type streamKey struct{}
+
+// ExpectStream marks ctx as carrying a streaming (SSE) provider request, so
+// NewClient applies Policy.ResponseHeader. A non-streaming request legitimately
+// gets no headers until generation finishes and must not be marked.
+func ExpectStream(ctx context.Context) context.Context {
+	return context.WithValue(ctx, streamKey{}, true)
+}
 
 // NewClient installs the same policy for gollama and Codex. Unlike http.Client.Timeout,
 // these limits do not impose a five-minute cap on an actively progressing stream.
@@ -48,7 +67,23 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	} else {
 		ctx, cancel = context.WithCancel(caller)
 	}
+	var headerTimer *time.Timer
+	if marked, _ := caller.Value(streamKey{}).(bool); marked && t.policy.ResponseHeader > 0 {
+		headerTimer = time.AfterFunc(t.policy.ResponseHeader, cancel)
+	}
 	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	if headerTimer != nil && !headerTimer.Stop() {
+		// The header deadline fired and cancelled ctx; a response that raced it
+		// is unusable. Caller cancellation still reports as itself.
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		cancel()
+		if caller.Err() != nil {
+			return nil, caller.Err()
+		}
+		return nil, fmt.Errorf("%w: no response headers after %s", ErrStreamStalled, t.policy.ResponseHeader)
+	}
 	if err != nil {
 		mapped := requestError(err, caller, ctx, t.policy.Total)
 		cancel()

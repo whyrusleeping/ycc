@@ -78,6 +78,7 @@ coordinator = "c"
 implementer = "c"
 reviewers = ["c"]
 [transport]
+response_header_seconds = 0
 stream_idle_seconds = 0
 total_timeout_seconds = 90
 [retry]
@@ -92,7 +93,7 @@ partial_max_attempts = 3
 		t.Fatal(err)
 	}
 	reg = NewRegistry(cfg)
-	if got := reg.TransportPolicy(); got.StreamIdle != 0 || got.Total != 90*time.Second {
+	if got := reg.TransportPolicy(); got.ResponseHeader != 0 || got.StreamIdle != 0 || got.Total != 90*time.Second {
 		t.Fatalf("policy = %+v", got)
 	}
 	if got := reg.RetryPolicy().PartialMaxAttempts; got != 3 {

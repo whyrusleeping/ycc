@@ -696,8 +696,9 @@ type Retry struct {
 // Transport settings are optional; nil keeps llmhttp defaults, explicit zero
 // disables the corresponding limit. Durations are seconds.
 type Transport struct {
-	StreamIdleSeconds   *int `toml:"stream_idle_seconds,omitempty"`
-	TotalTimeoutSeconds *int `toml:"total_timeout_seconds,omitempty"`
+	ResponseHeaderSeconds *int `toml:"response_header_seconds,omitempty"`
+	StreamIdleSeconds     *int `toml:"stream_idle_seconds,omitempty"`
+	TotalTimeoutSeconds   *int `toml:"total_timeout_seconds,omitempty"`
 }
 
 // GC configures the background session reaper. IntervalSeconds sets
@@ -978,8 +979,8 @@ func (c *Config) validate() error {
 	if c.Retry.MaxAttempts < 0 || c.Retry.BaseDelayMS < 0 || c.Retry.MaxDelayMS < 0 || c.Retry.PartialMaxAttempts < 0 || c.Retry.MaxRetryAfterMS < 0 || c.Retry.MaxTotalWaitMS < 0 {
 		return fmt.Errorf("retry: attempts and delays must be non-negative")
 	}
-	if (c.Transport.StreamIdleSeconds != nil && *c.Transport.StreamIdleSeconds < 0) || (c.Transport.TotalTimeoutSeconds != nil && *c.Transport.TotalTimeoutSeconds < 0) {
-		return fmt.Errorf("transport: stream_idle_seconds and total_timeout_seconds must be non-negative")
+	if (c.Transport.ResponseHeaderSeconds != nil && *c.Transport.ResponseHeaderSeconds < 0) || (c.Transport.StreamIdleSeconds != nil && *c.Transport.StreamIdleSeconds < 0) || (c.Transport.TotalTimeoutSeconds != nil && *c.Transport.TotalTimeoutSeconds < 0) {
+		return fmt.Errorf("transport: response_header_seconds, stream_idle_seconds and total_timeout_seconds must be non-negative")
 	}
 	if c.Retry.BaseDelayMS > 0 && c.Retry.MaxDelayMS > 0 && c.Retry.MaxDelayMS < c.Retry.BaseDelayMS {
 		return fmt.Errorf("retry: max_delay_ms (%d) must be >= base_delay_ms (%d)", c.Retry.MaxDelayMS, c.Retry.BaseDelayMS)
@@ -1193,6 +1194,9 @@ func (r *Registry) TransportPolicy() llmhttp.Policy {
 // transportPolicy is called with the registry lock held by BuildContext.
 func (r *Registry) transportPolicy() llmhttp.Policy {
 	p := llmhttp.DefaultPolicy()
+	if n := r.cfg.Transport.ResponseHeaderSeconds; n != nil {
+		p.ResponseHeader = time.Duration(*n) * time.Second
+	}
 	if n := r.cfg.Transport.StreamIdleSeconds; n != nil {
 		p.StreamIdle = time.Duration(*n) * time.Second
 	}

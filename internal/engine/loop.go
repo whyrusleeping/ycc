@@ -725,6 +725,9 @@ func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.Request
 		resp, err := client.TurnCtx(ctx, opts)
 		return resp, progress.Generated(), err
 	}
+	// Every configured StreamTurner sends a real SSE request, so a provider that
+	// never answers with headers fails fast instead of waiting out the total budget.
+	ctx = llmhttp.ExpectStream(ctx)
 	broadcast := l.Emitter != nil && l.Emitter.CanBroadcast()
 
 	// onDelta is serial, but a trailing flush runs on a timer goroutine. Hold mu
