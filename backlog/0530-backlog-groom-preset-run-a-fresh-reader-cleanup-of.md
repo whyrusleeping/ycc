@@ -1,7 +1,7 @@
 ---
 id: "0530"
 title: 'backlog-groom preset: run a fresh-reader cleanup of a project''s backlog'
-status: todo
+status: done
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -10,6 +10,8 @@ depends_on:
 spec_refs:
     - docs/design/doc-style.md
 ---
+
+## Description
 
 ## Description
 ## Why
@@ -36,4 +38,15 @@ Known first targets in other projects:
 - The spec lists the preset next to spec-doctor and memory-groom.
 - A run against a copy of valstore's backlog leaves 0296 readable and 0248's status consistent, and produces a flag list; record the result in the work log.
 
-## Work log
+## Acceptance criteria
+
+- A `backlog-groom` preset exists with title, description and prompt, startable by name from the web and iOS clients like the other presets.
+- The prompt implements the behaviour above, references doc-style.md, and edits only backlog files.
+- The spec lists the preset next to spec-doctor and memory-groom.
+- A run against a copy of valstore's backlog leaves 0296 readable and 0248's status consistent, and produces a flag list; record the result in the work log.
+
+## Outcome
+
+New `backlog-groom` pm preset (modes.go plus backlogGroomPresetPrompt in prompts.go). It reaches web and iOS through ListModes and is startable by name like the other presets. The preset grooms a bounded batch: the tasks the user names, else the oldest tasks with no groom entry. It edits only backlog files. It fixes what the evidence settles (debris, stale state, bare references, run-together text) and flags the rest: unsourced decisions, inherited authority, duplicates. Each reviewed task gets a `groom:` work-log entry. Spec §9 and doc-style §6 list the preset. A live opus run on a valstore copy made 0296 readable, made 0248's Description agree with its done status, and returned 4 decisions for the user; details are in the work log. Filed 0532 (proposed): completion compaction duplicates headings. go test for orchestrator, server and session passes; the sol reviewer accepted.
+
+Commit: Add backlog-groom pm preset: fresh-reader backlog cleanup against the doc-style backlog rules (0530)

@@ -45,6 +45,7 @@ func Presets() []Preset {
 		{"onboard", "Onboard this project", "Orient from existing project docs (spec entry point, any docs/ tree) and backlog, then establish or refresh them — greenfield (full spec) or brownfield (adopt existing docs, scoped to your work).", "pm", onboardPresetPrompt},
 		{"spec-doctor", "Spec doctor (drift & coverage)", "Check the spec against the code: run the deterministic reference check, then compare spec sections to the code to surface drift and coverage gaps — with proposed backlog tasks and suggested spec edits for your approval.", "pm", specDoctorPresetPrompt},
 		{"memory-groom", "Groom project memory", "Tend active memory.md notes: consolidate repeats, supersede stale or disproven guidance without deleting audit records, and run the promotion path (spec / plans / backlog) so prompt memory stays useful and under budget.", "pm", memoryGroomPresetPrompt},
+		{"backlog-groom", "Groom the backlog", "Read backlog tasks as a fresh reader and clean them up against the doc-style backlog rules: fix debris, stale status and bare references from evidence, and flag unsourced decisions, inherited authority and duplicates for your decision.", "pm", backlogGroomPresetPrompt},
 	}
 }
 

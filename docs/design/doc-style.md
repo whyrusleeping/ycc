@@ -60,6 +60,7 @@ wrote it, so each task is readable on its own.
 
 The `memory-groom` preset deduplicates and dedialects memory against this contract. The
 `spec-doctor` comparison pass may surface framing or register drift as cleanup suggestions,
-separate from factual drift. Optional cross-model preset bindings (`[roles.presets]`, spec
+separate from factual drift. The `backlog-groom` preset checks a batch of backlog tasks against §5,
+fixing what evidence settles and flagging the rest for the user. Optional cross-model preset bindings (`[roles.presets]`, spec
 §9 and §13) provide fresh wording and reduce single-model reinforcement; this contract is
 the stable target those passes check.

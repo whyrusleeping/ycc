@@ -240,6 +240,36 @@ and implied work to the backlog. Retire notes after promotion. Preserve correcti
 ` + memoryGroomBudgetStep + `
 Finish with what changed and any pending approvals.`
 
+const backlogGroomPresetPrompt = `Groom this project's backlog as a fresh reader against the backlog-task rules in
+docs/design/doc-style.md (when the project has it). Edit only backlog task files: no code, spec, or memory.
+
+Work one bounded batch of about 15 tasks, fewer when they are long: tasks the user named first, else
+the oldest tasks with no "groom:" work-log entry. A whole-backlog scan may order the batch but not widen
+it: grep for "…[truncated]", LC_ALL=C.UTF-8 grep -laxv '.*' backlog/*.md for invalid UTF-8, and
+depends_on ids with no task file. Evidence is git history, the code, .ycc/sessions/*/events.jsonl, and
+linked bench or docs files.
+- Fix debris: "…[truncated]" fragments that carry no information, duplicate or empty headings, stray
+  template text, invalid UTF-8. Edit cannot match broken bytes; rewrite such a line with a command
+  limited to that file.
+- Fix stale or contradictory state when evidence settles it, otherwise flag it: a Description that
+  contradicts status, unchecked criteria on a done task, an outdated current state. Use update_task
+  for status changes.
+- Fix insider references: gloss bare task ids and codenames at first mention, and point references
+  to deleted tasks at what replaced them.
+- Flag, never invent: "slice of accepted N" chains, repeated authorization disclaimers, and user or
+  owner decisions with no source. Cite the session event if you find one; otherwise mark the claim
+  as the authoring agent's inference. Never manufacture a decision.
+- Rewrite degenerate text, such as words run together, from the recorded evidence rather than by
+  paraphrasing the damaged text; keep every fact, number, and path.
+- Flag near-duplicates with a proposed merge. Give a huge work log a current-state summary at the
+  top of the task; keep the history.
+
+Change a task's meaning or status only when evidence settles it. Give every task you reviewed one
+dated "groom: …" work-log entry in the file's existing style (add a Work log section if it has none):
+what changed, or "reviewed, no change". Leave the changes uncommitted. Finish with a short report:
+what you changed, what you flagged for the user with ids and the decision needed, and roughly how
+many tasks remain ungroomed.`
+
 const memoryGroomSteps = `Use the active PROJECT MEMORY set; read memory.md only for its audit trail. Verify important
 claims against current code and candidate source events (.ycc/sessions/<id>/events.jsonl), not type labels.
 Forget obsolete, disproven, duplicated, fixed, or already-promoted notes. Merge/tighten with remember

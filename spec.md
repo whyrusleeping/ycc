@@ -661,8 +661,11 @@ surface; `docs/design/forge-integration.md` records that trust-boundary decision
 
 - **pm** manages design docs, backlog, investigation, onboarding, and grooming. It may inspect the
   workspace but is prompt-constrained not to implement code. Presets provide opening context for
-  onboarding, spec checking, and memory grooming; an optional preset-to-model binding supplies an
-  independent editorial perspective without changing role defaults.
+  onboarding (`onboard`), spec checking (`spec-doctor`), memory grooming (`memory-groom`), and
+  backlog grooming (`backlog-groom`: a bounded batch of tasks checked against the backlog rules in
+  `docs/design/doc-style.md`, editing only backlog files and flagging what evidence does not
+  settle); an optional preset-to-model binding supplies an independent editorial perspective
+  without changing role defaults.
 - **chat** is free-form assistance with direct worker tools and no fixed workflow.
 - **work** drives one accepted task through implementation, proportional review, backlog update,
   and commit.
