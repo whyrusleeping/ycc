@@ -3,12 +3,15 @@ import YccKit
 import YccProto
 
 /// Drill-down browser for daemon-host directories. The shared model is loaded by
-/// the add-project sheet so its initial suggestions and this browser use one RPC
-/// result and one authorization signal.
+/// the add-project sheet so its initial suggestions, default location, and this
+/// browser use one RPC result and one authorization signal.
 struct DirectoryBrowserView: View {
     @Environment(\.dismiss) private var dismiss
 
     let model: DirectoryBrowserModel
+    /// Directory to show on open instead of wherever the shared model last
+    /// was (the current location); empty keeps the current listing.
+    var startPath = ""
     let onUse: (String) -> Void
 
     var body: some View {
@@ -65,6 +68,9 @@ struct DirectoryBrowserView: View {
             // Normally already loaded by AddProjectView. This also retries an
             // initial non-authorization failure when the browser is opened.
             await model.loadInitial()
+            if !startPath.isEmpty && startPath != model.path {
+                await model.open(startPath)
+            }
         }
     }
 

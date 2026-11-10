@@ -198,11 +198,24 @@ public nonisolated struct Ycc_V1_AddProjectRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// workspace dir to register
+  /// Workspace dir to register. Without `create`/`clone_url` it must already
+  /// exist (not_found otherwise).
   public var path: String = String()
 
   /// optional; derived from the dir basename when empty
   public var name: String = String()
+
+  /// create makes `path` a new git repository: the directory (and missing
+  /// parents) is created and `git init` run in it. An existing non-empty
+  /// directory is already_exists.
+  public var create: Bool = false
+
+  /// clone_url clones a repository into `path` (which must not exist or be
+  /// empty) before registering it. Accepts `owner/repo` (GitHub), https/ssh/git
+  /// URLs, and scp-style `git@host:owner/repo` remotes. GitHub repos use an
+  /// authenticated `gh` on the daemon host when available, else plain git with
+  /// the daemon user's credentials; prompts are disabled.
+  public var cloneURL: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -322,8 +335,7 @@ public nonisolated struct Ycc_V1_ListDirRequest: Sendable {
   /// Absolute directory to list; empty => the daemon user's home directory.
   public var path: String = String()
 
-  /// When true, also populate `suggestions`: git repos that are siblings of
-  /// already-registered projects (likely projects, one tap to register).
+  /// When true, also populate `suggestions` and `default_parent`.
   public var suggest: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -345,8 +357,14 @@ public nonisolated struct Ycc_V1_ListDirResponse: Sendable {
   /// subdirectories, sorted, hidden dirs omitted
   public var entries: [Ycc_V1_DirEntry] = []
 
-  /// absolute paths (only when suggest=true)
+  /// Likely projects (only when suggest=true): absolute paths of unregistered
+  /// git repos beside registered projects, most recent git activity first,
+  /// at most 8.
   public var suggestions: [String] = []
+
+  /// Where new projects most likely belong (only when suggest=true): the
+  /// directory holding the most registered projects, else the home directory.
+  public var defaultParent: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5215,7 +5233,7 @@ nonisolated extension Ycc_V1_ListProjectsResponse: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Ycc_V1_AddProjectRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AddProjectRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}name\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}name\0\u{1}create\0\u{3}clone_url\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5225,6 +5243,8 @@ nonisolated extension Ycc_V1_AddProjectRequest: SwiftProtobuf.Message, SwiftProt
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.create) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.cloneURL) }()
       default: break
       }
     }
@@ -5237,12 +5257,20 @@ nonisolated extension Ycc_V1_AddProjectRequest: SwiftProtobuf.Message, SwiftProt
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
     }
+    if self.create != false {
+      try visitor.visitSingularBoolField(value: self.create, fieldNumber: 3)
+    }
+    if !self.cloneURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.cloneURL, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_AddProjectRequest, rhs: Ycc_V1_AddProjectRequest) -> Bool {
     if lhs.path != rhs.path {return false}
     if lhs.name != rhs.name {return false}
+    if lhs.create != rhs.create {return false}
+    if lhs.cloneURL != rhs.cloneURL {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5477,7 +5505,7 @@ nonisolated extension Ycc_V1_ListDirRequest: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_ListDirResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListDirResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}parent\0\u{1}entries\0\u{1}suggestions\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}parent\0\u{1}entries\0\u{1}suggestions\0\u{3}default_parent\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5489,6 +5517,7 @@ nonisolated extension Ycc_V1_ListDirResponse: SwiftProtobuf.Message, SwiftProtob
       case 2: try { try decoder.decodeSingularStringField(value: &self.parent) }()
       case 3: try { try decoder.decodeRepeatedMessageField(value: &self.entries) }()
       case 4: try { try decoder.decodeRepeatedStringField(value: &self.suggestions) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.defaultParent) }()
       default: break
       }
     }
@@ -5507,6 +5536,9 @@ nonisolated extension Ycc_V1_ListDirResponse: SwiftProtobuf.Message, SwiftProtob
     if !self.suggestions.isEmpty {
       try visitor.visitRepeatedStringField(value: self.suggestions, fieldNumber: 4)
     }
+    if !self.defaultParent.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultParent, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5515,6 +5547,7 @@ nonisolated extension Ycc_V1_ListDirResponse: SwiftProtobuf.Message, SwiftProtob
     if lhs.parent != rhs.parent {return false}
     if lhs.entries != rhs.entries {return false}
     if lhs.suggestions != rhs.suggestions {return false}
+    if lhs.defaultParent != rhs.defaultParent {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

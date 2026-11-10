@@ -64,25 +64,28 @@ private func dirResponse(
     path: String,
     parent: String,
     entries: [Ycc_V1_DirEntry] = [],
-    suggestions: [String] = []
+    suggestions: [String] = [],
+    defaultParent: String = ""
 ) -> Ycc_V1_ListDirResponse {
     var response = Ycc_V1_ListDirResponse()
     response.path = path
     response.parent = parent
     response.entries = entries
     response.suggestions = suggestions
+    response.defaultParent = defaultParent
     return response
 }
 
 @MainActor
 final class DirectoryBrowserModelTests: XCTestCase {
-    func testInitialLoadResolvesHomeAndSuggestions() async {
+    func testInitialLoadResolvesHomeSuggestionsAndDefaultParent() async {
         let source = MockDirectoryBrowserSource()
         source.responses[""] = dirResponse(
             path: "/Users/me",
             parent: "/Users",
             entries: [dirEntry("code")],
-            suggestions: ["/Users/me/code/ycc", "/Users/me/code/other"])
+            suggestions: ["/Users/me/code/ycc", "/Users/me/code/other"],
+            defaultParent: "/Users/me/code")
         let model = DirectoryBrowserModel(source: source)
 
         await model.loadInitial()
@@ -91,6 +94,8 @@ final class DirectoryBrowserModelTests: XCTestCase {
         XCTAssertEqual(model.parent, "/Users")
         XCTAssertEqual(model.entries.map(\.name), ["code"])
         XCTAssertEqual(model.suggestions, ["/Users/me/code/ycc", "/Users/me/code/other"])
+        XCTAssertEqual(model.home, "/Users/me")
+        XCTAssertEqual(model.defaultParent, "/Users/me/code")
         XCTAssertEqual(source.requests.count, 1)
         XCTAssertEqual(source.requests.first?.path, "")
         XCTAssertEqual(source.requests.first?.suggest, true)
@@ -99,6 +104,17 @@ final class DirectoryBrowserModelTests: XCTestCase {
         // A successful initial load is not repeated when the view reappears.
         await model.loadInitial()
         XCTAssertEqual(source.requests.count, 1)
+    }
+
+    func testAbbreviateHome() {
+        XCTAssertEqual(DirectoryBrowserModel.abbreviate("/Users/me/code", home: "/Users/me"), "~/code")
+        XCTAssertEqual(DirectoryBrowserModel.abbreviate("/Users/me", home: "/Users/me"), "~")
+        XCTAssertEqual(
+            DirectoryBrowserModel.abbreviate("/Users/meow/code", home: "/Users/me"),
+            "/Users/meow/code")
+        XCTAssertEqual(DirectoryBrowserModel.abbreviate("/srv/x", home: "/Users/me"), "/srv/x")
+        XCTAssertEqual(DirectoryBrowserModel.abbreviate("/srv/x", home: ""), "/srv/x")
+        XCTAssertEqual(DirectoryBrowserModel.abbreviate("/srv/x", home: "/"), "/srv/x")
     }
 
     func testOpenDrillsDownAndClearsError() async {

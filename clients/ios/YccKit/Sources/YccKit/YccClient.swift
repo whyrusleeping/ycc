@@ -105,12 +105,20 @@ public final class YccClient: Sendable {
     /// `path` must be an
     /// absolute path on the DAEMON's filesystem. `name` is optional — the daemon
     /// derives it from the directory basename when empty. Returns the registered
-    /// project (with its resolved name).
-    public func addProject(path: String, name: String = "") async throws -> Ycc_V1_ProjectInfo {
+    /// project (with its resolved name). `create` makes `path` a new git
+    /// repository; a non-empty `cloneURL` (`owner/repo` or a git remote) is
+    /// cloned into `path` first, and the call blocks until the clone finishes.
+    public func addProject(
+        path: String, name: String = "", create: Bool = false, cloneURL: String = ""
+    ) async throws -> Ycc_V1_ProjectInfo {
         var request = Ycc_V1_AddProjectRequest()
         request.path = path
         request.name = name
-        let response = await generated.addProject(request: request)
+        request.create = create
+        request.cloneURL = cloneURL
+        // A clone can take far longer than the ordinary unary deadline.
+        let service = cloneURL.isEmpty ? generated : generatedBulk
+        let response = await service.addProject(request: request)
         switch response.result {
         case .success(let message):
             return message.project

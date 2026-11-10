@@ -53,6 +53,43 @@ export function derivedName(path: string): string {
   return t.slice(t.lastIndexOf("/") + 1);
 }
 
+/** The parent directory of an absolute path (`/a/b` → `/a`, `/a` → `/`). */
+export function parentDir(path: string): string {
+  const t = path.replace(/\/+$/, "");
+  const i = t.lastIndexOf("/");
+  return i <= 0 ? "/" : t.slice(0, i);
+}
+
+/** `path` with the daemon user's home shown as `~`. */
+export function tildePath(path: string, home: string): string {
+  if (!home || home === "/") return path;
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
+/**
+ * The folder a clone lands in by default: the repository's last path
+ * segment without `.git` (`owner/repo`, `https://host/o/repo.git`, and
+ * `git@host:o/repo` all give `repo`). A page URL copied from a forge
+ * (`…/repo/tree/main/docs`) names its repository, not the page.
+ */
+export function repoFolderName(source: string): string {
+  const t = source
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/(?:-\/)?(?:tree|blob|commits?|pulls?|issues|releases)(?:\/.*)?$/, "")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "");
+  const name = t.slice(Math.max(t.lastIndexOf("/"), t.lastIndexOf(":")) + 1);
+  return isFolderName(name) ? name : "";
+}
+
+/** A single new directory name: non-empty, no slash, not `.` or `..`. */
+export function isFolderName(raw: string): boolean {
+  const t = raw.trim();
+  return t !== "" && t !== "." && t !== ".." && !t.includes("/");
+}
+
 /** An absolute child directory of `dir`. */
 export function childDir(dir: string, name: string): string {
   return dir === "/" || dir === "" ? `/${name}` : `${dir.replace(/\/+$/, "")}/${name}`;
@@ -74,8 +111,12 @@ export interface DirPickerState {
   /** Its parent; "" at the filesystem root (no Up). */
   parent: string;
   entries: DirEntry[];
-  /** Likely projects (git repos beside registered ones), from the first listing. */
+  /** Likely projects (git repos beside registered ones, most recent first), from the first listing. */
   suggestions: string[];
+  /** The daemon user's home directory (the first listing), for `~` display. */
+  home: string;
+  /** Where new projects most likely belong (from the first listing). */
+  defaultParent: string;
   /** The directory being opened, or null. */
   loading: string | null;
   error: string | null;
@@ -83,10 +124,24 @@ export interface DirPickerState {
 
 export type DirPickerAction =
   | { type: "open"; path: string }
-  | { type: "loaded"; requested: string; response: Pick<ListDirResponse, "path" | "parent" | "entries" | "suggestions">; initial: boolean }
+  | {
+      type: "loaded";
+      requested: string;
+      response: Pick<ListDirResponse, "path" | "parent" | "entries" | "suggestions" | "defaultParent">;
+      initial: boolean;
+    }
   | { type: "failed"; requested: string; message: string };
 
-export const initialDirPicker: DirPickerState = { path: "", parent: "", entries: [], suggestions: [], loading: null, error: null };
+export const initialDirPicker: DirPickerState = {
+  path: "",
+  parent: "",
+  entries: [],
+  suggestions: [],
+  home: "",
+  defaultParent: "",
+  loading: null,
+  error: null,
+};
 
 export function dirPickerReducer(state: DirPickerState, action: DirPickerAction): DirPickerState {
   switch (action.type) {
@@ -101,6 +156,8 @@ export function dirPickerReducer(state: DirPickerState, action: DirPickerAction)
         parent: r.parent,
         entries: [...r.entries],
         suggestions: action.initial ? [...r.suggestions] : state.suggestions,
+        home: action.initial ? r.path : state.home,
+        defaultParent: action.initial ? r.defaultParent || r.path : state.defaultParent,
         loading: null,
         error: null,
       };

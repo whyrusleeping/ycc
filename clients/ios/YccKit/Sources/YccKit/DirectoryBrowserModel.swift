@@ -25,8 +25,13 @@ public final class DirectoryBrowserModel {
     /// The current directory's absolute parent, or empty at filesystem root.
     public private(set) var parent = ""
     public private(set) var entries: [Ycc_V1_DirEntry] = []
-    /// Absolute likely-project paths returned by the initial suggestion request.
+    /// Absolute likely-project paths returned by the initial suggestion
+    /// request, in the daemon's order (most recent git activity first).
     public private(set) var suggestions: [String] = []
+    /// The daemon user's home directory: the path the initial request resolved.
+    public private(set) var home = ""
+    /// Where new projects most likely belong, from the initial request.
+    public private(set) var defaultParent = ""
 
     public private(set) var isLoading = false
     public var errorMessage: String?
@@ -45,7 +50,7 @@ public final class DirectoryBrowserModel {
     public var canGoUp: Bool { !parent.isEmpty }
 
     /// Resolve and load the daemon user's home directory, including likely
-    /// project suggestions. A successful initial load is performed only once;
+    /// project suggestions and the default parent for new projects. A successful initial load is performed only once;
     /// overlapping calls are ignored.
     public func loadInitial() async {
         guard !hasLoadedInitial, !isLoading else { return }
@@ -58,6 +63,8 @@ public final class DirectoryBrowserModel {
             parent = response.parent
             entries = response.entries
             suggestions = response.suggestions
+            home = response.path
+            defaultParent = response.defaultParent
             errorMessage = nil
             hasLoadedInitial = true
         } catch YccError.unauthorized {
@@ -85,6 +92,21 @@ public final class DirectoryBrowserModel {
         } catch {
             errorMessage = (error as? YccError)?.displayMessage ?? error.localizedDescription
         }
+    }
+
+    /// `path` with the daemon user's home directory shown as `~`.
+    public func abbreviated(_ path: String) -> String {
+        Self.abbreviate(path, home: home)
+    }
+
+    /// `path` with a leading `home` directory replaced by `~`; other paths
+    /// (and an unknown home) are returned unchanged.
+    public static func abbreviate(_ path: String, home: String) -> String {
+        guard !home.isEmpty, home != "/" else { return path }
+        if path == home { return "~" }
+        let prefix = home.hasSuffix("/") ? home : home + "/"
+        guard path.hasPrefix(prefix) else { return path }
+        return "~/" + path.dropFirst(prefix.count)
     }
 
     /// Navigate to the daemon-resolved parent of the current listing.

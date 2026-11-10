@@ -503,9 +503,21 @@ func (x *ListProjectsResponse) GetProjects() []*ProjectInfo {
 }
 
 type AddProjectRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // workspace dir to register
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // optional; derived from the dir basename when empty
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Workspace dir to register. Without `create`/`clone_url` it must already
+	// exist (not_found otherwise).
+	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"` // optional; derived from the dir basename when empty
+	// create makes `path` a new git repository: the directory (and missing
+	// parents) is created and `git init` run in it. An existing non-empty
+	// directory is already_exists.
+	Create bool `protobuf:"varint,3,opt,name=create,proto3" json:"create,omitempty"`
+	// clone_url clones a repository into `path` (which must not exist or be
+	// empty) before registering it. Accepts `owner/repo` (GitHub), https/ssh/git
+	// URLs, and scp-style `git@host:owner/repo` remotes. GitHub repos use an
+	// authenticated `gh` on the daemon host when available, else plain git with
+	// the daemon user's credentials; prompts are disabled.
+	CloneUrl      string `protobuf:"bytes,4,opt,name=clone_url,json=cloneUrl,proto3" json:"clone_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -550,6 +562,20 @@ func (x *AddProjectRequest) GetPath() string {
 func (x *AddProjectRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *AddProjectRequest) GetCreate() bool {
+	if x != nil {
+		return x.Create
+	}
+	return false
+}
+
+func (x *AddProjectRequest) GetCloneUrl() string {
+	if x != nil {
+		return x.CloneUrl
 	}
 	return ""
 }
@@ -844,8 +870,7 @@ type ListDirRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Absolute directory to list; empty => the daemon user's home directory.
 	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	// When true, also populate `suggestions`: git repos that are siblings of
-	// already-registered projects (likely projects, one tap to register).
+	// When true, also populate `suggestions` and `default_parent`.
 	Suggest       bool `protobuf:"varint,2,opt,name=suggest,proto3" json:"suggest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -896,11 +921,17 @@ func (x *ListDirRequest) GetSuggest() bool {
 }
 
 type ListDirResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`               // resolved absolute path that was listed
-	Parent        string                 `protobuf:"bytes,2,opt,name=parent,proto3" json:"parent,omitempty"`           // parent dir ("" when path is the root)
-	Entries       []*DirEntry            `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`         // subdirectories, sorted, hidden dirs omitted
-	Suggestions   []string               `protobuf:"bytes,4,rep,name=suggestions,proto3" json:"suggestions,omitempty"` // absolute paths (only when suggest=true)
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Path    string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`       // resolved absolute path that was listed
+	Parent  string                 `protobuf:"bytes,2,opt,name=parent,proto3" json:"parent,omitempty"`   // parent dir ("" when path is the root)
+	Entries []*DirEntry            `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"` // subdirectories, sorted, hidden dirs omitted
+	// Likely projects (only when suggest=true): absolute paths of unregistered
+	// git repos beside registered projects, most recent git activity first,
+	// at most 8.
+	Suggestions []string `protobuf:"bytes,4,rep,name=suggestions,proto3" json:"suggestions,omitempty"`
+	// Where new projects most likely belong (only when suggest=true): the
+	// directory holding the most registered projects, else the home directory.
+	DefaultParent string `protobuf:"bytes,5,opt,name=default_parent,json=defaultParent,proto3" json:"default_parent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -961,6 +992,13 @@ func (x *ListDirResponse) GetSuggestions() []string {
 		return x.Suggestions
 	}
 	return nil
+}
+
+func (x *ListDirResponse) GetDefaultParent() string {
+	if x != nil {
+		return x.DefaultParent
+	}
+	return ""
 }
 
 // ListFiles / ReadFile — read-only project file browsing. Unlike ListDir these
@@ -13914,10 +13952,12 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"fetchError\"\x15\n" +
 	"\x13ListProjectsRequest\"G\n" +
 	"\x14ListProjectsResponse\x12/\n" +
-	"\bprojects\x18\x01 \x03(\v2\x13.ycc.v1.ProjectInfoR\bprojects\";\n" +
+	"\bprojects\x18\x01 \x03(\v2\x13.ycc.v1.ProjectInfoR\bprojects\"p\n" +
 	"\x11AddProjectRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"C\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06create\x18\x03 \x01(\bR\x06create\x12\x1b\n" +
+	"\tclone_url\x18\x04 \x01(\tR\bcloneUrl\"C\n" +
 	"\x12AddProjectResponse\x12-\n" +
 	"\aproject\x18\x01 \x01(\v2\x13.ycc.v1.ProjectInfoR\aproject\"*\n" +
 	"\x14RemoveProjectRequest\x12\x12\n" +
@@ -13934,12 +13974,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\ris_registered\x18\x03 \x01(\bR\fisRegistered\">\n" +
 	"\x0eListDirRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
-	"\asuggest\x18\x02 \x01(\bR\asuggest\"\x8b\x01\n" +
+	"\asuggest\x18\x02 \x01(\bR\asuggest\"\xb2\x01\n" +
 	"\x0fListDirResponse\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
 	"\x06parent\x18\x02 \x01(\tR\x06parent\x12*\n" +
 	"\aentries\x18\x03 \x03(\v2\x10.ycc.v1.DirEntryR\aentries\x12 \n" +
-	"\vsuggestions\x18\x04 \x03(\tR\vsuggestions\"\x99\x01\n" +
+	"\vsuggestions\x18\x04 \x03(\tR\vsuggestions\x12%\n" +
+	"\x0edefault_parent\x18\x05 \x01(\tR\rdefaultParent\"\x99\x01\n" +
 	"\tFileEntry\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x15\n" +
 	"\x06is_dir\x18\x02 \x01(\bR\x05isDir\x12\x12\n" +

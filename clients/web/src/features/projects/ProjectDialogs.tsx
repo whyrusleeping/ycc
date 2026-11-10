@@ -1,6 +1,7 @@
 // Project management dialogs, opened from anywhere (sidebar menu, projects
-// page, new-session picker, command palette): add a project through a
-// server-side directory picker (ListDir), rename one, remove one (which
+// page, new-session picker, command palette): add a project (an existing
+// folder picked through the server-side directory browser, a new git repo, or
+// a clone), rename one, remove one (which
 // only deregisters it), or edit its quick replies. One host component in the shell renders whichever is
 // open; mutations refresh every project-keyed cache and keep the current
 // route, sidebar scope, and last-viewed project pointing at the right name.
@@ -26,9 +27,13 @@ import {
   dirCrumbs,
   dirPickerReducer,
   initialDirPicker,
+  isFolderName,
   isPlausiblePath,
+  parentDir,
   renamedRoute,
+  repoFolderName,
   routeUnderProject,
+  tildePath,
 } from "./model";
 
 type DialogState =
@@ -104,6 +109,14 @@ export function ProjectDialogs() {
   return <RemoveProjectDialog key={d.name} name={d.name} onClose={close} />;
 }
 
+type AddMode = "existing" | "new" | "clone";
+
+const ADD_MODES: { value: AddMode; title: string }[] = [
+  { value: "existing", title: "Existing folder" },
+  { value: "new", title: "New folder" },
+  { value: "clone", title: "Clone repository" },
+];
+
 function AddProjectDialog({
   onAdded,
   navigateTo,
@@ -117,11 +130,16 @@ function AddProjectDialog({
   const navigate = useNavigate();
   const { setScope } = useScope();
   const [picker, dispatch] = useReducer(dirPickerReducer, initialDirPicker);
+  const [mode, setMode] = useState<AddMode>("existing");
+  // Existing: the workspace itself. New folder/clone: the directory it goes in.
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
+  const [folder, setFolder] = useState("");
+  const [repo, setRepo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pathEdited = useRef(false);
+  const folderEdited = useRef(false);
   const list = useRef<HTMLUListElement>(null);
 
   const load = useCallback(async (dir: string, initial = false) => {
@@ -152,22 +170,41 @@ function AddProjectDialog({
     pathEdited.current = false;
     void load(dir);
   };
-  const ok = isPlausiblePath(path) && !submitting;
+  const chooseMode = (next: AddMode) => {
+    if (next === mode) return;
+    setMode(next);
+    setError(null);
+    // A new project goes beside the others; start the browser there.
+    if (next !== "existing" && mode === "existing" && picker.defaultParent) browse(picker.defaultParent);
+  };
+
+  const target = mode === "existing" ? path.trim() : childDir(path.trim().replace(/\/+$/, "") || "/", folder.trim());
+  const ok =
+    !submitting &&
+    isPlausiblePath(path) &&
+    (mode === "existing" || isFolderName(folder)) &&
+    (mode !== "clone" || repo.trim() !== "");
   const submit = async (e?: FormEvent) => {
     e?.preventDefault();
     if (!ok) return;
     setSubmitting(true);
     setError(null);
     try {
-      const resp = await client.addProject({ path: path.trim(), name: name.trim() });
+      const resp = await client.addProject(
+        mode === "existing"
+          ? { path: target, name: name.trim() }
+          : mode === "new"
+            ? { path: target, create: true }
+            : { path: target, cloneUrl: repo.trim() },
+      );
       const p = resp.project;
       // List it at once (the sidebar drops a scope it cannot find); the refetch confirms.
       if (p) qc.setQueryData<ProjectInfo[]>(queryKeys.projects, (list) => (list ? [...list.filter((x) => x.name !== p.name), p] : list));
       void invalidateProjectCaches(qc);
-      track.submit("add_project", { named: name.trim() !== "" });
+      track.submit("add_project", { mode, named: mode === "existing" && name.trim() !== "" });
       onClose();
       if (!p) return;
-      toast(`Added project ${p.name}.`, "info");
+      toast(mode === "clone" ? `Cloned ${p.name}.` : mode === "new" ? `Created project ${p.name}.` : `Added project ${p.name}.`, "info");
       if (onAdded) onAdded(p);
       else if (navigateTo) {
         setScope(p.name);
@@ -176,37 +213,76 @@ function AddProjectDialog({
     } catch (err) {
       if (expireOn(err)) return;
       track.error("projects.add", err);
-      setError(errorMessage(err, "The project could not be added."));
+      setError(errorMessage(err, mode === "clone" ? "The repository could not be cloned." : "The project could not be added."));
       setSubmitting(false);
     }
   };
 
   const loading = picker.loading !== null;
+  const shown = (p: string) => tildePath(p, picker.home);
+  const intro =
+    mode === "existing"
+      ? "Register a directory on the machine the daemon runs on (not this browser’s). Pick a recent repository, browse to it, or type its absolute path."
+      : mode === "new"
+        ? "Start a project in a new, empty git repository on the daemon’s machine. Choose where it goes and name the folder."
+        : "Clone a repository onto the daemon’s machine and add it as a project. GitHub repositories use the daemon’s gh login when it has one; anything else uses its git credentials.";
   return (
     <Modal open onClose={onClose} title="Add project" className="add-project-dialog" view="add_project" flow="add_project">
       <form className="add-project" onSubmit={(e) => void submit(e)}>
-        <p className="muted small">
-          Register a workspace directory on the machine the daemon runs on (not this browser’s). Browse to it, or type its
-          absolute path.
-        </p>
-        {picker.suggestions.length > 0 && (
+        <div className="segmented add-mode" role="group" aria-label="How to add the project">
+          {ADD_MODES.map((m) => (
+            <button
+              key={m.value}
+              type="button"
+              aria-pressed={mode === m.value}
+              className={mode === m.value ? "selected" : ""}
+              disabled={submitting}
+              onClick={() => chooseMode(m.value)}
+            >
+              {m.title}
+            </button>
+          ))}
+        </div>
+        <p className="muted small">{intro}</p>
+        {mode === "clone" && (
+          <label className="field-label">
+            Repository
+            <input
+              type="text"
+              className="field mono"
+              value={repo}
+              placeholder="owner/repo or https://github.com/owner/repo"
+              spellCheck={false}
+              autoComplete="off"
+              autoFocus
+              disabled={submitting}
+              onChange={(e) => {
+                setRepo(e.target.value);
+                if (!folderEdited.current) setFolder(repoFolderName(e.target.value));
+              }}
+            />
+          </label>
+        )}
+        {mode === "existing" && picker.suggestions.length > 0 && (
           <section aria-labelledby="ap-suggest">
             <div className="label" id="ap-suggest">
-              Suggestions
+              Recent repositories
             </div>
             <div className="suggestions">
               {picker.suggestions.map((s) => (
                 <button
                   key={s}
                   type="button"
-                  className={`chip suggestion mono${path === s ? " active" : ""}`}
+                  className={`chip suggestion${path === s ? " active" : ""}`}
                   title={`Use ${s}`}
+                  aria-pressed={path === s}
                   onClick={() => {
                     pathEdited.current = true;
                     setPath(s);
                   }}
                 >
-                  {s}
+                  <span className="suggestion-name">{derivedName(s)}</span>
+                  <span className="suggestion-parent mono">{shown(parentDir(s))}</span>
                 </button>
               ))}
             </div>
@@ -251,7 +327,7 @@ function AddProjectDialog({
               {picker.error}
             </div>
           )}
-          <ul className="dir-entries" ref={list} aria-busy={loading}>
+          <ul className={`dir-entries${mode === "existing" ? "" : " short"}`} ref={list} aria-busy={loading}>
             {picker.entries.map((e) => (
               <li key={e.name} className={e.isRegistered ? "registered" : undefined}>
                 <button
@@ -274,35 +350,70 @@ function AddProjectDialog({
             {loading && <li className="muted small pad">Loading…</li>}
           </ul>
         </section>
-        <label className="field-label">
-          Workspace path
-          <input
-            type="text"
-            className="field mono"
-            value={path}
-            placeholder="/home/me/code/project"
-            spellCheck={false}
-            autoComplete="off"
-            disabled={submitting}
-            onChange={(e) => {
-              pathEdited.current = true;
-              setPath(e.target.value);
-            }}
-          />
-        </label>
-        <label className="field-label">
-          Name (optional)
-          <input
-            type="text"
-            className="field"
-            value={name}
-            placeholder={path ? derivedName(path) || "Derived from the folder name" : "Derived from the folder name"}
-            spellCheck={false}
-            autoComplete="off"
-            disabled={submitting}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </label>
+        <div className={mode === "existing" ? undefined : "add-project-row"}>
+          <label className="field-label">
+            {mode === "existing" ? "Workspace path" : "Location"}
+            <input
+              type="text"
+              className="field mono"
+              value={path}
+              placeholder={mode === "existing" ? "/home/me/code/project" : "/home/me/code"}
+              spellCheck={false}
+              autoComplete="off"
+              disabled={submitting}
+              onChange={(e) => {
+                pathEdited.current = true;
+                setPath(e.target.value);
+              }}
+            />
+          </label>
+          {mode !== "existing" && (
+            <label className="field-label">
+              Folder name
+              <input
+                type="text"
+                className="field mono"
+                value={folder}
+                placeholder={mode === "clone" ? "From the repository" : "my-project"}
+                spellCheck={false}
+                autoComplete="off"
+                autoFocus={mode === "new"}
+                disabled={submitting}
+                onChange={(e) => {
+                  folderEdited.current = e.target.value !== "";
+                  setFolder(e.target.value);
+                }}
+              />
+            </label>
+          )}
+        </div>
+        {mode === "existing" ? (
+          <label className="field-label">
+            Name (optional)
+            <input
+              type="text"
+              className="field"
+              value={name}
+              placeholder={path ? derivedName(path) || "Derived from the folder name" : "Derived from the folder name"}
+              spellCheck={false}
+              autoComplete="off"
+              disabled={submitting}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+        ) : (
+          <p className="muted small add-project-preview">
+            {isPlausiblePath(path) && isFolderName(folder) ? (
+              <>
+                {mode === "new" ? "Creates " : "Clones into "}
+                <span className="mono">{shown(target)}</span>
+                {mode === "new" ? " and runs git init" : ""}. The project is named <strong>{folder.trim()}</strong>.
+              </>
+            ) : (
+              "Choose a location and a folder name."
+            )}
+          </p>
+        )}
         {error && (
           <div className="banner error" role="alert">
             {error}
@@ -312,8 +423,8 @@ function AddProjectDialog({
           <button type="button" className="btn ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={!ok} title={isPlausiblePath(path) ? undefined : "Choose an absolute directory path"}>
-            {submitting ? "Adding…" : "Add project"}
+          <button type="submit" className="btn primary" disabled={!ok}>
+            {mode === "clone" ? (submitting ? "Cloning…" : "Clone project") : mode === "new" ? (submitting ? "Creating…" : "Create project") : submitting ? "Adding…" : "Add project"}
           </button>
         </div>
       </form>

@@ -167,21 +167,6 @@ func (s *Server) projectInfo(name, path string) *v1.ProjectInfo {
 	return info
 }
 
-// AddProject registers a workspace under an optional name.
-func (s *Server) AddProject(_ context.Context, req *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error) {
-	if req.Msg.Path == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errNoPath)
-	}
-	p, err := s.mgr.AddProject(req.Msg.Path, req.Msg.Name)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	return connect.NewResponse(&v1.AddProjectResponse{Project: &v1.ProjectInfo{
-		Name: p.Name, Path: p.Path,
-		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
-	}}), nil
-}
-
 // RemoveProject deregisters a project by name.
 func (s *Server) RemoveProject(_ context.Context, req *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error) {
 	if err := s.mgr.RemoveProject(req.Msg.Name); err != nil {

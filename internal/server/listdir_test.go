@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -145,11 +148,14 @@ func TestListDirSuggestions(t *testing.T) {
 		return p
 	}
 	registered := mk("registered", true)
+	other := mk("other", true)
 	sibling := mk("sibling", true)
 	mk("plain", false)
 
-	if _, err := srv.AddProject(ctx, connect.NewRequest(&v1.AddProjectRequest{Path: registered})); err != nil {
-		t.Fatalf("AddProject: %v", err)
+	for _, p := range []string{registered, other} {
+		if _, err := srv.AddProject(ctx, connect.NewRequest(&v1.AddProjectRequest{Path: p})); err != nil {
+			t.Fatalf("AddProject: %v", err)
+		}
 	}
 
 	resp, err := srv.ListDir(ctx, connect.NewRequest(&v1.ListDirRequest{Path: code, Suggest: true}))
@@ -167,5 +173,50 @@ func TestListDirSuggestions(t *testing.T) {
 	}
 	if len(resp2.Msg.Suggestions) != 0 {
 		t.Fatalf("suggestions without suggest = %v, want empty", resp2.Msg.Suggestions)
+	}
+	if resp.Msg.DefaultParent != code {
+		t.Fatalf("default parent = %q, want %q (it holds the most projects)", resp.Msg.DefaultParent, code)
+	}
+}
+
+// TestListDirSuggestionsRecentFirst orders suggestions by git activity and
+// keeps only the most recent few.
+func TestListDirSuggestionsRecentFirst(t *testing.T) {
+	srv := newListDirServer(t)
+	code := t.TempDir()
+	registered := filepath.Join(code, "registered")
+	if err := os.MkdirAll(filepath.Join(registered, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.AddProject(context.Background(), connect.NewRequest(&v1.AddProjectRequest{Path: registered})); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+	base := time.Now().Add(-time.Hour)
+	var want []string
+	for i := range maxSuggestions + 3 {
+		// Names run opposite to recency so alphabetical order would be wrong.
+		p := filepath.Join(code, fmt.Sprintf("repo%02d", maxSuggestions+3-i))
+		if err := os.MkdirAll(filepath.Join(p, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stamp := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(filepath.Join(p, ".git"), stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		want = append([]string{p}, want...)
+	}
+	// Recent work inside .git (here a fetch) counts, not just the dir's mtime.
+	oldest := filepath.Join(code, fmt.Sprintf("repo%02d", maxSuggestions+3))
+	if err := os.WriteFile(filepath.Join(oldest, ".git", "FETCH_HEAD"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want = append([]string{oldest}, want[:len(want)-1]...)[:maxSuggestions]
+
+	resp, err := srv.ListDir(context.Background(), connect.NewRequest(&v1.ListDirRequest{Path: code, Suggest: true}))
+	if err != nil {
+		t.Fatalf("ListDir: %v", err)
+	}
+	if !slices.Equal(resp.Msg.Suggestions, want) {
+		t.Fatalf("suggestions = %v\nwant %v", resp.Msg.Suggestions, want)
 	}
 }

@@ -5192,6 +5192,41 @@ th[aria-sort="descending"] .sort-btn {
   background: var(--selected);
 }
 
+.chip.suggestion {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: inherit;
+}
+
+.suggestion-name {
+  font-weight: 600;
+}
+
+.suggestion-parent {
+  color: var(--fg-muted);
+}
+
+.segmented.add-mode {
+  margin: 0;
+}
+
+.segmented.add-mode button {
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  padding: 5px 0;
+}
+
+.add-project-row {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 10px;
+}
+
+.dir-entries.short {
+  height: 180px;
+}
+
 .dir-picker {
   border: 1px solid var(--border);
   border-radius: var(--radius);

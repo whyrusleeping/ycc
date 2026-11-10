@@ -374,9 +374,22 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"path":"/home/me/code","suggest":true}' \
  "suggestions":["/home/me/code/otherrepo"]}
 ```
 
-`suggest: true` additionally returns likely projects: git repos that are
-siblings of already-registered projects, excluding the registered ones (capped
-at 50).
+`suggest: true` additionally returns likely projects: unregistered git repos
+that are siblings of already-registered projects, most recent git activity
+first, at most 8. It also returns `defaultParent`, where a new project most
+likely belongs: the directory holding the most registered projects, else home.
+
+`AddProject` without other fields requires `path` to be an existing directory
+(`not_found` otherwise). `create: true` instead makes it a new git repository
+(missing parents created, `git init` run); `cloneUrl` clones into it first,
+accepting `owner/repo` (GitHub), https/ssh/git URLs (a GitHub page URL is
+reduced to its repository), and `git@host:owner/repo` remotes. GitHub repos use
+an authenticated `gh` on the daemon host when available, else git with the
+daemon user's credentials; prompts are disabled and the call blocks until the
+clone finishes (up to 15 minutes). For both, `path` must be absolute and
+missing or empty (`already_exists` otherwise); a bad repository is
+`invalid_argument`, and a failed clone is `failed_precondition` with git's
+error, credentials stripped.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"path":"/home/me/code/otherrepo"}' \

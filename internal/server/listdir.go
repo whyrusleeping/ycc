@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -82,6 +83,8 @@ func (s *Server) ListDir(_ context.Context, req *connect.Request[v1.ListDirReque
 	resp := &v1.ListDirResponse{Path: dir, Parent: parent, Entries: entries}
 	if req.Msg.Suggest {
 		resp.Suggestions = s.suggestProjects(registered)
+		home, _ := os.UserHomeDir()
+		resp.DefaultParent = defaultProjectParent(registered, home)
 	}
 	return connect.NewResponse(resp), nil
 }
@@ -96,18 +99,24 @@ func (s *Server) registeredPaths() map[string]bool {
 	return m
 }
 
+// maxSuggestions bounds ListDir suggestions: a short "recent" list you can
+// take in at a glance; everything else stays reachable through browsing.
+const maxSuggestions = 8
+
 // suggestProjects returns likely-project paths: git repositories that are
 // siblings of already-registered projects (projects tend to live together,
-// e.g. ~/code/*). Registered paths themselves are excluded. Results are
-// sorted and capped.
+// e.g. ~/code/*). Registered paths themselves are excluded. The most recently
+// active repositories come first.
 func (s *Server) suggestProjects(registered map[string]bool) []string {
-	const maxSuggestions = 50
 	parents := make(map[string]bool)
 	for p := range registered {
 		parents[filepath.Dir(p)] = true
 	}
-	seen := make(map[string]bool)
-	var out []string
+	type candidate struct {
+		path   string
+		active time.Time
+	}
+	var found []candidate
 	for parent := range parents {
 		dirents, err := os.ReadDir(parent)
 		if err != nil {
@@ -119,20 +128,65 @@ func (s *Server) suggestProjects(registered map[string]bool) []string {
 				continue
 			}
 			full := filepath.Join(parent, name)
-			if seen[full] || registered[full] {
+			if registered[full] || !isDir(de, full) {
 				continue
 			}
-			if isDir(de, full) && isGitRepo(full) {
-				seen[full] = true
-				out = append(out, full)
+			if active, ok := gitActivity(full); ok {
+				found = append(found, candidate{full, active})
 			}
 		}
 	}
-	sort.Strings(out)
-	if len(out) > maxSuggestions {
-		out = out[:maxSuggestions]
+	sort.Slice(found, func(i, j int) bool {
+		if !found[i].active.Equal(found[j].active) {
+			return found[i].active.After(found[j].active)
+		}
+		return found[i].path < found[j].path
+	})
+	if len(found) > maxSuggestions {
+		found = found[:maxSuggestions]
+	}
+	out := make([]string, len(found))
+	for i, c := range found {
+		out[i] = c.path
 	}
 	return out
+}
+
+// gitActivity reports whether dir is a git repository and approximately when
+// it was last used: the newest of the files git rewrites on status, commit,
+// checkout, and fetch. A worktree/submodule `.git` file only has its own time.
+func gitActivity(dir string) (time.Time, bool) {
+	gitDir := filepath.Join(dir, ".git")
+	info, err := os.Stat(gitDir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	latest := info.ModTime()
+	if info.IsDir() {
+		for _, f := range []string{"index", "HEAD", "FETCH_HEAD", filepath.Join("logs", "HEAD")} {
+			if fi, err := os.Stat(filepath.Join(gitDir, f)); err == nil && fi.ModTime().After(latest) {
+				latest = fi.ModTime()
+			}
+		}
+	}
+	return latest, true
+}
+
+// defaultProjectParent is where a new project most likely belongs: the
+// directory holding the most registered projects (ties broken by path), else
+// home.
+func defaultProjectParent(registered map[string]bool, home string) string {
+	counts := make(map[string]int)
+	for p := range registered {
+		counts[filepath.Dir(p)]++
+	}
+	best, n := home, 0
+	for dir, c := range counts {
+		if c > n || (c == n && dir < best) {
+			best, n = dir, c
+		}
+	}
+	return best
 }
 
 // isDir reports whether a directory entry is a directory, following symlinks

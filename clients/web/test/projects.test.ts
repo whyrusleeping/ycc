@@ -10,8 +10,11 @@ import {
   dirPickerReducer,
   gitSyncBadge,
   initialDirPicker,
+  isFolderName,
   isPlausiblePath,
   renamedRoute,
+  repoFolderName,
+  tildePath,
   routeUnderProject,
   type DirPickerState,
 } from "../src/features/projects/model";
@@ -40,26 +43,64 @@ describe("add project", () => {
     expect(isPlausiblePath("  /srv/x  ")).toBe(true);
     for (const bad of ["", "/", "//", "relative/path", "~/code", "  "]) expect(isPlausiblePath(bad), bad).toBe(false);
   });
+
+  it("names a clone's folder after the repository", () => {
+    for (const src of [
+      "owner/repo",
+      "https://github.com/o/repo.git",
+      "git@github.com:o/repo",
+      " https://host/g/sub/repo/ ",
+      "https://github.com/o/repo/tree/main/docs",
+      "https://github.com/o/repo?tab=readme#top",
+    ])
+      expect(repoFolderName(src), src).toBe("repo");
+    for (const src of ["", "o/..", "git@host:"]) expect(repoFolderName(src), src).toBe("");
+  });
+
+  it("accepts a single folder name only", () => {
+    expect(isFolderName(" my-project ")).toBe(true);
+    for (const bad of ["", " ", ".", "..", "a/b"]) expect(isFolderName(bad), bad).toBe(false);
+  });
+
+  it("abbreviates the daemon user's home as ~", () => {
+    expect(tildePath("/home/me/code", "/home/me")).toBe("~/code");
+    expect(tildePath("/home/me", "/home/me")).toBe("~");
+    expect(tildePath("/home/meow/code", "/home/me")).toBe("/home/meow/code");
+  });
 });
 
 describe("directory picker navigation", () => {
   const entry = (name: string, isGitRepo = false) => create(DirEntrySchema, { name, isGitRepo });
-  const home = { path: "/home/me", parent: "/home", entries: [entry("code"), entry("ycc", true)], suggestions: ["/home/me/code/b"] };
+  const home = {
+    path: "/home/me",
+    parent: "/home",
+    entries: [entry("code"), entry("ycc", true)],
+    suggestions: ["/home/me/code/b"],
+    defaultParent: "/home/me/code",
+  };
 
   it("loads home with suggestions, then drills down keeping them", () => {
     let s: DirPickerState = dirPickerReducer(initialDirPicker, { type: "open", path: "" });
     expect(s.loading).toBe("");
     s = dirPickerReducer(s, { type: "loaded", requested: "", response: home, initial: true });
-    expect(s).toMatchObject({ path: "/home/me", parent: "/home", loading: null, suggestions: ["/home/me/code/b"] });
+    expect(s).toMatchObject({
+      path: "/home/me",
+      parent: "/home",
+      loading: null,
+      suggestions: ["/home/me/code/b"],
+      home: "/home/me",
+      defaultParent: "/home/me/code",
+    });
     expect(canGoUp(s)).toBe(true);
     s = dirPickerReducer(s, { type: "open", path: childDir(s.path, "code") });
     s = dirPickerReducer(s, {
       type: "loaded",
       requested: "/home/me/code",
-      response: { path: "/home/me/code", parent: "/home/me", entries: [], suggestions: [] },
+      response: { path: "/home/me/code", parent: "/home/me", entries: [], suggestions: [], defaultParent: "" },
       initial: false,
     });
     expect(s.path).toBe("/home/me/code");
+    expect(s).toMatchObject({ home: "/home/me", defaultParent: "/home/me/code" });
     expect(s.entries).toEqual([]);
     expect(s.suggestions).toEqual(["/home/me/code/b"]);
   });
@@ -89,7 +130,7 @@ describe("directory picker navigation", () => {
     const s = dirPickerReducer({ ...initialDirPicker, loading: "/" }, {
       type: "loaded",
       requested: "/",
-      response: { path: "/", parent: "", entries: [], suggestions: [] },
+      response: { path: "/", parent: "", entries: [], suggestions: [], defaultParent: "" },
       initial: false,
     });
     expect(canGoUp(s)).toBe(false);

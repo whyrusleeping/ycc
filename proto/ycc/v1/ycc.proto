@@ -64,8 +64,20 @@ message GitStatus {
 message ListProjectsRequest {}
 message ListProjectsResponse { repeated ProjectInfo projects = 1; }
 message AddProjectRequest {
-  string path = 1; // workspace dir to register
+  // Workspace dir to register. Without `create`/`clone_url` it must already
+  // exist (not_found otherwise).
+  string path = 1;
   string name = 2; // optional; derived from the dir basename when empty
+  // create makes `path` a new git repository: the directory (and missing
+  // parents) is created and `git init` run in it. An existing non-empty
+  // directory is already_exists.
+  bool create = 3;
+  // clone_url clones a repository into `path` (which must not exist or be
+  // empty) before registering it. Accepts `owner/repo` (GitHub), https/ssh/git
+  // URLs, and scp-style `git@host:owner/repo` remotes. GitHub repos use an
+  // authenticated `gh` on the daemon host when available, else plain git with
+  // the daemon user's credentials; prompts are disabled.
+  string clone_url = 4;
 }
 message AddProjectResponse { ProjectInfo project = 1; }
 message RemoveProjectRequest { string name = 1; }
@@ -90,15 +102,20 @@ message DirEntry {
 message ListDirRequest {
   // Absolute directory to list; empty => the daemon user's home directory.
   string path = 1;
-  // When true, also populate `suggestions`: git repos that are siblings of
-  // already-registered projects (likely projects, one tap to register).
+  // When true, also populate `suggestions` and `default_parent`.
   bool suggest = 2;
 }
 message ListDirResponse {
   string path = 1;                 // resolved absolute path that was listed
   string parent = 2;               // parent dir ("" when path is the root)
   repeated DirEntry entries = 3;   // subdirectories, sorted, hidden dirs omitted
-  repeated string suggestions = 4; // absolute paths (only when suggest=true)
+  // Likely projects (only when suggest=true): absolute paths of unregistered
+  // git repos beside registered projects, most recent git activity first,
+  // at most 8.
+  repeated string suggestions = 4;
+  // Where new projects most likely belong (only when suggest=true): the
+  // directory holding the most registered projects, else the home directory.
+  string default_parent = 5;
 }
 
 // ListFiles / ReadFile — read-only project file browsing. Unlike ListDir these
