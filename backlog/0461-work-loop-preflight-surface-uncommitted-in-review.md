@@ -1,10 +1,10 @@
 ---
 id: "0461"
 title: 'Work loop preflight: surface uncommitted in_review work before starting'
-status: proposed
+status: todo
 priority: 2
 created: "2026-10-12"
-updated: "2026-10-12"
+updated: "2026-11-10"
 depends_on: []
 spec_refs: []
 ---

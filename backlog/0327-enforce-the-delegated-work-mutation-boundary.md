@@ -1,10 +1,10 @@
 ---
 id: "0327"
 title: Enforce the delegated-work mutation boundary
-status: proposed
+status: done
 priority: 2
 created: "2026-08-12"
-updated: "2026-08-12"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - §8 Tools and access policy
@@ -24,3 +24,4 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+- 2026-11-10: Closed without implementation. The owner declined this proposal.
