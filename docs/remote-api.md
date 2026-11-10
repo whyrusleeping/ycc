@@ -315,6 +315,7 @@ JSON="Content-Type: application/json"
 | [`StopSession`](#stopsession) | hard-terminate a session |
 | [`ResumeSession`](#resumesession) | re-open a persisted session on its existing log |
 | [`ListBacklog`](#listbacklog) / [`GetTask`](#gettask) | browse the durable backlog |
+| [`GetBacklogGroom`](#getbackloggroom) | automatic backlog grooming: enabled, running groom, latest run |
 | [`GetMemory`](#getmemory) | read the project's agent memory (memory.md) |
 | [`GetUsage`](#getusage) | priced token-usage breakdown |
 | [`GetBudget`](#getbudget) | configured spend-guard caps |
@@ -1095,6 +1096,31 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"id":"0130"}' \
 ```
 
 Unknown id → `{"code":"not_found","message":"no task with id \"9999\""}`.
+
+### GetBacklogGroom
+
+The project's daemon-scheduled backlog grooming (spec §6.2). Read-only. Reports
+whether it is on (`autoGroom`: `backlog.auto_groom` in `ycc.toml` and
+`[backlog] auto_groom` in the project's `.ycc/config.toml`), the live automatic
+groom session (`groomSessionId`, empty when none), the latest automatic groom
+(`lastGroom`: `sessionId`, `startedUnix`, `finishedUnix` (0 while running),
+`outcome`, `changed` (the churn that triggered it), `batch` (changed task ids it
+reviewed first), `deferred`, and `report`, the run's clipped final report), and
+`decisionsTaskId`, the standing proposed task "Backlog groom: decisions needed"
+that collects the grooms' flags (empty when there is none). To groom on demand,
+call `StartSession` with `mode: "pm"`, `preset: "backlog-groom"` and no prompt.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
+  $B/ycc.v1.SessionService/GetBacklogGroom
+```
+
+```json
+{"autoGroom":true,
+ "lastGroom":{"sessionId":"s_1a2b3c4d5e6f7a8b","startedUnix":"1790000000","finishedUnix":"1790000420",
+  "outcome":"finished","changed":12,"batch":["0412","0415"],"report":"...Flagged for the user: 1 (task 0533)"},
+ "decisionsTaskId":"0533"}
+```
 
 ### GetMemory
 

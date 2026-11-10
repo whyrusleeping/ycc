@@ -927,6 +927,21 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// The project's daemon-scheduled backlog grooming: whether it is on, the
+    /// live automatic groom, the latest run, and the standing "decisions
+    /// needed" task. `project` is optional for a single-project daemon.
+    public func getBacklogGroom(project: String = "") async throws -> Ycc_V1_GetBacklogGroomResponse {
+        var request = Ycc_V1_GetBacklogGroomRequest()
+        request.project = project
+        let response = await generated.getBacklogGroom(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     // MARK: - Usage & budget
 
     /// Priced token-usage breakdown, grouped and filtered by `GetUsage`.

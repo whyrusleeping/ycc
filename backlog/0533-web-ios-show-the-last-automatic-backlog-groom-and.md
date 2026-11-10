@@ -1,7 +1,7 @@
 ---
 id: "0533"
 title: 'Web + iOS: show the last automatic backlog groom and a "groom now" action'
-status: todo
+status: done
 priority: 3
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -10,6 +10,8 @@ depends_on:
 spec_refs:
     - spec.md#6.2 Backlog
 ---
+
+## Description
 
 ## Description
 ## Why
@@ -25,5 +27,13 @@ Task 0531 added daemon-scheduled backlog grooming (spec §6.2): `Manager.Backlog
 - An RPC returns enabled, running session and last run for a project. Server test covers it.
 - Web and iOS show the last run and offer "groom now". Light/dark screenshots, web bundle rebuilt, iOS built and tested on the Mac.
 
+## Acceptance criteria
 
-## Work log
+- An RPC returns enabled, running session and last run for a project. Server test covers it.
+- Web and iOS show the last run and offer "groom now". Light/dark screenshots, web bundle rebuilt, iOS built and tested on the Mac.
+
+## Outcome
+
+GetBacklogGroom RPC reports auto-groom enabled, the live automatic groom, the last run (changed/batch/deferred/report) and the proposed "Backlog groom: decisions needed" task; TestGetBacklogGroom. Web backlog page GroomBanner (status line, session link, report toggle, decisions link, Groom now/Watch) with unit tests, light/dark shots and a Groom now click verified in the sidebar-v2 harness; bundle rebuilt. iOS backlog strip + detail sheet (polls while a groom runs), BacklogGroomSummary tests; swift test 594 pass, xcodebuild build/test pass on the Mac; iOS UI not viewed in a simulator (no AXe).
+
+Commit: Backlog groom status: GetBacklogGroom RPC (enabled, running groom, last run, decisions task) with web backlog banner and iOS backlog strip/sheet offering Groom now (0533)

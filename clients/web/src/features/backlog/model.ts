@@ -3,7 +3,13 @@
 // sorting the ListBacklog table, keyboard cursor movement, editable-list
 // parsing, the body/work-log split, and task links inside task bodies.
 import { clone, create } from "@bufbuild/protobuf";
-import { BacklogTaskSummarySchema, type BacklogTaskSummary, type TaskDetail } from "../../gen/ycc/v1/ycc_pb";
+import {
+  BacklogTaskSummarySchema,
+  type BacklogTaskSummary,
+  type GetBacklogGroomResponse,
+  type TaskDetail,
+} from "../../gen/ycc/v1/ycc_pb";
+import { relativeTime } from "../sessions/feed";
 
 /** Statuses UpdateTask accepts, in workflow (board) order. */
 export const TASK_STATUSES = ["proposed", "todo", "in_progress", "in_review", "blocked", "done"] as const;
@@ -407,4 +413,38 @@ export function upsertSummary(list: readonly BacklogTaskSummary[], d: TaskDetail
   const next = list.slice();
   next[i] = row;
   return next;
+}
+
+/** True when an automatic backlog groom ended without finishing cleanly. */
+export function groomFailed(status: GetBacklogGroomResponse): boolean {
+  const run = status.lastGroom;
+  if (!run || status.groomSessionId === run.sessionId) return false;
+  return Number(run.finishedUnix) === 0 || (run.outcome !== "" && run.outcome !== "finished");
+}
+
+/**
+ * The backlog page's one-line account of automatic grooming (GetBacklogGroom):
+ * the latest run's state, when, and how many changed tasks it took on.
+ */
+export function groomLine(status: GetBacklogGroomResponse, now: number = Date.now()): string {
+  const run = status.lastGroom;
+  if (!run) {
+    return status.autoGroom
+      ? "No automatic groom yet. One runs once enough tasks have changed."
+      : "Automatic grooming is off for this project.";
+  }
+  const at = (unix: bigint) => relativeTime(new Date(Number(unix) * 1000).toISOString(), now);
+  const tasks = (n: number) => `${n} changed ${n === 1 ? "task" : "tasks"}`;
+  const left = run.deferred > 0 ? `, ${run.deferred} left for the next run` : "";
+  if (status.groomSessionId && status.groomSessionId === run.sessionId) {
+    return `Running · started ${at(run.startedUnix)} · reviewing ${tasks(run.batch.length)}${left}`;
+  }
+  if (Number(run.finishedUnix) === 0) {
+    return `Interrupted · started ${at(run.startedUnix)} · ${tasks(run.batch.length)} not reviewed`;
+  }
+  const outcome = run.outcome || "finished";
+  const head = `${outcome[0].toUpperCase()}${outcome.slice(1)} ${at(run.finishedUnix)}`;
+  return outcome === "finished"
+    ? `${head} · reviewed ${tasks(run.batch.length)}${left}`
+    : `${head} · ${tasks(run.changed)} still to review`;
 }

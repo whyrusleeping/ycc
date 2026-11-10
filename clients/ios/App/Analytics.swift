@@ -69,7 +69,7 @@ enum Analytics {
         "drawer.open", "drawer.select_project", "drawer.rename_project", "drawer.remove_project",
         "drawer.disconnect",
         "scope.select",
-        "backlog.move", "task.status", "task.start_work",
+        "backlog.move", "backlog.groom", "backlog.groom_details", "task.status", "task.start_work",
         "loop.start", "loop.stop",
         "new_session.workstream",
         "workstreams.preview", "workstreams.merge", "workstreams.retry", "workstreams.discard",

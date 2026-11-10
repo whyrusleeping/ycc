@@ -292,7 +292,9 @@ task, "Backlog groom: decisions needed", that each run rewrites rather than dupl
 left uncommitted. `.ycc/backlog-groom.json` records the latest run (session, outcome, batch,
 clipped final report) and the baseline. `[backlog] auto_groom = false` in a project's
 `.ycc/config.toml` opts that project out; `backlog.auto_groom = false` in `ycc.toml` disables it
-daemon-wide. Runs use the automation origin, so they stay out of session inboxes.
+daemon-wide. Runs use the automation origin, so they stay out of session inboxes. `GetBacklogGroom`
+reports this state; the web backlog page and the iOS backlog view show the latest run, link the
+decisions task, and offer "Groom now", which starts the `backlog-groom` preset.
 
 A bare spec reference names a section in the entry point; `path#Section` names another design
 document. Work sessions record their active task focus in the event log, making usage and session

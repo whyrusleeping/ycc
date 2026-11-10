@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -16,6 +18,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
@@ -684,6 +687,93 @@ func TestGetMemory(t *testing.T) {
 
 	if _, err := srv.GetMemory(ctx, connect.NewRequest(&v1.GetMemoryRequest{Project: "nope"})); err == nil {
 		t.Fatal("GetMemory with bogus project: expected error")
+	} else if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument", code)
+	}
+}
+
+// TestGetBacklogGroom: automatic backlog grooming defaults on with no run yet;
+// the latest run recorded in .ycc/backlog-groom.json is reported (without the
+// churn baseline), the standing "decisions needed" proposed task is found, a
+// project opt-out turns it off, and an unknown project is InvalidArgument.
+func TestGetBacklogGroom(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	got, err := srv.GetBacklogGroom(ctx, connect.NewRequest(&v1.GetBacklogGroomRequest{}))
+	if err != nil {
+		t.Fatalf("GetBacklogGroom (fresh): %v", err)
+	}
+	if m := got.Msg; !m.GetAutoGroom() || m.GetGroomSessionId() != "" || m.GetLastGroom() != nil || m.GetDecisionsTaskId() != "" {
+		t.Fatalf("GetBacklogGroom (fresh) = %+v", m)
+	}
+
+	started := time.Unix(1790000000, 0).UTC()
+	finished := started.Add(7 * time.Minute)
+	state := session.BacklogGroomState{
+		LastSession: "s_groom", LastStarted: started, LastFinished: finished, Outcome: "finished",
+		Changed: 12, Batch: []string{"0001", "0002"}, Deferred: 1, Report: "Flagged for the user: 1 (task 0003)",
+		BaselineAt: finished, Baseline: map[string]string{"0001-a.md": "abc"},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws, ".ycc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".ycc", "backlog-groom.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	var wantDecisions string
+	for _, c := range []struct {
+		title  string
+		status docs.Status
+	}{
+		{"Some other work", docs.StatusProposed},
+		{orchestrator.BacklogGroomFollowUpTitle, docs.StatusDone}, // an old, resolved one
+		{orchestrator.BacklogGroomFollowUpTitle, docs.StatusProposed},
+	} {
+		task, err := store.CreateWithStatus(c.title, "body", 3, nil, nil, c.status)
+		if err != nil {
+			t.Fatalf("Create %q: %v", c.title, err)
+		}
+		if c.status == docs.StatusProposed && c.title == orchestrator.BacklogGroomFollowUpTitle {
+			wantDecisions = task.ID
+		}
+	}
+
+	got, err = srv.GetBacklogGroom(ctx, connect.NewRequest(&v1.GetBacklogGroomRequest{}))
+	if err != nil {
+		t.Fatalf("GetBacklogGroom: %v", err)
+	}
+	last := got.Msg.GetLastGroom()
+	if last == nil || last.GetSessionId() != "s_groom" || last.GetStartedUnix() != started.Unix() ||
+		last.GetFinishedUnix() != finished.Unix() || last.GetOutcome() != "finished" || last.GetChanged() != 12 ||
+		strings.Join(last.GetBatch(), ",") != "0001,0002" || last.GetDeferred() != 1 ||
+		last.GetReport() != "Flagged for the user: 1 (task 0003)" {
+		t.Fatalf("GetBacklogGroom last = %+v", last)
+	}
+	if got.Msg.GetDecisionsTaskId() != wantDecisions || wantDecisions == "" {
+		t.Fatalf("decisions task = %q, want %q", got.Msg.GetDecisionsTaskId(), wantDecisions)
+	}
+
+	if err := os.WriteFile(filepath.Join(ws, ".ycc", "config.toml"), []byte("[backlog]\nauto_groom = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err = srv.GetBacklogGroom(ctx, connect.NewRequest(&v1.GetBacklogGroomRequest{}))
+	if err != nil || got.Msg.GetAutoGroom() || got.Msg.GetLastGroom() == nil {
+		t.Fatalf("GetBacklogGroom (opted out) = %+v, %v; want disabled with the last run kept", got, err)
+	}
+
+	if _, err := srv.GetBacklogGroom(ctx, connect.NewRequest(&v1.GetBacklogGroomRequest{Project: "nope"})); err == nil {
+		t.Fatal("GetBacklogGroom with bogus project: expected error")
 	} else if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
 		t.Fatalf("code = %v, want InvalidArgument", code)
 	}

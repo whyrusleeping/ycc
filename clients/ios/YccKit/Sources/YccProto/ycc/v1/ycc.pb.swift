@@ -2889,6 +2889,87 @@ public nonisolated struct Ycc_V1_CreateTaskResponse: Sendable {
   fileprivate var _task: Ycc_V1_TaskDetail? = nil
 }
 
+/// Automatic backlog grooming (spec §6.2): the daemon starts an unattended
+/// backlog-groom pm session once enough tasks have changed since the last
+/// finished groom. To groom on demand, start the "backlog-groom" preset.
+public nonisolated struct Ycc_V1_GetBacklogGroomRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetBacklogGroomResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// daemon-scheduled grooming enabled ([backlog] auto_groom)
+  public var autoGroom: Bool = false
+
+  /// live automatic groom session; "" when none
+  public var groomSessionID: String = String()
+
+  /// latest automatic groom; unset when none has run
+  public var lastGroom: Ycc_V1_BacklogGroomRun {
+    get {_lastGroom ?? Ycc_V1_BacklogGroomRun()}
+    set {_lastGroom = newValue}
+  }
+  /// Returns true if `lastGroom` has been explicitly set.
+  public var hasLastGroom: Bool {self._lastGroom != nil}
+  /// Clears the value of `lastGroom`. Subsequent reads from it will return its default value.
+  public mutating func clearLastGroom() {self._lastGroom = nil}
+
+  /// The standing proposed task "Backlog groom: decisions needed" that collects
+  /// the grooms' flags for the user; "" when there is none.
+  public var decisionsTaskID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _lastGroom: Ycc_V1_BacklogGroomRun? = nil
+}
+
+/// One daemon-scheduled automatic backlog groom.
+public nonisolated struct Ycc_V1_BacklogGroomRun: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  public var startedUnix: Int64 = 0
+
+  /// 0 while running or if interrupted before recording
+  public var finishedUnix: Int64 = 0
+
+  /// finished | error | stopped | timed out | interrupted; "" while running
+  public var outcome: String = String()
+
+  /// tasks created or changed since the previous groom (the trigger)
+  public var changed: Int32 = 0
+
+  /// changed task ids handed to the run, reviewed first
+  public var batch: [String] = []
+
+  /// changed tasks left for a later run
+  public var deferred: Int32 = 0
+
+  /// the run's final report, clipped; "" until it ends
+  public var report: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Plan library (reusable runbooks): read-only access to the
 /// in-repo plans/*.md so clients can browse and view saved plans.
 public nonisolated struct Ycc_V1_ListPlansRequest: Sendable {
@@ -10330,6 +10411,150 @@ nonisolated extension Ycc_V1_CreateTaskResponse: SwiftProtobuf.Message, SwiftPro
 
   public static func ==(lhs: Ycc_V1_CreateTaskResponse, rhs: Ycc_V1_CreateTaskResponse) -> Bool {
     if lhs._task != rhs._task {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetBacklogGroomRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetBacklogGroomRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetBacklogGroomRequest, rhs: Ycc_V1_GetBacklogGroomRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetBacklogGroomResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetBacklogGroomResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}auto_groom\0\u{3}groom_session_id\0\u{3}last_groom\0\u{3}decisions_task_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.autoGroom) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.groomSessionID) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._lastGroom) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.decisionsTaskID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.autoGroom != false {
+      try visitor.visitSingularBoolField(value: self.autoGroom, fieldNumber: 1)
+    }
+    if !self.groomSessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.groomSessionID, fieldNumber: 2)
+    }
+    try { if let v = self._lastGroom {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    if !self.decisionsTaskID.isEmpty {
+      try visitor.visitSingularStringField(value: self.decisionsTaskID, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetBacklogGroomResponse, rhs: Ycc_V1_GetBacklogGroomResponse) -> Bool {
+    if lhs.autoGroom != rhs.autoGroom {return false}
+    if lhs.groomSessionID != rhs.groomSessionID {return false}
+    if lhs._lastGroom != rhs._lastGroom {return false}
+    if lhs.decisionsTaskID != rhs.decisionsTaskID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_BacklogGroomRun: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BacklogGroomRun"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}started_unix\0\u{3}finished_unix\0\u{1}outcome\0\u{1}changed\0\u{1}batch\0\u{1}deferred\0\u{1}report\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.startedUnix) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.finishedUnix) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.outcome) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.changed) }()
+      case 6: try { try decoder.decodeRepeatedStringField(value: &self.batch) }()
+      case 7: try { try decoder.decodeSingularInt32Field(value: &self.deferred) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.report) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if self.startedUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.startedUnix, fieldNumber: 2)
+    }
+    if self.finishedUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.finishedUnix, fieldNumber: 3)
+    }
+    if !self.outcome.isEmpty {
+      try visitor.visitSingularStringField(value: self.outcome, fieldNumber: 4)
+    }
+    if self.changed != 0 {
+      try visitor.visitSingularInt32Field(value: self.changed, fieldNumber: 5)
+    }
+    if !self.batch.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.batch, fieldNumber: 6)
+    }
+    if self.deferred != 0 {
+      try visitor.visitSingularInt32Field(value: self.deferred, fieldNumber: 7)
+    }
+    if !self.report.isEmpty {
+      try visitor.visitSingularStringField(value: self.report, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_BacklogGroomRun, rhs: Ycc_V1_BacklogGroomRun) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.startedUnix != rhs.startedUnix {return false}
+    if lhs.finishedUnix != rhs.finishedUnix {return false}
+    if lhs.outcome != rhs.outcome {return false}
+    if lhs.changed != rhs.changed {return false}
+    if lhs.batch != rhs.batch {return false}
+    if lhs.deferred != rhs.deferred {return false}
+    if lhs.report != rhs.report {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -2,7 +2,12 @@
 // keyboard cursor, list parsing, the work-log split, and task-file links.
 import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { BacklogTaskSummarySchema, TaskDetailSchema, type BacklogTaskSummary } from "../src/gen/ycc/v1/ycc_pb";
+import {
+  BacklogTaskSummarySchema,
+  GetBacklogGroomResponseSchema,
+  TaskDetailSchema,
+  type BacklogTaskSummary,
+} from "../src/gen/ycc/v1/ycc_pb";
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
@@ -12,6 +17,8 @@ import {
   moveBoardCursor,
   compareIds,
   filterTasks,
+  groomFailed,
+  groomLine,
   isActionable,
   moveCursor,
   normalizeTaskId,
@@ -212,5 +219,36 @@ describe("backlog model", () => {
     const moved = withStatus(tasks[1], "in_progress");
     expect(moved).toMatchObject({ id: "0002", status: "in_progress", title: "Wire the API" });
     expect(tasks[1].status).toBe("todo");
+  });
+});
+
+describe("automatic backlog groom line", () => {
+  const now = Date.UTC(2026, 10, 10, 12, 0, 0);
+  const unix = (minutesAgo: number) => BigInt(Math.floor(now / 1000) - minutesAgo * 60);
+  const status = (init: MessageInitShape<typeof GetBacklogGroomResponseSchema>) => create(GetBacklogGroomResponseSchema, init);
+  const run = { sessionId: "s_g", startedUnix: unix(180), changed: 12, batch: ["0001", "0002", "0003"], deferred: 0 };
+
+  it("explains a project with no run yet", () => {
+    expect(groomLine(status({ autoGroom: true }), now)).toMatch(/No automatic groom yet/);
+    expect(groomLine(status({ autoGroom: false }), now)).toBe("Automatic grooming is off for this project.");
+    expect(groomFailed(status({ autoGroom: true }))).toBe(false);
+  });
+
+  it("describes a running, finished, failed, and interrupted run", () => {
+    const running = status({ autoGroom: true, groomSessionId: "s_g", lastGroom: { ...run, deferred: 2 } });
+    expect(groomLine(running, now)).toBe("Running · started 3h ago · reviewing 3 changed tasks, 2 left for the next run");
+    expect(groomFailed(running)).toBe(false);
+
+    const finished = status({ autoGroom: true, lastGroom: { ...run, finishedUnix: unix(170), outcome: "finished" } });
+    expect(groomLine(finished, now)).toBe("Finished 3h ago · reviewed 3 changed tasks");
+    expect(groomFailed(finished)).toBe(false);
+
+    const failed = status({ autoGroom: true, lastGroom: { ...run, finishedUnix: unix(120), outcome: "timed out" } });
+    expect(groomLine(failed, now)).toBe("Timed out 2h ago · 12 changed tasks still to review");
+    expect(groomFailed(failed)).toBe(true);
+
+    const lost = status({ autoGroom: true, lastGroom: { ...run, batch: ["0001"] } });
+    expect(groomLine(lost, now)).toBe("Interrupted · started 3h ago · 1 changed task not reviewed");
+    expect(groomFailed(lost)).toBe(true);
   });
 });

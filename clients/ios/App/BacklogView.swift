@@ -13,7 +13,9 @@ import YccProto
 /// Tapping a card opens the task detail; the card's move menu and the long-press
 /// context menu change status in place; the toolbar "+" opens quick capture, and
 /// the overflow menu holds the sort order plus the daemon's backlog-placed
-/// presets (grooming) and re-onboarding. A
+/// presets (grooming) and re-onboarding. Under the work-loop banner, a strip
+/// shows the latest automatic backlog groom (tap for its report) with a
+/// "Groom now" button. A
 /// mid-screen `.unauthorized` failure routes back to the connect screen via
 /// ``AppModel/handleUnauthorized()``.
 struct BacklogView: View {
@@ -28,6 +30,12 @@ struct BacklogView: View {
     @State private var showLoopStopConfirmation = false
     /// Backlog grooming and re-onboarding, placed by the daemon (ListModes).
     @State private var presetActions: PresetActionsModel?
+    /// Automatic backlog grooming (GetBacklogGroom) for `groomProject`.
+    @State private var groomStatus: Ycc_V1_GetBacklogGroomResponse?
+    @State private var groomProject = ""
+    @State private var showGroomSheet = false
+    @State private var isStartingGroom = false
+    @State private var groomError: String?
     /// Board vs list, remembered across launches.
     @AppStorage("backlog.presentation") private var presentation: Presentation = .board
     /// Card/row ordering, shared by both presentations and remembered across launches.
@@ -86,6 +94,7 @@ struct BacklogView: View {
         .task { await ensureLoaded() }
         .presetActionAlerts(presetActions, app: app)
         .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
+        .task(id: groomTaskID) { await loadAndPollGroomStatus() }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
@@ -113,6 +122,20 @@ struct BacklogView: View {
     /// sit on the banner buttons).
     private func withDialogs(_ content: some View) -> some View {
         content
+        .sheet(isPresented: $showGroomSheet) {
+            if let groomStatus {
+                groomSheet(groomStatus, project: groomProject)
+            }
+        }
+        .alert(
+            "Couldn’t start grooming",
+            isPresented: Binding(get: { groomError != nil }, set: { if !$0 { groomError = nil } }),
+            presenting: groomError
+        ) { _ in
+            Button("OK", role: .cancel) { groomError = nil }
+        } message: { message in
+            Text(message)
+        }
         .sheet(isPresented: $showCapture) {
             if let model {
                 QuickCaptureView(model: model)
@@ -186,6 +209,10 @@ struct BacklogView: View {
             if !model.selectedProject.isEmpty, app.client != nil {
                 workLoopBanner(model)
                 Divider()
+                if let groomStatus, groomProject == model.selectedProject {
+                    groomBanner(groomStatus, project: groomProject)
+                    Divider()
+                }
             }
             backlogContent(model)
         }
@@ -303,6 +330,192 @@ struct BacklogView: View {
         }
     }
 
+    // MARK: - Automatic backlog grooming
+
+    /// One line under the work-loop banner: the latest automatic groom (tap
+    /// for its report and session) and a "Groom now" / "Watch" button.
+    private func groomBanner(_ status: Ycc_V1_GetBacklogGroomResponse, project: String) -> some View {
+        let line = BacklogGroomSummary.line(status)
+        let failed = BacklogGroomSummary.failed(status)
+        return HStack(spacing: 10) {
+            Button {
+                Analytics.action("backlog.groom_details", via: .tap)
+                showGroomSheet = true
+                Task { await loadGroomStatus() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: failed ? "exclamationmark.triangle" : "list.bullet.clipboard")
+                        .font(.caption)
+                        .foregroundStyle(failed ? Theme.attention : .secondary)
+                    Text("Groom · \(line)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Backlog grooming: \(line)")
+            .accessibilityHint("Shows the latest groom's report")
+
+            groomActionButton(status, project: project, compact: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color(.secondarySystemGroupedBackground))
+    }
+
+    /// "Groom now", or "Watch groom" while an automatic groom runs.
+    @ViewBuilder
+    private func groomActionButton(_ status: Ycc_V1_GetBacklogGroomResponse, project: String, compact: Bool) -> some View {
+        if !status.groomSessionID.isEmpty {
+            Button {
+                showGroomSheet = false
+                openGroomSession(status.groomSessionID, project: project, live: true)
+            } label: {
+                groomLabel("Watch groom", systemImage: "eye", compact: compact)
+            }
+        } else {
+            Button {
+                startGroom(project: project)
+            } label: {
+                if isStartingGroom {
+                    groomLabel("Starting…", systemImage: "hourglass", compact: compact)
+                } else {
+                    groomLabel("Groom now", systemImage: "wand.and.stars", compact: compact)
+                }
+            }
+            .disabled(isStartingGroom)
+        }
+    }
+
+    @ViewBuilder
+    private func groomLabel(_ title: String, systemImage: String, compact: Bool) -> some View {
+        if compact {
+            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
+        } else {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    /// The latest automatic groom in full: status, what it took on, its
+    /// report, the standing decisions task, and the session.
+    private func groomSheet(_ status: Ycc_V1_GetBacklogGroomResponse, project: String) -> some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(BacklogGroomSummary.line(status))
+                    if status.hasLastGroom {
+                        let run = status.lastGroom
+                        LabeledContent("Changed tasks", value: "\(run.changed)")
+                        if !run.batch.isEmpty {
+                            LabeledContent("Reviewed first", value: run.batch.joined(separator: ", "))
+                        }
+                        Button {
+                            showGroomSheet = false
+                            openGroomSession(
+                                run.sessionID, project: project,
+                                live: BacklogGroomSummary.isRunning(status))
+                        } label: {
+                            Label("Open groom session", systemImage: "bubble.left.and.text.bubble.right")
+                        }
+                    }
+                    if !status.decisionsTaskID.isEmpty {
+                        Button {
+                            showGroomSheet = false
+                            router.open(.taskDetail(
+                                project: project, taskID: status.decisionsTaskID,
+                                title: "Backlog groom: decisions needed"))
+                        } label: {
+                            Label("Decisions needed (\(status.decisionsTaskID))", systemImage: "questionmark.bubble")
+                        }
+                    }
+                    groomActionButton(status, project: project, compact: false)
+                } header: {
+                    Text("Latest automatic groom")
+                } footer: {
+                    Text(status.autoGroom
+                        ? "The daemon grooms the backlog on its own once enough tasks have changed, at most once a day. "
+                            + "Flags it can’t settle go in one proposed task, “Backlog groom: decisions needed”."
+                        : "Automatic grooming is off for this project ([backlog] auto_groom). Groom now still works.")
+                }
+                if status.hasLastGroom, !status.lastGroom.report.isEmpty {
+                    Section("Report") {
+                        MarkdownText(text: status.lastGroom.report)
+                    }
+                }
+            }
+            .navigationTitle("Backlog grooming")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showGroomSheet = false }
+                }
+            }
+        }
+    }
+
+    private var groomTaskID: String {
+        "\(model?.selectedProject ?? "")|\(app.client != nil)"
+    }
+
+    /// Load grooming status, then re-read it every 15s while an automatic
+    /// groom runs so the strip follows it to its outcome.
+    private func loadAndPollGroomStatus() async {
+        await loadGroomStatus()
+        while !Task.isCancelled, !(groomStatus?.groomSessionID.isEmpty ?? true) {
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000_000)
+            } catch {
+                return
+            }
+            await loadGroomStatus()
+        }
+    }
+
+    private func loadGroomStatus() async {
+        guard let project = model?.selectedProject, !project.isEmpty, let client = app.client else {
+            groomStatus = nil
+            return
+        }
+        do {
+            let status = try await client.getBacklogGroom(project: project)
+            guard model?.selectedProject == project else { return }
+            groomStatus = status
+            groomProject = project
+        } catch YccError.unauthorized {
+            app.handleUnauthorized()
+        } catch {
+            // Grooming status is an extra: a daemon without the RPC, or a
+            // failed read, just hides the banner.
+            if groomProject != project { groomStatus = nil }
+        }
+    }
+
+    private func openGroomSession(_ id: String, project: String, live: Bool) {
+        router.open(.session(id: id, project: project, live: live, title: "Groom backlog"))
+    }
+
+    private func startGroom(project: String) {
+        guard !isStartingGroom, let client = app.client else { return }
+        Analytics.action("backlog.groom", via: .tap)
+        isStartingGroom = true
+        Task {
+            defer { isStartingGroom = false }
+            do {
+                let id = try await client.startPresetSession(
+                    project: project, preset: BacklogGroomSummary.preset, mode: "pm")
+                showGroomSheet = false
+                openGroomSession(id, project: project, live: true)
+            } catch YccError.unauthorized {
+                app.handleUnauthorized()
+            } catch {
+                groomError = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            }
+        }
+    }
+
     private func updateErrorBinding(_ model: BacklogModel) -> Binding<Bool> {
         Binding(
             get: { model.updateError != nil },
@@ -331,7 +544,12 @@ struct BacklogView: View {
                 }
             }
         }
-        .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
+        .refreshable {
+            Analytics.action("refresh", via: .pull)
+            async let groom: Void = loadGroomStatus()
+            await model.refresh()
+            await groom
+        }
         .alert(
             "Couldn’t update task",
             isPresented: updateErrorBinding(model),

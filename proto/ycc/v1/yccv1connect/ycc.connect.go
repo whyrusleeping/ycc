@@ -188,6 +188,9 @@ const (
 	// SessionServiceCreateTaskProcedure is the fully-qualified name of the SessionService's CreateTask
 	// RPC.
 	SessionServiceCreateTaskProcedure = "/ycc.v1.SessionService/CreateTask"
+	// SessionServiceGetBacklogGroomProcedure is the fully-qualified name of the SessionService's
+	// GetBacklogGroom RPC.
+	SessionServiceGetBacklogGroomProcedure = "/ycc.v1.SessionService/GetBacklogGroom"
 	// SessionServiceListPlansProcedure is the fully-qualified name of the SessionService's ListPlans
 	// RPC.
 	SessionServiceListPlansProcedure = "/ycc.v1.SessionService/ListPlans"
@@ -385,6 +388,9 @@ type SessionServiceClient interface {
 	// task scaffold around a description and assign the next id. Used by
 	// `ycc task add` when a daemon is available.
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
+	// GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
+	// whether it is on, the live automatic groom, and the latest run.
+	GetBacklogGroom(context.Context, *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error)
 	// Plan library (reusable runbooks): read-only access to the
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
@@ -785,6 +791,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("CreateTask")),
 			connect.WithClientOptions(opts...),
 		),
+		getBacklogGroom: connect.NewClient[v1.GetBacklogGroomRequest, v1.GetBacklogGroomResponse](
+			httpClient,
+			baseURL+SessionServiceGetBacklogGroomProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetBacklogGroom")),
+			connect.WithClientOptions(opts...),
+		),
 		listPlans: connect.NewClient[v1.ListPlansRequest, v1.ListPlansResponse](
 			httpClient,
 			baseURL+SessionServiceListPlansProcedure,
@@ -1041,6 +1053,7 @@ type sessionServiceClient struct {
 	getTask                *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 	updateTask             *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
 	createTask             *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
+	getBacklogGroom        *connect.Client[v1.GetBacklogGroomRequest, v1.GetBacklogGroomResponse]
 	listPlans              *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
 	getPlan                *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
 	getMemory              *connect.Client[v1.GetMemoryRequest, v1.GetMemoryResponse]
@@ -1341,6 +1354,11 @@ func (c *sessionServiceClient) CreateTask(ctx context.Context, req *connect.Requ
 	return c.createTask.CallUnary(ctx, req)
 }
 
+// GetBacklogGroom calls ycc.v1.SessionService.GetBacklogGroom.
+func (c *sessionServiceClient) GetBacklogGroom(ctx context.Context, req *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error) {
+	return c.getBacklogGroom.CallUnary(ctx, req)
+}
+
 // ListPlans calls ycc.v1.SessionService.ListPlans.
 func (c *sessionServiceClient) ListPlans(ctx context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {
 	return c.listPlans.CallUnary(ctx, req)
@@ -1606,6 +1624,9 @@ type SessionServiceHandler interface {
 	// task scaffold around a description and assign the next id. Used by
 	// `ycc task add` when a daemon is available.
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
+	// GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
+	// whether it is on, the live automatic groom, and the latest run.
+	GetBacklogGroom(context.Context, *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error)
 	// Plan library (reusable runbooks): read-only access to the
 	// in-repo plans/*.md so clients can browse and view saved plans.
 	ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error)
@@ -2002,6 +2023,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("CreateTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetBacklogGroomHandler := connect.NewUnaryHandler(
+		SessionServiceGetBacklogGroomProcedure,
+		svc.GetBacklogGroom,
+		connect.WithSchema(sessionServiceMethods.ByName("GetBacklogGroom")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListPlansHandler := connect.NewUnaryHandler(
 		SessionServiceListPlansProcedure,
 		svc.ListPlans,
@@ -2308,6 +2335,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceUpdateTaskHandler.ServeHTTP(w, r)
 		case SessionServiceCreateTaskProcedure:
 			sessionServiceCreateTaskHandler.ServeHTTP(w, r)
+		case SessionServiceGetBacklogGroomProcedure:
+			sessionServiceGetBacklogGroomHandler.ServeHTTP(w, r)
 		case SessionServiceListPlansProcedure:
 			sessionServiceListPlansHandler.ServeHTTP(w, r)
 		case SessionServiceGetPlanProcedure:
@@ -2593,6 +2622,10 @@ func (UnimplementedSessionServiceHandler) UpdateTask(context.Context, *connect.R
 
 func (UnimplementedSessionServiceHandler) CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CreateTask is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetBacklogGroom(context.Context, *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetBacklogGroom is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListPlans(context.Context, *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {

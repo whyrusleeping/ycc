@@ -20,6 +20,7 @@ import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
 import { track } from "../../app/analytics";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
 import { BacklogBoard } from "./Board";
+import { GroomBanner } from "./GroomBanner";
 import { LoopBanner } from "../workloop/WorkLoopPage";
 import { PLACEMENT } from "../newSession/model";
 import { PresetMenu } from "../newSession/PresetActions";
@@ -282,7 +283,10 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             <button
               type="button"
               className="btn ghost"
-              onClick={() => void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) })}
+              onClick={() => {
+                void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) });
+                void qc.invalidateQueries({ queryKey: queryKeys.backlogGroom(project) });
+              }}
               disabled={backlog.isFetching}
               data-track="backlog.refresh"
               title="Refresh"
@@ -306,6 +310,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
           </div>
         </header>
         <LoopBanner project={project} />
+        <GroomBanner project={project} />
         <div className="backlog-toolbar" role="toolbar" aria-label="Backlog filters">
           <input
             ref={filterRef}

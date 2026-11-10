@@ -300,9 +300,9 @@ Finish with size before/after and what was retired, merged, or proposed.`, activ
 		docs.MemorySoftBudget, memoryGroomSteps, memoryGroomBudgetStep)
 }
 
-// backlogGroomFollowUpTitle titles the single standing proposed task an
+// BacklogGroomFollowUpTitle titles the single standing proposed task an
 // unattended backlog groom files (or updates) for decisions it cannot settle.
-const backlogGroomFollowUpTitle = "Backlog groom: decisions needed"
+const BacklogGroomFollowUpTitle = "Backlog groom: decisions needed"
 
 // BacklogAutoGroomPrompt opens an unattended backlog groom. batch lists the
 // changed tasks to review first; deferred counts changed tasks left for a later
@@ -331,7 +331,7 @@ Put every flag in one proposed task titled %q: if one is still proposed, rewrite
 description (keep flags that still apply, drop resolved ones) instead of filing another. For each
 flag give the task id, the problem, the evidence, and the decision needed. File nothing when there
 are no flags. End the report with "Flagged for the user: N (task <id>)" or "Flagged for the user: none".`,
-		changed, first, later, backlogGroomPresetPrompt, backlogGroomFollowUpTitle)
+		changed, first, later, backlogGroomPresetPrompt, BacklogGroomFollowUpTitle)
 }
 
 const unattendedGuidance = `UNATTENDED: no human is waiting. Make reversible assumptions and report them; do not ask to

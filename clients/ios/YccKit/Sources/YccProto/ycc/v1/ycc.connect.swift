@@ -215,6 +215,11 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `createTask`(request: Ycc_V1_CreateTaskRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CreateTaskResponse>
 
+    /// GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
+    /// whether it is on, the live automatic groom, and the latest run.
+    @available(iOS 13, *)
+    func `getBacklogGroom`(request: Ycc_V1_GetBacklogGroomRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetBacklogGroomResponse>
+
     /// Plan library (reusable runbooks): read-only access to the
     /// in-repo plans/*.md so clients can browse and view saved plans.
     @available(iOS 13, *)
@@ -625,6 +630,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getBacklogGroom`(request: Ycc_V1_GetBacklogGroomRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetBacklogGroomResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetBacklogGroom", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listPlans`(request: Ycc_V1_ListPlansRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListPlansResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListPlans", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -844,6 +854,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getTask = Connect.MethodSpec(name: "GetTask", service: "ycc.v1.SessionService", type: .unary)
             public static let updateTask = Connect.MethodSpec(name: "UpdateTask", service: "ycc.v1.SessionService", type: .unary)
             public static let createTask = Connect.MethodSpec(name: "CreateTask", service: "ycc.v1.SessionService", type: .unary)
+            public static let getBacklogGroom = Connect.MethodSpec(name: "GetBacklogGroom", service: "ycc.v1.SessionService", type: .unary)
             public static let listPlans = Connect.MethodSpec(name: "ListPlans", service: "ycc.v1.SessionService", type: .unary)
             public static let getPlan = Connect.MethodSpec(name: "GetPlan", service: "ycc.v1.SessionService", type: .unary)
             public static let getMemory = Connect.MethodSpec(name: "GetMemory", service: "ycc.v1.SessionService", type: .unary)

@@ -45,6 +45,8 @@ export const queryKeys = {
   sessionFeedAll: ["sessionFeed"] as const,
   /** ListBacklog for a project ("" resolves the sole/default project server-side). */
   backlog: (project: string) => ["backlog", project] as const,
+  /** GetBacklogGroom: automatic backlog grooming status and latest run. */
+  backlogGroom: (project: string) => ["backlogGroom", project] as const,
   /** GetTask. */
   task: (project: string, id: string) => ["task", project, id] as const,
   /** GetWorkLoop: the project's loop snapshot (null when none has run). */
@@ -249,6 +251,16 @@ export function useBacklog(project: string, enabled = true) {
     enabled,
     refetchInterval: 30_000,
     queryFn: async ({ signal }) => (await client.listBacklog({ project }, { signal })).tasks,
+  });
+}
+
+/** GetBacklogGroom, polled slowly (an automatic groom may start or finish). */
+export function useBacklogGroom(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.backlogGroom(project),
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: ({ signal }) => client.getBacklogGroom({ project }, { signal }),
   });
 }
 

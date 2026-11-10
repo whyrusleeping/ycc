@@ -1521,6 +1521,41 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	}}), nil
 }
 
+// GetBacklogGroom reports a project's automatic backlog grooming (spec §6.2):
+// whether it is enabled, the live automatic groom, the latest run from
+// .ycc/backlog-groom.json, and the standing "decisions needed" proposed task
+// the grooms file their flags in. Read-only.
+func (s *Server) GetBacklogGroom(_ context.Context, req *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error) {
+	info, err := s.mgr.BacklogGroomInfo(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	resp := &v1.GetBacklogGroomResponse{AutoGroom: info.Enabled, GroomSessionId: info.RunningSession}
+	if last := info.Last; last.LastSession != "" {
+		run := &v1.BacklogGroomRun{
+			SessionId: last.LastSession, StartedUnix: last.LastStarted.Unix(), Outcome: last.Outcome,
+			Changed: int32(last.Changed), Batch: last.Batch, Deferred: int32(last.Deferred), Report: last.Report,
+		}
+		if !last.LastFinished.IsZero() {
+			run.FinishedUnix = last.LastFinished.Unix()
+		}
+		resp.LastGroom = run
+	}
+	if store, err := s.mgr.Backlog(req.Msg.Project); err == nil {
+		if tasks, err := store.ListMetadata(); err == nil {
+			// Each run rewrites the one proposed task; if several exist, the
+			// newest is the live one.
+			for _, t := range tasks {
+				if t.Status == docs.StatusProposed && strings.EqualFold(strings.TrimSpace(t.Title), orchestrator.BacklogGroomFollowUpTitle) &&
+					t.ID > resp.DecisionsTaskId {
+					resp.DecisionsTaskId = t.ID
+				}
+			}
+		}
+	}
+	return connect.NewResponse(resp), nil
+}
+
 // UpdateTask changes a backlog task's editable frontmatter or Markdown body.
 // Unset fields are left untouched;
 // a request with NO mutation fields set is a valid "refresh" that re-reads the

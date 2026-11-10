@@ -932,6 +932,33 @@ message CreateTaskRequest {
 }
 message CreateTaskResponse { TaskDetail task = 1; }
 
+// Automatic backlog grooming (spec §6.2): the daemon starts an unattended
+// backlog-groom pm session once enough tasks have changed since the last
+// finished groom. To groom on demand, start the "backlog-groom" preset.
+message GetBacklogGroomRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+}
+message GetBacklogGroomResponse {
+  bool auto_groom = 1;            // daemon-scheduled grooming enabled ([backlog] auto_groom)
+  string groom_session_id = 2;    // live automatic groom session; "" when none
+  BacklogGroomRun last_groom = 3; // latest automatic groom; unset when none has run
+  // The standing proposed task "Backlog groom: decisions needed" that collects
+  // the grooms' flags for the user; "" when there is none.
+  string decisions_task_id = 4;
+}
+
+// One daemon-scheduled automatic backlog groom.
+message BacklogGroomRun {
+  string session_id = 1;
+  int64 started_unix = 2;
+  int64 finished_unix = 3;      // 0 while running or if interrupted before recording
+  string outcome = 4;           // finished | error | stopped | timed out | interrupted; "" while running
+  int32 changed = 5;            // tasks created or changed since the previous groom (the trigger)
+  repeated string batch = 6;    // changed task ids handed to the run, reviewed first
+  int32 deferred = 7;           // changed tasks left for a later run
+  string report = 8;            // the run's final report, clipped; "" until it ends
+}
+
 // Plan library (reusable runbooks): read-only access to the
 // in-repo plans/*.md so clients can browse and view saved plans.
 message ListPlansRequest { string project = 1; }
@@ -1683,6 +1710,9 @@ service SessionService {
   // task scaffold around a description and assign the next id. Used by
   // `ycc task add` when a daemon is available.
   rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  // GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
+  // whether it is on, the live automatic groom, and the latest run.
+  rpc GetBacklogGroom(GetBacklogGroomRequest) returns (GetBacklogGroomResponse);
   // Plan library (reusable runbooks): read-only access to the
   // in-repo plans/*.md so clients can browse and view saved plans.
   rpc ListPlans(ListPlansRequest) returns (ListPlansResponse);

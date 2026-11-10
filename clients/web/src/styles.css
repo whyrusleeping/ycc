@@ -5241,6 +5241,43 @@ th[aria-sort="descending"] .sort-btn {
   white-space: nowrap;
 }
 
+/* Backlog page: automatic backlog grooming (0533) */
+.groom-banner {
+  margin: -6px 0 14px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+}
+
+.groom-banner.failed {
+  border-color: var(--error);
+}
+
+.groom-banner-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.groom-banner-text {
+  min-width: 0;
+  color: var(--fg);
+}
+
+.groom-banner-text .link {
+  font-size: inherit;
+}
+
+.groom-report {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  max-height: 320px;
+  overflow: auto;
+}
+
 /* Projects (0415): sidebar actions, add/rename dialogs, the projects page */
 .project-switcher-row {
   display: flex;
