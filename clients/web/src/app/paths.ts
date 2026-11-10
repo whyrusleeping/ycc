@@ -7,6 +7,7 @@ export const PROJECT_SECTIONS = [
   { key: "backlog", label: "Backlog" },
   { key: "loop", label: "Work loop" },
   { key: "workstreams", label: "Workstreams" },
+  { key: "watches", label: "Watches" },
   { key: "usage", label: "Usage" },
   { key: "files", label: "Files" },
   { key: "memory", label: "Memory & plans" },
@@ -29,6 +30,9 @@ export const paths = {
   loop: (project?: string | null) => (project ? `/p/${enc(project)}/loop` : "/loop"),
   /** Parallel workstreams; unscoped asks for a project (or uses the sole/default one). */
   workstreams: (project?: string | null) => (project ? `/p/${enc(project)}/workstreams` : "/workstreams"),
+  /** Recurring checks, or one watch; unscoped asks for a project (or uses the sole/default one). */
+  watches: (project?: string | null, name?: string) =>
+    `${project ? `/p/${enc(project)}/watches` : "/watches"}${name ? `/${enc(name)}` : ""}`,
   /**
    * The file browser at a root-relative path ("" is the root). `session`
    * resolves it against that session's live worktree; `lines` targets a line
@@ -63,7 +67,7 @@ export const paths = {
 };
 
 /** Sections with an unscoped route (usage shows every project; the rest ask which). */
-export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "usage", "files", "memory"];
+export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "watches", "usage", "files", "memory"];
 
 /** The unscoped (or scoped) route of a section that has one. */
 export function sectionPath(section: ProjectSection, project: string | null): string | null {
@@ -75,6 +79,8 @@ export function sectionPath(section: ProjectSection, project: string | null): st
       return paths.loop(null);
     case "workstreams":
       return paths.workstreams(null);
+    case "watches":
+      return paths.watches(null);
     case "usage":
       return paths.usage(null);
     case "files":

@@ -5074,6 +5074,68 @@ th[aria-sort="descending"] .sort-btn {
   margin-bottom: 8px;
 }
 
+/* Watches (reuse the workstream list and badge styles) */
+.ws-row.watch-paused .ws-branch {
+  color: var(--fg-muted);
+}
+
+.watch-summary {
+  margin-top: 6px;
+  font-size: var(--fs-sm);
+}
+
+.watch-status {
+  margin: -4px 0 14px;
+}
+
+.watch-section {
+  margin-top: 22px;
+}
+
+.watch-section h2 {
+  font-size: var(--fs-base);
+  margin-bottom: 8px;
+}
+
+.watch-section h2 .count {
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.watch-notes {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.watch-actions-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+
+.watch-when {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.watch-question {
+  font-weight: 500;
+}
+
+.watch-answer {
+  margin-top: 2px;
+}
+
+.watch-report.kind-skipped,
+.watch-report.kind-probe {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 /* Merge panel (inspector) */
 .merge-accept {
   display: flex;

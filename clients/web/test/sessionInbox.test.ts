@@ -32,6 +32,17 @@ describe("personal session inbox", () => {
     expect(isInboxSession(row("manual", { origin: "user" }).session, true)).toBe(true);
   });
 
+  it("keeps watch runs out of the inbox unless they ask or are flagged", () => {
+    const watchRuns = [
+      row("run", { origin: "watch" }),
+      row("answered", { origin: "watch", humanParticipated: true }),
+      row("parked", { origin: "watch", live: true, waitingInput: true }),
+      row("flagged-run", { origin: "watch", followUp: true }),
+    ];
+    expect(ids(filterSessions(watchRuns, "inbox", "", () => true, loops))).toEqual(["parked", "flagged-run"]);
+    expect(ids(filterSessions(watchRuns, "all", "", () => true, loops))).toEqual(ids(watchRuns));
+  });
+
   it("lists running automatic work under Active without adding it to the inbox", () => {
     const running = [row("loop-live", { origin: "work_loop", live: true, status: "running" }), row("idle-manual", { origin: "user", live: true })];
     expect(ids(filterSessions(running, "active", "", () => false, loops))).toEqual(["loop-live"]);

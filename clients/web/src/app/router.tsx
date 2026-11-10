@@ -13,6 +13,7 @@ import {
   SessionPage,
   SettingsRoutePage,
   UsageRoutePage,
+  WatchesRoutePage,
   WorkLoopRoutePage,
   WorkstreamsRoutePage,
 } from "./pages";
@@ -37,6 +38,8 @@ export function makeRouter() {
         { path: "p/:project/loop", element: <WorkLoopRoutePage /> },
         { path: "workstreams", element: <WorkstreamsRoutePage /> },
         { path: "p/:project/workstreams", element: <WorkstreamsRoutePage /> },
+        { path: "watches/:name?", element: <WatchesRoutePage /> },
+        { path: "p/:project/watches/:name?", element: <WatchesRoutePage /> },
         { path: "files/*", element: <FilesRoutePage /> },
         { path: "p/:project/files/*", element: <FilesRoutePage /> },
         { path: "memory", element: <MemoryRoutePage /> },

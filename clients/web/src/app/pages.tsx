@@ -12,6 +12,7 @@ import { NewSessionPage as NewSession } from "../features/newSession/NewSessionP
 import { LoopStateBadge, WorkLoopPage } from "../features/workloop/WorkLoopPage";
 import { bannerLine, loopState } from "../features/workloop/model";
 import { WorkstreamsPage } from "../features/workstreams/WorkstreamsPage";
+import { WatchesPage } from "../features/watches/WatchesPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { FilesPage } from "../features/files/FilesPage";
 import { GetStarted } from "../features/onboarding/GetStarted";
@@ -246,6 +247,33 @@ function UnscopedWorkstreams() {
       target={(name) => paths.workstreams(name)}
       fallback={() => <WorkstreamsPage project="" />}
       extra={(name) => <WorkstreamsChoiceState project={name} />}
+    />
+  );
+}
+
+/** `/p/:project/watches[/:name]` and the unscoped `/watches[/:name]` (asks which project). */
+export function WatchesRoutePage() {
+  const { project, name } = useParams();
+  if (project !== undefined) return <ScopedWatches project={project} name={name ?? null} />;
+  return <UnscopedWatches name={name ?? null} />;
+}
+
+function ScopedWatches({ project, name }: { project: string; name: string | null }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(name ? `Watch ${name} · ${project}` : `Watches · ${project}`);
+  return <WatchesPage key={project} project={project} name={name} />;
+}
+
+function UnscopedWatches({ name }: { name: string | null }) {
+  useDocumentTitle(name ? `Watch ${name}` : "Watches");
+  return (
+    <ProjectChoice
+      title="Watches"
+      question="Which project’s watches?"
+      target={(project) => paths.watches(project, name ?? undefined)}
+      fallback={() => <WatchesPage project="" name={name} />}
     />
   );
 }

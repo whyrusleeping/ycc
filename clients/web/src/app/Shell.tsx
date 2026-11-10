@@ -63,6 +63,7 @@ const SECTION_ICONS: Record<(typeof PROJECT_SECTIONS)[number]["key"], IconName> 
   backlog: "backlog",
   loop: "loop",
   workstreams: "workstreams",
+  watches: "watches",
   usage: "usage",
   files: "files",
   memory: "memory",

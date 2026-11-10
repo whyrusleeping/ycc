@@ -9,6 +9,7 @@ export type IconName =
   | "backlog"
   | "loop"
   | "workstreams"
+  | "watches"
   | "usage"
   | "files"
   | "memory"
@@ -61,6 +62,13 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="18" cy="7" r="2" />
       <path d="M6 7v10" />
       <path d="M18 9a6 6 0 0 1-6 6H8" />
+    </>
+  ),
+  /** An eye: recurring checks. */
+  watches: (
+    <>
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+      <circle cx="12" cy="12" r="3" />
     </>
   ),
   usage: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,

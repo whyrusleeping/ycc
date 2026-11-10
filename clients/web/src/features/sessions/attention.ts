@@ -15,9 +15,15 @@ export const SESSION_FILTERS: readonly { value: SessionFilter; label: string }[]
   { value: "all", label: "All history" },
 ];
 
-/** Unknown legacy origin stays visible; current-loop membership is positive evidence. */
+/**
+ * Unknown legacy origin stays visible; current-loop membership is positive
+ * evidence. Watch runs live on their watch's timeline: only a pending question
+ * or a follow-up flag brings one into the inbox, not having been answered.
+ */
 export function isInboxSession(s: SessionSummary, loopOwned = false): boolean {
-  if (s.waitingInput || s.followUp || s.humanParticipated || s.origin === "user") return true;
+  if (s.waitingInput || s.followUp) return true;
+  if (s.origin === "watch") return false;
+  if (s.humanParticipated || s.origin === "user") return true;
   if (["work_loop", "memory_groom", "automation"].includes(s.origin ?? "")) return false;
   return !loopOwned;
 }

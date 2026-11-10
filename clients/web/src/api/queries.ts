@@ -4,12 +4,13 @@
 import { QueryClient, keepPreviousData, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { BacklogTaskSummary, ProjectInfo, TaskDetail, WorkLoopInfo, WorkstreamInfo } from "../gen/ycc/v1/ycc_pb";
+import type { BacklogTaskSummary, GetWatchResponse, ProjectInfo, TaskDetail, Watch, WorkLoopInfo, WorkstreamInfo } from "../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "./client";
 import { buildFeed, historyTargets, mergePage, withFollowUp, type FeedRow, type HistoryLoad } from "../features/sessions/feed";
 import { upsertSummary } from "../features/backlog/model";
 import { pollInterval as loopPollInterval } from "../features/workloop/model";
 import { pollInterval as workstreamPollInterval } from "../features/workstreams/model";
+import { pollInterval as watchPollInterval } from "../features/watches/model";
 import { toast } from "../ui/toast";
 import { useNotifyState } from "../features/notify/notifier";
 
@@ -67,6 +68,12 @@ export const queryKeys = {
   filesAll: ["files"] as const,
   /** GetHealth: the daemon's latest health-check results. */
   health: ["health"] as const,
+  /** ListWatches for a project. */
+  watches: (project: string) => ["watches", "list", project] as const,
+  /** GetWatch: one watch with its newest `limit` reports. */
+  watch: (project: string, name: string, limit: number) => ["watches", "one", project, name, limit] as const,
+  /** Every watch query (a mutation revalidates them all). */
+  watchesAll: ["watches"] as const,
 };
 
 export function makeQueryClient(): QueryClient {
@@ -314,6 +321,27 @@ export function useWorkstreams(project: string, enabled = true) {
     enabled,
     refetchInterval: (q) => workstreamPollInterval(q.state.data),
     queryFn: async ({ signal }) => (await client.listWorkstreams({ project }, { signal })).workstreams,
+  });
+}
+
+/** ListWatches, polled quickly while a run is active. */
+export function useWatches(project: string, enabled = true) {
+  return useQuery<Watch[]>({
+    queryKey: queryKeys.watches(project),
+    enabled,
+    refetchInterval: (q) => watchPollInterval(q.state.data),
+    queryFn: async ({ signal }) => (await client.listWatches({ project }, { signal })).watches,
+  });
+}
+
+/** GetWatch: the watch and its newest `limit` reports (newest first). */
+export function useWatch(project: string, name: string, limit: number) {
+  return useQuery<GetWatchResponse>({
+    queryKey: queryKeys.watch(project, name, limit),
+    enabled: name !== "",
+    placeholderData: keepPreviousData,
+    refetchInterval: (q) => watchPollInterval(q.state.data?.watch ? [q.state.data.watch] : undefined),
+    queryFn: ({ signal }) => client.getWatch({ project, name, reportLimit: limit }, { signal }),
   });
 }
 

@@ -47,6 +47,8 @@ export const VIEW_NAMES = [
   "task",
   "workloop",
   "workstreams",
+  "watches",
+  "watch",
   "files",
   "file",
   "memory",
@@ -66,6 +68,7 @@ export const VIEW_NAMES = [
   "tier_editor",
   "loop_start",
   "workstream_spawn",
+  "watch_editor",
 ] as const;
 
 const MAX_NAME = 80;
@@ -151,6 +154,8 @@ export function routeView(pathname: string): string {
       return "workloop";
     case "workstreams":
       return "workstreams";
+    case "watches":
+      return rest.length === 0 ? "watches" : rest.length === 1 ? "watch" : "not_found";
     case "files": {
       // The route does not say directory or file; an extension is a good guess.
       const last = rest[rest.length - 1] ?? "";
