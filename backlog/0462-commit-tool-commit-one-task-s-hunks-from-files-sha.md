@@ -1,10 +1,10 @@
 ---
 id: "0462"
 title: 'commit tool: loosen restrictions — allow committing alongside other uncommitted work instead of refusing or splitting'
-status: proposed
+status: todo
 priority: 2
 created: "2026-10-12"
-updated: "2026-10-12"
+updated: "2026-11-09"
 depends_on: []
 spec_refs: []
 ---

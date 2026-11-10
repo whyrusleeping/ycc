@@ -1,10 +1,10 @@
 ---
 id: "0463"
 title: 'Chat sessions: commit accepted task work instead of ending on "should I commit?"'
-status: proposed
+status: todo
 priority: 3
 created: "2026-10-12"
-updated: "2026-10-12"
+updated: "2026-11-09"
 depends_on: []
 spec_refs: []
 ---
@@ -17,6 +17,8 @@ spec_refs: []
 - (b) If the session asks anyway, persist the open question so it stays visible after the session goes idle, e.g. as a home/iOS "needs answer" item, and in work-loop preflight.
 
 **Acceptance:** the chosen behaviour is specified in the spec and prompts. A reviewed task in a chat session no longer ends uncommitted without a persistent, visible prompt.
+
+**Update (owner accepted, 2026-11-09 usage analysis):** across all projects since June, about 12% of the owner's follow-up messages (128) are "commit", "commit and push" or "commit everything". In 78 of 104 cases the agent's last report had ended with a statement like "changes are uncommitted", not a question. This applies to ordinary chat edits too, not only reviewed backlog tasks. Prefer (a). Add a per-project policy for finished chat work: `commit`, `commit+push`, or `ask` (today's behaviour). The default must remove the need to type "commit". Pushing requires the explicit `commit+push` setting. The final report says what was committed (and pushed). Related: 0462 removes the commit-tool restrictions behind "commit everything when I say commit".
 
 ## Acceptance criteria
 
