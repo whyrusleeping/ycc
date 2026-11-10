@@ -661,7 +661,8 @@ surface; `docs/design/forge-integration.md` records that trust-boundary decision
 
 - **pm** manages design docs, backlog, investigation, onboarding, and grooming. It may inspect the
   workspace but is prompt-constrained not to implement code. Presets provide opening context for
-  onboarding (`onboard`), spec checking (`spec-doctor`), memory grooming (`memory-groom`), and
+  onboarding (`onboard`: learn the project, then build its backlog with the user, §19.2), spec
+  checking (`spec-doctor`), memory grooming (`memory-groom`), and
   backlog grooming (`backlog-groom`: a bounded batch of tasks checked against the backlog rules in
   `docs/design/doc-style.md`, editing only backlog files and flagging what evidence does not
   settle); an optional preset-to-model binding supplies an independent editorial perspective
@@ -1189,11 +1190,23 @@ session list replaces the checklist once any session exists.
 
 ### 19.2 Project onboarding
 
-Project onboarding is a pm preset. For a greenfield workspace it establishes purpose,
-constraints, an initial design, and starter backlog. For an existing codebase it asks what the
-user intends to change, inspects only that slice, records only the design needed for that work,
-and creates actionable tasks. The invariant is to spec the work rather than inventory the entire
-repository before ycc becomes useful.
+Project onboarding is the pm `onboard` preset: an interactive session that learns the project and
+then builds its backlog with the user.
+
+1. **Learn.** Before asking anything, the session reads the README, design docs, backlog, code
+   layout, recent git history, and open TODOs. It summarizes what the project is, its state, and
+   where work is active, and asks the user to correct that summary.
+2. **Ask.** Goals, priorities, and constraints are asked through `ask_user` a few at a time, with
+   options drawn from what the session found.
+3. **Draft the backlog.** Candidate tasks are proposed in small batches. Tasks the user accepts are
+   filed `todo` and the maybes `proposed`. Only the design the accepted work needs is written: a
+   greenfield project gets an initial spec of purpose, scope, constraints, and architecture.
+4. **Recap.** The session ends with what it recorded and which tasks are ready, and offers the
+   first through the approved pm-to-work handoff (§9). It never starts work otherwise.
+
+On a project that already has docs and a backlog, onboarding refreshes them from that base rather
+than re-seeding. The invariant is to spec the work rather than inventory the entire repository
+before ycc becomes useful.
 
 ## 20. Usage, pricing, and budgets
 

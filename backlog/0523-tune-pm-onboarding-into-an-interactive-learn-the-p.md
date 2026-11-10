@@ -1,7 +1,7 @@
 ---
 id: "0523"
 title: Tune PM onboarding into an interactive learn-the-project, build-the-backlog session
-status: todo
+status: done
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -12,6 +12,7 @@ spec_refs:
 ---
 
 ## Description
+
 **Owner direction (2026-11-11):** the one place PM is clearly worth having is new-user / new-project onboarding: go learn about the project, then work with the user interactively to build out the backlog. 0521 makes that PM's only user-facing entry. This task makes the session itself good at that job.
 
 **Current state:** `onboardPresetPrompt` (internal/orchestrator/prompts.go) branches greenfield vs. brownfield. For brownfield it says to "ask what work the user wants first, investigate that slice, seed only its docs and tasks" and offer a `switch_to_work` handoff. It is a refresh-the-docs procedure more than a guided conversation.
@@ -29,6 +30,8 @@ spec_refs:
 - Live runs with a real model on (a) a brownfield repo with no ycc docs and (b) an already-onboarded repo. The session summarizes the project, asks grounded questions, files accepted tasks as todo and ideas as proposed, and doesn't spec the whole repo. Record transcript evidence in the work log.
 - No regression to the Get started checklist's "onboard it" step (0505).
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Rewrote onboardPresetPrompt to work in four steps: learn the project before asking, then ask grounded ask_user questions in batches, then propose candidate tasks in batches (accepted ones filed todo, maybes proposed, only the design the accepted work needs), then recap and offer switch_to_work. Existing backlogs are refreshed, not re-seeded. Updated the preset description and spec §9/§19.2. The preset name is unchanged, so the web Get started step still works. Live opus runs with a simulated owner covered (a) a gollama clone with no docs and (b) an onboarded ll-paint clone; both met the criteria. The harness and logs are in .ycc/tmp/onboard-eval. The orchestrator, docs and config tests pass.
+
+Commit: Onboard preset: interactive learn-the-project, build-the-backlog flow; spec §9/§19.2 (0523)

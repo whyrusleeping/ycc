@@ -211,16 +211,19 @@ Promote memory into design only with user approval; never infer policy or author
 ` + imageGuidance
 
 // Presets are on-demand procedures, not permanent instructions for every turn.
-const onboardPresetPrompt = `Refresh or establish this project's design docs and backlog.
-First inspect the configured spec entry point, backlog, plans, and existing README/design docs,
-ARCHITECTURE.md, or ADRs. Existing docs/backlog mean refresh from that base, not blank-slate onboarding.
-Adopt the established docs layout rather than creating a parallel spec.md; use a thin entry index if needed.
-
-With no usable design docs, inspect source and git history to distinguish greenfield from brownfield:
-- Greenfield: discuss purpose, scope, constraints, and architecture; write an initial spec and starter backlog.
-- Brownfield: ask what work the user wants first, investigate that slice, seed only its design docs and tasks,
-  and offer an explicitly approved switch_to_work handoff. Do not spec the whole repository.
-Ask when ambiguous. File unaccepted ideas as proposed. Finish when agreed docs and tasks are recorded.`
+const onboardPresetPrompt = `Onboard this project with the user: learn it, then build its backlog together.
+1. Learn before asking: read the README, the configured spec entry point and any docs/ tree, ADRs,
+   the backlog and plans, the code layout, recent git history, and open TODOs. Summarize what the
+   project is, its state, and where work is active, and ask the user to correct it.
+2. Ask about goals, priorities, and constraints with ask_user, a few questions at a time, each with
+   concrete options drawn from what you found.
+3. Propose candidate tasks in small batches. File what the user accepts as todo and the maybes as
+   proposed. Write only the design the accepted work needs, in the established docs layout (a thin
+   entry index if needed); do not spec the whole repository. A greenfield project gets an initial
+   spec of purpose, scope, constraints, and architecture.
+An existing backlog is the starting point: refresh stale tasks and fill gaps rather than re-seeding.
+Finish with a short recap of what you recorded and which tasks are ready. Then offer to start the
+first one with switch_to_work, which asks the user to confirm; never start work otherwise.`
 
 const specDoctorPresetPrompt = `Check design docs against current code; report before making changes.
 1. Run ycc spec-check (or go run ./cmd/ycc spec-check) for deterministic stale-reference findings.
