@@ -457,6 +457,9 @@ struct LandingView: View {
                     NavigationLink(value: HomeDestination.workstreams(project: project)) {
                         Label("Workstreams", systemImage: "arrow.triangle.branch")
                     }
+                    NavigationLink(value: HomeDestination.watches(project: project)) {
+                        Label("Watches", systemImage: "eye")
+                    }
                     NavigationLink(value: HomeDestination.usage(project: project)) {
                         Label("Usage", systemImage: "chart.bar")
                     }
@@ -512,6 +515,10 @@ struct LandingView: View {
                 WorkLoopView(project: project)
             case let .workstreams(project):
                 WorkstreamsView(initialProject: project)
+            case let .watches(project):
+                WatchesView(client: client, project: project)
+            case let .watch(project, name):
+                WatchDetailView(client: client, project: project, name: name, sessionList: model)
             case let .usage(project):
                 UsageView(initialProject: project)
             case let .memory(project):

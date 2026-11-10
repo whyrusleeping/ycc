@@ -1169,6 +1169,42 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertFalse(model.totalActivity.isEmpty)
     }
 
+    /// Watch runs live on their watch's timeline: only a pending question or
+    /// a follow-up flag lists one, in either scope, and only listed rows feed
+    /// the drawer badges.
+    func testWatchRunsAreListedOnlyWhileAskingOrFlagged() async {
+        func watchRun(_ id: String, live: Bool = false, waiting: Bool = false, flagged: Bool = false,
+                      answered: Bool = false) -> Ycc_V1_SessionSummary {
+            var row = session(id: id, status: live ? "running" : "idle", live: live, waitingInput: waiting)
+            row.origin = "watch"
+            row.followUp = flagged
+            row.humanParticipated = answered
+            return row
+        }
+        let source = MockListSource()
+        source.projects = [project("one")]
+        source.sessionsByProject = ["one": [
+            session(id: "chat"),
+            watchRun("run", live: true),
+            watchRun("answered", answered: true),
+            watchRun("parked", live: true, waiting: true),
+            watchRun("flagged", flagged: true),
+        ]]
+        let model = SessionListModel(source: source)
+        await model.refresh()
+
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["chat", "parked", "flagged"])
+        model.selectedProject = "one"
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["chat", "parked", "flagged"])
+        // The running unlisted run doesn't count as activity; the parked one asks.
+        XCTAssertEqual(model.activity(forProject: "one"), ProjectActivity(active: 1, needsAnswer: 1))
+        // Still reachable by id (from its watch).
+        XCTAssertNotNil(model.session(sessionID: "run"))
+
+        model.markAnswered(sessionID: "parked")
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["chat", "flagged"])
+    }
+
     func testProjectsByRecencyOrdersByNewestSessionThenRegistryOrder() async {
         let source = MockListSource()
         source.projects = [project("alpha"), project("beta"), project("gamma"), project("delta")]

@@ -80,6 +80,14 @@ opens the workstream's session. Workstream sessions carry a branch mark in the s
 their context menu opens Workstreams. The home overflow menu reaches Workstreams in every scope;
 the unscoped feed opens it across all projects with its own project filter.
 
+A project's overflow menu also opens **Watches** (docs/design/watches.md): each watch with its
+latest status, next run or paused/expired state, and any question a run is waiting on, with
+pause/resume, run now and delete. A watch's screen leads with the runs waiting on an answer, then
+its controls, definition, notes, standing decisions and report timeline; runs and decisions push
+their session so Back returns to the watch. Creating and editing watches stay on the web client
+and with agents. Watch runs stay out of the session lists and drawer badges unless they ask a
+question or are flagged, so a run drops back out once answered.
+
 Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`
 (from the project overflow menu, or a session's menu for its own worktree). Text files render
 with line numbers and a small built-in syntax highlighter, markdown and SVG render by default with a

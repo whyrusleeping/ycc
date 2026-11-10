@@ -282,6 +282,7 @@ public final class SessionListModel {
             // The aggregate is already sorted on ingestion.
             rows = allSessions
         }
+        rows = rows.filter(Self.isListed)
         let followUpCount = rows.filter(\.followUp).count
         if followUpOnly { rows = rows.filter(\.followUp) }
         // Flagged rows are pinned in both scopes, except under the follow-up
@@ -336,6 +337,14 @@ public final class SessionListModel {
         loopSessionIDs.contains(sessionID)
     }
 
+    /// Whether a row belongs in the session lists and drawer badges. Watch
+    /// runs live on their watch's report timeline (docs/design/watches.md):
+    /// only a pending question or a follow-up flag lists one, so a run drops
+    /// back out once answered.
+    public nonisolated static func isListed(_ session: Ycc_V1_SessionSummary) -> Bool {
+        session.origin != "watch" || session.waitingInput || session.followUp
+    }
+
     // MARK: - Unread agent activity
 
     /// Whether a row carries agent activity the user has not seen yet.
@@ -378,7 +387,7 @@ public final class SessionListModel {
         var latest: [String: Date] = [:]
         var total = ProjectActivity()
         for project in loadedProjects { counts[project] = ProjectActivity() }
-        for session in allSessions {
+        for session in allSessions where Self.isListed(session) {
             var own = ProjectActivity()
             Self.accumulate(session, into: &own)
             if readMarks.isUnread(session) { own.unread += 1 }

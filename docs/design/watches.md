@@ -1,7 +1,7 @@
 # Design: watches
 
-> Status: accepted. Daemon, tools, RPC (spec §9.2) and the web surface are implemented; the iOS
-> surface is pending.
+> Status: accepted. Daemon, tools, RPC (spec §9.2), and the web and iOS surfaces are implemented;
+> iOS lists and controls watches but leaves creating and editing them to the web and agents.
 
 ## Context
 

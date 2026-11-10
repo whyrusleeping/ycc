@@ -51,7 +51,7 @@ enum Analytics {
         "home", "session", "task", "backlog", "workloop", "workstreams", "usage", "memory", "file",
         "settings", "drawer", "connect", "new_session", "quick_capture", "add_project",
         "session_settings", "session_usage", "question", "files", "diff", "anthropic_login",
-        "model_editor", "tier_editor", "health",
+        "model_editor", "tier_editor", "health", "watches", "watch",
     ]
 
     static let actions: [String] = [
@@ -74,6 +74,8 @@ enum Analytics {
         "new_session.workstream",
         "workstreams.preview", "workstreams.merge", "workstreams.retry", "workstreams.discard",
         "workstreams.mergeAll", "workstreams.open_session",
+        "watches.pause", "watches.resume", "watches.run_now", "watches.delete",
+        "watches.parked", "watches.run_session", "watches.decision_session", "watches.older",
         "refresh", "health.check_now",
     ] + ["new_session", "quick_capture", "add_project", "task_edit"].flatMap { flow in
         ["open", "submit", "cancel"].map { "\(flow).\($0)" }

@@ -70,6 +70,8 @@ extension HomeDestination {
         case .backlog(let project): return "backlog:\(project)"
         case .workLoop(let project): return "workLoop:\(project)"
         case .workstreams(let project): return "workstreams:\(project)"
+        case .watches(let project): return "watches:\(project)"
+        case .watch(let project, let name): return "watch:\(project):\(name)"
         case .usage(let project): return "usage:\(project)"
         case .memory(let project): return "memory:\(project)"
         case .file(let route):
