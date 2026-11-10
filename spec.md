@@ -203,8 +203,8 @@ the ordinary file tools.
 
 The spec states durable behavior, architecture, interfaces, and invariants. Design notes retain
 rationale and rejected alternatives that would be noisy in the spec. `docs/design/doc-style.md`
-defines their register. Operational instructions belong in the README or a reusable runbook, not
-in the design set.
+defines the register of design docs, memory, and backlog tasks. Operational instructions belong in
+the README or a reusable runbook, not in the design set.
 
 ### 6.2 Backlog
 

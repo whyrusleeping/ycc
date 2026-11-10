@@ -209,7 +209,8 @@ func createTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "create_task",
 		Description: "Create a task and return its assigned id. Accepted work is todo or in_progress when starting now. " +
-			"Unaccepted ideas must be proposed; only user acceptance promotes them into the work pipeline.",
+			"Unaccepted ideas must be proposed; only user acceptance promotes them into the work pipeline. " +
+			"Write the task to the backlog-task rules in docs/design/doc-style.md when the project has that file.",
 		Params: tools.Obj(map[string]any{
 			"title":       tools.StrProp("short task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),

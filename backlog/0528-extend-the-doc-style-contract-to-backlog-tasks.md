@@ -1,7 +1,7 @@
 ---
 id: "0528"
 title: Extend the doc-style contract to backlog tasks
-status: todo
+status: done
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -10,6 +10,8 @@ spec_refs:
     - docs/design/doc-style.md
     - Project memory — agent-learned, advisory
 ---
+
+## Description
 
 ## Description
 ## Why
@@ -36,4 +38,15 @@ Add a backlog-task section to `docs/design/doc-style.md` and reference it wherev
 - The spec notes that the contract covers backlog tasks.
 - `go test ./internal/orchestrator` passes.
 
-## Work log
+## Acceptance criteria
+
+- doc-style.md has a backlog section covering the rules above, written in the existing register.
+- The prompts that create or update tasks reference it in one sentence each. No duplicated rule text.
+- The spec notes that the contract covers backlog tasks.
+- `go test ./internal/orchestrator` passes.
+
+## Outcome
+
+docs/design/doc-style.md §5 "Backlog tasks" now has rules for references, current state, decisions, authority and work logs. One shared sentence in projectDocsGuidance points the pm, chat and work prompts at doc-style.md, replacing pm's old separate line. Both create_task tool descriptions (modes and capture) also reference it. Spec §6.1 says the contract covers backlog tasks. go test ./internal/orchestrator passes, and the sol reviewer accepted after re-running it.
+
+Commit: doc-style: add backlog-task rules; reference them from task-writing prompts and create_task (0528)

@@ -97,8 +97,9 @@ func captureClarify() *gollama.Tool {
 // loop with the new task id carried back to the client.
 func captureCreateTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name:        "create_task",
-		Description: "Create the new backlog task. Returns the assigned id and ends the capture. Call exactly once.",
+		Name: "create_task",
+		Description: "Create the new backlog task. Returns the assigned id and ends the capture. Call exactly once. " +
+			"Write the task to the backlog-task rules in docs/design/doc-style.md when the project has that file.",
 		Params: tools.Obj(map[string]any{
 			"title":       tools.StrProp("short, imperative task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),

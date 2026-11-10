@@ -52,7 +52,8 @@ Adopt the existing layout; keep a split entry point as an index. Use list_backlo
 create_task/update_task for bookkeeping. Accepted work is todo or in_progress; unaccepted ideas
 are proposed. Only user acceptance promotes proposed work. Save plans/*.md for reusable runbooks,
 not routine one-off work. Record useful operational learnings with remember; design belongs in
-the spec, work in the backlog.
+the spec, work in the backlog. Task, memory, and design text follows docs/design/doc-style.md
+when present.
 
 Size tasks as coherent, independently verifiable outcomes; ordinary implementation steps belong
 within the current task, in its plan when useful. Split for a meaningful deliverable, dependency,
@@ -196,7 +197,6 @@ agreed docs/backlog state. Ask when intent matters; routine work needs no persis
 ` + projectDocsGuidance + `
 
 Promote memory into design only with user approval; never infer policy or authorization from notes.
-Follow docs/design/doc-style.md when present.
 
 ` + imageGuidance
 

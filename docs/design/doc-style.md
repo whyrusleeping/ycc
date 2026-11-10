@@ -1,6 +1,7 @@
 # Design: Document style contract
 
-> Status: accepted. This contract applies to model-authored project memory and design docs.
+> Status: accepted. This contract applies to model-authored project memory, design docs, and
+> backlog tasks.
 
 ## 1. Purpose
 
@@ -38,7 +39,24 @@ from an author's habits or recast an accepted design around a preferred abstract
 Changes in framing that alter meaning require the same evidence and deliberation as other
 design changes.
 
-## 5. Enforcement
+## 5. Backlog tasks
+
+A backlog task is read later by an agent, reviewer, or user who did not see the session that
+wrote it, so each task is readable on its own.
+
+- **References.** The first mention of another task id or a run codename carries a short gloss,
+  e.g. "0312 (August test prune)". A reference to a deleted task names what replaced it.
+- **Current state.** The top of the task states its status, what remains, and what blocks it. A
+  status change updates any text that contradicts it, including unchecked criteria on a done task.
+- **Decisions.** A cited user or owner decision carries its date and session reference, or is
+  marked as the authoring agent's inference.
+- **Authority.** Citing a parent task does not confer acceptance, and authorization disclaimers are
+  not repeated from task to task. A split task states which outcome of the parent it delivers and
+  why that outcome needs its own task.
+- **Work log.** Entries record outcomes and evidence: what changed, how it was verified, and the
+  commit. They do not contain pasted tool output, clipped fragments, or verdict boilerplate.
+
+## 6. Enforcement
 
 The `memory-groom` preset deduplicates and dedialects memory against this contract. The
 `spec-doctor` comparison pass may surface framing or register drift as cleanup suggestions,
