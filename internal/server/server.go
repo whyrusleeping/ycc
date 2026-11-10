@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net/http"
 	"os"
@@ -226,45 +227,128 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	convert := func(su session.SessionSummary) *v1.SessionSummary {
-		models := make([]*v1.SessionModelUsage, 0, len(su.ModelUsage))
-		for _, usage := range su.ModelUsage {
-			models = append(models, &v1.SessionModelUsage{Model: usage.Model, Tokens: usage.Tokens})
+	return connect.NewResponse(&v1.ListSessionHistoryResponse{
+		Sessions: sessionSummariesProto(sums), Pinned: sessionSummariesProto(pinned), NextCursor: next,
+	}), nil
+}
+
+// homePageLimit is ListHomeSessions' default per-project first-page size.
+const homePageLimit = 50
+
+// ListHomeSessions answers a home screen's whole refresh in one round trip:
+// the registered projects plus each distinct workspace's first history page
+// and work-loop session ids. A project whose history fails reports its error
+// in its own page instead of failing the request.
+func (s *Server) ListHomeSessions(_ context.Context, req *connect.Request[v1.ListHomeSessionsRequest]) (*connect.Response[v1.ListHomeSessionsResponse], error) {
+	limit := int(req.Msg.Limit)
+	if limit <= 0 {
+		limit = homePageLimit
+	}
+	projects := s.mgr.ProjectsByRecency()
+	// Aliases of one workspace would list the same logs; keep the first name.
+	seen := make(map[string]bool, len(projects))
+	var names []string
+	for _, p := range projects {
+		key := filepath.Clean(p.Path)
+		if seen[key] {
+			continue
 		}
-		return &v1.SessionSummary{
-			SessionId:         su.ID,
-			Origin:            su.Origin,
-			HumanParticipated: su.HumanParticipated,
-			Mode:              su.Mode,
-			Status:            string(su.Status),
-			Workspace:         su.Workspace,
-			Title:             su.Title,
-			StartedAt:         rfc3339(su.StartedAt),
-			LastActivity:      rfc3339(su.LastActivity),
-			FocusTasks:        su.FocusTasks,
-			Turns:             int64(su.Turns),
-			ToolCalls:         int64(su.ToolCalls),
-			Live:              su.Live,
-			WaitingInput:      su.Waiting,
-			ModelUsage:        models,
-			TotalTokens:       su.TotalTokens,
-			ContextTokens:     su.ContextTokens,
-			AwaitingJobs:      su.AwaitingJobs,
-			FollowUp:          su.FollowUp,
-			FollowUpAt:        rfc3339(su.FollowUpAt),
-			ReadThrough:       rfc3339(su.ReadThrough),
-			WorkstreamId:      su.WorkstreamID,
+		seen[key] = true
+		names = append(names, p.Name)
+	}
+	infos := make([]*v1.ProjectInfo, len(projects))
+	pages := make([]*v1.ProjectSessionPage, len(names))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for i, p := range projects {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			infos[i] = s.projectInfo(p.Name, p.Path)
+		}()
+	}
+	for i, name := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			pages[i] = s.homePage(name, limit)
+		}()
+	}
+	wg.Wait()
+	return connect.NewResponse(&v1.ListHomeSessionsResponse{Projects: infos, Pages: pages}), nil
+}
+
+// homePage is one project's ListHomeSessions page.
+func (s *Server) homePage(name string, limit int) *v1.ProjectSessionPage {
+	page := &v1.ProjectSessionPage{Project: name}
+	sums, pinned, next, err := s.mgr.ListSessionHistoryPage(name, limit, "")
+	if err != nil {
+		page.Error = err.Error()
+		return page
+	}
+	page.Sessions = sessionSummariesProto(sums)
+	page.Pinned = sessionSummariesProto(pinned)
+	page.NextCursor = next
+	// Loop badges are supplemental: a failure leaves them off.
+	if wl, err := s.mgr.GetWorkLoop(name); err != nil {
+		log.Printf("ycc: home sessions: work loop for %q: %v", name, err)
+	} else if wl != nil {
+		seenIDs := map[string]bool{}
+		add := func(id string) {
+			if id = strings.TrimSpace(id); id != "" && !seenIDs[id] {
+				seenIDs[id] = true
+				page.LoopSessionIds = append(page.LoopSessionIds, id)
+			}
 		}
+		for _, sn := range wl.Sessions {
+			add(sn.SessionID)
+		}
+		add(wl.CurrentSessionID)
 	}
-	out := make([]*v1.SessionSummary, 0, len(sums))
-	for _, row := range sums {
-		out = append(out, convert(row))
+	return page
+}
+
+func sessionSummariesProto(rows []session.SessionSummary) []*v1.SessionSummary {
+	out := make([]*v1.SessionSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, sessionSummaryProto(row))
 	}
-	live := make([]*v1.SessionSummary, 0, len(pinned))
-	for _, row := range pinned {
-		live = append(live, convert(row))
+	return out
+}
+
+func sessionSummaryProto(su session.SessionSummary) *v1.SessionSummary {
+	models := make([]*v1.SessionModelUsage, 0, len(su.ModelUsage))
+	for _, usage := range su.ModelUsage {
+		models = append(models, &v1.SessionModelUsage{Model: usage.Model, Tokens: usage.Tokens})
 	}
-	return connect.NewResponse(&v1.ListSessionHistoryResponse{Sessions: out, Pinned: live, NextCursor: next}), nil
+	return &v1.SessionSummary{
+		SessionId:         su.ID,
+		Origin:            su.Origin,
+		HumanParticipated: su.HumanParticipated,
+		Mode:              su.Mode,
+		Status:            string(su.Status),
+		Workspace:         su.Workspace,
+		Title:             su.Title,
+		StartedAt:         rfc3339(su.StartedAt),
+		LastActivity:      rfc3339(su.LastActivity),
+		FocusTasks:        su.FocusTasks,
+		Turns:             int64(su.Turns),
+		ToolCalls:         int64(su.ToolCalls),
+		Live:              su.Live,
+		WaitingInput:      su.Waiting,
+		ModelUsage:        models,
+		TotalTokens:       su.TotalTokens,
+		ContextTokens:     su.ContextTokens,
+		AwaitingJobs:      su.AwaitingJobs,
+		FollowUp:          su.FollowUp,
+		FollowUpAt:        rfc3339(su.FollowUpAt),
+		ReadThrough:       rfc3339(su.ReadThrough),
+		WorkstreamId:      su.WorkstreamID,
+	}
 }
 
 func (s *Server) SetSessionFollowUp(_ context.Context, req *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error) {

@@ -309,6 +309,24 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// The home list's whole refresh in one round trip: registered projects
+    /// plus each project's first history page and work-loop session ids. A
+    /// daemon without the RPC answers `unimplemented`, which surfaces as
+    /// ``HomeSessionsUnsupported`` so callers can fall back to the per-project
+    /// requests.
+    public func listHomeSessions(limit: Int32) async throws -> Ycc_V1_ListHomeSessionsResponse {
+        var request = Ycc_V1_ListHomeSessionsRequest()
+        request.limit = limit
+        let response = await generated.listHomeSessions(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            if error.code == .unimplemented { throw HomeSessionsUnsupported() }
+            throw Self.map(error)
+        }
+    }
+
     // MARK: - Work loop
 
     /// Start the daemon-owned unattended backlog drain for a project. The loop

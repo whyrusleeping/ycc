@@ -161,6 +161,58 @@ private final class MockListSource: SessionListSource, @unchecked Sendable {
         if let error { throw error }
         return loop
     }
+
+    /// Serve `ListHomeSessions` from the same scripted projects, first pages,
+    /// history errors and loops the per-project requests use, as the daemon
+    /// does. Unsupported (an older daemon) unless `supportsHome`.
+    var supportsHome = false
+    var homeError: Error?
+    var homeFailuresRemaining = 0
+    private var homeRequests = 0
+    var homeRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return homeRequests
+    }
+    var historyRequestCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestedProjects.count
+    }
+
+    func listHomeSessions(limit: Int32) async throws -> Ycc_V1_ListHomeSessionsResponse {
+        lock.lock()
+        homeRequests += 1
+        let supported = supportsHome
+        let shouldFailTransiently = homeFailuresRemaining > 0
+        if shouldFailTransiently { homeFailuresRemaining -= 1 }
+        let error = homeError
+        var response = Ycc_V1_ListHomeSessionsResponse()
+        response.projects = projects
+        var seenPaths = Set<String>()
+        for info in projects where seenPaths.insert(info.path).inserted {
+            var page = Ycc_V1_ProjectSessionPage()
+            page.project = info.name
+            if let failure = historyErrorsByProject[info.name] ?? historyError {
+                page.error = (failure as? YccError)?.displayMessage ?? failure.localizedDescription
+            } else {
+                let first = pagesByProject[info.name]?[""] ?? SessionHistoryPage(
+                    sessions: sessionsByProject[info.name] ?? sessions, pinned: [], nextCursor: "")
+                page.sessions = first.sessions
+                page.pinned = first.pinned
+                page.nextCursor = first.nextCursor
+                if let loop = loopsByProject[info.name], loopErrorsByProject[info.name] == nil {
+                    page.loopSessionIds = loop.sessions.map(\.sessionID) + [loop.currentSessionID]
+                }
+            }
+            response.pages.append(page)
+        }
+        lock.unlock()
+        guard supported else { throw HomeSessionsUnsupported() }
+        if shouldFailTransiently { throw YccError.rpc(message: "transient home failure") }
+        if let error { throw error }
+        return response
+    }
 }
 
 @MainActor
@@ -1405,7 +1457,7 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(source.listProjectsRequestCount, 3)
     }
 
-    func testFailedRefreshDoesNotThrottleTheNextPassiveRefresh() async {
+    func testFailedRefreshBacksOffPassiveRefreshesBriefly() async {
         let source = MockListSource()
         source.projects = [project("one")]
         source.historyErrorsByProject["one"] = YccError.rpc(message: "offline")
@@ -1417,6 +1469,9 @@ final class SessionListModelTests: XCTestCase {
         clock.now = 1
         source.historyErrorsByProject = [:]
         source.sessionsByProject["one"] = [session(id: "back")]
+        await model.refreshIfStale() // backing off after the failure: skipped
+        XCTAssertEqual(source.listProjectsRequestCount, 1)
+        clock.now = 6
         await model.refreshIfStale()
 
         XCTAssertEqual(source.listProjectsRequestCount, 2)
@@ -1641,5 +1696,286 @@ private final class TestClock: @unchecked Sendable {
     var now: TimeInterval {
         get { lock.lock(); defer { lock.unlock() }; return value }
         set { lock.lock(); value = newValue; lock.unlock() }
+    }
+}
+
+// MARK: - One-request home refresh (0515)
+
+extension SessionListModelTests {
+    /// A shared fixture exercising everything the merge has to get right:
+    /// truncated pages (the recency frontier), pinned live/waiting and flagged
+    /// rows beyond a page, an aliased workspace, unread rows, loop badges and a
+    /// watch run.
+    private func homeFixture(supportsHome: Bool) -> MockListSource {
+        let source = MockListSource()
+        source.supportsHome = supportsHome
+        source.projects = [project("alpha"), project("beta"), project("alias", path: "/tmp/alpha"), project("gamma")]
+        var flagged = session(id: "b-flag", lastActivity: "2026-07-01T00:00:00Z")
+        flagged.followUp = true
+        flagged.followUpAt = "2026-07-02T00:00:00Z"
+        var watch = session(id: "b-watch", lastActivity: "2026-07-08T11:30:00Z")
+        watch.origin = "watch"
+        let waiting = session(
+            id: "a-waiting", status: "idle", lastActivity: "2026-07-02T00:00:00Z", live: true, waitingInput: true)
+        source.pagesByProject["alpha"] = [
+            "": SessionHistoryPage(
+                sessions: [
+                    session(id: "a1", lastActivity: "2026-07-08T12:00:00Z", readThrough: "2026-07-08T11:00:00Z"),
+                    session(id: "a2", lastActivity: "2026-07-08T09:00:00Z", readThrough: "2026-07-08T10:00:00Z"),
+                ],
+                pinned: [waiting], nextCursor: "alpha-2"),
+            "alpha-2": SessionHistoryPage(
+                sessions: [session(id: "a3", lastActivity: "2026-07-07T09:00:00Z")], pinned: [], nextCursor: ""),
+        ]
+        source.pagesByProject["beta"] = [
+            "": SessionHistoryPage(
+                sessions: [
+                    watch,
+                    session(id: "b1", status: "running", lastActivity: "2026-07-08T11:00:00Z", live: true),
+                    session(id: "b-loop", lastActivity: "2026-07-08T08:00:00Z", readThrough: "2026-07-01T00:00:00Z"),
+                ],
+                pinned: [flagged], nextCursor: ""),
+        ]
+        source.sessionsByProject["gamma"] = []
+        var done = Ycc_V1_WorkLoopSession()
+        done.sessionID = "b-loop"
+        var loop = Ycc_V1_WorkLoopInfo()
+        loop.sessions = [done]
+        loop.currentSessionID = "b1"
+        source.loopsByProject["beta"] = loop
+        return source
+    }
+
+    private struct ListSnapshot: Equatable {
+        var rows: [String]
+        var sections: [String]
+        var routes: [String: String]
+        var loops: Set<String>
+        var unread: Int
+        var activity: [String: ProjectActivity]
+        var total: ProjectActivity
+        var projects: [String]
+        var hasMore: Bool
+        var warning: String?
+        var error: String?
+    }
+
+    private func snapshot(_ model: SessionListModel) -> ListSnapshot {
+        ListSnapshot(
+            rows: model.sessions.map(\.sessionID),
+            sections: model.sections.map { "\($0.kind.rawValue):\($0.sessions.map(\.sessionID))" },
+            routes: model.sessionProjects, loops: model.loopSessionIDs, unread: model.unreadCount,
+            activity: model.activityByProject, total: model.totalActivity,
+            projects: model.projectsByRecency.map(\.name), hasMore: model.hasMoreHistory,
+            warning: model.partialWarning, error: model.errorMessage)
+    }
+
+    func testHomeRefreshIssuesOneRequestRegardlessOfProjectCount() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        source.projects = (1...12).map { project("p\($0)") }
+        for index in 1...12 {
+            source.sessionsByProject["p\(index)"] = [session(id: "s\(index)")]
+        }
+        let model = SessionListModel(source: source)
+
+        await model.refresh()
+
+        XCTAssertEqual(source.homeRequestCount, 1)
+        XCTAssertEqual(source.listProjectsRequestCount, 0)
+        XCTAssertEqual(source.historyRequestCount, 0)
+        XCTAssertEqual(model.projects.count, 12)
+        XCTAssertTrue(model.hasLoadedProjects)
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), Set((1...12).map { "s\($0)" }))
+        XCTAssertEqual(model.project(for: model.session(sessionID: "s7")!), "p7")
+
+        await model.refresh()
+        XCTAssertEqual(source.homeRequestCount, 2)
+        XCTAssertEqual(source.historyRequestCount, 0)
+    }
+
+    func testHomeRefreshMatchesPerProjectFanOut() async {
+        let legacySource = homeFixture(supportsHome: false)
+        let homeSource = homeFixture(supportsHome: true)
+        let legacy = SessionListModel(source: legacySource, retryDelays: [])
+        let home = SessionListModel(source: homeSource, retryDelays: [])
+
+        await legacy.refresh()
+        await home.refresh()
+
+        XCTAssertGreaterThan(legacySource.historyRequestCount, 0)
+        XCTAssertEqual(homeSource.historyRequestCount, 0)
+        XCTAssertEqual(homeSource.homeRequestCount, 1)
+        let expected = snapshot(legacy)
+        // The fixture really exercises the merge: frontier hides a3 until
+        // paged, pinned rows surface, the watch run stays out, badges apply.
+        XCTAssertEqual(expected.rows, ["a1", "b1", "a2", "a-waiting", "b-flag"])
+        XCTAssertEqual(expected.loops, ["b-loop", "b1"])
+        XCTAssertGreaterThan(expected.unread, 0)
+        XCTAssertEqual(snapshot(home), expected)
+
+        for scope in ["alpha", "beta", "gamma"] {
+            legacy.selectedProject = scope
+            home.selectedProject = scope
+            XCTAssertEqual(snapshot(home), snapshot(legacy), scope)
+        }
+        legacy.selectedProject = nil
+        home.selectedProject = nil
+        await legacy.loadMoreHistory()
+        await home.loadMoreHistory()
+        XCTAssertTrue(home.sessions.contains { $0.sessionID == "a3" })
+        XCTAssertEqual(snapshot(home), snapshot(legacy))
+    }
+
+    func testHomeRefreshFailureKeepsRowsWithQuietStaleNoteAndBacksOff() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = ["one": [session(id: "a")], "two": [session(id: "b")]]
+        let clock = TestClock()
+        let model = SessionListModel(source: source, retryDelays: [0, 0], clock: { clock.now })
+        await model.refresh()
+        XCTAssertNotNil(model.lastUpdated)
+        XCTAssertNil(model.staleReason)
+
+        // The daemon becomes unreachable; the app comes back to the foreground.
+        source.homeError = YccError.rpc(message: "The network connection was lost.")
+        clock.now = 60
+        await model.refreshIfStale()
+        // One request plus its two quick retries, and nothing per project.
+        XCTAssertEqual(source.homeRequestCount, 4)
+        XCTAssertEqual(source.historyRequestCount, 0)
+        XCTAssertEqual(source.listProjectsRequestCount, 0)
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["a", "b"])
+        XCTAssertNil(model.errorMessage)
+        XCTAssertNil(model.partialWarning)
+        XCTAssertEqual(model.staleReason, "The network connection was lost.")
+
+        // Further passive triggers back off instead of retrying.
+        clock.now = 62
+        await model.refreshIfStale()
+        XCTAssertEqual(source.homeRequestCount, 4)
+        clock.now = 66
+        await model.refreshIfStale()
+        XCTAssertEqual(source.homeRequestCount, 7)
+        clock.now = 72 // second failure: 10 s backoff
+        await model.refreshIfStale()
+        XCTAssertEqual(source.homeRequestCount, 7)
+
+        // Pull-to-refresh is never held back, and success clears the note.
+        source.homeError = nil
+        await model.refresh()
+        XCTAssertEqual(source.homeRequestCount, 8)
+        XCTAssertNil(model.staleReason)
+        clock.now = 85
+        source.homeError = YccError.rpc(message: "offline")
+        await model.refreshIfStale()
+        XCTAssertEqual(source.homeRequestCount, 11, "Success resets the backoff")
+    }
+
+    func testHomeRefreshFailureBeforeAnyLoadShowsTheError() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        source.homeError = YccError.rpc(message: "offline")
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertEqual(model.errorMessage, "offline")
+        XCTAssertNil(model.staleReason)
+        XCTAssertEqual(source.homeRequestCount, 1)
+    }
+
+    func testHomeRefreshTransientFailureIsRetried() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        source.projects = [project("one")]
+        source.sessionsByProject["one"] = [session(id: "a")]
+        source.homeFailuresRemaining = 1
+        let model = SessionListModel(source: source, retryDelays: [0])
+        await model.refresh()
+        XCTAssertEqual(source.homeRequestCount, 2)
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["a"])
+        XCTAssertNil(model.staleReason)
+    }
+
+    func testHomeRefreshProjectErrorKeepsThatProjectsRows() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = ["one": [session(id: "a")], "two": [session(id: "b")]]
+        var done = Ycc_V1_WorkLoopSession()
+        done.sessionID = "b"
+        var loop = Ycc_V1_WorkLoopInfo()
+        loop.sessions = [done]
+        source.loopsByProject["two"] = loop
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertTrue(model.isLoopSession(sessionID: "b"))
+
+        source.historyErrorsByProject["two"] = YccError.rpc(message: "disk error")
+        source.sessionsByProject["one"] = [session(id: "a"), session(id: "a-new")]
+        await model.refresh()
+
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["a", "a-new", "b"])
+        XCTAssertEqual(model.project(for: model.session(sessionID: "b")!), "two")
+        XCTAssertTrue(model.isLoopSession(sessionID: "b"))
+        XCTAssertEqual(model.partialWarning, "Some projects couldn’t be loaded: two.")
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testOlderDaemonFallsBackToPerProjectRequestsOnce() async {
+        let source = MockListSource()
+        source.projects = [project("one"), project("two")]
+        source.sessionsByProject = ["one": [session(id: "a")], "two": [session(id: "b")]]
+        let model = SessionListModel(source: source, retryDelays: [0.4, 1.2])
+
+        await model.refresh()
+        XCTAssertEqual(source.homeRequestCount, 1, "Unsupported is not retried")
+        XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["a", "b"])
+        XCTAssertEqual(source.requested("one"), 1)
+
+        await model.refresh()
+        XCTAssertEqual(source.homeRequestCount, 1, "The fallback sticks for the model's lifetime")
+        XCTAssertEqual(source.requested("one"), 2)
+    }
+
+    func testHomeRefreshUnauthorizedRoutesToConnect() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        source.homeError = YccError.unauthorized
+        let model = SessionListModel(source: source)
+        await model.refresh()
+        XCTAssertTrue(model.unauthorized)
+        XCTAssertEqual(source.homeRequestCount, 1)
+        XCTAssertNil(model.staleReason)
+    }
+
+    func testHomeRefreshWithoutProjectsIsAnEmptyListNotAnError() async {
+        let source = MockListSource()
+        source.supportsHome = true
+        let model = SessionListModel(source: source)
+        await model.refresh()
+        XCTAssertTrue(model.sessions.isEmpty)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.hasLoadedProjects)
+    }
+
+    func testStaleNoteSaysWhenTheListWasLastUpdated() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertEqual(SessionListModel.staleNote(lastUpdated: nil, now: now), "Couldn’t refresh")
+        XCTAssertEqual(SessionListModel.staleNote(lastUpdated: now.addingTimeInterval(-20), now: now),
+            "Couldn’t refresh · updated just now")
+        XCTAssertEqual(SessionListModel.staleNote(lastUpdated: now.addingTimeInterval(-240), now: now),
+            "Couldn’t refresh · updated 4m ago")
+        XCTAssertFalse(SessionListModel.staleNote(lastUpdated: now.addingTimeInterval(-30 * 86_400), now: now)
+            .hasSuffix("ago"))
+    }
+
+    func testFailureBackoffDoublesToAMinute() {
+        XCTAssertEqual(SessionListModel.failureBackoff(0), 0)
+        XCTAssertEqual(SessionListModel.failureBackoff(1), 5)
+        XCTAssertEqual(SessionListModel.failureBackoff(2), 10)
+        XCTAssertEqual(SessionListModel.failureBackoff(4), 40)
+        XCTAssertEqual(SessionListModel.failureBackoff(5), 60)
+        XCTAssertEqual(SessionListModel.failureBackoff(100), 60)
     }
 }

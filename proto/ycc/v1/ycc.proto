@@ -355,6 +355,36 @@ message ListSessionHistoryResponse {
   repeated SessionSummary pinned = 3;
 }
 
+// ListHomeSessions replaces a home screen's ListProjects plus per-project
+// ListSessionHistory and GetWorkLoop fan-out with one request.
+message ListHomeSessionsRequest {
+  // First-page size per project; zero means 50. Capped at 500.
+  int32 limit = 1;
+}
+// One project's first bounded ListSessionHistory page.
+message ProjectSessionPage {
+  // Registered name to route session RPCs with. Projects registered under
+  // several names for one workspace get a single page, under the name listed
+  // first in `projects`.
+  string project = 1;
+  repeated SessionSummary sessions = 2;
+  repeated SessionSummary pinned = 3;
+  // Continue with ListSessionHistory(project, cursor); empty when complete.
+  string next_cursor = 4;
+  // Sessions owned by the project's daemon work loop (its recorded sessions
+  // plus the current one), for "via loop" badges.
+  repeated string loop_session_ids = 5;
+  // Non-empty when this project's history could not be listed; the other
+  // fields are then empty. Other projects are unaffected.
+  string error = 6;
+}
+message ListHomeSessionsResponse {
+  // The registered projects, as ListProjects returns them.
+  repeated ProjectInfo projects = 1;
+  // One page per distinct project workspace, in `projects` order.
+  repeated ProjectSessionPage pages = 2;
+}
+
 // SetSessionFollowUp sets or clears a user-owned bookmark. Repeated sets keep
 // the original timestamp. Sending input never clears it.
 message SetSessionFollowUpRequest {
@@ -1511,6 +1541,10 @@ service SessionService {
   // ListSessionHistory enumerates all sessions for a project (live + persisted
   // on-disk logs), most-recent first. ListSessions stays live-only.
   rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
+  // ListHomeSessions returns the registered projects plus every distinct
+  // project's first history page and work-loop membership in one round trip,
+  // for a client's cross-project home list.
+  rpc ListHomeSessions(ListHomeSessionsRequest) returns (ListHomeSessionsResponse);
   rpc SetSessionFollowUp(SetSessionFollowUpRequest) returns (SetSessionFollowUpResponse);
   // MarkSessionsRead advances the user's shared per-session read marks.
   rpc MarkSessionsRead(MarkSessionsReadRequest) returns (MarkSessionsReadResponse);

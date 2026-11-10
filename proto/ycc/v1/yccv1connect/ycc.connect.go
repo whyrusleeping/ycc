@@ -45,6 +45,9 @@ const (
 	// SessionServiceListSessionHistoryProcedure is the fully-qualified name of the SessionService's
 	// ListSessionHistory RPC.
 	SessionServiceListSessionHistoryProcedure = "/ycc.v1.SessionService/ListSessionHistory"
+	// SessionServiceListHomeSessionsProcedure is the fully-qualified name of the SessionService's
+	// ListHomeSessions RPC.
+	SessionServiceListHomeSessionsProcedure = "/ycc.v1.SessionService/ListHomeSessions"
 	// SessionServiceSetSessionFollowUpProcedure is the fully-qualified name of the SessionService's
 	// SetSessionFollowUp RPC.
 	SessionServiceSetSessionFollowUpProcedure = "/ycc.v1.SessionService/SetSessionFollowUp"
@@ -287,6 +290,10 @@ type SessionServiceClient interface {
 	// ListSessionHistory enumerates all sessions for a project (live + persisted
 	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
+	// ListHomeSessions returns the registered projects plus every distinct
+	// project's first history page and work-loop membership in one round trip,
+	// for a client's cross-project home list.
+	ListHomeSessions(context.Context, *connect.Request[v1.ListHomeSessionsRequest]) (*connect.Response[v1.ListHomeSessionsResponse], error)
 	SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error)
 	// MarkSessionsRead advances the user's shared per-session read marks.
 	MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error)
@@ -477,6 +484,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceListSessionHistoryProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ListSessionHistory")),
+			connect.WithClientOptions(opts...),
+		),
+		listHomeSessions: connect.NewClient[v1.ListHomeSessionsRequest, v1.ListHomeSessionsResponse](
+			httpClient,
+			baseURL+SessionServiceListHomeSessionsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListHomeSessions")),
 			connect.WithClientOptions(opts...),
 		),
 		setSessionFollowUp: connect.NewClient[v1.SetSessionFollowUpRequest, v1.SetSessionFollowUpResponse](
@@ -968,6 +981,7 @@ type sessionServiceClient struct {
 	startSession           *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
 	listSessions           *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	listSessionHistory     *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
+	listHomeSessions       *connect.Client[v1.ListHomeSessionsRequest, v1.ListHomeSessionsResponse]
 	setSessionFollowUp     *connect.Client[v1.SetSessionFollowUpRequest, v1.SetSessionFollowUpResponse]
 	markSessionsRead       *connect.Client[v1.MarkSessionsReadRequest, v1.MarkSessionsReadResponse]
 	getQuickReplies        *connect.Client[v1.GetQuickRepliesRequest, v1.GetQuickRepliesResponse]
@@ -1068,6 +1082,11 @@ func (c *sessionServiceClient) ListSessions(ctx context.Context, req *connect.Re
 // ListSessionHistory calls ycc.v1.SessionService.ListSessionHistory.
 func (c *sessionServiceClient) ListSessionHistory(ctx context.Context, req *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	return c.listSessionHistory.CallUnary(ctx, req)
+}
+
+// ListHomeSessions calls ycc.v1.SessionService.ListHomeSessions.
+func (c *sessionServiceClient) ListHomeSessions(ctx context.Context, req *connect.Request[v1.ListHomeSessionsRequest]) (*connect.Response[v1.ListHomeSessionsResponse], error) {
+	return c.listHomeSessions.CallUnary(ctx, req)
 }
 
 // SetSessionFollowUp calls ycc.v1.SessionService.SetSessionFollowUp.
@@ -1478,6 +1497,10 @@ type SessionServiceHandler interface {
 	// ListSessionHistory enumerates all sessions for a project (live + persisted
 	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
+	// ListHomeSessions returns the registered projects plus every distinct
+	// project's first history page and work-loop membership in one round trip,
+	// for a client's cross-project home list.
+	ListHomeSessions(context.Context, *connect.Request[v1.ListHomeSessionsRequest]) (*connect.Response[v1.ListHomeSessionsResponse], error)
 	SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error)
 	// MarkSessionsRead advances the user's shared per-session read marks.
 	MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error)
@@ -1664,6 +1687,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceListSessionHistoryProcedure,
 		svc.ListSessionHistory,
 		connect.WithSchema(sessionServiceMethods.ByName("ListSessionHistory")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListHomeSessionsHandler := connect.NewUnaryHandler(
+		SessionServiceListHomeSessionsProcedure,
+		svc.ListHomeSessions,
+		connect.WithSchema(sessionServiceMethods.ByName("ListHomeSessions")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceSetSessionFollowUpHandler := connect.NewUnaryHandler(
@@ -2156,6 +2185,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListSessionsHandler.ServeHTTP(w, r)
 		case SessionServiceListSessionHistoryProcedure:
 			sessionServiceListSessionHistoryHandler.ServeHTTP(w, r)
+		case SessionServiceListHomeSessionsProcedure:
+			sessionServiceListHomeSessionsHandler.ServeHTTP(w, r)
 		case SessionServiceSetSessionFollowUpProcedure:
 			sessionServiceSetSessionFollowUpHandler.ServeHTTP(w, r)
 		case SessionServiceMarkSessionsReadProcedure:
@@ -2339,6 +2370,10 @@ func (UnimplementedSessionServiceHandler) ListSessions(context.Context, *connect
 
 func (UnimplementedSessionServiceHandler) ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListSessionHistory is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListHomeSessions(context.Context, *connect.Request[v1.ListHomeSessionsRequest]) (*connect.Response[v1.ListHomeSessionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListHomeSessions is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error) {

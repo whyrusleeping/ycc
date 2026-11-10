@@ -1,10 +1,10 @@
 ---
 id: "0515"
 title: 'iOS home: one cross-project session-list request instead of 2 RPCs per project (reliable reopen)'
-status: todo
+status: in_review
 priority: 2
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - docs/design/ios-client.md
@@ -29,3 +29,7 @@ spec_refs:
 ## Acceptance criteria
 
 ## Work log
+
+- 2026-11-10 — Implemented. New `ListHomeSessions` RPC (internal/server/server.go): ListProjects-equivalent `projects` plus one `ProjectSessionPage` per distinct workspace (first `ListSessionHistory` page, `pinned`, `next_cursor`, `loop_session_ids`, per-project `error`). Proto regenerated for Go, web (ycc_pb.ts; internal/web/dist rebuilt) and Swift. iOS `SessionListModel` refreshes with that single call (retried twice like other foreground calls), feeding the existing merge, so ordering/frontier/pinned/unread/loop badges and per-project load-more are unchanged; on `unimplemented` it falls back to the old fan-out for the model's lifetime. A failed refresh keeps loaded rows and sets `staleReason` (list shows "Couldn’t refresh · updated …"); passive refreshes back off 5 s doubling to 60 s; pull-to-refresh always runs. Also fixed a legacy-path bug: late work-loop badges were dropped by the next load-more re-merge.
+- Evidence: `go test ./...` green (new internal/server/home_sessions_test.go checks pages match per-project ListSessionHistory/GetWorkLoop, cursor continuation, empty registry). YccKit `swift test` on the Mac: 583 tests, 0 failures; new tests cover one request for 12 projects, shared-fixture parity with the fan-out (unscoped, each scope, after load-more), stale note + 3 requests per failed foreground + backoff, per-project error, older-daemon fallback, unauthorized, empty registry. App built for the iPhone Air simulator and checked against the sidebar-v2 scratch daemon via /debug/latency: connect → home load is a single `ListHomeSessions` (loop badge, needs-answer bell, follow-up section shown); with the tunnel cut, backgrounding and foregrounding kept the rows with the quiet stale note; with it restored, the next foreground issued one `ListHomeSessions` and the note cleared. Screenshots in .ycc/tmp/w0515/.
+- Left in_review for on-device use.

@@ -1067,6 +1067,68 @@ public nonisolated struct Ycc_V1_ListSessionHistoryResponse: Sendable {
   public init() {}
 }
 
+/// ListHomeSessions replaces a home screen's ListProjects plus per-project
+/// ListSessionHistory and GetWorkLoop fan-out with one request.
+public nonisolated struct Ycc_V1_ListHomeSessionsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// First-page size per project; zero means 50. Capped at 500.
+  public var limit: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One project's first bounded ListSessionHistory page.
+public nonisolated struct Ycc_V1_ProjectSessionPage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Registered name to route session RPCs with. Projects registered under
+  /// several names for one workspace get a single page, under the name listed
+  /// first in `projects`.
+  public var project: String = String()
+
+  public var sessions: [Ycc_V1_SessionSummary] = []
+
+  public var pinned: [Ycc_V1_SessionSummary] = []
+
+  /// Continue with ListSessionHistory(project, cursor); empty when complete.
+  public var nextCursor: String = String()
+
+  /// Sessions owned by the project's daemon work loop (its recorded sessions
+  /// plus the current one), for "via loop" badges.
+  public var loopSessionIds: [String] = []
+
+  /// Non-empty when this project's history could not be listed; the other
+  /// fields are then empty. Other projects are unaffected.
+  public var error: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ListHomeSessionsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The registered projects, as ListProjects returns them.
+  public var projects: [Ycc_V1_ProjectInfo] = []
+
+  /// One page per distinct project workspace, in `projects` order.
+  public var pages: [Ycc_V1_ProjectSessionPage] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// SetSessionFollowUp sets or clears a user-owned bookmark. Repeated sets keep
 /// the original timestamp. Sending input never clears it.
 public nonisolated struct Ycc_V1_SetSessionFollowUpRequest: Sendable {
@@ -6869,6 +6931,126 @@ nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, 
     if lhs.sessions != rhs.sessions {return false}
     if lhs.nextCursor != rhs.nextCursor {return false}
     if lhs.pinned != rhs.pinned {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListHomeSessionsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListHomeSessionsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}limit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.limit != 0 {
+      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListHomeSessionsRequest, rhs: Ycc_V1_ListHomeSessionsRequest) -> Bool {
+    if lhs.limit != rhs.limit {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ProjectSessionPage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ProjectSessionPage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}sessions\0\u{1}pinned\0\u{3}next_cursor\0\u{3}loop_session_ids\0\u{1}error\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.sessions) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.pinned) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.nextCursor) }()
+      case 5: try { try decoder.decodeRepeatedStringField(value: &self.loopSessionIds) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.error) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessions.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.sessions, fieldNumber: 2)
+    }
+    if !self.pinned.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.pinned, fieldNumber: 3)
+    }
+    if !self.nextCursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.nextCursor, fieldNumber: 4)
+    }
+    if !self.loopSessionIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.loopSessionIds, fieldNumber: 5)
+    }
+    if !self.error.isEmpty {
+      try visitor.visitSingularStringField(value: self.error, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ProjectSessionPage, rhs: Ycc_V1_ProjectSessionPage) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessions != rhs.sessions {return false}
+    if lhs.pinned != rhs.pinned {return false}
+    if lhs.nextCursor != rhs.nextCursor {return false}
+    if lhs.loopSessionIds != rhs.loopSessionIds {return false}
+    if lhs.error != rhs.error {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListHomeSessionsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListHomeSessionsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}projects\0\u{1}pages\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.projects) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.pages) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.projects.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.projects, fieldNumber: 1)
+    }
+    if !self.pages.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.pages, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListHomeSessionsResponse, rhs: Ycc_V1_ListHomeSessionsResponse) -> Bool {
+    if lhs.projects != rhs.projects {return false}
+    if lhs.pages != rhs.pages {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

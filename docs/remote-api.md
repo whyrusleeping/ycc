@@ -297,6 +297,7 @@ JSON="Content-Type: application/json"
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
+| [`ListHomeSessions`](#listhomesessions) | projects plus every project's first history page and loop membership, in one request |
 | [`SetSessionFollowUp`](#setsessionfollowup) | set or clear a user-owned session bookmark |
 | [`MarkSessionsRead`](#marksessionsread) | advance the user's shared per-session read marks |
 | [`GetSessionTranscript`](#getsessiontranscript) | full event log for one session |
@@ -582,6 +583,32 @@ not in `sessions`, including waiting questions and active-task sessions beyond t
 page. Subsequent
 pages do not repeat pinned rows; merge by `sessionId`, preferring the latest
 copy, and retain pinned rows outside the recency frontier.
+
+### ListHomeSessions
+
+One round trip for a cross-project home list, replacing `ListProjects` plus a
+`ListSessionHistory` and `GetWorkLoop` per project. `limit` is the first-page size
+per project (zero means 50, capped at 500).
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
+  $B/ycc.v1.SessionService/ListHomeSessions
+```
+
+```json
+{"projects":[{"name":"work","path":"/home/me/work","needsOnboarding":false}],
+ "pages":[{"project":"work","sessions":[{"sessionId":"s_doc","mode":"work","status":"running"}],
+   "nextCursor":"WyIyMDI2…","loopSessionIds":["s_doc"]}]}
+```
+
+`projects` is exactly what `ListProjects` returns. `pages` holds one entry per distinct
+workspace in `projects` order. If several names are registered for one workspace, the first
+name gets the page. Each page carries the same `sessions`, `pinned` and `nextCursor` as a
+first bounded `ListSessionHistory` page for that project. Continue a page with
+`ListSessionHistory` using its `project` and `cursor`. `loopSessionIds` lists the sessions
+owned by the project's work loop: its recorded sessions plus the current one. If one
+project's history cannot be listed, its page carries only `project` and `error`, and the
+other pages are unaffected. With no projects registered both lists are empty.
 
 ### SetSessionFollowUp
 

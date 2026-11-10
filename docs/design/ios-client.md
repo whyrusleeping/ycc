@@ -48,7 +48,11 @@ The app treats daemon data as authoritative and keeps only client-local navigati
 and preferences, plus a local cache of read marks that is pushed to the daemon. Read marks
 themselves are daemon state shared with the web client (spec §18.6). Session, backlog, usage, and
 workstream state are projections of
-RPC responses/events and refresh when the app returns to the foreground. Backlog task detail has an
+RPC responses/events and refresh when the app returns to the foreground. The home list refreshes
+with one `ListHomeSessions` request whatever the project count (falling back to per-project
+`ListSessionHistory` + `GetWorkLoop` on older daemons). If it fails, the loaded rows stay with a quiet
+"Couldn’t refresh · updated …" note, and passive refreshes back off (5 s doubling to a minute) while
+pull-to-refresh always retries. Backlog task detail has an
 explicit editor for title, status, priority, dependencies, spec references, and Markdown body;
 `UpdateTask` saves the whole draft and the returned canonical detail replaces the projection.
 Cancellation leaves the loaded task untouched, while a failed save retains the draft for retry.

@@ -31,6 +31,16 @@ public protocol SessionListSource: Sendable {
     func setSessionFollowUp(project: String, sessionID: String, followUp: Bool) async throws -> Ycc_V1_SetSessionFollowUpResponse
     /// Fetch a project's daemon-side work-loop snapshot for row ownership badges.
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
+    /// The whole home refresh in one request (`ListHomeSessions`): projects plus
+    /// each project's first page and loop membership. Throws
+    /// ``HomeSessionsUnsupported`` when the daemon predates it.
+    func listHomeSessions(limit: Int32) async throws -> Ycc_V1_ListHomeSessionsResponse
+}
+
+/// The daemon (or source) has no `ListHomeSessions`; the home list falls back
+/// to one history and one work-loop request per project.
+public struct HomeSessionsUnsupported: Error, Sendable {
+    public init() {}
 }
 
 /// Existing sources need not support loop ownership; it is supplemental and a
@@ -39,6 +49,9 @@ public extension SessionListSource {
     func workLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? { nil }
     func setSessionFollowUp(project: String, sessionID: String, followUp: Bool) async throws -> Ycc_V1_SetSessionFollowUpResponse {
         throw YccError.rpc(message: "This source does not support follow-up flags.")
+    }
+    func listHomeSessions(limit: Int32) async throws -> Ycc_V1_ListHomeSessionsResponse {
+        throw HomeSessionsUnsupported()
     }
 }
 
@@ -198,6 +211,14 @@ public final class SessionListModel {
     /// Set when a load failed with ``YccError/unauthorized``; the view observes
     /// this to route back to the connect screen via `AppModel.handleUnauthorized`.
     public private(set) var unauthorized = false
+    /// Why the latest refresh failed while the list kept showing the rows it
+    /// already had (the daemon unreachable after foregrounding, say). The view
+    /// shows it as a quiet stale note rather than an error; nil once a refresh
+    /// succeeds.
+    public private(set) var staleReason: String?
+    /// When the shown rows were last refreshed successfully (wall clock), for
+    /// the stale note's "updated 3m ago".
+    public private(set) var lastUpdated: Date?
 
     private let source: SessionListSource
     /// Foregrounding can leave pooled TCP connections dead, and CFNetwork does
@@ -226,6 +247,16 @@ public final class SessionListModel {
     /// hold the whole list back. `nil` disables the valve.
     @ObservationIgnored private let partialPublishDelay: TimeInterval?
     @ObservationIgnored private var lastSuccessfulRefresh: TimeInterval?
+    /// Consecutive failed home refreshes and when the latest one failed.
+    /// Passive refreshes back off after failures (``failureBackoff``) so an
+    /// unreachable daemon is not retried on every foreground or navigation.
+    @ObservationIgnored private var consecutiveFailures = 0
+    @ObservationIgnored private var lastFailedRefresh: TimeInterval?
+    /// Whether to try the single-request home refresh (`ListHomeSessions`).
+    /// Cleared for the model's lifetime when the daemon predates it.
+    @ObservationIgnored private var usesHomeRequest = true
+    /// How many times the one-request home refresh was attempted (tests).
+    @ObservationIgnored private(set) var homeRefreshCount = 0
     /// How many times loaded pages were merged and published (diagnostics/tests).
     @ObservationIgnored private(set) var publicationCount = 0
 
@@ -594,16 +625,18 @@ public final class SessionListModel {
         dataRevision &+= 1
     }
 
-    /// (Re)load the project list and every project's history. The aggregate feed
-    /// queries each distinct registered workspace once, merges and deduplicates
-    /// the results, and keeps successful projects when another project fails —
-    /// so the drawer's badges stay accurate no matter which project is selected.
-    /// Concurrent callers await the same load rather than issuing overlapping
-    /// foreground POST bursts.
+    /// (Re)load the project list and every project's history. One
+    /// `ListHomeSessions` request returns every distinct workspace's first page
+    /// (older daemons: one history and one work-loop request per project); the
+    /// model merges and deduplicates the pages and keeps successful projects
+    /// when another project fails — so the drawer's badges stay accurate no
+    /// matter which project is selected. Concurrent callers await the same load
+    /// rather than issuing overlapping foreground requests.
     ///
     /// `force: false` is for passive triggers (returning to the list,
     /// foregrounding): it is skipped when a successful refresh completed within
-    /// the last ``staleAfter`` seconds. Pull-to-refresh and post-mutation
+    /// the last ``staleAfter`` seconds, or while backing off after failed
+    /// refreshes (``failureBackoff(_:)``). Pull-to-refresh and post-mutation
     /// reloads use the default forced refresh.
     public func refresh(force: Bool = true) async {
         if let refreshTask {
@@ -613,6 +646,10 @@ public final class SessionListModel {
         if !force, let lastSuccessfulRefresh {
             let elapsed = clock() - lastSuccessfulRefresh
             if elapsed >= 0 && elapsed < staleAfter { return }
+        }
+        if !force, consecutiveFailures > 0, let lastFailedRefresh {
+            let elapsed = clock() - lastFailedRefresh
+            if elapsed >= 0 && elapsed < Self.failureBackoff(consecutiveFailures) { return }
         }
 
         refreshGeneration += 1
@@ -628,6 +665,14 @@ public final class SessionListModel {
     public nonisolated static func continuousSeconds() -> TimeInterval {
         let components = clockOrigin.duration(to: ContinuousClock.now).components
         return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+    }
+
+    /// How long passive refreshes wait after `failures` consecutive failed
+    /// refreshes: 5 s, doubling to a one-minute cap. Pull-to-refresh is never
+    /// held back.
+    nonisolated static func failureBackoff(_ failures: Int) -> TimeInterval {
+        guard failures > 0 else { return 0 }
+        return min(60, 5 * pow(2, Double(min(failures, 8) - 1)))
     }
 
     /// A throttled ``refresh(force:)`` for passive triggers.
@@ -662,9 +707,87 @@ public final class SessionListModel {
             loadSpan.end(rows: allSessions.count)
         }
         unauthorized = false
-        if await refreshHistories(cachedProjects: projects) {
-            lastSuccessfulRefresh = clock()
+        let succeeded: Bool
+        if usesHomeRequest, let result = await refreshHome() {
+            succeeded = result
+        } else {
+            succeeded = await refreshHistories(cachedProjects: projects)
         }
+        if succeeded {
+            lastSuccessfulRefresh = clock()
+            lastUpdated = Date()
+            staleReason = nil
+            consecutiveFailures = 0
+            lastFailedRefresh = nil
+        } else if !unauthorized {
+            consecutiveFailures += 1
+            lastFailedRefresh = clock()
+        }
+    }
+
+    /// The whole refresh as one `ListHomeSessions` request (retried briefly
+    /// like any foreground request). Returns whether it succeeded, or `nil`
+    /// when the source does not support it and the per-project fan-out must
+    /// run instead.
+    ///
+    /// A failed request keeps every loaded row and reports a quiet
+    /// ``staleReason``; only a list that has never loaded shows the error in
+    /// place of its rows.
+    private func refreshHome() async -> Bool? {
+        let source = source
+        homeRefreshCount += 1
+        let span = LatencyDiagnostics.shared.begin("home.sessions")
+        let response: Ycc_V1_ListHomeSessionsResponse
+        do {
+            response = try await Self.retrying(delays: retryDelays) {
+                try await source.listHomeSessions(limit: 50)
+            }
+            span.end(rows: response.pages.reduce(0) { $0 + $1.sessions.count })
+        } catch is HomeSessionsUnsupported {
+            span.end()
+            usesHomeRequest = false
+            return nil
+        } catch YccError.unauthorized {
+            span.end()
+            unauthorized = true
+            return false
+        } catch {
+            span.end()
+            let message = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            if loadedProjects.isEmpty && allSessions.isEmpty {
+                errorMessage = message
+                staleReason = nil
+            } else {
+                staleReason = message
+            }
+            return false
+        }
+        hasLoadedProjects = true
+        if response.projects != projects { projects = response.projects }
+        let loads = response.pages.map { page -> HistoryLoad in
+            guard page.error.isEmpty else {
+                // Keep the project's previous rows (and badges), as a failed
+                // per-project request would.
+                let previous = historyLoads[page.project]
+                return HistoryLoad(
+                    project: page.project,
+                    sessions: previous?.sessions ?? [],
+                    pinned: previous?.pinned ?? [],
+                    nextCursor: previous?.nextCursor ?? "",
+                    loopSessionIDs: Set(loopSessionIDs.filter { sessionProjects[$0] == page.project }),
+                    error: page.error,
+                    hasHistory: loadedProjects.contains(page.project))
+            }
+            return HistoryLoad(
+                project: page.project, sessions: page.sessions, pinned: page.pinned,
+                nextCursor: page.nextCursor,
+                loopSessionIDs: Set(page.loopSessionIds.filter { !$0.isEmpty }),
+                hasHistory: true)
+        }
+        apply(loads: loads)
+        noteListedReadMarks()
+        staleReason = nil
+        return errorMessage == nil
     }
 
     /// The project argument needed to open or resume a loaded row.
@@ -748,7 +871,8 @@ public final class SessionListModel {
         }
     }
 
-    /// One refresh round. With a cached project list the per-project history
+    /// One refresh round against a daemon without `ListHomeSessions`. With a
+    /// cached project list the per-project history
     /// and work-loop queries start immediately, concurrently with ListProjects
     /// (one round trip instead of two); when ListProjects answers, newly
     /// registered projects are fetched and removed ones dropped. On first load
@@ -907,6 +1031,9 @@ public final class SessionListModel {
                     // Before the publication the badges ride along with it;
                     // afterwards a late badge must not re-sort/re-baseline.
                     guard finished || progressive else { continue }
+                    // Keep the published page's badges too, or the next
+                    // load-more re-merge would drop a late badge.
+                    historyLoads[project]?.loopSessionIDs = ids
                     let merged = targets.reduce(into: Set<String>()) { result, project in
                         result.formUnion(byProject[project]?.loopSessionIDs ?? [])
                     }
@@ -995,6 +1122,9 @@ public final class SessionListModel {
                 return try await operation()
             } catch YccError.unauthorized {
                 throw YccError.unauthorized
+            } catch let error as HomeSessionsUnsupported {
+                // Definitive: the caller falls back without retrying.
+                throw error
             } catch {
                 guard let delay = nextDelay.next() else { throw error }
                 if delay > 0, delay.isFinite {
@@ -1155,6 +1285,18 @@ public final class SessionListModel {
     /// `startedAt`. Returns `nil` when neither parses.
     public static func recencyDate(_ session: Ycc_V1_SessionSummary) -> Date? {
         parseTimestamp(session.lastActivity) ?? parseTimestamp(session.startedAt)
+    }
+
+    /// The quiet note shown above a list whose latest refresh failed:
+    /// "Couldn’t refresh · updated 4m ago".
+    public static func staleNote(lastUpdated: Date?, now: Date = Date()) -> String {
+        guard let lastUpdated else { return "Couldn’t refresh" }
+        let age = compactAge(of: lastUpdated, now: now)
+        if age == "now" { return "Couldn’t refresh · updated just now" }
+        if now.timeIntervalSince(lastUpdated) < 7 * 86_400 {
+            return "Couldn’t refresh · updated \(age) ago"
+        }
+        return "Couldn’t refresh · updated \(age)"
     }
 
     /// A mail-style compact age for a row's trailing timestamp ("now", "13m",

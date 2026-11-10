@@ -657,6 +657,14 @@ struct LandingView: View {
                     .foregroundStyle(Theme.attention)
                     .accessibilityLabel("Partial results. \(warning)")
             }
+            // The daemon was unreachable: keep the rows, say so quietly.
+            if let reason = model.staleReason {
+                Label(SessionListModel.staleNote(lastUpdated: model.lastUpdated),
+                    systemImage: "icloud.slash")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHint(reason)
+            }
             ForEach(model.sections) { section in
                 Section {
                     // Section-scoped row ids: a (un)flag moves a row between
