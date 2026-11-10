@@ -135,11 +135,14 @@ type Deps struct {
 	// ScheduleWatch creates a watch from a user-confirmed chat request. Nil
 	// hides schedule_watch.
 	ScheduleWatch func(context.Context, WatchSpec) (string, error)
-	Implementer   AgentSpec
-	Reviewers     []AgentSpec
-	Asker         Asker
-	MaxTok        int
-	MaxTurns      int // per-Run tool-call turn cap; 0 => engine default backstop
+	// StartWork starts a work session for one task from a user-confirmed chat
+	// hand-off (start_work). Nil hides start_work.
+	StartWork   func(context.Context, WorkHandoff) (StartedWork, error)
+	Implementer AgentSpec
+	Reviewers   []AgentSpec
+	Asker       Asker
+	MaxTok      int
+	MaxTurns    int // per-Run tool-call turn cap; 0 => engine default backstop
 	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
 	// PromptCacheScope prefixes each subagent loop's prompt-cache routing key

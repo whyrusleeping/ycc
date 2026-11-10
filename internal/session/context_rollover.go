@@ -440,7 +440,7 @@ func buildCoordinatorRolloverSummary(ctx context.Context, events []event.Event, 
 			}
 			appendAuthorityQuestionPair(&authority, question, ev)
 		case event.TaskFocus, event.PlanProposed, event.DecisionMade, event.ReviewSubmitted,
-			event.DocUpdated, event.CommitMade:
+			event.DocUpdated, event.CommitMade, event.WorkHandoff:
 			decisions = append(decisions, rolloverEvidence{ev.Seq,
 				fmt.Sprintf("- #%d %s: %s\n", ev.Seq, ev.Type, compactJSON(ev.Data, 900))})
 		case event.BudgetExceeded:

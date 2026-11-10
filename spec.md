@@ -724,6 +724,19 @@ prompt uses the preset's own opening prompt. A pm-to-work
 handoff requires explicit approval and carries the selected task and planning context. Mode
 transitions are recorded; clients start sessions and otherwise project the daemon-owned state.
 
+Chat hands a task to the pipeline without ending. Its `start_work` tool takes one actionable task
+(todo or in progress, dependencies done, not held by another live session) and a bounded handoff:
+the decisions, constraints and verification expected. After a real user confirmation, which is
+never auto-answered, it starts an attended work session pinned to that task with the handoff in
+its opening prompt. The session runs in the chat's worktree, or in a separate workstream when the
+chat or another session has uncommitted edits the task may touch. A workstream starts from the
+committed HEAD, so its task file must be committed first. Only attended chats offer the
+tool. Both sessions record a `work_handoff` event. The chat continues and tracks the work session
+as a background job (§7.3): when that session finishes, goes idle, errors or is stopped, the job
+reports how it ended, its commits and its final report. Killing the job stops tracking only. Chat
+still commits its own inline work (above); the hand-off is for work the user wants independently
+reviewed.
+
 ### 9.1 Unattended work loop
 
 The daemon repeatedly starts fresh work sessions while ready tasks remain. It skips proposed,

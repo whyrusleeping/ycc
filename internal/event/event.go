@@ -91,6 +91,11 @@ const (
 	// is established (data: { task: "0007", title?: "…" }); subsequent
 	// model_turns are attributed to the most recent focus by the projection.
 	TaskFocus Type = "task_focus"
+	// WorkHandoff records a user-approved chat hand-off of one task to a new
+	// work session (start_work). The chat records { task, session, workstream?,
+	// branch? }; the work session records { task, from_session } after its
+	// session_started.
+	WorkHandoff Type = "work_handoff"
 	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"
