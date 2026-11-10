@@ -56,45 +56,14 @@ struct WorkLoopView: View {
             set: { if !$0 { model?.completionMessage = nil } })
     }
 
-    /// Login sheet, start/stop confirmations and result alerts.
+    /// Login sheet and result alerts. The start/stop confirmations sit on
+    /// their buttons so the iOS 26 popover points at them.
     private func withDialogs(_ content: some View) -> some View {
         content
         .sheet(isPresented: $showAnthropicLogin) {
             if let client = app.client {
                 NavigationStack { AnthropicLoginView(client: client) }
                     .trackedView("anthropic_login")
-            }
-        }
-        .confirmationDialog(
-            "Start unattended work loop?",
-            isPresented: $showStartConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Start loop") {
-                guard let model else { return }
-                Analytics.action("loop.start")
-                Task { await model.start() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended.")
-        }
-        .confirmationDialog(
-            "Stop work loop gracefully?",
-            isPresented: $showStopConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Stop loop", role: .destructive) {
-                guard let model else { return }
-                Analytics.action("loop.stop")
-                Task { await model.stop() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if model?.state == .waiting {
-                Text("The loop is waiting for the provider; stopping ends the wait immediately. The daemon will not pick another backlog task.")
-            } else {
-                Text("The current session will finish. The daemon will not pick another backlog task.")
             }
         }
         .alert(
@@ -140,6 +109,9 @@ struct WorkLoopView: View {
                     Button("Start loop") { showStartConfirmation = true }
                         .buttonStyle(.accent)
                         .disabled(!model.canStart)
+                        .workLoopStartConfirmation(isPresented: $showStartConfirmation) {
+                            start(model)
+                        }
                 }
             } refresh: {
                 await model.refresh()
@@ -236,6 +208,9 @@ struct WorkLoopView: View {
                         Label("Start loop", systemImage: "play.circle")
                     }
                     .disabled(!model.canStart)
+                    .workLoopStartConfirmation(isPresented: $showStartConfirmation) {
+                        start(model)
+                    }
                 }
                 if model.state.isActive {
                     Button(role: .destructive) {
@@ -246,10 +221,22 @@ struct WorkLoopView: View {
                             systemImage: "stop.circle")
                     }
                     .disabled(!model.canStop)
+                    .workLoopStopConfirmation(
+                        isPresented: $showStopConfirmation,
+                        waiting: model.state == .waiting
+                    ) {
+                        Analytics.action("loop.stop")
+                        Task { await model.stop() }
+                    }
                 }
             }
         }
         .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
+    }
+
+    private func start(_ model: WorkLoopModel) {
+        Analytics.action("loop.start")
+        Task { await model.start() }
     }
 
     private func header(_ model: WorkLoopModel, _ loop: Ycc_V1_WorkLoopInfo) -> some View {
@@ -412,6 +399,51 @@ struct WorkLoopView: View {
             }
             guard !Task.isCancelled else { return }
             await model?.refresh()
+        }
+    }
+}
+
+extension View {
+    /// The start confirmation. Apply it to the Start button itself, not the
+    /// screen: on iOS 26 a confirmation dialog presents as a popover anchored to
+    /// the view it modifies, so a screen-level dialog points its arrow at the
+    /// middle of the screen.
+    func workLoopStartConfirmation(
+        isPresented: Binding<Bool>,
+        onStart: @escaping () -> Void
+    ) -> some View {
+        confirmationDialog(
+            "Start unattended work loop?",
+            isPresented: isPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Start loop", action: onStart)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended.")
+        }
+    }
+
+    /// The stop confirmation; like ``workLoopStartConfirmation(isPresented:onStart:)``,
+    /// apply it to the Stop button.
+    func workLoopStopConfirmation(
+        isPresented: Binding<Bool>,
+        waiting: Bool,
+        onStop: @escaping () -> Void
+    ) -> some View {
+        confirmationDialog(
+            "Stop work loop gracefully?",
+            isPresented: isPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Stop loop", role: .destructive, action: onStop)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if waiting {
+                Text("The loop is waiting for the provider; stopping ends the wait immediately. The daemon will not pick another backlog task.")
+            } else {
+                Text("The current session will finish. The daemon will not pick another backlog task.")
+            }
         }
     }
 }

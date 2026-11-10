@@ -104,43 +104,14 @@ struct BacklogView: View {
             set: { if !$0 { scopedLoopModel?.completionMessage = nil } })
     }
 
-    /// Capture sheet, work-loop confirmations and result alerts.
+    /// Capture sheet and work-loop result alerts (the start/stop confirmations
+    /// sit on the banner buttons).
     private func withDialogs(_ content: some View) -> some View {
         content
         .sheet(isPresented: $showCapture) {
             if let model {
                 QuickCaptureView(model: model)
                     .trackedFlow("quick_capture")
-            }
-        }
-        .confirmationDialog(
-            "Start unattended work loop?",
-            isPresented: $showLoopStartConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Start loop") {
-                guard let loopModel = scopedLoopModel else { return }
-                Task { await loopModel.start() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended.")
-        }
-        .confirmationDialog(
-            "Stop work loop gracefully?",
-            isPresented: $showLoopStopConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Stop loop", role: .destructive) {
-                guard let loopModel = scopedLoopModel else { return }
-                Task { await loopModel.stop() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            if scopedLoopModel?.state == .waiting {
-                Text("The loop is waiting for the provider; stopping ends the wait immediately. The daemon will not pick another backlog task.")
-            } else {
-                Text("The current session will finish. The daemon will not pick another backlog task.")
             }
         }
         .alert(
@@ -261,6 +232,10 @@ struct BacklogView: View {
                         .labelStyle(.iconOnly)
                 }
                 .accessibilityLabel("Start work loop")
+                .workLoopStartConfirmation(isPresented: $showLoopStartConfirmation) {
+                    guard let loopModel = scopedLoopModel else { return }
+                    Task { await loopModel.start() }
+                }
             } else if state == .stopping {
                 Button {} label: {
                     Label("Stopping…", systemImage: "stop.circle")
@@ -277,6 +252,13 @@ struct BacklogView: View {
                 }
                 .disabled(loopModel?.canStop != true)
                 .accessibilityLabel("Stop work loop")
+                .workLoopStopConfirmation(
+                    isPresented: $showLoopStopConfirmation,
+                    waiting: state == .waiting
+                ) {
+                    guard let loopModel = scopedLoopModel else { return }
+                    Task { await loopModel.stop() }
+                }
             }
         }
         .padding(.horizontal, 16)
