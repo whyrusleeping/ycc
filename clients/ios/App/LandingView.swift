@@ -640,94 +640,7 @@ struct LandingView: View {
                     .accessibilityLabel("Partial results. \(warning)")
             }
             ForEach(model.sections) { section in
-                Section {
-                    // Section-scoped row ids: a (un)flag moves a row between
-                    // sections, and a bare session id makes List animate that
-                    // as a cross-section move (rows below slide up first, then
-                    // the old row reappears and fades). Distinct ids make it a
-                    // plain delete from one section and insert into the other.
-                    ForEach(section.sessions.map { (section.id + "/" + $0.sessionID, $0) }, id: \.0) { _, session in
-                        let destination = HomeDestination.session(
-                            id: session.sessionID,
-                            project: model.project(for: session),
-                            live: session.live,
-                            title: SessionListModel.displayTitle(for: session))
-                        // No row tint for needs-answer: the section header and
-                        // the gutter bell already carry the one attention cue.
-                        // Running sessions breathe instead (RunningGlow).
-                        SessionCell(
-                            isRunning: SessionListModel.lifecycleLabel(for: session) == "running",
-                            isFirst: session.sessionID == section.sessions.first?.sessionID,
-                            isLast: session.sessionID == section.sessions.last?.sessionID,
-                            // A drill-in pushes, as a NavigationLink would.
-                            open: { router.path.append(destination) }
-                        ) {
-                            SessionRow(
-                                session: session,
-                                project: model.displayProject(for: session),
-                                showsProject: model.selectedProject == nil,
-                                isLoopOwned: model.isLoopSession(session),
-                                isUnread: model.isUnread(session))
-                        }
-                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                            Button {
-                                setFollowUp(session, model: model, via: .swipe)
-                            } label: {
-                                Label(session.followUp ? "Unflag" : "Follow up",
-                                    systemImage: session.followUp ? "flag.slash" : "flag")
-                            }
-                            .tint(Theme.attention)
-                            .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
-                        }
-                        // Acknowledging new agent output without reading it is a
-                        // legitimate answer to a badge, so it gets the trailing
-                        // (dismissive) edge.
-                        .swipeActions(edge: .trailing) {
-                            if model.isUnread(session) {
-                                Button {
-                                    Analytics.action("sessions.mark_read", via: .swipe)
-                                    model.markRead(session)
-                                } label: {
-                                    Label("Mark read", systemImage: "envelope.open")
-                                }
-                                .tint(.gray)
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                setFollowUp(session, model: model, via: .contextMenu)
-                            } label: {
-                                Label(session.followUp ? "Remove follow-up flag" : "Flag for follow-up",
-                                    systemImage: session.followUp ? "flag.slash" : "flag")
-                            }
-                            .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
-                            if model.isUnread(session) {
-                                Button {
-                                    Analytics.action("sessions.mark_read", via: .contextMenu)
-                                    model.markRead(session)
-                                } label: {
-                                    Label("Mark read", systemImage: "envelope.open")
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    if let title = section.title {
-                        Label {
-                            Text(title.lowercased())
-                                .font(.caption.monospaced())
-                        } icon: {
-                            if section.kind == .needsAnswer {
-                                Image(systemName: "bell.badge.fill")
-                                    .foregroundStyle(Theme.attention)
-                            } else if section.kind == .followUp {
-                                Image(systemName: "flag.fill")
-                                    .foregroundStyle(Theme.attention)
-                            }
-                        }
-                        .textCase(nil)
-                    }
-                }
+                sessionSection(section, model: model)
             }
             if model.hasMoreHistory {
                 Button {
@@ -747,6 +660,107 @@ struct LandingView: View {
         // Unanimated, the row snaps out from under the closing swipe action.
         .animation(.default, value: model.followUpUpdatingIDs)
         .refreshable { Analytics.action("refresh", via: .pull); await refreshAll(model) }
+    }
+
+    /// One list section. Split out of `sessionList`, along with `sessionRow`:
+    /// as a single expression the List body no longer type-checks in
+    /// reasonable time.
+    private func sessionSection(_ section: SessionSection, model: SessionListModel) -> some View {
+        Section {
+            // Section-scoped row ids: a (un)flag moves a row between
+            // sections, and a bare session id makes List animate that
+            // as a cross-section move (rows below slide up first, then
+            // the old row reappears and fades). Distinct ids make it a
+            // plain delete from one section and insert into the other.
+            ForEach(section.sessions.map { (section.id + "/" + $0.sessionID, $0) }, id: \.0) { _, session in
+                sessionRow(session, in: section, model: model)
+            }
+        } header: {
+            if let title = section.title {
+                Label {
+                    Text(title.lowercased())
+                        .font(.caption.monospaced())
+                } icon: {
+                    if section.kind == .needsAnswer {
+                        Image(systemName: "bell.badge.fill")
+                            .foregroundStyle(Theme.attention)
+                    } else if section.kind == .followUp {
+                        Image(systemName: "flag.fill")
+                            .foregroundStyle(Theme.attention)
+                    }
+                }
+                .textCase(nil)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionRow(
+        _ session: Ycc_V1_SessionSummary, in section: SessionSection, model: SessionListModel
+    ) -> some View {
+        let destination = HomeDestination.session(
+            id: session.sessionID,
+            project: model.project(for: session),
+            live: session.live,
+            title: SessionListModel.displayTitle(for: session))
+        // No row tint for needs-answer: the section header and
+        // the gutter bell already carry the one attention cue.
+        // Running sessions breathe instead (RunningGlow).
+        SessionCell(
+            isRunning: SessionListModel.lifecycleLabel(for: session) == "running",
+            isFirst: session.sessionID == section.sessions.first?.sessionID,
+            isLast: session.sessionID == section.sessions.last?.sessionID,
+            // A drill-in pushes, as a NavigationLink would.
+            open: { router.path.append(destination) }
+        ) {
+            SessionRow(
+                session: session,
+                project: model.displayProject(for: session),
+                showsProject: model.selectedProject == nil,
+                isLoopOwned: model.isLoopSession(session),
+                isUnread: model.isUnread(session))
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                setFollowUp(session, model: model, via: .swipe)
+            } label: {
+                Label(session.followUp ? "Unflag" : "Follow up",
+                    systemImage: session.followUp ? "flag.slash" : "flag")
+            }
+            .tint(Theme.attention)
+            .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
+        }
+        // Acknowledging new agent output without reading it is a
+        // legitimate answer to a badge, so it gets the trailing
+        // (dismissive) edge.
+        .swipeActions(edge: .trailing) {
+            if model.isUnread(session) {
+                Button {
+                    Analytics.action("sessions.mark_read", via: .swipe)
+                    model.markRead(session)
+                } label: {
+                    Label("Mark read", systemImage: "envelope.open")
+                }
+                .tint(.gray)
+            }
+        }
+        .contextMenu {
+            Button {
+                setFollowUp(session, model: model, via: .contextMenu)
+            } label: {
+                Label(session.followUp ? "Remove follow-up flag" : "Flag for follow-up",
+                    systemImage: session.followUp ? "flag.slash" : "flag")
+            }
+            .disabled(model.followUpUpdatingIDs.contains(session.sessionID))
+            if model.isUnread(session) {
+                Button {
+                    Analytics.action("sessions.mark_read", via: .contextMenu)
+                    model.markRead(session)
+                } label: {
+                    Label("Mark read", systemImage: "envelope.open")
+                }
+            }
+        }
     }
 
     private func setFollowUp(_ session: Ycc_V1_SessionSummary, model: SessionListModel, via: UsageAnalytics.Via) {
