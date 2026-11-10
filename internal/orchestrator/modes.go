@@ -87,10 +87,12 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
 			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d))
+		base := chatModeSystem
 		if d.ScheduleWatch != nil {
 			reg.Add(scheduleWatch(d))
+			base += "\n\n" + watchProposalGuidance
 		}
-		return reg, sys(chatModeSystem, unattended, d.Workspace)
+		return reg, sys(base, unattended, d.Workspace)
 	case "watch":
 		// One scheduled watch run. Questions are real (the run parks while the
 		// schedule continues); the run ends with watch_report.
@@ -116,10 +118,14 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		reg.Add(tools.RequestIntegration(), tools.ReportBlocked())
 		return reg, sys(integrateModeSystem, unattended, d.Workspace)
 	default: // work
+		base, direct := coordinatorSystem, false
 		if d.WorkImplementation != "delegate" {
-			return CoordinatorTools(d, ws, true), sys(coordinatorDirectSystem, unattended, d.Workspace)
+			base, direct = coordinatorDirectSystem, true
 		}
-		return CoordinatorTools(d, ws, false), sys(coordinatorSystem, unattended, d.Workspace)
+		if d.ScheduleWatch != nil {
+			base += "\n\n" + watchProposalGuidance
+		}
+		return CoordinatorTools(d, ws, direct), sys(base, unattended, d.Workspace)
 	}
 }
 

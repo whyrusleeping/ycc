@@ -759,9 +759,13 @@ to repeat it. Answering resumes the run (reopening it after a restart). The daem
 each answered watch question to the watch's standing decisions (the latest 20). Watch runs never
 send idle pushes; an `alert` report sends an attention push unless the run already asked a question.
 Runs act only on low-risk or pre-authorized actions and ask rather than act on anything
-attributable to another live session or an `in_progress` task. Attended chat sessions on a
+attributable to another live session or an `in_progress` task. Attended chat and work sessions on a
 persistent daemon offer `schedule_watch`, which creates a watch only after the user confirms its
-definition; the first run is due immediately. `docs/design/watches.md` records the rationale.
+definition; the first run is due immediately. Their prompts tell the agent to propose a watch, with a
+cadence suited to the work and an expiry a little past its expected end, when a turn ends while
+external work it started (a remote soak, backfill, or deploy) is still running, and to name the
+covering watch in its final reply. Work that finished within the turn or that a background job
+tracks gets no watch. `docs/design/watches.md` records the rationale.
 
 ## 10. Work orchestration
 

@@ -421,6 +421,9 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	// background implementer/agent (or another session) is mid-run.
 	reg.Add(askUser(d), commitTool(d), updateTask(d),
 		createTask(d), remember(d), forget(d), tools.Finish())
+	if d.ScheduleWatch != nil {
+		reg.Add(scheduleWatch(d))
+	}
 	return reg
 }
 

@@ -94,6 +94,25 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 }
 
+// schedule_watch and the guidance to propose a watch for external work left
+// running travel together in chat and work (both strategies), and both vanish
+// when the session cannot create watches (0517).
+func TestScheduleWatchOfferedWithGuidance(t *testing.T) {
+	for _, tc := range []struct{ mode, impl string }{{"chat", ""}, {"work", "delegate"}, {"work", "direct"}} {
+		d := depsFor(t)
+		d.WorkImplementation = tc.impl
+		reg, system := BuildMode(tc.mode, d, false)
+		if hasTool(reg, "schedule_watch") || strings.Contains(system, watchProposalGuidance) {
+			t.Fatalf("%s/%s: schedule_watch or its guidance offered without a ScheduleWatch hook", tc.mode, tc.impl)
+		}
+		d.ScheduleWatch = func(context.Context, WatchSpec) (string, error) { return "", nil }
+		reg, system = BuildMode(tc.mode, d, false)
+		if !hasTool(reg, "schedule_watch") || !strings.Contains(system, watchProposalGuidance) {
+			t.Fatalf("%s/%s: schedule_watch and its guidance must both be offered", tc.mode, tc.impl)
+		}
+	}
+}
+
 // In the "direct" implementation strategy (spec §10) the work coordinator
 // implements changes itself: the implementer spawn/revise tools are dropped, but
 // it keeps the editing tools and the review pipeline, and gets the direct prompt.

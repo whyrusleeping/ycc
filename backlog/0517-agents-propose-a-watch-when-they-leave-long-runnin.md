@@ -1,10 +1,10 @@
 ---
 id: "0517"
 title: Agents propose a watch when they leave long-running external work, instead of waiting for "how's it going?"
-status: todo
+status: done
 priority: 2
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - spec.md#9.2 Watches
@@ -12,6 +12,7 @@ spec_refs:
 ---
 
 ## Description
+
 **Evidence (2026-11-09 usage analysis):** 24 owner messages are pure check-ins ("how's it going?", "check in", "where are we at on the backfill?"). 18 of them came after the agent had ended its turn with a statement while external work kept running (soaks, replays, backfills in vals and wheeler). The owner has to remember to poke the session. Watches (0498, spec §9.2) now provide daemon-owned recurring checks with notifications. 0499/0500 add the client panels.
 
 **Change:**
@@ -25,6 +26,8 @@ spec_refs:
 
 Narrower than the 0391 design scope (bounded run records, leases), which stays proposed.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Attended chat and work sessions that can create watches get schedule_watch plus guidance to propose a watch (brief, cadence, expiry past expected end) when a turn ends with external work still running, and none for work finished in-turn or tracked as a job; probe/expiry param text tightened; spec §9.2 and docs/design/watches.md updated. Live eval (live_watch_eval_test.go, -tags liveeval) passes 12/12 on claude and sol; baseline failed sol 0/2 on the no-follow-up-asked soak. Hiding watch runs from recent sessions remains client work in 0499/0500 (runs carry origin watch).
+
+Commit: Agents propose a watch when a turn leaves external work running; schedule_watch in attended work sessions too (0517)

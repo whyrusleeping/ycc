@@ -116,7 +116,8 @@ func scheduleWatch(d *Deps) *gollama.Tool {
 		Name: "schedule_watch",
 		Description: "Create a recurring watch: the daemon starts a fresh short session on a schedule to check " +
 			"something (e.g. a live system), report, and ask the user when something needs attention. Use this " +
-			"instead of sleep/wait loops when the user asks for periodic checks. The user confirms the definition " +
+			"instead of sleep/wait loops when the user asks for periodic checks, and when your turn leaves " +
+			"long-running external work (soak, backfill, replay, deploy) going. The user confirms the definition " +
 			"before it is created. Watches may take low-risk reversible actions unattended; list anything riskier " +
 			"the user has explicitly allowed in allowed_actions.",
 		Params: tools.Obj(map[string]any{
@@ -124,9 +125,9 @@ func scheduleWatch(d *Deps) *gollama.Tool {
 			"brief":            tools.StrProp("self-contained instructions for each run: what to check, how, and what counts as wrong"),
 			"interval_minutes": map[string]any{"type": "integer", "minimum": 5, "description": "minutes between runs"},
 			"model":            tools.StrProp("optional logical model for runs (default: the configured coordinator)"),
-			"probe":            tools.StrProp("optional shell command the daemon runs first; exit 0 records ok without a model run"),
+			"probe":            tools.StrProp("optional shell command the daemon runs first; exit 0 records ok without a model run, so it must exit non-zero whenever something is wrong (a status command that always succeeds is not a probe)"),
 			"probe_always":     map[string]any{"type": "boolean", "description": "start a model run even when the probe passes, giving it the probe output"},
-			"expires_hours":    map[string]any{"type": "integer", "minimum": 1, "description": "optional: pause the watch after this many hours"},
+			"expires_hours":    map[string]any{"type": "integer", "minimum": 1, "description": "pause the watch after this many hours; set it for work with an expected end"},
 			"allowed_actions":  tools.StrArrProp("optional actions beyond the low-risk default that the user explicitly allowed"),
 		}, "name", "brief", "interval_minutes"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
@@ -188,6 +189,17 @@ func describeWatchSpec(s WatchSpec) string {
 	}
 	return b.String()
 }
+
+// watchProposalGuidance accompanies schedule_watch in attended chat and work
+// sessions: owners otherwise have to remember to ask how unattended external
+// work is going (0517).
+const watchProposalGuidance = `When your turn ends while long-running external work you started is still going (a remote soak,
+replay, backfill, deploy, or CI run that outlives the turn), propose a watch with schedule_watch
+instead of leaving the user to ask how it is going. Give it a self-contained brief (what to check,
+how, what counts as wrong, what marks the work finished), a cadence suited to the work, and
+expires_hours a little past the expected end. The user confirms the definition. Your final reply
+says what is still running and which watch covers it. Propose no watch for work that finished
+within the turn or that a background job tracks; job completion already wakes this session.`
 
 const watchModeSystem = `You are one run of a recurring watch: a scheduled check the daemon starts in a fresh session.
 The opening message is the user's brief; the daemon's run context follows it with notes from the
