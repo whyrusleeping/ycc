@@ -131,7 +131,9 @@ struct WorkstreamsView: View {
             ContentUnavailableView(
                 "No workstreams",
                 systemImage: "arrow.triangle.branch",
-                description: Text("Parallel worktrees spawned for this project show up here."))
+                description: Text(model.selectedProject.isEmpty
+                    ? "Start one from New session with Separate workstream on."
+                    : "Parallel worktrees spawned for this project show up here."))
         } else {
             workstreamList(model)
         }

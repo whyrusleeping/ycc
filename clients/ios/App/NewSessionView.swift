@@ -156,6 +156,7 @@ struct NewSessionView: View {
     private var bottomChrome: some View {
         VStack(spacing: 0) {
             errorBanner
+            workstreamNote
             optionChips
             composer
         }
@@ -184,6 +185,21 @@ struct NewSessionView: View {
         }
     }
 
+    /// What "Separate workstream" means, shown while it is on.
+    @ViewBuilder
+    private var workstreamNote: some View {
+        if model.separateWorkstream {
+            Text(model.selectedProject.isEmpty
+                ? "Choose a project for the workstream."
+                : "Gets its own git worktree and branch, so it can’t collide with other sessions; it merges back using the project’s integration setting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+        }
+    }
+
     /// A compact, scrollable row of chips just above the composer: mode (with
     /// its description as a subtitle in the menu), and — when
     /// there is more than one project — the project.
@@ -195,6 +211,13 @@ struct NewSessionView: View {
                 // project…" affordance, which must be reachable on
                 // a daemon with no registered projects yet.
                 projectChip
+                // A workstream needs a registered project to branch from.
+                if !model.projects.isEmpty {
+                    workstreamChip
+                    if model.separateWorkstream {
+                        taskChip
+                    }
+                }
                 if model.showsModelPicker {
                     modelChip
                 }
@@ -203,6 +226,58 @@ struct NewSessionView: View {
             .padding(.top, 8)
             .padding(.bottom, 2)
         }
+        // (Re)load the task choices whenever the workstream toggle turns on
+        // or the project changes under it.
+        .task(id: "\(model.separateWorkstream)|\(model.selectedProject)") {
+            await model.loadWorkstreamTasks()
+        }
+    }
+
+    /// The "Separate workstream" toggle, drawn as a chip that turns into the
+    /// filled accent while on.
+    private var workstreamChip: some View {
+        Button {
+            model.separateWorkstream.toggle()
+            Analytics.action(
+                "new_session.workstream",
+                attrs: ["on": model.separateWorkstream ? "true" : "false"])
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: model.separateWorkstream ? "checkmark" : "arrow.triangle.branch")
+                    .font(.caption2)
+                Text("Separate workstream")
+                    .font(.caption.weight(.medium))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                model.separateWorkstream ? Theme.accentFill : Color(.secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // Off, it matches the neighbouring menu chips' tinted labels.
+            .foregroundStyle(model.separateWorkstream ? Theme.onAccentFill : Color.accentColor)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isStarting)
+        .accessibilityAddTraits(model.separateWorkstream ? .isSelected : [])
+        .accessibilityHint("Runs the session in its own git worktree and branch")
+    }
+
+    /// Workstream only: the optional backlog task it targets.
+    private var taskChip: some View {
+        @Bindable var model = model
+        return Menu {
+            Picker("Task", selection: $model.selectedTaskID) {
+                Text("No task").tag("")
+                ForEach(model.workstreamTaskChoices, id: \.id) { task in
+                    Text("\(task.id) · \(task.title)").tag(task.id)
+                }
+            }
+        } label: {
+            chipLabel(
+                model.chosenWorkstreamTask.map { "Task \($0.id)" } ?? "Task (optional)",
+                systemImage: "checklist")
+        }
+        .disabled(model.isStarting)
     }
 
     private var modeChip: some View {
@@ -323,7 +398,7 @@ struct NewSessionView: View {
                 }
                 .disabled(model.isStarting)
                 ComposerTextField(
-                    placeholder: model.promptIsOptional
+                    placeholder: model.promptIsOptional || model.chosenWorkstreamTask != nil
                         ? "What should the agent do? (optional)"
                         : "What should the agent do?",
                     text: $model.prompt,
@@ -347,7 +422,7 @@ struct NewSessionView: View {
                             .font(.title2)
                     }
                     // Otherwise VoiceOver reads the SF Symbol name.
-                    .accessibilityLabel("Start session")
+                    .accessibilityLabel(model.separateWorkstream ? "Start workstream" : "Start session")
                     .disabled(!model.canStart || loadingPictures)
                 }
             }
@@ -371,7 +446,9 @@ struct NewSessionView: View {
             .split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
         Task {
             let project = model.selectedProject
+            let workstream = model.separateWorkstream
             if let sessionID = await model.start() {
+                Analytics.submit("new_session", attrs: ["workstream": workstream ? "true" : "false"])
                 onStarted(sessionID, project, title)
             }
         }

@@ -12,8 +12,8 @@ enum Analytics {
     }
 
     /// Completes the open flow `name` (see ``View/trackedFlow(_:)``).
-    static func submit(_ name: String) {
-        UsageAnalytics.shared.submitFlow(name)
+    static func submit(_ name: String, attrs: [String: String] = [:]) {
+        UsageAnalytics.shared.submitFlow(name, attrs: attrs)
     }
 
     /// Route analytics through the active connection (or stop sending).
@@ -65,12 +65,13 @@ enum Analytics {
         "transcript.expand_activity", "transcript.fold_activity",
         "message.retry", "message.edit",
         "sessions.mark_read", "sessions.mark_all_read",
-        "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter",
+        "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter", "sessions.open_workstreams",
         "drawer.open", "drawer.select_project", "drawer.rename_project", "drawer.remove_project",
         "drawer.disconnect",
         "scope.select",
         "backlog.move", "task.status", "task.start_work",
         "loop.start", "loop.stop",
+        "new_session.workstream",
         "workstreams.preview", "workstreams.merge", "workstreams.retry", "workstreams.discard",
         "workstreams.mergeAll", "workstreams.open_session",
         "refresh", "health.check_now",

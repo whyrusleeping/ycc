@@ -129,7 +129,8 @@ struct LandingView: View {
                     initialProject: request.project,
                     cache: app.dataCache
                 ) { sessionID, project, title in
-                    Analytics.submit("new_session")
+                    // NewSessionView records the flow's submit (with whether
+                    // it spawned a workstream).
                     newSessionRequest = nil
                     // Follow the session's project so the list shows it when
                     // the user backs out of the live view.
@@ -137,7 +138,13 @@ struct LandingView: View {
                         model?.selectedProject = project
                         Task { await model?.refresh() }
                     }
-                    router.open(.session(id: sessionID, project: project, live: true, title: title))
+                    if sessionID.isEmpty {
+                        // A workstream the daemon reported without a session:
+                        // show it where it can be followed.
+                        router.open(.workstreams(project: project))
+                    } else {
+                        router.open(.session(id: sessionID, project: project, live: true, title: title))
+                    }
                 }
                 .trackedFlow("new_session")
             }
@@ -417,8 +424,8 @@ struct LandingView: View {
     /// one users reach for constantly) and remains available on the daemon-wide
     /// Recent Sessions feed, where it asks which project's backlog to open. The
     /// rest sit behind an overflow menu, as in the session view. The overflow
-    /// itself is not project-scoped: it also carries "Mark all read", which the
-    /// unscoped feed needs just as much.
+    /// itself is not project-scoped: on the unscoped feed it offers Workstreams
+    /// across all projects, and "Mark all read" in either scope.
     @ToolbarContentBuilder
     private var projectDestinations: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
@@ -460,9 +467,15 @@ struct LandingView: View {
                         project: project, reference: FileReference(path: "", isDirectory: true)))) {
                         Label("Files", systemImage: "folder")
                     }
+                } else {
+                    // On the unscoped feed, Workstreams lists every
+                    // project's, with its own project filter.
+                    NavigationLink(value: HomeDestination.workstreams(project: "")) {
+                        Label("Workstreams", systemImage: "arrow.triangle.branch")
+                    }
                 }
                 if (model?.unreadCount ?? 0) > 0 {
-                    if model?.selectedProject != nil { Divider() }
+                    Divider()
                     Button {
                         Analytics.action("sessions.mark_all_read", via: .menu)
                         model?.markAllRead()
@@ -473,8 +486,6 @@ struct LandingView: View {
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }
-            // Nothing to offer on the unscoped feed with everything read.
-            .disabled(model?.selectedProject == nil && (model?.unreadCount ?? 0) == 0)
         }
     }
 
@@ -707,6 +718,14 @@ struct LandingView: View {
                                     model.markRead(session)
                                 } label: {
                                     Label("Mark read", systemImage: "envelope.open")
+                                }
+                            }
+                            if !session.workstreamID.isEmpty {
+                                Button {
+                                    Analytics.action("sessions.open_workstreams", via: .contextMenu)
+                                    router.open(.workstreams(project: model.project(for: session)))
+                                } label: {
+                                    Label("Open workstreams", systemImage: "arrow.triangle.branch")
                                 }
                             }
                         }
@@ -1118,10 +1137,18 @@ private struct SessionRow: View {
         let lifecycle = SessionListModel.lifecycleLabel(for: session)
             .flatMap { $0 == "waiting" ? nil : $0 }
         let items = SessionListModel.metadataItems(for: session, isLoopOwned: isLoopOwned)
-        if lifecycle != nil || !items.isEmpty {
+        let inWorkstream = !session.workstreamID.isEmpty
+        if lifecycle != nil || !items.isEmpty || inWorkstream {
             HStack(spacing: 6) {
                 if let lifecycle {
                     StatusBadge(label: lifecycle)
+                }
+                // The web's branch mark: this session runs in its own
+                // workstream (the row's context menu opens Workstreams).
+                if inWorkstream {
+                    Image(systemName: "arrow.triangle.branch")
+                        .imageScale(.small)
+                        .accessibilityLabel("workstream session")
                 }
                 if !items.isEmpty {
                     Text(items.joined(separator: " · "))

@@ -23,6 +23,15 @@ public protocol NewSessionSource: Sendable {
     ) async throws -> String
     /// Re-open a persisted session on its existing log; returns its id.
     func resumeSession(project: String, sessionId: String) async throws -> String
+    /// A project's backlog (`ListBacklog`); drives the workstream task picker.
+    func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary]
+    /// Start the session in a new workstream (`SpawnWorkstream`) with the same
+    /// choices as ``startSession(project:mode:prompt:coordinatorModel:images:)``
+    /// plus the applied preset and an optional backlog task.
+    func spawnWorkstream(
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        preset: String, taskID: String, images: [MessageImage]
+    ) async throws -> Ycc_V1_WorkstreamInfo
 }
 
 extension YccClient: NewSessionSource {}
@@ -96,6 +105,21 @@ public final class NewSessionModel {
     /// ``PictureAttachments/maxCount``). They travel with `StartSession`, so the
     /// agent sees the screenshot on its FIRST turn rather than a turn later.
     public var images: [MessageImage] = []
+
+    /// Start in a separate workstream (its own git worktree and branch, via
+    /// `SpawnWorkstream`) instead of the project's shared checkout. Off for
+    /// every new composer and never remembered.
+    public var separateWorkstream = false
+    /// Workstream only: the optional backlog task it targets ("" = none).
+    public var selectedTaskID: String = ""
+    /// Actionable tasks of ``workstreamTasksProject`` for the task picker,
+    /// highest priority first.
+    private var workstreamTasks: [Ycc_V1_BacklogTaskSummary] = []
+    /// The project ``workstreamTasks`` was loaded for (`nil` before any load).
+    private var workstreamTasksProject: String?
+    /// The preset last applied, which travels with the start while its mode
+    /// is still selected (the daemon may bind a model to it).
+    private var appliedPreset: String = ""
 
     public private(set) var isLoading = false
     public private(set) var isStarting = false
@@ -182,14 +206,30 @@ public final class NewSessionModel {
 
     /// A start is allowed once a mode is chosen, the prompt carries something
     /// (text, or a picture that speaks for itself, unless the mode makes the
-    /// prompt optional), and no start is already in flight.
+    /// prompt optional), and no start is already in flight. A workstream also
+    /// needs a project, and its chosen task stands in for an unwritten prompt.
     public var canStart: Bool {
         !isStarting
             && !selectedMode.isEmpty
+            && (!separateWorkstream || !selectedProject.isEmpty)
             && (!defaultModelDisabled || !selectedModel.isEmpty)
             && (promptIsOptional
                 || !images.isEmpty
+                || chosenWorkstreamTask != nil
                 || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// The workstream task picker's choices: actionable tasks of the selected
+    /// project, empty until they load (or when the backlog can't be read).
+    public var workstreamTaskChoices: [Ycc_V1_BacklogTaskSummary] {
+        workstreamTasksProject == selectedProject ? workstreamTasks : []
+    }
+
+    /// The task the workstream will target: the selection, if the selected
+    /// project offers it.
+    public var chosenWorkstreamTask: Ycc_V1_BacklogTaskSummary? {
+        guard separateWorkstream, !selectedTaskID.isEmpty else { return nil }
+        return workstreamTaskChoices.first { $0.id == selectedTaskID }
     }
 
     /// The currently-selected mode's description, if any (shown under the picker).
@@ -280,10 +320,69 @@ public final class NewSessionModel {
     public func apply(preset: Ycc_V1_Preset) {
         selectedMode = preset.mode
         prompt = preset.openingPrompt
+        appliedPreset = preset.name
+    }
+
+    /// The applied preset's name while its mode is still selected, else "".
+    var presetForStart: String {
+        presets.contains { $0.name == appliedPreset && $0.mode == selectedMode } ? appliedPreset : ""
+    }
+
+    /// Load the selected project's actionable backlog tasks for the
+    /// workstream task picker. Task ids are project-local, so a selection
+    /// made for another project is dropped, as is a chosen task that is no
+    /// longer offered. A failure only leaves the picker empty (the task is
+    /// optional), except that unauthorized still routes back to the connect
+    /// screen.
+    public func loadWorkstreamTasks() async {
+        let project = selectedProject
+        guard separateWorkstream, !project.isEmpty else { return }
+        var loaded: [Ycc_V1_BacklogTaskSummary] = []
+        do {
+            loaded = Self.spawnableTasks(try await source.listBacklog(project: project))
+        } catch YccError.unauthorized {
+            unauthorized = true
+            return
+        } catch {
+            // Optional picker: leave it empty.
+        }
+        guard project == selectedProject else { return }
+        if workstreamTasksProject != project {
+            selectedTaskID = ""
+        }
+        workstreamTasks = loaded
+        workstreamTasksProject = project
+        if !selectedTaskID.isEmpty, !workstreamTasks.contains(where: { $0.id == selectedTaskID }) {
+            selectedTaskID = ""
+        }
+    }
+
+    /// The tasks a workstream can usefully target: ready `todo`/`in_progress`
+    /// work, highest priority first (unset priority last), then by id. Mirrors
+    /// the web client's `spawnableTasks`.
+    nonisolated static func spawnableTasks(_ tasks: [Ycc_V1_BacklogTaskSummary]) -> [Ycc_V1_BacklogTaskSummary] {
+        tasks
+            .filter { task in
+                let status = task.status.lowercased()
+                return task.ready && (status == "todo" || status == "in_progress")
+            }
+            .sorted { a, b in
+                let pa = a.priority > 0 ? a.priority : 99
+                let pb = b.priority > 0 ? b.priority : 99
+                return pa != pb ? pa < pb : a.id < b.id
+            }
+    }
+
+    /// The opening prompt for a workstream started on a task with no written
+    /// prompt (the web client's `taskPrompt`).
+    nonisolated static func taskPrompt(id: String, title: String) -> String {
+        title.isEmpty ? "Work on backlog task \(id)" : "Work on backlog task \(id): \(title)"
     }
 
     /// Start the session. On success remembers the selections and returns the new
-    /// session id (to `Subscribe` from seq 0). On failure sets ``errorMessage`` /
+    /// session id (to `Subscribe` from seq 0). With ``separateWorkstream`` on it
+    /// spawns a workstream instead and returns its session id (empty only if
+    /// the daemon reported none). On failure sets ``errorMessage`` /
     /// ``unauthorized`` and returns `nil`.
     public func start() async -> String? {
         guard canStart else { return nil }
@@ -291,12 +390,30 @@ public final class NewSessionModel {
         defer { isStarting = false }
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let sessionId = try await source.startSession(
-                project: selectedProject,
-                mode: selectedMode,
-                prompt: trimmedPrompt,
-                coordinatorModel: selectedModel,
-                images: images)
+            let sessionId: String
+            if separateWorkstream {
+                let task = chosenWorkstreamTask
+                var workstreamPrompt = trimmedPrompt
+                if workstreamPrompt.isEmpty, let task {
+                    workstreamPrompt = Self.taskPrompt(id: task.id, title: task.title)
+                }
+                sessionId = try await source.spawnWorkstream(
+                    project: selectedProject,
+                    mode: selectedMode,
+                    prompt: workstreamPrompt,
+                    coordinatorModel: selectedModel,
+                    preset: presetForStart,
+                    taskID: task?.id ?? "",
+                    images: images
+                ).sessionID
+            } else {
+                sessionId = try await source.startSession(
+                    project: selectedProject,
+                    mode: selectedMode,
+                    prompt: trimmedPrompt,
+                    coordinatorModel: selectedModel,
+                    images: images)
+            }
             rememberSelections()
             errorMessage = nil
             return sessionId

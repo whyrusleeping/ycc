@@ -1494,6 +1494,11 @@ private final class CatalogSource: NewSessionSource, @unchecked Sendable {
         project: String, mode: String, prompt: String, coordinatorModel: String, images: [MessageImage]
     ) async throws -> String { "s_new" }
     func resumeSession(project: String, sessionId: String) async throws -> String { sessionId }
+    func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] { [] }
+    func spawnWorkstream(
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        preset: String, taskID: String, images: [MessageImage]
+    ) async throws -> Ycc_V1_WorkstreamInfo { Ycc_V1_WorkstreamInfo() }
 }
 
 private final class MemoryDefaults: SessionDefaultsStore {

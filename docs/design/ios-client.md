@@ -73,6 +73,13 @@ session, backlog → task) push; task dependency references are lateral hops tha
 screen in place, so a blocked task leads directly to each blocker without growing the stack when
 dependencies cross-link. A deep link identifies a project/session but never carries credentials.
 
+New session's **Separate workstream** chip (off for every new composer, like the web toggle) sends
+the same mode, model, applied preset, prompt, and pictures through `SpawnWorkstream` instead of
+`StartSession`, with an optional ready backlog task that stands in for an unwritten prompt, then
+opens the workstream's session. Workstream sessions carry a branch mark in the session list, and
+their context menu opens Workstreams. The home overflow menu reaches Workstreams in every scope;
+the unscoped feed opens it across all projects with its own project filter.
+
 Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`
 (from the project overflow menu, or a session's menu for its own worktree). Text files render
 with line numbers and a small built-in syntax highlighter, markdown and SVG render by default with a

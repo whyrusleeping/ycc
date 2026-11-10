@@ -49,6 +49,33 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
         if let resumeError { throw resumeError }
         return sessionId
     }
+
+    var backlog: [String: [Ycc_V1_BacklogTaskSummary]] = [:]
+    var backlogError: Error?
+    var spawnError: Error?
+    private(set) var backlogCalls: [String] = []
+    private(set) var spawnArgs: (
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        preset: String, taskID: String, images: [MessageImage])?
+
+    func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
+        backlogCalls.append(project)
+        if let backlogError { throw backlogError }
+        return backlog[project] ?? []
+    }
+
+    func spawnWorkstream(
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        preset: String, taskID: String, images: [MessageImage]
+    ) async throws -> Ycc_V1_WorkstreamInfo {
+        spawnArgs = (project, mode, prompt, coordinatorModel, preset, taskID, images)
+        if let spawnError { throw spawnError }
+        var info = Ycc_V1_WorkstreamInfo()
+        info.id = "ws_1"
+        info.project = project
+        info.sessionID = "s_ws"
+        return info
+    }
 }
 
 /// An in-memory ``SessionDefaultsStore`` so recall/persist is testable.
@@ -458,5 +485,241 @@ final class NewSessionModelTests: XCTestCase {
         await model.load()
 
         XCTAssertTrue(model.unauthorized)
+    }
+
+    // MARK: - Separate workstream (task 0519)
+
+    private func task(_ id: String, _ title: String, status: String = "todo", priority: Int32 = 3, ready: Bool = true) -> Ycc_V1_BacklogTaskSummary {
+        var t = Ycc_V1_BacklogTaskSummary()
+        t.id = id
+        t.title = title
+        t.status = status
+        t.priority = priority
+        t.ready = ready
+        return t
+    }
+
+    /// With the toggle on, the start goes through SpawnWorkstream carrying the
+    /// same mode / model / preset / pictures, and returns its session id.
+    func testWorkstreamStartSpawnsWithTheSameChoices() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat"), mode("pm")]
+        var plan = preset("plan")
+        plan.openingPrompt = "Plan the next step"
+        source.presets = [plan]
+        source.projects = [project("one"), project("two")]
+        source.models = modelList(["fast", "smart"], coordinator: "fast")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.selectedProject = "two"
+        model.apply(preset: plan)
+        model.selectedModel = "smart"
+        model.images = [MessageImage(data: Data([0xFF]), mediaType: "image/jpeg")]
+        model.separateWorkstream = true
+
+        let id = await model.start()
+
+        XCTAssertEqual(id, "s_ws")
+        XCTAssertNil(source.startArgs)
+        XCTAssertEqual(source.spawnArgs?.project, "two")
+        XCTAssertEqual(source.spawnArgs?.mode, "pm")
+        XCTAssertEqual(source.spawnArgs?.prompt, "Plan the next step")
+        XCTAssertEqual(source.spawnArgs?.coordinatorModel, "smart")
+        XCTAssertEqual(source.spawnArgs?.preset, "plan")
+        XCTAssertEqual(source.spawnArgs?.taskID, "")
+        XCTAssertEqual(source.spawnArgs?.images.count, 1)
+    }
+
+    /// With the toggle off nothing changes: StartSession, never SpawnWorkstream,
+    /// and no backlog fetch.
+    func testToggleOffStartsAnOrdinarySession() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.prompt = "hello"
+        model.selectedTaskID = "0001"
+        await model.loadWorkstreamTasks()
+
+        let id = await model.start()
+
+        XCTAssertEqual(id, "s_new")
+        XCTAssertNil(source.spawnArgs)
+        XCTAssertEqual(source.startArgs?.prompt, "hello")
+        XCTAssertTrue(source.backlogCalls.isEmpty)
+    }
+
+    /// Switching to a mode the preset doesn't belong to drops the preset.
+    func testWorkstreamDropsPresetAfterModeChange() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat"), mode("pm")]
+        source.presets = [preset("plan")]
+        source.projects = [project("one")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.apply(preset: preset("plan"))
+        model.selectedMode = "chat"
+        model.prompt = "just chat"
+        model.separateWorkstream = true
+
+        _ = await model.start()
+
+        XCTAssertEqual(source.spawnArgs?.preset, "")
+        XCTAssertEqual(source.spawnArgs?.mode, "chat")
+    }
+
+    /// The task picker offers the selected project's actionable tasks by
+    /// priority; a chosen task stands in for an unwritten prompt.
+    func testWorkstreamTaskSuppliesThePrompt() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one")]
+        source.backlog["one"] = [
+            task("0003", "Later", priority: 4),
+            task("0002", "Blocked", ready: false),
+            task("0004", "Finished", status: "done"),
+            task("0001", "First", priority: 1),
+            task("0005", "Proposal", status: "proposed"),
+        ]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.separateWorkstream = true
+        XCTAssertFalse(model.canStart)   // chat needs a prompt or a task
+
+        await model.loadWorkstreamTasks()
+        XCTAssertEqual(source.backlogCalls, ["one"])
+        XCTAssertEqual(model.workstreamTaskChoices.map(\.id), ["0001", "0003"])
+
+        model.selectedTaskID = "0003"
+        XCTAssertTrue(model.canStart)
+        let id = await model.start()
+
+        XCTAssertEqual(id, "s_ws")
+        XCTAssertEqual(source.spawnArgs?.taskID, "0003")
+        XCTAssertEqual(source.spawnArgs?.prompt, "Work on backlog task 0003: Later")
+    }
+
+    /// A written prompt wins over the task's default prompt.
+    func testWorkstreamWrittenPromptIsKeptWithATask() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one")]
+        source.backlog["one"] = [task("0001", "First")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.separateWorkstream = true
+        await model.loadWorkstreamTasks()
+        model.selectedTaskID = "0001"
+        model.prompt = "  focus on the tests  "
+
+        _ = await model.start()
+
+        XCTAssertEqual(source.spawnArgs?.taskID, "0001")
+        XCTAssertEqual(source.spawnArgs?.prompt, "focus on the tests")
+    }
+
+    /// A workstream needs a project to branch from.
+    func testWorkstreamRequiresAProject() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one"), project("two")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.prompt = "go"
+        XCTAssertTrue(model.canStart)    // an ordinary session may leave it to the daemon
+
+        model.separateWorkstream = true
+        XCTAssertFalse(model.canStart)
+        model.selectedProject = "one"
+        XCTAssertTrue(model.canStart)
+    }
+
+    /// A task chosen for one project neither counts nor travels once the
+    /// project changes, and a reload for the new project clears it, even when
+    /// that project has a task with the same (project-local) id.
+    func testWorkstreamTaskDoesNotFollowAProjectChange() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one"), project("two")]
+        source.backlog["one"] = [task("0001", "First")]
+        source.backlog["two"] = [task("0001", "Unrelated"), task("0009", "Other")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.selectedProject = "one"
+        model.separateWorkstream = true
+        await model.loadWorkstreamTasks()
+        model.selectedTaskID = "0001"
+        XCTAssertTrue(model.canStart)
+
+        model.selectedProject = "two"
+        XCTAssertNil(model.chosenWorkstreamTask)
+        XCTAssertFalse(model.canStart)
+        await model.loadWorkstreamTasks()
+        XCTAssertEqual(model.selectedTaskID, "")
+        XCTAssertNil(model.chosenWorkstreamTask)
+        XCTAssertEqual(model.workstreamTaskChoices.map(\.id), ["0001", "0009"])
+
+        model.prompt = "go"
+        _ = await model.start()
+        XCTAssertEqual(source.spawnArgs?.project, "two")
+        XCTAssertEqual(source.spawnArgs?.taskID, "")
+        XCTAssertEqual(source.spawnArgs?.prompt, "go")
+    }
+
+    /// Returning to the project a task was chosen in before the other
+    /// project's tasks load keeps the choice.
+    func testWorkstreamTaskSurvivesAnAbandonedProjectSwitch() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one"), project("two")]
+        source.backlog["one"] = [task("0001", "First")]
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.selectedProject = "one"
+        model.separateWorkstream = true
+        await model.loadWorkstreamTasks()
+        model.selectedTaskID = "0001"
+
+        model.selectedProject = "two"
+        model.selectedProject = "one"
+        await model.loadWorkstreamTasks()
+
+        XCTAssertEqual(model.chosenWorkstreamTask?.title, "First")
+    }
+
+    /// The task list is optional: a backlog failure leaves the picker empty
+    /// and still allows a prompted start.
+    func testWorkstreamBacklogFailureIsTolerated() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one")]
+        source.backlogError = YccError.rpc(message: "no backlog")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.separateWorkstream = true
+        model.prompt = "go"
+
+        await model.loadWorkstreamTasks()
+
+        XCTAssertTrue(model.workstreamTaskChoices.isEmpty)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(model.canStart)
+    }
+
+    func testWorkstreamSpawnErrorIsSurfaced() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("chat")]
+        source.projects = [project("one")]
+        source.spawnError = YccError.failedPrecondition(message: "project one already has 4 active workstreams")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.separateWorkstream = true
+        model.prompt = "go"
+
+        let id = await model.start()
+
+        XCTAssertNil(id)
+        XCTAssertEqual(model.errorMessage, "project one already has 4 active workstreams")
     }
 }

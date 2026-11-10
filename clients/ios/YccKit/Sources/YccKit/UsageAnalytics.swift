@@ -173,14 +173,14 @@ public final class UsageAnalytics: @unchecked Sendable {
         action("\(name).open", via: via)
     }
 
-    /// The flow completed (records `<name>.submit` once).
-    public func submitFlow(_ name: String, via: Via = .tap) {
+    /// The flow completed (records `<name>.submit` once, with `attrs`).
+    public func submitFlow(_ name: String, via: Via = .tap, attrs: [String: String] = [:]) {
         let name = UsageAnalytics.token(name, max: 72)
         lock.lock()
         let open = flows[name] == false
         if open { flows[name] = true }
         lock.unlock()
-        if open { action("\(name).submit", via: via) }
+        if open { action("\(name).submit", via: via, attrs: attrs) }
     }
 
     /// The flow's surface went away; unsubmitted means abandoned.
