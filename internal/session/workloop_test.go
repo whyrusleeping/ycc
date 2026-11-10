@@ -1028,10 +1028,13 @@ func TestWorkLoopSkipsTaskHeldByActiveSession(t *testing.T) {
 
 // A work session's backlog view names the project's other live sessions and
 // distinguishes one still working on a task from one idle since its last turn,
-// whose earlier focus is not held. Its own session is left out.
+// whose earlier focus is not held. Its own session is left out, and so is an
+// idle session quiet for over an hour, but not a working one.
 func TestOtherSessionsNoteSeparatesWorkingFromIdle(t *testing.T) {
 	m, _, ws := loopTestManager(t, nil)
-	if got := m.otherSessionsNote(ws, "s_self"); !strings.Contains(got, "none is live") {
+	now := time.Now()
+	later := now.Add(quietSessionAge + time.Minute)
+	if got := m.otherSessionsNote(ws, "s_self", now); !strings.Contains(got, "none has been active") {
 		t.Fatalf("no sessions: %q", got)
 	}
 	add := func(id, mode string) *Session {
@@ -1046,14 +1049,19 @@ func TestOtherSessionsNoteSeparatesWorkingFromIdle(t *testing.T) {
 	chat := add("s_chat", "chat")
 	chat.emitter.Emit(event.TaskFocus, map[string]any{"task": "0567"})
 
-	got := m.otherSessionsNote(ws, "s_self")
-	if strings.Contains(got, "s_self") || !strings.Contains(got, "- s_chat (chat, running) working on 0567\n") {
-		t.Fatalf("working: %q", got)
+	for _, at := range []time.Time{now, later} {
+		got := m.otherSessionsNote(ws, "s_self", at)
+		if strings.Contains(got, "s_self") || !strings.Contains(got, "- s_chat (chat, running) working on 0567\n") {
+			t.Fatalf("working at %v: %q", at, got)
+		}
 	}
 	chat.setStatus(event.StatusIdle)
-	got = m.otherSessionsNote(ws, "s_self")
+	got := m.otherSessionsNote(ws, "s_self", now)
 	if !strings.Contains(got, "(chat, idle since ") || !strings.Contains(got, " earlier focus 0567 (not held)\n") {
 		t.Fatalf("idle: %q", got)
+	}
+	if got := m.otherSessionsNote(ws, "s_self", later); strings.Contains(got, "s_chat") {
+		t.Fatalf("quiet idle session listed: %q", got)
 	}
 }
 

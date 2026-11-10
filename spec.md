@@ -717,7 +717,8 @@ in the same workspace. A session holds every task it has focused while it is mid
 waiting on its own background work or a question; once it is idle between turns, an in_progress
 task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
 actionable and end with the project's other live sessions (mode, state such as running or idle
-since a time, focused tasks, running jobs), so agents choose from daemon state rather than
+since a time, focused tasks, running jobs; sessions not working and quiet for over an hour are
+omitted), so agents choose from daemon state rather than
 inferring parallel work from commit times or processes. A loop whose only ready work is held
 finishes saying which sessions hold it rather
 than starting sessions that would decline to collide. Unchanged task metadata after a session
@@ -784,7 +785,8 @@ an `ok` report without a model call when it exits 0, unless the watch asks for a
 Otherwise a fresh `watch`-mode session (origin `watch`, attended) starts with the brief as its
 opening input and daemon context: the previous run's notes and report, the user's earlier answers
 to watch questions, questions still pending from parked runs, pre-authorized actions, probe output,
-and a snapshot of the project's other live sessions with their tasks and running jobs, active
+and a snapshot of the project's other live sessions (omitting ones idle for over an hour) with
+their tasks and running jobs, active
 workstreams, and `in_progress` tasks. The run ends with `watch_report` (`ok`/`warn`/`alert`,
 summary, actions with undo steps, replacement notes of at most 4 KB). A report listing actions is
 at least `warn`. A run that ends without reporting, or that a restart interrupts without a

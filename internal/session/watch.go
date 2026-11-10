@@ -1255,10 +1255,10 @@ func (m *Manager) watchRunContext(primary string, rec watchRecord, scheduled tim
 // tell what it must not act on.
 func (m *Manager) watchActivitySnapshot(primary string) string {
 	var b strings.Builder
-	if lines := m.liveSessionLines(primary, ""); lines != "" {
-		b.WriteString("Live sessions:\n" + lines)
+	if lines := m.liveSessionLines(primary, "", m.watchClock()); lines != "" {
+		b.WriteString("Live sessions (those idle for over an hour are omitted):\n" + lines)
 	} else {
-		b.WriteString("No other live sessions.\n")
+		b.WriteString("No other session has been active in the last hour.\n")
 	}
 	label := m.projectLabel(primary)
 	var active []string
@@ -1288,10 +1288,15 @@ func (m *Manager) watchActivitySnapshot(primary string) string {
 	return b.String()
 }
 
+// quietSessionAge is how long a live session that is not working may go without
+// activity before session listings leave it out as noise.
+const quietSessionAge = time.Hour
+
 // liveSessionLines lists the live sessions of project primary except exclude,
 // one line each with mode, state, focused tasks and running jobs. Only a session
-// that is still working holds its focused tasks; an idle one's are past focus.
-func (m *Manager) liveSessionLines(primary, exclude string) string {
+// that is still working holds its focused tasks; an idle one's are past focus,
+// and one quiet for over quietSessionAge is omitted.
+func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) string {
 	primary = canonicalPath(primary)
 	sessions := m.List()
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
@@ -1301,13 +1306,17 @@ func (m *Manager) liveSessionLines(primary, exclude string) string {
 			continue
 		}
 		evs := s.Log().Snapshot()
+		working := s.activelyWorking()
+		if !working && len(evs) > 0 && now.Sub(evs[len(evs)-1].TS) > quietSessionAge {
+			continue
+		}
 		kind := s.Mode
 		if s.Mode == watchMode {
 			kind = "watch run"
 		}
 		fmt.Fprintf(&b, "- %s (%s, %s)", s.ID, kind, sessionActivityState(s, evs))
 		if tasks := focusTasks(evs); len(tasks) > 0 {
-			if s.activelyWorking() {
+			if working {
 				b.WriteString(" working on " + strings.Join(tasks, ", "))
 			} else {
 				b.WriteString(" earlier focus " + strings.Join(tasks, ", ") + " (not held)")
@@ -1349,12 +1358,12 @@ func sessionActivityState(s *Session, evs []event.Event) string {
 
 // otherSessionsNote is the work-selection view of the project's other live
 // sessions, appended to list_backlog.
-func (m *Manager) otherSessionsNote(absWS, exclude string) string {
-	lines := m.liveSessionLines(m.primaryTreeFor(absWS), exclude)
+func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string {
+	lines := m.liveSessionLines(m.primaryTreeFor(absWS), exclude, now)
 	if lines == "" {
-		return "Other sessions in this project: none is live (daemon state).\n"
+		return "Other sessions in this project: none has been active in the last hour (daemon state).\n"
 	}
-	return "Other live sessions in this project (daemon state):\n" + lines
+	return "Other live sessions in this project (daemon state; those idle for over an hour are omitted):\n" + lines
 }
 
 // scheduleWatchFromChat is the schedule_watch hook; the tool has already
