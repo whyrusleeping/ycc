@@ -305,6 +305,7 @@ JSON="Content-Type: application/json"
 | [`SubscribeSessionView`](#indexed-session-view) | sequence-safe presentation row/state updates |
 | [`GetSessionActivity` / `GetJobOutput` / `GetActivitySteps`](#session-activity) | agent/subagent/job graph with live progress / a live job's output / one actor's timed turns and tool calls |
 | [`GetSessionAttachment`](#getsessionattachment) | fetch a retained user-picture payload |
+| [`ListModes`](#listmodes) | session modes, the default one, and where each preset is offered |
 | [`StartSession`](#startsession) | start a new session |
 | [`Subscribe`](#subscribe) | stream a session's events (replay + live) |
 | [`SendInput`](#sendinput) | prod a session with a user message |
@@ -776,6 +777,25 @@ curl -sS -H "$AUTH" -H "$JSON" \
   -d '{"project":"work","sessionId":"s_doc","attachmentId":"a_…"}' \
   $B/ycc.v1.SessionService/GetSessionAttachment
 ```
+
+### ListModes
+
+Empty request. Returns the session `modes` (name, title, description), the
+`defaultMode` a new session starts in (`chat`), and the `presets`: pm entry points
+that start a session with a tailored opening prompt. Each preset's `placement` says
+where a client offers it, so clients need no list of preset names:
+
+| `placement` | Offered |
+|-------------|---------|
+| `onboarding` | on new session only for a project whose `needsOnboarding` is true ([`ListProjects`](#listprojects)); as a re-onboard action on the project and backlog pages |
+| `project` | as a contextual action on the project page (`spec-doctor`, "Check docs against code") |
+| `backlog` | on the backlog page (`backlog-groom`) |
+| `memory` | on the memory page (`memory-groom`) |
+
+Clients ignore placements they don't know. Starting from a backlog task uses
+`mode: "work"` regardless of the default. Start a preset with
+[`StartSession`](#startsession) by its `mode` and `preset` name; with no `prompt`
+the daemon supplies the preset's opening prompt.
 
 ### StartSession
 
