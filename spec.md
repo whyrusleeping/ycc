@@ -1075,6 +1075,17 @@ badge running or job-awaiting live sessions, and they keep a local optimistic co
 whenever it is ahead of the daemon. That copy also migrates read state recorded before marks were
 shared.
 
+Quick replies are canned messages that clients send in one gesture from an idle session.
+`GetQuickReplies` returns the daemon's built-ins (Go ahead, Continue, Commit & push, each with a
+stable id) and then the project's own replies. `SetQuickReplies` replaces the project's own list:
+up to 12 trimmed, non-empty label/text pairs, with labels up to 32 characters. The list lives in
+the project's root workspace at `.ycc/quick-replies.json` (`{"replies":[{"label":…,"text":…}]}`).
+Because the list is personal state, it is not committed. A quick reply is an ordinary user message.
+Clients offer quick replies only when no turn is running, no question has its own answer surface,
+and the draft is empty. They record `composer.quick_reply` with the built-in id or `project`,
+never the text. Desktop web shows quick replies as chips above the composer, with an Edit link and
+a Projects-page entry that open the editor.
+
 ### 18.7 Interrupt and steer
 
 Interrupt durably acknowledges a `pause_requested` action immediately; it requests a graceful pause at a safe checkpoint and does not cancel a tool mid-write. `interrupted` alone confirms the pause. `pause_cancelled` (Resume before the checkpoint), `interrupted`, `resumed`, stop, and reopen clear the pending indication.

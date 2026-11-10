@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { needsAnthropicReconnect } from "../settings/anthropic";
 import { openAnthropicLogin } from "../settings/AnthropicLogin";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys } from "../../api/queries";
+import { queryKeys, useQuickReplies } from "../../api/queries";
+import { openQuickReplies } from "../projects/ProjectDialogs";
 import { useInspector } from "../inspector/inspector";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { AnswerPanel } from "./AnswerPanel";
@@ -29,6 +30,15 @@ import { CopyButton } from "../../ui/CopyButton";
 import { MenuButton } from "../../ui/Menu";
 import { CAPTURE_SHORTCUT_LABEL, openCapture } from "../backlog/CaptureDialog";
 import { NewTaskDialog } from "../backlog/NewTaskDialog";
+
+/**
+ * Quick replies answer a finished turn: none while the agent is running (it is
+ * steered by typing) or while a pending question has its own answer panel.
+ */
+export function quickRepliesAllowed(snap: SessionSnapshot): boolean {
+  if (snap.mode !== "live") return true;
+  return snap.phase.kind !== "running" && !snap.pendingQuestion;
+}
 
 /** Header status; null when the session is simply idle (nothing worth saying). */
 export function statusText(snap: SessionSnapshot): { text: string; tone: string } | null {
@@ -271,6 +281,12 @@ export function SessionView({
   if (livePhase && snap.awaitsAnswer) placeholder = "Type an answer to the pending question…";
   else if (livePhase && snap.phase.kind === "paused") placeholder = "Steer the paused session; sending continues it…";
   else if (livePhase && snap.phase.kind === "running") placeholder = "Send a steer — delivered at the next checkpoint…";
+  const quickReplyIdle = quickRepliesAllowed(snap);
+  const quickReplyData = useQuickReplies(project, canCompose).data;
+  const quickReplies = useMemo(
+    () => (quickReplyData ? [...quickReplyData.builtin, ...quickReplyData.project] : undefined),
+    [quickReplyData],
+  );
 
   return (
     <div className={`session${drop.dragging ? " dragging" : ""}`} {...drop.handlers}>
@@ -433,6 +449,8 @@ export function SessionView({
             picturesBlocked={livePhase && snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
             sendAttrs={{ phase: snap.awaitsAnswer ? "question" : snap.pauseRequested ? "pausing" : snap.phase.kind }}
             onSend={(t, pictures) => void controller.send(t, pictures)}
+            quickReplies={quickReplyIdle ? quickReplies : undefined}
+            onEditQuickReplies={() => openQuickReplies(project)}
           />
         )
       )}

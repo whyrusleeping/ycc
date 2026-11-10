@@ -2028,6 +2028,49 @@ pre.clamp {
   margin: 4px 0 0;
 }
 
+.quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-replies .chip.suggestion {
+  padding: 2px 8px;
+  line-height: 18px;
+  background: var(--surface);
+}
+
+.quick-replies-edit {
+  margin-left: auto;
+}
+
+.quick-replies-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.quick-replies-form > p {
+  margin: 0;
+}
+
+.quick-reply-edit {
+  display: grid;
+  grid-template-columns: 10rem 1fr auto;
+  align-items: end;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.quick-replies-form .dialog-actions {
+  align-self: stretch;
+}
+
 .btn.attach {
   padding: 8px;
   line-height: 0;

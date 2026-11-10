@@ -1,10 +1,10 @@
 ---
 id: "0513"
 title: 'Web: one-tap quick replies in the session composer (go ahead, continue, commit & push, project actions)'
-status: todo
+status: done
 priority: 2
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - docs/design/web-client.md
@@ -24,3 +24,5 @@ spec_refs:
 ## Acceptance criteria
 
 ## Work log
+- 2026-11-10: Done. The daemon has `GetQuickReplies` (returns the built-ins with stable ids, then the project's list) and `SetQuickReplies` (replaces the project's list). Project replies are stored in the root workspace at `.ycc/quick-replies.json`: personal state, not committed project config. Web shows chips above the composer. They hide while running, while the answer panel is up, once text is typed, and right after a click. The composer has an Edit… link, and the Projects page ⋯ menu has a Quick replies… editor. Component tests cover the hide rules. Light/dark check done with the sidebar-v2 harness, and a live send was checked on a mock session. One reviewer found two issues, both fixed: a double-click could send twice, and the sole-project cache alias went stale.
+- Commit: quick replies: daemon-served built-in + project replies, web composer chips and editor (0513)

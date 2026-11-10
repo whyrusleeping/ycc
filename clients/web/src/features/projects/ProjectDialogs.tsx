@@ -1,7 +1,7 @@
 // Project management dialogs, opened from anywhere (sidebar menu, projects
 // page, new-session picker, command palette): add a project through a
-// server-side directory picker (ListDir), rename one, or remove one (which
-// only deregisters it). One host component in the shell renders whichever is
+// server-side directory picker (ListDir), rename one, remove one (which
+// only deregisters it), or edit its quick replies. One host component in the shell renders whichever is
 // open; mutations refresh every project-keyed cache and keep the current
 // route, sidebar scope, and last-viewed project pointing at the right name.
 import { useQueryClient } from "@tanstack/react-query";
@@ -9,11 +9,11 @@ import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalSt
 import { useLocation, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, useProjects } from "../../api/queries";
+import { queryKeys, useProjects, useQuickReplies } from "../../api/queries";
 import { lastViewedProject } from "../../app/memory";
 import { paths } from "../../app/paths";
 import { useScope } from "../../app/scope";
-import type { ProjectInfo } from "../../gen/ycc/v1/ycc_pb";
+import type { GetQuickRepliesResponse, ProjectInfo, QuickReply } from "../../gen/ycc/v1/ycc_pb";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
 import { track } from "../../app/analytics";
@@ -34,6 +34,7 @@ type DialogState =
   | { kind: "add"; onAdded?: (p: ProjectInfo) => void; navigate: boolean }
   | { kind: "rename"; name: string }
   | { kind: "remove"; name: string }
+  | { kind: "quickReplies"; name: string }
   | null;
 
 let state: DialogState = null;
@@ -56,6 +57,10 @@ export function openRenameProject(name: string) {
 }
 export function openRemoveProject(name: string) {
   set({ kind: "remove", name });
+}
+/** Edit the project's quick replies ("" = the daemon's sole/default project). */
+export function openQuickReplies(name: string) {
+  set({ kind: "quickReplies", name });
 }
 
 function useDialogState(): DialogState {
@@ -94,6 +99,7 @@ export function ProjectDialogs() {
   if (!d) return null;
   if (d.kind === "add") return <AddProjectDialog onAdded={d.onAdded} navigateTo={d.navigate} onClose={close} />;
   if (d.kind === "rename") return <RenameProjectDialog key={d.name} name={d.name} onClose={close} />;
+  if (d.kind === "quickReplies") return <QuickRepliesDialog key={d.name} name={d.name} onClose={close} />;
   return <RemoveProjectDialog key={d.name} name={d.name} onClose={close} />;
 }
 
@@ -429,5 +435,134 @@ function RemoveProjectDialog({ name, onClose }: { name: string; onClose: () => v
       onCancel={onClose}
       onConfirm={() => void remove()}
     />
+  );
+}
+
+const MAX_QUICK_REPLIES = 12;
+type QuickReplyRow = { key: number; label: string; text: string };
+let quickReplyRowKey = 0;
+
+function QuickRepliesDialog({ name, onClose }: { name: string; onClose: () => void }) {
+  const replies = useQuickReplies(name);
+  const title = name ? `Quick replies for ${name}` : "Quick replies";
+  return (
+    <Modal open onClose={onClose} title={title} className="quick-replies-dialog" view="quick_replies" flow="quick_replies">
+      {replies.isPending ? (
+        <p className="muted">Loading…</p>
+      ) : replies.isError ? (
+        <p className="error">{errorMessage(replies.error)}</p>
+      ) : (
+        <QuickRepliesForm name={name} builtin={replies.data.builtin} initial={replies.data.project} onClose={onClose} />
+      )}
+    </Modal>
+  );
+}
+
+function QuickRepliesForm({
+  name,
+  builtin,
+  initial,
+  onClose,
+}: {
+  name: string;
+  builtin: readonly QuickReply[];
+  initial: readonly QuickReply[];
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [rows, setRows] = useState<QuickReplyRow[]>(() =>
+    initial.map((r) => ({ key: ++quickReplyRowKey, label: r.label, text: r.text })),
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const incomplete = rows.some((r) => !r.label.trim() || !r.text.trim());
+  const update = (key: number, patch: Partial<QuickReplyRow>) =>
+    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || incomplete) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const resp = await client.setQuickReplies({
+        project: name,
+        replies: rows.map((r) => ({ label: r.label, text: r.text })),
+      });
+      qc.setQueryData<GetQuickRepliesResponse>(queryKeys.quickReplies(name), (old) =>
+        old ? { ...old, project: resp.project } : old,
+      );
+      void qc.invalidateQueries({ queryKey: queryKeys.quickRepliesAll });
+      track.submit("quick_replies", { count: resp.project.length });
+      onClose();
+    } catch (err) {
+      if (expireOn(err)) return;
+      track.error("projects.quick_replies", err);
+      setError(errorMessage(err, "The quick replies could not be saved."));
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={(e) => void submit(e)} className="quick-replies-form">
+      <p className="muted small">
+        Shown above the composer when a session is idle; one click sends the message. Built in:{" "}
+        {builtin.map((r) => r.label).join(", ")}.
+      </p>
+      {rows.length === 0 && <p className="muted small">This project has no replies of its own yet.</p>}
+      {rows.map((r, i) => (
+        <fieldset key={r.key} className="quick-reply-edit" disabled={busy}>
+          <label className="field-label">
+            Label
+            <input
+              type="text"
+              className="field"
+              value={r.label}
+              maxLength={32}
+              placeholder="Deploy"
+              autoFocus={i === rows.length - 1 && r.label === ""}
+              onChange={(e) => update(r.key, { label: e.target.value })}
+            />
+          </label>
+          <label className="field-label">
+            Message
+            <textarea
+              className="field"
+              rows={2}
+              value={r.text}
+              placeholder="Deploy to prod following the deploy runbook"
+              onChange={(e) => update(r.key, { text: e.target.value })}
+            />
+          </label>
+          <button
+            type="button"
+            className="btn ghost small"
+            aria-label={`Remove ${r.label || "this reply"}`}
+            onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}
+          >
+            Remove
+          </button>
+        </fieldset>
+      ))}
+      <button
+        type="button"
+        className="btn ghost small"
+        disabled={busy || rows.length >= MAX_QUICK_REPLIES}
+        onClick={() => setRows((rs) => [...rs, { key: ++quickReplyRowKey, label: "", text: "" }])}
+      >
+        + Add reply
+      </button>
+      {error && (
+        <div className="banner error" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="dialog-actions">
+        <button type="button" className="btn ghost" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="submit" className="btn primary" disabled={busy || incomplete}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </form>
   );
 }

@@ -296,6 +296,43 @@ func (s *Server) SetSessionFollowUp(_ context.Context, req *connect.Request[v1.S
 	return connect.NewResponse(&v1.SetSessionFollowUpResponse{FollowUp: req.Msg.FollowUp, FollowUpAt: rfc3339(at)}), nil
 }
 
+func quickRepliesProto(replies []session.QuickReply) []*v1.QuickReply {
+	out := make([]*v1.QuickReply, 0, len(replies))
+	for _, r := range replies {
+		out = append(out, &v1.QuickReply{Id: r.ID, Label: r.Label, Text: r.Text})
+	}
+	return out
+}
+
+func (s *Server) GetQuickReplies(_ context.Context, req *connect.Request[v1.GetQuickRepliesRequest]) (*connect.Response[v1.GetQuickRepliesResponse], error) {
+	replies, err := s.mgr.QuickReplies(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.GetQuickRepliesResponse{
+		Builtin: quickRepliesProto(session.BuiltinQuickReplies),
+		Project: quickRepliesProto(replies),
+	}), nil
+}
+
+func (s *Server) SetQuickReplies(_ context.Context, req *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error) {
+	in := make([]session.QuickReply, 0, len(req.Msg.Replies))
+	for _, r := range req.Msg.Replies {
+		in = append(in, session.QuickReply{Label: r.GetLabel(), Text: r.GetText()})
+	}
+	stored, err := s.mgr.SetQuickReplies(req.Msg.Project, in)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrInvalidQuickReplies) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.SetQuickRepliesResponse{Project: quickRepliesProto(stored)}), nil
+}
+
 // MarkSessionsRead advances the user's shared read marks. Unparseable stamps
 // are rejected; unknown sessions are skipped by the manager.
 func (s *Server) MarkSessionsRead(_ context.Context, req *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error) {

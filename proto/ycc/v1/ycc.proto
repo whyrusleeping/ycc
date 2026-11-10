@@ -364,6 +364,28 @@ message MarkSessionsReadResponse {
   repeated SessionReadMark marks = 1;
 }
 
+// Quick replies: short canned messages clients offer as one-gesture sends on
+// an idle session. Built-ins come from the daemon so every client shows the
+// same set; a project adds its own after them.
+message QuickReply {
+  string id = 1;    // stable id for built-ins (analytics); empty for project replies
+  string label = 2; // short button text
+  string text = 3;  // the message sent
+}
+message GetQuickRepliesRequest { string project = 1; }
+message GetQuickRepliesResponse {
+  repeated QuickReply builtin = 1;
+  repeated QuickReply project = 2;
+}
+// SetQuickReplies replaces the project's own replies (ids are ignored). Labels
+// and texts are trimmed and must be non-empty; at most 12 replies, labels up
+// to 32 characters, texts up to 4000 bytes.
+message SetQuickRepliesRequest {
+  string project = 1;
+  repeated QuickReply replies = 2;
+}
+message SetQuickRepliesResponse { repeated QuickReply project = 1; }
+
 // GetSessionTranscript returns the full event log for a session — live or
 // persisted on disk — so the session browser can render a read-only replayed
 // transcript with the same event components as the live view.
@@ -1456,6 +1478,8 @@ service SessionService {
   rpc SetSessionFollowUp(SetSessionFollowUpRequest) returns (SetSessionFollowUpResponse);
   // MarkSessionsRead advances the user's shared per-session read marks.
   rpc MarkSessionsRead(MarkSessionsReadRequest) returns (MarkSessionsReadResponse);
+  rpc GetQuickReplies(GetQuickRepliesRequest) returns (GetQuickRepliesResponse);
+  rpc SetQuickReplies(SetQuickRepliesRequest) returns (SetQuickRepliesResponse);
   // GetSessionTranscript returns a session's full event log (live or persisted)
   // for the read-only transcript drill-in.
   rpc GetSessionTranscript(GetSessionTranscriptRequest) returns (GetSessionTranscriptResponse);

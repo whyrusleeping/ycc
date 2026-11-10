@@ -36,6 +36,10 @@ export const queryKeys = {
   modelConfig: (name: string) => ["modelConfig", name] as const,
   /** ListReviewTiers. */
   reviewTiers: ["reviewTiers"] as const,
+  /** GetQuickReplies for a project. */
+  quickReplies: (project: string) => ["quickReplies", project] as const,
+  /** Every GetQuickReplies result ("" and the sole project's name share one list). */
+  quickRepliesAll: ["quickReplies"] as const,
   sessionFeed: (targets: string[]) => ["sessionFeed", targets] as const,
   sessionFeedAll: ["sessionFeed"] as const,
   /** ListBacklog for a project ("" resolves the sole/default project server-side). */
@@ -367,6 +371,16 @@ export function useReviewTiers(enabled = true) {
     queryKey: queryKeys.reviewTiers,
     enabled,
     queryFn: ({ signal }) => client.listReviewTiers({}, { signal }),
+  });
+}
+
+/** GetQuickReplies: the daemon's built-ins and the project's own replies. */
+export function useQuickReplies(project: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.quickReplies(project),
+    enabled,
+    staleTime: 60_000,
+    queryFn: ({ signal }) => client.getQuickReplies({ project }, { signal }),
   });
 }
 

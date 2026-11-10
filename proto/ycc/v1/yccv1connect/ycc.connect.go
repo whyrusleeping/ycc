@@ -51,6 +51,12 @@ const (
 	// SessionServiceMarkSessionsReadProcedure is the fully-qualified name of the SessionService's
 	// MarkSessionsRead RPC.
 	SessionServiceMarkSessionsReadProcedure = "/ycc.v1.SessionService/MarkSessionsRead"
+	// SessionServiceGetQuickRepliesProcedure is the fully-qualified name of the SessionService's
+	// GetQuickReplies RPC.
+	SessionServiceGetQuickRepliesProcedure = "/ycc.v1.SessionService/GetQuickReplies"
+	// SessionServiceSetQuickRepliesProcedure is the fully-qualified name of the SessionService's
+	// SetQuickReplies RPC.
+	SessionServiceSetQuickRepliesProcedure = "/ycc.v1.SessionService/SetQuickReplies"
 	// SessionServiceGetSessionTranscriptProcedure is the fully-qualified name of the SessionService's
 	// GetSessionTranscript RPC.
 	SessionServiceGetSessionTranscriptProcedure = "/ycc.v1.SessionService/GetSessionTranscript"
@@ -284,6 +290,8 @@ type SessionServiceClient interface {
 	SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error)
 	// MarkSessionsRead advances the user's shared per-session read marks.
 	MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error)
+	GetQuickReplies(context.Context, *connect.Request[v1.GetQuickRepliesRequest]) (*connect.Response[v1.GetQuickRepliesResponse], error)
+	SetQuickReplies(context.Context, *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error)
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
@@ -481,6 +489,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceMarkSessionsReadProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("MarkSessionsRead")),
+			connect.WithClientOptions(opts...),
+		),
+		getQuickReplies: connect.NewClient[v1.GetQuickRepliesRequest, v1.GetQuickRepliesResponse](
+			httpClient,
+			baseURL+SessionServiceGetQuickRepliesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetQuickReplies")),
+			connect.WithClientOptions(opts...),
+		),
+		setQuickReplies: connect.NewClient[v1.SetQuickRepliesRequest, v1.SetQuickRepliesResponse](
+			httpClient,
+			baseURL+SessionServiceSetQuickRepliesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetQuickReplies")),
 			connect.WithClientOptions(opts...),
 		),
 		getSessionTranscript: connect.NewClient[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse](
@@ -950,6 +970,8 @@ type sessionServiceClient struct {
 	listSessionHistory     *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
 	setSessionFollowUp     *connect.Client[v1.SetSessionFollowUpRequest, v1.SetSessionFollowUpResponse]
 	markSessionsRead       *connect.Client[v1.MarkSessionsReadRequest, v1.MarkSessionsReadResponse]
+	getQuickReplies        *connect.Client[v1.GetQuickRepliesRequest, v1.GetQuickRepliesResponse]
+	setQuickReplies        *connect.Client[v1.SetQuickRepliesRequest, v1.SetQuickRepliesResponse]
 	getSessionTranscript   *connect.Client[v1.GetSessionTranscriptRequest, v1.GetSessionTranscriptResponse]
 	getSessionView         *connect.Client[v1.GetSessionViewRequest, v1.GetSessionViewResponse]
 	getSessionViewPage     *connect.Client[v1.GetSessionViewPageRequest, v1.GetSessionViewPageResponse]
@@ -1056,6 +1078,16 @@ func (c *sessionServiceClient) SetSessionFollowUp(ctx context.Context, req *conn
 // MarkSessionsRead calls ycc.v1.SessionService.MarkSessionsRead.
 func (c *sessionServiceClient) MarkSessionsRead(ctx context.Context, req *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error) {
 	return c.markSessionsRead.CallUnary(ctx, req)
+}
+
+// GetQuickReplies calls ycc.v1.SessionService.GetQuickReplies.
+func (c *sessionServiceClient) GetQuickReplies(ctx context.Context, req *connect.Request[v1.GetQuickRepliesRequest]) (*connect.Response[v1.GetQuickRepliesResponse], error) {
+	return c.getQuickReplies.CallUnary(ctx, req)
+}
+
+// SetQuickReplies calls ycc.v1.SessionService.SetQuickReplies.
+func (c *sessionServiceClient) SetQuickReplies(ctx context.Context, req *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error) {
+	return c.setQuickReplies.CallUnary(ctx, req)
 }
 
 // GetSessionTranscript calls ycc.v1.SessionService.GetSessionTranscript.
@@ -1449,6 +1481,8 @@ type SessionServiceHandler interface {
 	SetSessionFollowUp(context.Context, *connect.Request[v1.SetSessionFollowUpRequest]) (*connect.Response[v1.SetSessionFollowUpResponse], error)
 	// MarkSessionsRead advances the user's shared per-session read marks.
 	MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error)
+	GetQuickReplies(context.Context, *connect.Request[v1.GetQuickRepliesRequest]) (*connect.Response[v1.GetQuickRepliesResponse], error)
+	SetQuickReplies(context.Context, *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error)
 	// GetSessionTranscript returns a session's full event log (live or persisted)
 	// for the read-only transcript drill-in.
 	GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error)
@@ -1642,6 +1676,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceMarkSessionsReadProcedure,
 		svc.MarkSessionsRead,
 		connect.WithSchema(sessionServiceMethods.ByName("MarkSessionsRead")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetQuickRepliesHandler := connect.NewUnaryHandler(
+		SessionServiceGetQuickRepliesProcedure,
+		svc.GetQuickReplies,
+		connect.WithSchema(sessionServiceMethods.ByName("GetQuickReplies")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetQuickRepliesHandler := connect.NewUnaryHandler(
+		SessionServiceSetQuickRepliesProcedure,
+		svc.SetQuickReplies,
+		connect.WithSchema(sessionServiceMethods.ByName("SetQuickReplies")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetSessionTranscriptHandler := connect.NewUnaryHandler(
@@ -2114,6 +2160,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSetSessionFollowUpHandler.ServeHTTP(w, r)
 		case SessionServiceMarkSessionsReadProcedure:
 			sessionServiceMarkSessionsReadHandler.ServeHTTP(w, r)
+		case SessionServiceGetQuickRepliesProcedure:
+			sessionServiceGetQuickRepliesHandler.ServeHTTP(w, r)
+		case SessionServiceSetQuickRepliesProcedure:
+			sessionServiceSetQuickRepliesHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionTranscriptProcedure:
 			sessionServiceGetSessionTranscriptHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionViewProcedure:
@@ -2297,6 +2347,14 @@ func (UnimplementedSessionServiceHandler) SetSessionFollowUp(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) MarkSessionsRead(context.Context, *connect.Request[v1.MarkSessionsReadRequest]) (*connect.Response[v1.MarkSessionsReadResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.MarkSessionsRead is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetQuickReplies(context.Context, *connect.Request[v1.GetQuickRepliesRequest]) (*connect.Response[v1.GetQuickRepliesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetQuickReplies is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetQuickReplies(context.Context, *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetQuickReplies is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSessionTranscript(context.Context, *connect.Request[v1.GetSessionTranscriptRequest]) (*connect.Response[v1.GetSessionTranscriptResponse], error) {

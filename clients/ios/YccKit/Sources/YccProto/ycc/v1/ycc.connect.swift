@@ -32,6 +32,12 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `markSessionsRead`(request: Ycc_V1_MarkSessionsReadRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_MarkSessionsReadResponse>
 
+    @available(iOS 13, *)
+    func `getQuickReplies`(request: Ycc_V1_GetQuickRepliesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetQuickRepliesResponse>
+
+    @available(iOS 13, *)
+    func `setQuickReplies`(request: Ycc_V1_SetQuickRepliesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetQuickRepliesResponse>
+
     /// GetSessionTranscript returns a session's full event log (live or persisted)
     /// for the read-only transcript drill-in.
     @available(iOS 13, *)
@@ -371,6 +377,16 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     @available(iOS 13, *)
     public func `markSessionsRead`(request: Ycc_V1_MarkSessionsReadRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_MarkSessionsReadResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/MarkSessionsRead", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `getQuickReplies`(request: Ycc_V1_GetQuickRepliesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetQuickRepliesResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetQuickReplies", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `setQuickReplies`(request: Ycc_V1_SetQuickRepliesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SetQuickRepliesResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SetQuickReplies", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
@@ -761,6 +777,8 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let listSessionHistory = Connect.MethodSpec(name: "ListSessionHistory", service: "ycc.v1.SessionService", type: .unary)
             public static let setSessionFollowUp = Connect.MethodSpec(name: "SetSessionFollowUp", service: "ycc.v1.SessionService", type: .unary)
             public static let markSessionsRead = Connect.MethodSpec(name: "MarkSessionsRead", service: "ycc.v1.SessionService", type: .unary)
+            public static let getQuickReplies = Connect.MethodSpec(name: "GetQuickReplies", service: "ycc.v1.SessionService", type: .unary)
+            public static let setQuickReplies = Connect.MethodSpec(name: "SetQuickReplies", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionTranscript = Connect.MethodSpec(name: "GetSessionTranscript", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionView = Connect.MethodSpec(name: "GetSessionView", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionViewPage = Connect.MethodSpec(name: "GetSessionViewPage", service: "ycc.v1.SessionService", type: .unary)

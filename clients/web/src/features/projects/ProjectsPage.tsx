@@ -7,7 +7,7 @@ import { paths } from "../../app/paths";
 import type { ProjectInfo } from "../../gen/ycc/v1/ycc_pb";
 import { MenuButton } from "../../ui/Menu";
 import { gitSyncBadge, gitSyncTitle } from "./model";
-import { openAddProject, openRemoveProject, openRenameProject } from "./ProjectDialogs";
+import { openAddProject, openQuickReplies, openRemoveProject, openRenameProject } from "./ProjectDialogs";
 
 export function GitBadge({ project }: { project: ProjectInfo }) {
   const badge = gitSyncBadge(project.git);
@@ -86,6 +86,12 @@ export function ProjectsPage() {
                 items={[
                   { id: "session.new", label: "New session…", onSelect: () => navigate(paths.newSession(p.name)) },
                   { id: "projects.rename", label: "Rename…", onSelect: () => openRenameProject(p.name) },
+                  {
+                    id: "projects.quickReplies",
+                    label: "Quick replies…",
+                    title: "One-click messages shown above the composer in this project's sessions",
+                    onSelect: () => openQuickReplies(p.name),
+                  },
                   {
                     id: "projects.remove",
                     label: "Remove from ycc…",

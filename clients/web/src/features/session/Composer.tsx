@@ -1,10 +1,12 @@
 // Multiline composer: Enter sends, Shift+Enter inserts a newline. Pictures can
 // be attached with the paperclip, pasted, or dropped onto the session view.
 // Drafts (text and pictures) are kept per session while the page is open.
+// While the draft is empty, quick-reply chips send a canned message in one click.
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { DraftPicture } from "../attachments/attachments";
 import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
 import { track, type Attrs, type Via } from "../../app/analytics";
+import type { QuickReply } from "../../gen/ycc/v1/ycc_pb";
 
 const drafts = new Map<string, string>();
 const pictureDrafts = new Map<string, DraftPicture[]>();
@@ -26,8 +28,14 @@ export const Composer = forwardRef<
     picturesBlocked?: string;
     /** Enum-valued analytics attrs for `composer.send` (e.g. the session phase). */
     sendAttrs?: Attrs;
+    /** One-click replies offered while the draft is empty (omit to hide them). */
+    quickReplies?: readonly QuickReply[];
+    onEditQuickReplies?: () => void;
   }
->(function Composer({ sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs }, ref) {
+>(function Composer(
+  { sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs, quickReplies, onEditQuickReplies },
+  ref,
+) {
   const [text, setText] = useState(() => drafts.get(sessionKey) ?? "");
   const area = useRef<HTMLTextAreaElement>(null);
   const draft = usePictureDraft(pictureDrafts.get(sessionKey) ?? [], (next) => {
@@ -76,6 +84,21 @@ export const Composer = forwardRef<
     draft.release();
   };
 
+  // A sent reply hides the chips until the parent stops offering them (the
+  // turn started) or a few seconds pass, so a double click can't send twice.
+  const [quickSent, setQuickSent] = useState(false);
+  const offered = quickReplies !== undefined;
+  useEffect(() => {
+    if (!quickSent) return;
+    if (!offered) {
+      setQuickSent(false);
+      return;
+    }
+    const t = setTimeout(() => setQuickSent(false), 5000);
+    return () => clearTimeout(t);
+  }, [quickSent, offered]);
+  const showQuickReplies = !disabled && !quickSent && !!quickReplies?.length && text.trim() === "" && !hasPictures;
+
   return (
     <form
       className="composer"
@@ -89,6 +112,36 @@ export const Composer = forwardRef<
           <PictureStrip pictures={draft.pictures} onRemove={draft.remove} />
           {draft.error && <p className="error small">{draft.error}</p>}
           {picturesBlocked && hasPictures && <p className="warn small">{picturesBlocked}</p>}
+        </div>
+      )}
+      {showQuickReplies && quickReplies && (
+        <div className="quick-replies" role="group" aria-label="Quick replies">
+          {quickReplies.map((r, i) => (
+            <button
+              key={r.id || `project-${i}`}
+              type="button"
+              className="chip suggestion"
+              title={r.text}
+              onClick={() => {
+                // The kind, never the text: project replies are user-written.
+                track.action("composer.quick_reply", "click", { ...sendAttrs, kind: r.id || "project" });
+                setQuickSent(true);
+                onSend(r.text, []);
+              }}
+            >
+              {r.label}
+            </button>
+          ))}
+          {onEditQuickReplies && (
+            <button
+              type="button"
+              className="link small quick-replies-edit"
+              data-track="composer.quick_replies_edit"
+              onClick={onEditQuickReplies}
+            >
+              Edit…
+            </button>
+          )}
         </div>
       )}
       <div className="composer-row">
