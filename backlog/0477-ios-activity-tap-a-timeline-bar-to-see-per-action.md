@@ -1,10 +1,10 @@
 ---
 id: "0477"
 title: 'iOS Activity: tap a timeline bar to see per-action timing (model turns, tool calls)'
-status: in_review
+status: done
 priority: 2
 created: "2026-10-22"
-updated: "2026-10-22"
+updated: "2026-11-10"
 depends_on:
     - "0475"
 spec_refs: []
@@ -26,3 +26,4 @@ The user wants to tap things in the iOS Activity timeline and see what took so l
 - Go tests pass; the iOS app builds and its tests pass on the Mac mini.
 
 ## Work log
+- 2026-11-10: Owner-requested simulator review: agent, round, coordinator and running-round bars open per-action breakdowns (sorting by order or slowest), steps open their transcript rows, and job bars open their output. PASS. Screenshots in .ycc/tmp/ios-review/C/shots/.

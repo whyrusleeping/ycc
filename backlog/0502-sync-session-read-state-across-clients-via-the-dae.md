@@ -1,10 +1,10 @@
 ---
 id: "0502"
 title: Sync session read state across clients via the daemon
-status: in_review
+status: done
 priority: 2
 created: "2026-11-05"
-updated: "2026-11-05"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - docs/design/web-client.md
@@ -38,3 +38,4 @@ Ruled out as causes: summary and event timestamps share the same millisecond RFC
   - Web (`readStore.ts`) and iOS (`SessionReadStore`) drop the per-device watermark. Their effective mark is the later of the local and daemon marks. Listing never creates marks; local marks ahead of the daemon are re-pushed, which also migrates old local marks. Web pushes are coalesced over 1.5s and flushed on unmount, pagehide or hidden.
   - Verification: Go suite passes. Web typecheck and tests pass (423). YccKit `swift test` passes on the Mac (560) and the app builds and runs its test target. The scratch-daemon Playwright e2e (`.ycc/tmp/readsync-e2e/e2e.mjs`) passes 15/15, using two browser contexts as two devices and RPC as iOS: no marks from listing, daemon→web, RPC read clears the web on the next refresh, the web dot and opening a session reach the daemon, and a second browser follows.
   - Not done: an iOS simulator or device check against a live daemon (in_review per iOS convention). The optional TUI marking was left out; sessions driven only from the terminal still show unread elsewhere until read there.
+- 2026-11-10: Owner-requested iOS simulator check against a live scratch daemon. A read via the `MarkSessionsRead` RPC cleared the session on iOS. Opening a session on iOS cleared it in a fresh web profile, and a read on the web (Playwright) cleared it on iOS. PASS.

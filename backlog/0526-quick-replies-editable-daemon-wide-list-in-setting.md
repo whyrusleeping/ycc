@@ -17,5 +17,6 @@ Owner request after 0513/0514: quick replies should be editable from Settings. D
 
 ## Work log
 - 2026-11-10: `GetQuickRepliesResponse.global` replaces `builtin`. `SetQuickRepliesRequest.global` replaces the daemon-wide list, stored at `<state>/ycc/quick-replies.json`; only default ids are kept. Web has a Settings › Quick replies section using a shared `QuickRepliesForm`, which the project dialog also uses. iOS has Settings › Quick replies (`QuickRepliesSettingsView` + YccKit `QuickRepliesEditorModel`), built by a subagent. Analytics kind is the default's id, else `global` or `project`. Tests pass: Go RPC test, web suite (435), YccKit (571), and xcodebuild test. Checked web save → chips in the browser, and the iOS editor plus swipe menu in the simulator. Left in_review for on-device use.
+- 2026-11-10: iOS side checked in an owner-requested simulator review: Settings › Quick replies edits, adds, removes, reorders and saves, and the edited default keeps `id:"continue"`. The session menu shows the new order followed by project extras, and an emptied list stays empty with an empty-state message. PASS. The web side was not re-checked in this pass.
 
 ## Acceptance criteria

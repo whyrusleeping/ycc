@@ -1,7 +1,7 @@
 ---
 id: "0514"
 title: 'iOS: quick-reply swipe menu in the session view'
-status: in_review
+status: done
 priority: 2
 created: "2026-11-09"
 updated: "2026-11-10"
@@ -31,3 +31,4 @@ iOS counterpart of 0513. It uses the same built-in and project-defined quick rep
 ## Work log
 - 2026-11-10: Implemented, now in review for on-device use. `QuickReplyMenuLayout` (YccKit, unit-tested) holds the geometry and the pick/flick/cancel rules. `App/QuickReplyMenu.swift` holds the overlay, the handle, and an edge-start `UIPanGestureRecognizer` on the window's root view. Scroll views wait for that recognizer to fail, so the transcript doesn't scroll under the menu. It is a plain pan rather than a screen-edge pan so simulator automation can drive it. `SessionView` fetches the replies with `GetQuickReplies`, applies the hide rules, and shows the 2-second Undo bar. On the Mac simulator (iPhone 17) with a scratch daemon and mock model: a swipe pick sent "Commit and push", a flick then a tap opened the menu and Undo stopped the send, a release away from the rows cancelled, typing hid the handle, and the handle hid while running. The ycc-demo project showed its own replies and vals showed only the built-ins. Light and dark checked. `xcodebuild test` and `swift test` (568) pass.
 - Commit: iOS: quick-reply swipe menu in the session view (0514)
+- 2026-11-10: Owner-requested simulator review: edge drag, arc rows, highlight, send on release with undo, cancel away from the rows, the tap fallback, and hiding the handle while running, with composer text or with a pending question all work. The reply set is the daemon-wide list followed by project extras. PASS. Nits: the toast says "Sending '…'" rather than "Sent: …", and the undo bar briefly pops the Jump to latest pill.

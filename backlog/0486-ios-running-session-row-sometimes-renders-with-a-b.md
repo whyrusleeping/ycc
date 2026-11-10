@@ -19,3 +19,4 @@ Acceptance: on-device use shows no more blank running rows. If they come back, m
 ## Acceptance criteria
 
 ## Work log
+- 2026-11-10: Owner-requested simulator review: the running-row glow and card fill were present in every case tried (first, middle and last row; open → back; relaunch; long-press preview; light and dark). The original bug was intermittent and device-only and never reproduced in the simulator, so confirmation still needs on-device use.

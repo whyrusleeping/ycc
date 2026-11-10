@@ -1,10 +1,10 @@
 ---
 id: "0487"
 title: 'Daemon health monitor: periodic model / Exa / disk checks + GetHealth RPC'
-status: in_review
+status: done
 priority: 2
 created: "2026-10-29"
-updated: "2026-10-29"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - spec.md#14.2 Health monitoring
@@ -28,3 +28,4 @@ Acceptance:
 ## Acceptance criteria
 
 ## Work log
+- 2026-11-10: Exercised end to end by the 0489 simulator review: a daemon from HEAD reported model probe ok, warn (503) and fail (401), and an unreachable Exa API, through `GetHealth` and Check now.

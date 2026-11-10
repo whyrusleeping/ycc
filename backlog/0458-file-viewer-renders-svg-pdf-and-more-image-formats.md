@@ -17,3 +17,4 @@ Status is in_review until the iOS app is built and checked on a device: open an 
 ## Acceptance criteria
 
 ## Work log
+- 2026-11-10: iOS side checked in an owner-requested simulator review: SVG renders with its inline script not run and "Show source" works, PDF renders both pages, and HEIC, AVIF, TIFF, BMP, WebP and GIF render. PASS. The web side was not re-checked in this pass.

@@ -1,10 +1,10 @@
 ---
 id: "0503"
 title: 'iOS: render markdown images of workspace files inline in transcripts'
-status: in_review
+status: done
 priority: 3
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-10"
 depends_on: []
 spec_refs:
     - spec.md#18. Client interaction model
@@ -24,3 +24,4 @@ Acceptance criteria:
 ## Acceptance criteria
 
 ## Work log
+- 2026-11-10: Owner-requested simulator review: inline images render in final-report and intermediate messages, with tall images capped and tap opening the file viewer. Fallback links cover svg, a fake png, an oversized file, a missing file and a remote URL (a remote image is never fetched inline). PASS. Minor cosmetic: a tall, narrow image's bordered frame is drawn at the image's pixel width rather than around the scaled image (`MarkdownImage.swift` ~65–69).
