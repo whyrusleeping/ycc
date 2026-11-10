@@ -684,15 +684,15 @@ surface; `docs/design/forge-integration.md` records that trust-boundary decision
 
 ## 9. Modes
 
-- **pm** manages design docs, backlog, investigation, onboarding, and grooming. It may inspect the
-  workspace but is prompt-constrained not to implement code. Presets provide opening context for
-  onboarding (`onboard`: learn the project, then build its backlog with the user, §19.2), spec
-  checking (`spec-doctor`), memory grooming (`memory-groom`), and
-  backlog grooming (`backlog-groom`: a bounded batch of tasks checked against the backlog rules in
-  `docs/design/doc-style.md`, editing only backlog files and flagging what evidence does not
-  settle); an optional preset-to-model binding supplies an independent editorial perspective
-  without changing role defaults.
-- **chat** is free-form assistance with direct worker tools and no fixed workflow. Finished,
+Modes differ by who drives the workflow, not by which tools were removed: the user drives **chat**,
+the work pipeline drives **work** (a picked task or the loop), and **pm** serves project onboarding
+plus scheduled and maintenance runs. Chat is the interactive default. A November 2026 usage review
+found 152 owner-started chat sessions, 18 work and no interactive pm: chat already has the backlog
+tools, memory, `ask_user` and subagents, so pm-shaped requests went to chat. New-session preset
+suggestions were clicked four times, and three of those were then cancelled.
+
+- **chat** is free-form assistance with direct worker tools and no fixed workflow, and the mode a
+  new session starts in. Finished,
   verified work is committed by default, through a `commit` tool that takes the files the
   session changed, whole, plus any named paths. Given a task, it also completes that task in the
   same commit. `[chat] finished_work` in a project's `.ycc/config.toml` sets the policy: `commit`
@@ -702,10 +702,25 @@ surface; `docs/design/forge-integration.md` records that trust-boundary decision
   behind a closing "should I commit?" or "changes are uncommitted", and about 12% of the owner's
   follow-up messages were some form of "commit".
 - **work** drives one accepted task through implementation, proportional review, backlog update,
-  and commit.
+  and commit. Starting from a task implies work; the work loop starts it too.
+- **pm** manages design docs, backlog, investigation, onboarding, and grooming. It may inspect the
+  workspace but is prompt-constrained not to implement code. Users meet it as project onboarding
+  (`onboard`: learn the project, then build its backlog with the user, §19.2), offered when a
+  project needs onboarding and as a re-onboard action afterwards. Its other presets are
+  maintenance, started from where they apply or by the scheduler: spec checking (`spec-doctor`,
+  "check docs against code" on the project page), memory grooming (`memory-groom`, the Memory
+  page and automatic grooms), and backlog grooming (`backlog-groom`, the backlog page and automatic
+  grooms: a bounded batch of tasks checked against the backlog rules in
+  `docs/design/doc-style.md`, editing only backlog files and flagging what evidence does not
+  settle). An optional preset-to-model binding supplies an independent editorial perspective
+  without changing role defaults.
 
-A prompt entered with a preset composes with the preset rather than replacing it; a preset started
-with no prompt uses the preset's own opening prompt. A pm-to-work
+`ListModes` reports the default mode and, per preset, its placement (onboarding, project, backlog,
+memory), so clients put each preset in its place without lists of preset names. New session
+offers no mode or preset grid by default; explicit mode choice sits behind an advanced
+disclosure.
+A prompt entered with a preset replaces the preset's opening prompt; a preset started with no
+prompt uses the preset's own opening prompt. A pm-to-work
 handoff requires explicit approval and carries the selected task and planning context. Mode
 transitions are recorded; clients start sessions and otherwise project the daemon-owned state.
 

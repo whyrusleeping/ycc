@@ -1,7 +1,8 @@
 // The new-session page: which project (asked when starting from the unscoped
-// Recent feed, last-viewed project first), mode with descriptions, preset
-// suggestions that adopt a mode and seed the prompt, an optional per-session
-// coordinator model, and a multiline prompt with pictures → StartSession, or
+// Recent feed, last-viewed project first), then a prompt starting chat. A
+// project that needs onboarding is offered the onboarding preset; an Advanced
+// disclosure keeps explicit mode choice. Also an optional per-session
+// coordinator model and pictures → StartSession, or
 // with "Separate workstream" on → SpawnWorkstream (plus an optional task and
 // base ref). On success it navigates straight into the live session.
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,7 +13,7 @@ import { authStore } from "../../api/auth";
 import { queryKeys, useBacklog, useModels, useModes, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { track, useFlow, type Via } from "../../app/analytics";
-import { lastMode, lastViewedProject } from "../../app/memory";
+import { lastViewedProject } from "../../app/memory";
 import { openAddProject } from "../projects/ProjectDialogs";
 import { AttachButton, PictureStrip, filesFrom, loadPictures, revokePictures, useDropZone } from "../attachments/pictures";
 import { MAX_PICTURES } from "../attachments/attachments";
@@ -60,6 +61,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   };
   const area = useRef<HTMLTextAreaElement>(null);
   const [pendingPreset, setPendingPreset] = useState<Preset | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Leaving without starting records new_session.cancel.
   useFlow("new_session");
@@ -75,12 +77,19 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
     draftStore.seedProject(project, project === routeProject);
   }, [projects.data, projectSeeded, routeProject]);
 
-  // Keep a valid mode selected (the remembered one when it still exists).
+  // Keep a valid mode selected: a kept draft's own, else the daemon's default (chat).
   useEffect(() => {
     const list = modes.data?.modes;
     if (!list?.length) return;
-    setDraft((d) => (d.mode && list.some((m) => m.name === d.mode) ? d : { ...d, mode: initialMode(list, lastMode.get()) }));
+    setDraft((d) => (d.mode && list.some((m) => m.name === d.mode) ? d : { ...d, mode: initialMode(list, modes.data?.defaultMode) }));
   }, [modes.data]);
+
+  // A kept draft (or an applied preset) in another mode shows the mode choice.
+  const draftMode = draft.mode;
+  const defaultModeName = modes.data ? initialMode(modes.data.modes, modes.data.defaultMode) : "";
+  useEffect(() => {
+    if (draftMode && defaultModeName && draftMode !== defaultModeName) setAdvancedOpen(true);
+  }, [draftMode, defaultModeName]);
 
   const choice = modelChoices(models.data);
   // Never keep an override pointing at a model that is no longer offered.
@@ -133,7 +142,6 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         model: draft.model ? "override" : "default",
         workstream: draft.workstream,
       });
-      lastMode.set(draft.mode);
       if (draft.project) lastViewedProject.set(draft.project);
       draftStore.clear();
       void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
@@ -169,6 +177,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
 
   const modeList = modes.data?.modes ?? [];
   const selectedMode = modeList.find((m) => m.name === draft.mode);
+  const otherMode = !!draft.mode && draft.mode !== defaultModeName;
 
   return (
     <div className={`new-session${drop.dragging ? " dragging" : ""}`} {...drop.handlers}>
@@ -212,33 +221,10 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
           </section>
         ) : (
           <>
-            <section aria-labelledby="mode-heading">
-              <h2 id="mode-heading" className="section-label">
-                Mode
-              </h2>
-              <div className="mode-grid" role="group" aria-labelledby="mode-heading">
-                {modeList.map((m) => (
-                  <button
-                    key={m.name}
-                    type="button"
-                    aria-pressed={draft.mode === m.name}
-                    className={`choice-card mode-card${draft.mode === m.name ? " selected" : ""}`}
-                    disabled={starting}
-                    onClick={() => {
-                      track.action("new_session.mode", "click", { mode: m.name });
-                      setDraft((d) => withMode(d, m.name, modes.data?.presets ?? []));
-                    }}
-                  >
-                    <span className="choice-title">{m.title || m.name}</span>
-                    {m.description && <span className="choice-sub">{m.description}</span>}
-                  </button>
-                ))}
-              </div>
-            </section>
             {presets.length > 0 && (
               <section aria-labelledby="presets-heading">
                 <h2 id="presets-heading" className="section-label">
-                  Suggestions
+                  This project isn’t onboarded yet
                 </h2>
                 <div className="preset-grid">
                   {presets.map((p) => (
@@ -259,14 +245,38 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                     >
                       <span className="choice-title">{p.title || p.name}</span>
                       {p.description && <span className="choice-sub clamp-2">{p.description}</span>}
-                      {p.mode && (
-                        <span className="tag">{modeList.find((m) => m.name === p.mode)?.title || p.mode}</span>
-                      )}
                     </button>
                   ))}
                 </div>
               </section>
             )}
+            <details
+              className="new-session-advanced"
+              open={advancedOpen}
+              onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+            >
+              <summary data-track="new_session.advanced">
+                Advanced: mode <span className="muted">· {selectedMode?.title || draft.mode || "—"}</span>
+              </summary>
+              <div className="mode-grid" role="group" aria-label="Mode">
+                {modeList.map((m) => (
+                  <button
+                    key={m.name}
+                    type="button"
+                    aria-pressed={draft.mode === m.name}
+                    className={`choice-card mode-card${draft.mode === m.name ? " selected" : ""}`}
+                    disabled={starting}
+                    onClick={() => {
+                      track.action("new_session.mode", "click", { mode: m.name });
+                      setDraft((d) => withMode(d, m.name, modes.data?.presets ?? []));
+                    }}
+                  >
+                    <span className="choice-title">{m.title || m.name}</span>
+                    {m.description && <span className="choice-sub">{m.description}</span>}
+                  </button>
+                ))}
+              </div>
+            </details>
           </>
         )}
       </div>
@@ -352,7 +362,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               </select>
             </label>
           )}
-          {selectedMode && (
+          {selectedMode && otherMode && (
             <span className="chip-note muted">
               Mode: <strong>{selectedMode.title || selectedMode.name}</strong>
             </span>

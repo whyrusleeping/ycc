@@ -778,15 +778,15 @@ public nonisolated struct Ycc_V1_Mode: Sendable {
   public init() {}
 }
 
-/// Preset is a home-menu entry that starts a session in `mode` with a tailored
-/// `opening_prompt`. The pm mode exposes spec/backlog/feature/bug framings this
-/// way: one mode with four opening prompts.
+/// Preset starts a session in `mode` with a tailored `opening_prompt`. Presets
+/// are not general new-session suggestions: `placement` says where a client
+/// offers one, so clients place them without hardcoding preset names.
 public nonisolated struct Ycc_V1_Preset: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// menu key, distinct from the mode
+  /// key passed as StartSessionRequest.preset, distinct from the mode
   public var name: String = String()
 
   public var title: String = String()
@@ -798,6 +798,17 @@ public nonisolated struct Ycc_V1_Preset: Sendable {
 
   /// verbatim first prompt seeded into the session
   public var openingPrompt: String = String()
+
+  /// Where clients offer the preset; clients ignore values they don't know.
+  ///   "onboarding": on new session only for a project that needs onboarding,
+  ///                 and as a re-onboard / plan-with-PM action on the project
+  ///                 and backlog pages.
+  ///   "project":    a contextual action on the project page (e.g. checking
+  ///                 docs against code).
+  ///   "backlog":    an action on the backlog page.
+  ///   "memory":     an action on the memory page.
+  /// Empty means the client need not offer it.
+  public var placement: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -812,6 +823,10 @@ public nonisolated struct Ycc_V1_ListModesResponse: Sendable {
   public var modes: [Ycc_V1_Mode] = []
 
   public var presets: [Ycc_V1_Preset] = []
+
+  /// The mode a new session starts in unless the user picks another ("chat").
+  /// Starting from a backlog task uses "work" regardless.
+  public var defaultMode: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -6450,7 +6465,7 @@ nonisolated extension Ycc_V1_Mode: SwiftProtobuf.Message, SwiftProtobuf._Message
 
 nonisolated extension Ycc_V1_Preset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Preset"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}description\0\u{1}mode\0\u{3}opening_prompt\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}description\0\u{1}mode\0\u{3}opening_prompt\0\u{1}placement\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6463,6 +6478,7 @@ nonisolated extension Ycc_V1_Preset: SwiftProtobuf.Message, SwiftProtobuf._Messa
       case 3: try { try decoder.decodeSingularStringField(value: &self.description_p) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.mode) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.openingPrompt) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.placement) }()
       default: break
       }
     }
@@ -6484,6 +6500,9 @@ nonisolated extension Ycc_V1_Preset: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if !self.openingPrompt.isEmpty {
       try visitor.visitSingularStringField(value: self.openingPrompt, fieldNumber: 5)
     }
+    if !self.placement.isEmpty {
+      try visitor.visitSingularStringField(value: self.placement, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6493,6 +6512,7 @@ nonisolated extension Ycc_V1_Preset: SwiftProtobuf.Message, SwiftProtobuf._Messa
     if lhs.description_p != rhs.description_p {return false}
     if lhs.mode != rhs.mode {return false}
     if lhs.openingPrompt != rhs.openingPrompt {return false}
+    if lhs.placement != rhs.placement {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6500,7 +6520,7 @@ nonisolated extension Ycc_V1_Preset: SwiftProtobuf.Message, SwiftProtobuf._Messa
 
 nonisolated extension Ycc_V1_ListModesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListModesResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}modes\0\u{1}presets\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}modes\0\u{1}presets\0\u{3}default_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6510,6 +6530,7 @@ nonisolated extension Ycc_V1_ListModesResponse: SwiftProtobuf.Message, SwiftProt
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.modes) }()
       case 2: try { try decoder.decodeRepeatedMessageField(value: &self.presets) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.defaultMode) }()
       default: break
       }
     }
@@ -6522,12 +6543,16 @@ nonisolated extension Ycc_V1_ListModesResponse: SwiftProtobuf.Message, SwiftProt
     if !self.presets.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.presets, fieldNumber: 2)
     }
+    if !self.defaultMode.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultMode, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_ListModesResponse, rhs: Ycc_V1_ListModesResponse) -> Bool {
     if lhs.modes != rhs.modes {return false}
     if lhs.presets != rhs.presets {return false}
+    if lhs.defaultMode != rhs.defaultMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

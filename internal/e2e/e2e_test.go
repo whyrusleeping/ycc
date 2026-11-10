@@ -66,7 +66,7 @@ func TestE2EResize(t *testing.T) {
 	h.resize(150, 48)
 	// The title bar and the mode list survive the reflow.
 	h.waitForRegex(regexp.MustCompile(`ycc\s+—\s+home`))
-	h.waitForText("Plan and intake")
+	h.waitForText("Pick a backlog task")
 	h.screenshot("03_resized_menu")
 }
 

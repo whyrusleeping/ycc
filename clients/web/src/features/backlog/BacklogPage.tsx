@@ -21,6 +21,8 @@ import { track } from "../../app/analytics";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
 import { BacklogBoard } from "./Board";
 import { LoopBanner } from "../workloop/WorkLoopPage";
+import { PLACEMENT } from "../newSession/model";
+import { PresetMenu } from "../newSession/PresetActions";
 import {
   DEFAULT_FILTER,
   DEFAULT_SORT,
@@ -300,6 +302,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             <button type="button" className="btn primary" data-track="backlog.newTask" onClick={() => setCreating(true)}>
               + New task
             </button>
+            <PresetMenu project={project} placements={[PLACEMENT.backlog, PLACEMENT.onboarding]} ariaLabel="More backlog actions" />
           </div>
         </header>
         <LoopBanner project={project} />

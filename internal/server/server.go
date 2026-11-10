@@ -70,8 +70,8 @@ func New(mgr *session.Manager) *Server {
 	return &Server{mgr: mgr, subUsage: subusage.NewService(nil), viewStores: make(map[string]*sessionview.Store), viewKeepalive: sessionViewKeepalive}
 }
 
-// ListModes returns the selectable session modes and opening-prompt presets for
-// the home menu.
+// ListModes returns the selectable session modes, the default one, and the
+// opening-prompt presets with where clients offer each.
 func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesRequest]) (*connect.Response[v1.ListModesResponse], error) {
 	var modes []*v1.Mode
 	for _, m := range orchestrator.Modes() {
@@ -79,9 +79,9 @@ func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesReq
 	}
 	var presets []*v1.Preset
 	for _, p := range orchestrator.Presets() {
-		presets = append(presets, &v1.Preset{Name: p.Name, Title: p.Title, Description: p.Description, Mode: p.Mode, OpeningPrompt: p.Prompt})
+		presets = append(presets, &v1.Preset{Name: p.Name, Title: p.Title, Description: p.Description, Mode: p.Mode, OpeningPrompt: p.Prompt, Placement: p.Placement})
 	}
-	return connect.NewResponse(&v1.ListModesResponse{Modes: modes, Presets: presets}), nil
+	return connect.NewResponse(&v1.ListModesResponse{Modes: modes, Presets: presets, DefaultMode: orchestrator.DefaultMode}), nil
 }
 
 func rejectObviousCredential(text string) error {

@@ -4,7 +4,8 @@ import { useEffect, useMemo, type ReactNode } from "react";
 import { useProjects, useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { errorMessage } from "../api/client";
 import { BacklogPage } from "../features/backlog/BacklogPage";
-import { projectChoices } from "../features/newSession/model";
+import { PLACEMENT, projectChoices } from "../features/newSession/model";
+import { PresetButtons } from "../features/newSession/PresetActions";
 import { SessionList } from "../features/sessions/SessionList";
 import { SessionView } from "../features/session/SessionView";
 import { displayTitle, taskIds } from "../features/sessions/feed";
@@ -50,7 +51,7 @@ export function HomePage() {
   );
 }
 
-/** `/p/:project`: one project's sessions. */
+/** `/p/:project`: one project's sessions, with its onboarding and docs-check actions. */
 export function ProjectPage() {
   const { project = "" } = useParams();
   const { setScope } = useScope();
@@ -60,6 +61,9 @@ export function ProjectPage() {
     <div className="page">
       <header className="page-head">
         <h1>{project}</h1>
+        <div className="page-actions">
+          <PresetButtons project={project} placements={[PLACEMENT.onboarding, PLACEMENT.project]} />
+        </div>
       </header>
       <SessionList scope={project} variant="page" />
     </div>

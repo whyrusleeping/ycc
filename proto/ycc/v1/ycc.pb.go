@@ -2338,16 +2338,28 @@ func (x *Mode) GetDescription() string {
 	return ""
 }
 
-// Preset is a home-menu entry that starts a session in `mode` with a tailored
-// `opening_prompt`. The pm mode exposes spec/backlog/feature/bug framings this
-// way: one mode with four opening prompts.
+// Preset starts a session in `mode` with a tailored `opening_prompt`. Presets
+// are not general new-session suggestions: `placement` says where a client
+// offers one, so clients place them without hardcoding preset names.
 type Preset struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // menu key, distinct from the mode
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // key passed as StartSessionRequest.preset, distinct from the mode
 	Title         string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	Mode          string                 `protobuf:"bytes,4,opt,name=mode,proto3" json:"mode,omitempty"`                                        // session mode to start (e.g. "pm")
 	OpeningPrompt string                 `protobuf:"bytes,5,opt,name=opening_prompt,json=openingPrompt,proto3" json:"opening_prompt,omitempty"` // verbatim first prompt seeded into the session
+	// Where clients offer the preset; clients ignore values they don't know.
+	//
+	//	"onboarding": on new session only for a project that needs onboarding,
+	//	              and as a re-onboard / plan-with-PM action on the project
+	//	              and backlog pages.
+	//	"project":    a contextual action on the project page (e.g. checking
+	//	              docs against code).
+	//	"backlog":    an action on the backlog page.
+	//	"memory":     an action on the memory page.
+	//
+	// Empty means the client need not offer it.
+	Placement     string `protobuf:"bytes,6,opt,name=placement,proto3" json:"placement,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2417,10 +2429,20 @@ func (x *Preset) GetOpeningPrompt() string {
 	return ""
 }
 
+func (x *Preset) GetPlacement() string {
+	if x != nil {
+		return x.Placement
+	}
+	return ""
+}
+
 type ListModesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Modes         []*Mode                `protobuf:"bytes,1,rep,name=modes,proto3" json:"modes,omitempty"`
-	Presets       []*Preset              `protobuf:"bytes,2,rep,name=presets,proto3" json:"presets,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Modes   []*Mode                `protobuf:"bytes,1,rep,name=modes,proto3" json:"modes,omitempty"`
+	Presets []*Preset              `protobuf:"bytes,2,rep,name=presets,proto3" json:"presets,omitempty"`
+	// The mode a new session starts in unless the user picks another ("chat").
+	// Starting from a backlog task uses "work" regardless.
+	DefaultMode   string `protobuf:"bytes,3,opt,name=default_mode,json=defaultMode,proto3" json:"default_mode,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2467,6 +2489,13 @@ func (x *ListModesResponse) GetPresets() []*Preset {
 		return x.Presets
 	}
 	return nil
+}
+
+func (x *ListModesResponse) GetDefaultMode() string {
+	if x != nil {
+		return x.DefaultMode
+	}
+	return ""
 }
 
 type ListSessionsRequest struct {
@@ -14267,16 +14296,18 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x04Mode\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\"\x8f\x01\n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\"\xad\x01\n" +
 	"\x06Preset\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
 	"\x04mode\x18\x04 \x01(\tR\x04mode\x12%\n" +
-	"\x0eopening_prompt\x18\x05 \x01(\tR\ropeningPrompt\"a\n" +
+	"\x0eopening_prompt\x18\x05 \x01(\tR\ropeningPrompt\x12\x1c\n" +
+	"\tplacement\x18\x06 \x01(\tR\tplacement\"\x84\x01\n" +
 	"\x11ListModesResponse\x12\"\n" +
 	"\x05modes\x18\x01 \x03(\v2\f.ycc.v1.ModeR\x05modes\x12(\n" +
-	"\apresets\x18\x02 \x03(\v2\x0e.ycc.v1.PresetR\apresets\"/\n" +
+	"\apresets\x18\x02 \x03(\v2\x0e.ycc.v1.PresetR\apresets\x12!\n" +
+	"\fdefault_mode\x18\x03 \x01(\tR\vdefaultMode\"/\n" +
 	"\x13ListSessionsRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"\x9b\x01\n" +
 	"\vSessionInfo\x12\x1d\n" +

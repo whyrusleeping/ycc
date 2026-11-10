@@ -1,7 +1,7 @@
 ---
 id: "0521"
 title: 'Reframe session modes: chat by default, PM only for project onboarding, maintenance presets off the new-session screen (spec + daemon + web)'
-status: todo
+status: done
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -12,6 +12,7 @@ spec_refs:
 ---
 
 ## Description
+
 **Evidence (2026-11-11 usage review):** since session origin was recorded, the owner has started 152 chat sessions, 18 work sessions and 0 PM sessions. The only PM sessions are memory-groom runs, mostly scheduled. Every web new-session submit in analytics is chat. Presets were clicked 4 times, and 3 of those ended in `replace_prompt.cancel`. PM-shaped requests ("do a pass over the spec and backlog and think about the product…") go to chat, because chat already has the backlog tools, memory, ask_user and spawn_agent. PM is a strict subset of chat, minus code edits and subagents, so it never wins for interactive work.
 
 **Owner direction:** chat is the interactive default. PM stays user-facing for one job: onboarding a new user or project, where it learns the project and builds out the backlog interactively with the user. Modes should differ by who drives the workflow (you, the work pipeline, or the scheduler), not by which tools were removed.
@@ -30,6 +31,8 @@ spec_refs:
 - Web checks via the sidebar-v2 or onboarding harness: light/dark screenshots of new session (onboarded vs. un-onboarded project) and the relocated actions. Bundle rebuilt. Go and web tests green.
 - The TUI is being retired (0481); no TUI work required.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+ListModes adds default_mode (chat) and Preset.placement (onboarding/project/backlog/memory); pm retitled Project onboarding, spec-doctor "Check docs against code". Web new session starts chat with mode cards behind a collapsed Advanced disclosure; only onboarding is suggested, for projects needing it; kept drafts keep mode/preset. Project page: Onboard/Re-onboard + Check docs against code; backlog ⋯ menu: Groom the backlog + Re-onboard; GetStarted uses placement; Memory and task starts unchanged. Spec §9, remote-api, web-client docs updated; Go/web/Swift regen (YccKit builds), bundle rebuilt; go test ./... and 438 web tests green; light/dark shots in .ycc/tmp/w0521.
+
+Commit: Modes reframed: new sessions start chat, pm is project onboarding, presets placed by ListModes metadata (default_mode, Preset.placement) at their contextual pages (0521)

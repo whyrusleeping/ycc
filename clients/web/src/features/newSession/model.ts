@@ -1,7 +1,7 @@
 // Pure new-session logic (mirrors YccKit NewSessionModel and the iOS landing
 // view's project prompt): which project to ask about first, default mode and
-// model choices, preset suggestions, start validation, and the StartSession
-// request.
+// model choices, where presets are offered, start validation, and the
+// StartSession request.
 import type { ListModelsResponse, ModelInfo, Preset, ProjectInfo } from "../../gen/ycc/v1/ycc_pb";
 import { toImageAttachments, type DraftPicture } from "../attachments/attachments";
 import { taskPrompt } from "../workstreams/model";
@@ -27,26 +27,54 @@ export function initialProject(routeProject: string | null, projects: readonly P
   return "";
 }
 
-/** A remembered mode if it still exists, else the daemon's first mode. */
-export function initialMode(modes: readonly { name: string }[], remembered: string | null): string {
-  if (remembered && modes.some((m) => m.name === remembered)) return remembered;
+/**
+ * The mode a new draft starts in: the daemon's default (chat) when listed,
+ * else its first mode. Sessions started from a backlog task use work instead.
+ */
+export function initialMode(modes: readonly { name: string }[], defaultMode: string | undefined): string {
+  if (defaultMode && modes.some((m) => m.name === defaultMode)) return defaultMode;
   return modes[0]?.name ?? "";
 }
 
+/** Where the daemon says a preset is offered (ListModes Preset.placement). */
+export const PLACEMENT = {
+  /** New session for a project that needs onboarding; re-onboarding on the project and backlog pages. */
+  onboarding: "onboarding",
+  /** A contextual action on the project page. */
+  project: "project",
+  /** An action on the backlog page. */
+  backlog: "backlog",
+  /** An action on the memory page. */
+  memory: "memory",
+} as const;
+
+/** Presets the daemon places at any of `placements`, in the order of `placements`, then the daemon's. */
+export function placedPresets(presets: readonly Preset[], placements: readonly string[]): Preset[] {
+  return placements.flatMap((placement) => presets.filter((p) => p.placement === placement));
+}
+
 /**
- * Presets suitable for the selected project. The onboarding card shows only
- * for a project that needs onboarding (or whose daemon omitted the status).
+ * New session's only preset suggestions: onboarding, for a selected project
+ * that needs it (or whose daemon omitted the status). Other presets live at
+ * their contextual places, not here.
  */
 export function suggestedPresets(
   presets: readonly Preset[],
   projects: readonly ProjectInfo[],
   selectedProject: string,
 ): Preset[] {
-  const withoutOnboarding = presets.filter((p) => p.name !== "onboard");
   const project = projects.find((p) => p.name === selectedProject);
-  if (!project) return withoutOnboarding;
-  if (project.needsOnboarding === undefined) return [...presets];
-  return project.needsOnboarding ? [...presets] : withoutOnboarding;
+  if (!project || project.needsOnboarding === false) return [];
+  return placedPresets(presets, [PLACEMENT.onboarding]);
+}
+
+/**
+ * The label of a contextual preset action: an onboarding preset for a project
+ * that is already onboarded re-runs onboarding.
+ */
+export function presetActionLabel(preset: Preset, needsOnboarding: boolean | undefined): string {
+  if (preset.placement === PLACEMENT.onboarding && needsOnboarding === false) return "Re-onboard";
+  return preset.title || preset.name;
 }
 
 /** Plain work mode may start without a prompt (the agent picks a ready task). */

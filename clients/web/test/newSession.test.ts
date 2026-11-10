@@ -16,6 +16,8 @@ import {
   initialMode,
   initialProject,
   modelChoices,
+  placedPresets,
+  presetActionLabel,
   projectChoices,
   suggestedPresets,
   withMode,
@@ -26,8 +28,9 @@ const project = (name: string, needsOnboarding?: boolean) =>
   create(ProjectInfoSchema, { name, path: `/w/${name}`, ...(needsOnboarding === undefined ? {} : { needsOnboarding }) });
 const projects = [project("alpha", false), project("beta", false), project("gamma", true)];
 const presets = [
-  create(PresetSchema, { name: "onboard", mode: "pm", openingPrompt: "ONBOARD" }),
-  create(PresetSchema, { name: "spec-doctor", mode: "pm", openingPrompt: "DOCTOR" }),
+  create(PresetSchema, { name: "onboard", title: "Onboard this project", mode: "pm", openingPrompt: "ONBOARD", placement: "onboarding" }),
+  create(PresetSchema, { name: "spec-doctor", title: "Check docs against code", mode: "pm", openingPrompt: "DOCTOR", placement: "project" }),
+  create(PresetSchema, { name: "backlog-groom", mode: "pm", openingPrompt: "GROOM", placement: "backlog" }),
 ];
 const draft = (over: Partial<NewSessionDraft> = {}): NewSessionDraft => ({
   project: "alpha",
@@ -58,18 +61,31 @@ describe("new session", () => {
     expect(initialProject(null, [])).toBe("");
   });
 
-  it("remembers a still-valid mode, else the first", () => {
-    const modes = [{ name: "chat" }, { name: "work" }];
-    expect(initialMode(modes, "work")).toBe("work");
-    expect(initialMode(modes, "gone")).toBe("chat");
-    expect(initialMode([], null)).toBe("");
+  it("starts in the daemon's default mode, else its first", () => {
+    const modes = [{ name: "work" }, { name: "chat" }];
+    expect(initialMode(modes, "chat")).toBe("chat");
+    expect(initialMode(modes, "gone")).toBe("work");
+    expect(initialMode(modes, undefined)).toBe("work");
+    expect(initialMode([], "chat")).toBe("");
   });
 
-  it("offers onboarding only to projects that need it (or report nothing)", () => {
-    expect(suggestedPresets(presets, projects, "alpha").map((p) => p.name)).toEqual(["spec-doctor"]);
-    expect(suggestedPresets(presets, projects, "gamma").map((p) => p.name)).toEqual(["onboard", "spec-doctor"]);
-    expect(suggestedPresets(presets, [project("old")], "old").map((p) => p.name)).toEqual(["onboard", "spec-doctor"]);
-    expect(suggestedPresets(presets, projects, "").map((p) => p.name)).toEqual(["spec-doctor"]);
+  it("suggests only onboarding, and only to projects that need it (or report nothing)", () => {
+    expect(suggestedPresets(presets, projects, "alpha")).toEqual([]);
+    expect(suggestedPresets(presets, projects, "gamma").map((p) => p.name)).toEqual(["onboard"]);
+    expect(suggestedPresets(presets, [project("old")], "old").map((p) => p.name)).toEqual(["onboard"]);
+    expect(suggestedPresets(presets, projects, "")).toEqual([]);
+  });
+
+  it("places presets by the daemon's placement, not their names", () => {
+    expect(placedPresets(presets, ["backlog", "onboarding"]).map((p) => p.name)).toEqual(["backlog-groom", "onboard"]);
+    expect(placedPresets(presets, ["onboarding", "project"]).map((p) => p.name)).toEqual(["onboard", "spec-doctor"]);
+    expect(placedPresets(presets, ["memory"])).toEqual([]);
+    // Onboarding an already-onboarded project re-onboards it.
+    expect(presetActionLabel(presets[0], true)).toBe("Onboard this project");
+    expect(presetActionLabel(presets[0], undefined)).toBe("Onboard this project");
+    expect(presetActionLabel(presets[0], false)).toBe("Re-onboard");
+    expect(presetActionLabel(presets[1], false)).toBe("Check docs against code");
+    expect(presetActionLabel(presets[2], false)).toBe("backlog-groom");
   });
 
   it("gates starting on project, prompt (except work mode), and the model", () => {

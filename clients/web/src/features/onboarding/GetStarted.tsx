@@ -15,6 +15,7 @@ import { track } from "../../app/analytics";
 import { openAddProject } from "../projects/ProjectDialogs";
 import { openAnthropicLogin, openOpenAILogin } from "../settings/AnthropicLogin";
 import { modelStep, onboardingTarget } from "./model";
+import { PLACEMENT, placedPresets } from "../newSession/model";
 
 export function GetStarted() {
   const qc = useQueryClient();
@@ -32,7 +33,7 @@ export function GetStarted() {
   const model = modelStep(coordinator, health.data, health.isError);
   const projectList = projects.data ?? [];
   const target = onboardingTarget(projectList);
-  const onboard = modes.data?.presets.find((p) => p.name === "onboard");
+  const onboard = placedPresets(modes.data?.presets ?? [], [PLACEMENT.onboarding])[0];
 
   const recheck = async () => {
     setChecking(true);

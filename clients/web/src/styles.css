@@ -2506,6 +2506,30 @@ pre.clamp {
   max-width: 980px;
 }
 
+/* New session's mode choice, folded away: chat is the default. */
+.new-session-advanced {
+  max-width: 980px;
+}
+
+.new-session-advanced > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--fg-subtle);
+  font-family: var(--mono);
+}
+
+.new-session-advanced > summary .muted {
+  text-transform: none;
+}
+
+.new-session-advanced[open] > summary {
+  margin-bottom: 10px;
+}
+
 .section-label {
   font-size: var(--fs-2xs);
   font-weight: 500;

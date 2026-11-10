@@ -251,19 +251,32 @@ message Mode {
   string title = 2;
   string description = 3;
 }
-// Preset is a home-menu entry that starts a session in `mode` with a tailored
-// `opening_prompt`. The pm mode exposes spec/backlog/feature/bug framings this
-// way: one mode with four opening prompts.
+// Preset starts a session in `mode` with a tailored `opening_prompt`. Presets
+// are not general new-session suggestions: `placement` says where a client
+// offers one, so clients place them without hardcoding preset names.
 message Preset {
-  string name = 1;        // menu key, distinct from the mode
+  string name = 1;        // key passed as StartSessionRequest.preset, distinct from the mode
   string title = 2;
   string description = 3;
   string mode = 4;        // session mode to start (e.g. "pm")
   string opening_prompt = 5; // verbatim first prompt seeded into the session
+  // Where clients offer the preset; clients ignore values they don't know.
+  //   "onboarding": on new session only for a project that needs onboarding,
+  //                 and as a re-onboard / plan-with-PM action on the project
+  //                 and backlog pages.
+  //   "project":    a contextual action on the project page (e.g. checking
+  //                 docs against code).
+  //   "backlog":    an action on the backlog page.
+  //   "memory":     an action on the memory page.
+  // Empty means the client need not offer it.
+  string placement = 6;
 }
 message ListModesResponse {
   repeated Mode modes = 1;
   repeated Preset presets = 2;
+  // The mode a new session starts in unless the user picks another ("chat").
+  // Starting from a backlog task uses "work" regardless.
+  string default_mode = 3;
 }
 
 message ListSessionsRequest {

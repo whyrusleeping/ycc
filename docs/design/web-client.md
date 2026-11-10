@@ -144,6 +144,15 @@ one first. Per-session reasoning and role models are changed with `SetThinking` 
 `SetRoleConfig` scoped to the session; per-session usage is `GetUsage` grouped by session and model,
 filtered to that session.
 
+New session is a project and a prompt, starting chat (`ListModes.defaultMode`). It has no mode or
+preset grid: explicit mode choice sits in a collapsed **Advanced** disclosure, which opens by itself
+when a kept draft or applied preset is in another mode. The only suggestion is the onboarding preset,
+for a project that needs onboarding. Presets otherwise appear where they apply, by their `placement`:
+the project page offers onboarding (**Re-onboard** once the project is onboarded) and **Check docs
+against code**; the backlog page's **⋯** menu offers backlog grooming and re-onboarding; the Memory
+page grooms memory. These actions start the preset at once with its own opening prompt and open the
+session. Starting from a backlog task starts work.
+
 New session's **Separate workstream** toggle (off for every new draft) sends the same mode, model,
 preset, prompt, and pictures through `SpawnWorkstream` instead of `StartSession`, with an optional
 backlog task and base ref, then opens the workstream's session.

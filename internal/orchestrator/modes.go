@@ -14,38 +14,53 @@ import (
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
-// ModeInfo describes a session mode for the home menu (ListModes).
+// ModeInfo describes a session mode for ListModes.
 type ModeInfo struct {
 	Name        string
 	Title       string
 	Description string
 }
 
+// DefaultMode is the mode a new interactive session starts in. Modes differ by
+// who drives the workflow: chat is the user, work is the pipeline (a task or the
+// loop), and pm is onboarding plus scheduled maintenance.
+const DefaultMode = "chat"
+
 // Modes returns the selectable chat, work, and project-management modes.
 func Modes() []ModeInfo {
 	return []ModeInfo{
-		{"chat", "Chat", "Open-ended conversation and coding — no fixed workflow."},
+		{"chat", "Chat", "Open-ended conversation and coding: you drive, with no fixed workflow."},
 		{"work", "Work on backlog", "Pick a backlog task, implement it, review it proportionately, and commit."},
-		{"pm", "Project manager", "Plan and intake — spec authoring, backlog grooming, new features, and bug reports. No implementation."},
+		{"pm", "Project onboarding", "Learn the project and build its spec and backlog with you. Also runs scheduled maintenance (memory and backlog grooming, spec checks). No implementation."},
 	}
 }
 
-// Preset is a home-menu entry that opens a mode with a tailored prompt.
+// Preset placements: where clients offer a preset (ListModes Preset.placement).
+const (
+	PlacementOnboarding = "onboarding" // new session for projects needing onboarding; re-onboard on project/backlog pages
+	PlacementProject    = "project"    // contextual action on the project page
+	PlacementBacklog    = "backlog"    // action on the backlog page
+	PlacementMemory     = "memory"     // action on the memory page
+)
+
+// Preset starts a mode with a tailored prompt. Presets are not general
+// new-session suggestions; Placement says where clients offer one.
 type Preset struct {
-	Name        string // menu key (distinct from the mode)
+	Name        string // StartSession preset key (distinct from the mode)
 	Title       string
 	Description string
 	Mode        string // always "pm" today
 	Prompt      string // verbatim opening prompt seeded into the pm session
+	Placement   string // one of the Placement* constants
 }
 
 // Presets returns the specialized project-management entry points.
 func Presets() []Preset {
 	return []Preset{
-		{"onboard", "Onboard this project", "Learn the project from its docs, code and history, then build or refresh its backlog with you: questions grounded in what it found, candidate tasks in small batches, and only the design the accepted work needs.", "pm", onboardPresetPrompt},
-		{"spec-doctor", "Spec doctor (drift & coverage)", "Check the spec against the code: run the deterministic reference check, then compare spec sections to the code to surface drift and coverage gaps — with proposed backlog tasks and suggested spec edits for your approval.", "pm", specDoctorPresetPrompt},
-		{"memory-groom", "Groom project memory", "Tend active memory.md notes: consolidate repeats, supersede stale or disproven guidance without deleting audit records, and run the promotion path (spec / plans / backlog) so prompt memory stays useful and under budget.", "pm", memoryGroomPresetPrompt},
-		{"backlog-groom", "Groom the backlog", "Read backlog tasks as a fresh reader and clean them up against the doc-style backlog rules: fix debris, stale status and bare references from evidence, and flag unsourced decisions, inherited authority and duplicates for your decision.", "pm", backlogGroomPresetPrompt},
+		{"onboard", "Onboard this project", "Learn the project from its docs, code and history, then build or refresh its backlog with you: questions grounded in what it found, candidate tasks in small batches, and only the design the accepted work needs.", "pm", onboardPresetPrompt, PlacementOnboarding},
+		{"spec-doctor", "Check docs against code", "Check the spec against the code: run the deterministic reference check, then compare spec sections to the code to surface drift and coverage gaps — with proposed backlog tasks and suggested spec edits for your approval.", "pm", specDoctorPresetPrompt, PlacementProject},
+		{"memory-groom", "Groom project memory", "Tend active memory.md notes: consolidate repeats, supersede stale or disproven guidance without deleting audit records, and run the promotion path (spec / plans / backlog) so prompt memory stays useful and under budget.", "pm", memoryGroomPresetPrompt, PlacementMemory},
+		{"backlog-groom", "Groom the backlog", "Read backlog tasks as a fresh reader and clean them up against the doc-style backlog rules: fix debris, stale status and bare references from evidence, and flag unsourced decisions, inherited authority and duplicates for your decision.", "pm", backlogGroomPresetPrompt, PlacementBacklog},
 	}
 }
 
