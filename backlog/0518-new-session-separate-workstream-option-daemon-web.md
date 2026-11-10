@@ -1,7 +1,7 @@
 ---
 id: "0518"
 title: 'New Session: "Separate workstream" option (daemon + web), and make workstreams findable'
-status: todo
+status: done
 priority: 2
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -13,6 +13,7 @@ spec_refs:
 ---
 
 ## Description
+
 **Why (2026-11-09 usage analysis):** the owner had never noticed workstreams. On web they're an unlabeled icon in the sidebar row. On iOS they're in the home **…** menu only when one project is selected, and iOS can't start one. Meanwhile parallel sessions in one shared tree keep colliding: commit refusals over other sessions' uncommitted work (0462), and the 2026-10-12 wheeler loop that spun on another session's uncommitted files. New Session (150+ uses a month) is where the owner decides how to run work, so the choice belongs there.
 
 **Change:**
@@ -30,6 +31,8 @@ spec_refs:
 - Web component tests plus a light/dark visual check pass. internal/web/dist is rebuilt and committed.
 - The iOS counterpart is a separate task.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+SpawnWorkstreamRequest gained mode/coordinator_model/preset/images (validated like StartSession: credential check, picture limits, unknown/disabled model rejected before any worktree); SessionSummary.workstream_id added and ListSessionHistory now lists in-flight workstream sessions from their worktrees (marks preserved logs too). Web New Session has an off-by-default "Separate workstream" toggle with a one-line explanation, optional task and base ref, "Start workstream" submit that opens the workstream's session; new_session.submit records workstream=true|false. Session rows (sidebar and page) show a branch mark linking to workstreams, and the sidebar shows a labelled one-line Workstreams status while any are in flight (0497's compact nav kept). Go/Swift/web protos regenerated, internal/web/dist rebuilt; daemon session+RPC tests, web model/component tests (434 passing), light/dark visual check done. iOS counterpart is 0519.
+
+Commit: New Session: "Separate workstream" option; workstream sessions listed and marked; sidebar workstreams line (0518)

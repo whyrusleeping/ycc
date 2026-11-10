@@ -268,6 +268,7 @@ func (s *Server) ListSessionHistory(_ context.Context, req *connect.Request[v1.L
 			FollowUp:          su.FollowUp,
 			FollowUpAt:        rfc3339(su.FollowUpAt),
 			ReadThrough:       rfc3339(su.ReadThrough),
+			WorkstreamId:      su.WorkstreamID,
 		}
 	}
 	out := make([]*v1.SessionSummary, 0, len(sums))

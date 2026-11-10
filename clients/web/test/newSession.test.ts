@@ -11,6 +11,7 @@ import {
 import {
   applyPreset,
   buildStartRequest,
+  buildWorkstreamRequest,
   canStart,
   initialMode,
   initialProject,
@@ -35,6 +36,9 @@ const draft = (over: Partial<NewSessionDraft> = {}): NewSessionDraft => ({
   prompt: "",
   preset: "",
   pictures: [],
+  workstream: false,
+  taskId: "",
+  baseRef: "",
   ...over,
 });
 const gateOpts = { projectsRegistered: 3, defaultDisabled: false, starting: false, loadingPictures: false };
@@ -101,6 +105,29 @@ describe("new session", () => {
       preset: "spec-doctor",
       images: [{ data, mediaType: "image/jpeg", filename: "a.jpg" }],
     });
+  });
+
+  it("builds a workstream request with the same session choices plus task and base", () => {
+    const data = new Uint8Array([9]);
+    const pic = { id: "p", data, mediaType: "image/jpeg", filename: "a.jpg", previewUrl: "blob:x" };
+    const d = draft({ workstream: true, prompt: " do it ", model: "fast", preset: "spec-doctor", pictures: [pic], taskId: "0042", baseRef: " main " });
+    expect(buildWorkstreamRequest(d)).toEqual({
+      ...buildStartRequest(d),
+      taskId: "0042",
+      baseRef: "main",
+    });
+    // An unwritten prompt becomes the chosen task's prompt.
+    expect(buildWorkstreamRequest(draft({ workstream: true, taskId: "0042" }), { id: "0042", title: "Fix it" }).prompt).toBe(
+      "Work on backlog task 0042: Fix it",
+    );
+    expect(buildWorkstreamRequest(draft({ workstream: true })).prompt).toBe("");
+  });
+
+  it("lets a workstream task stand in for the prompt, and needs a project", () => {
+    expect(canStart(draft({ workstream: true, taskId: "0042" }), gateOpts).ok).toBe(true);
+    expect(canStart(draft({ workstream: true }), gateOpts).ok).toBe(false);
+    expect(canStart(draft({ taskId: "0042" }), gateOpts).ok).toBe(false);
+    expect(canStart(draft({ workstream: true, project: "", prompt: "hi" }), { ...gateOpts, projectsRegistered: 0 }).ok).toBe(false);
   });
 
   it("offers enabled models and flags a disabled default", () => {

@@ -909,8 +909,10 @@ inspecting arbitrary key files.
 ### 14.1 Parallel workstreams
 
 Parallel mutation uses linked git worktrees rather than branch switching in a shared tree or full
-clones. Each workstream has a ycc branch, out-of-tree worktree, work session, base commit, and
-daemon registry record. It is a child of its project, not a project-picker entry. Workstreams give
+clones. Each workstream has a ycc branch, out-of-tree worktree, session (work mode unless started
+with another), base commit, and daemon registry record. It is a child of its project, not a
+project-picker entry; its sessions are listed in the project's session history, marked with the
+workstream. Workstreams give
 full filesystem, index, and build isolation; sessions sharing one tree rely on per-session change
 attribution instead (§7.3).
 

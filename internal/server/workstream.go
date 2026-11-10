@@ -44,6 +44,10 @@ func workstreamError(err error) *connect.Error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, session.ErrUnknownProject):
 		return connect.NewError(connect.CodeNotFound, err)
+	case errors.Is(err, session.ErrUnknownModel):
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	case errors.Is(err, session.ErrDisabledModel):
+		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	msg := err.Error()
 	switch {
@@ -62,18 +66,30 @@ func workstreamError(err error) *connect.Error {
 }
 
 // SpawnWorkstream creates a linked worktree + branch off the project's base and
-// starts a `work` session inside it. The session_id for
-// Subscribe rides inside the returned WorkstreamInfo.
+// starts a session (work mode unless the request names another) inside it. The
+// session_id for Subscribe rides inside the returned WorkstreamInfo.
 func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
 	m := req.Msg
 	if strings.TrimSpace(m.Project) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("project is required"))
 	}
+	// Same input rules as StartSession, checked before any worktree exists.
+	if err := rejectObviousCredential(m.Prompt); err != nil {
+		return nil, err
+	}
+	images, err := checkInputImages(m.Images)
+	if err != nil {
+		return nil, err
+	}
 	ws, _, err := s.mgr.SpawnWorkstream(session.SpawnWorkstreamConfig{
-		Project: m.Project,
-		BaseRef: m.BaseRef,
-		TaskID:  m.TaskId,
-		Prompt:  m.Prompt,
+		Project:          m.Project,
+		BaseRef:          m.BaseRef,
+		TaskID:           m.TaskId,
+		Prompt:           m.Prompt,
+		Mode:             m.Mode,
+		CoordinatorModel: m.CoordinatorModel,
+		Preset:           m.Preset,
+		Images:           images,
 	})
 	if err != nil {
 		return nil, workstreamError(err)

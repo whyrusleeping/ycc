@@ -320,6 +320,10 @@ message SessionSummary {
   // last_activity is later than read_through (clients still never badge a
   // running live session).
   string read_through = 21;
+  // The workstream this session belongs to (its work session or integration
+  // recovery session); empty for sessions in the project's own tree. In-flight
+  // workstream sessions are listed with their project's history.
+  string workstream_id = 22;
 }
 // Sessions are ordered by the serialized millisecond-precision last_activity
 // descending, started_at descending, then id ascending. The keyset cursor
@@ -1237,7 +1241,7 @@ message WorkstreamInfo {
 }
 
 // SpawnWorkstream creates a worktree + branch off the project's base and starts a
-// `work` session inside it. The session_id for Subscribe rides
+// session inside it. The session_id for Subscribe rides
 // inside the returned WorkstreamInfo.
 message SpawnWorkstreamRequest {
   string project = 1;           // parent project name (required)
@@ -1245,6 +1249,14 @@ message SpawnWorkstreamRequest {
   string task_id = 3;           // optional backlog task id (appended to branch)
   string prompt = 4;            // optional initial prompt for the session
   reserved 5;                   // retired session-policy field
+  // The remaining fields mirror StartSessionRequest so New Session can start
+  // the same session in a workstream: mode (empty => "work"), a session-only
+  // coordinator override, the opening-prompt preset, and opening pictures
+  // (same limits and validation as StartSessionRequest.images).
+  string mode = 6;
+  string coordinator_model = 7;
+  string preset = 8;
+  repeated ImageAttachment images = 9;
 }
 message SpawnWorkstreamResponse { WorkstreamInfo workstream = 1; }
 

@@ -4,6 +4,7 @@
 // request.
 import type { ListModelsResponse, ModelInfo, Preset, ProjectInfo } from "../../gen/ycc/v1/ycc_pb";
 import { toImageAttachments, type DraftPicture } from "../attachments/attachments";
+import { taskPrompt } from "../workstreams/model";
 
 /**
  * Registered project names for the "which project?" prompt, in the daemon's
@@ -81,6 +82,12 @@ export interface NewSessionDraft {
   /** Name of the applied preset while its mode is still selected. */
   preset: string;
   pictures: readonly DraftPicture[];
+  /** Start in a separate workstream (own worktree and branch) instead of the project's tree. */
+  workstream: boolean;
+  /** Workstream only: the optional backlog task it targets. */
+  taskId: string;
+  /** Workstream only: the optional branch or commit to start from. */
+  baseRef: string;
 }
 
 export interface StartGate {
@@ -96,11 +103,14 @@ export function canStart(
   if (opts.starting) return { ok: false, reason: "Starting…" };
   if (opts.loadingPictures) return { ok: false, reason: "Attaching pictures…" };
   if (opts.projectsRegistered > 0 && !draft.project) return { ok: false, reason: "Choose a project first." };
+  if (draft.workstream && !draft.project) return { ok: false, reason: "A workstream needs a registered project." };
   if (!draft.mode) return { ok: false, reason: "Choose a mode." };
   if (opts.defaultDisabled && !draft.model) {
     return { ok: false, reason: "The default coordinator model is disabled; choose a model." };
   }
-  if (!promptIsOptional(draft.mode) && !draft.prompt.trim() && draft.pictures.length === 0) {
+  // A workstream's task supplies the prompt when none is written.
+  const taskPrompted = draft.workstream && draft.taskId.trim() !== "";
+  if (!promptIsOptional(draft.mode) && !taskPrompted && !draft.prompt.trim() && draft.pictures.length === 0) {
     return { ok: false, reason: "Describe what the agent should do." };
   }
   return { ok: true };
@@ -141,4 +151,16 @@ export function buildStartRequest(draft: NewSessionDraft) {
     preset: draft.preset,
     images: toImageAttachments(draft.pictures),
   };
+}
+
+/**
+ * The SpawnWorkstream request for a draft with "Separate workstream" on: the
+ * same session choices as buildStartRequest plus the optional task and base.
+ * An unwritten prompt for a chosen task becomes that task's prompt.
+ */
+export function buildWorkstreamRequest(draft: NewSessionDraft, task?: { id: string; title: string }) {
+  const taskId = draft.taskId.trim();
+  let prompt = draft.prompt.trim();
+  if (!prompt && taskId) prompt = task?.id === taskId ? taskPrompt(task) : `Work on backlog task ${taskId}`;
+  return { ...buildStartRequest(draft), prompt, taskId, baseRef: draft.baseRef.trim() };
 }

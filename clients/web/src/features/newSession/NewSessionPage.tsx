@@ -1,14 +1,15 @@
 // The new-session page: which project (asked when starting from the unscoped
 // Recent feed, last-viewed project first), mode with descriptions, preset
 // suggestions that adopt a mode and seed the prompt, an optional per-session
-// coordinator model, and a multiline prompt with pictures → StartSession.
-// On success it navigates straight into the live session.
+// coordinator model, and a multiline prompt with pictures → StartSession, or
+// with "Separate workstream" on → SpawnWorkstream (plus an optional task and
+// base ref). On success it navigates straight into the live session.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, useModels, useModes, useProjects } from "../../api/queries";
+import { queryKeys, useBacklog, useModels, useModes, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { track, useFlow, type Via } from "../../app/analytics";
 import { lastMode, lastViewedProject } from "../../app/memory";
@@ -17,10 +18,13 @@ import { AttachButton, PictureStrip, filesFrom, loadPictures, revokePictures, us
 import { MAX_PICTURES } from "../attachments/attachments";
 import type { Preset } from "../../gen/ycc/v1/ycc_pb";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
+import { Icon } from "../../ui/icons";
+import { spawnableTasks } from "../workstreams/model";
 import { NewSessionDraftStore } from "./drafts";
 import {
   applyPreset,
   buildStartRequest,
+  buildWorkstreamRequest,
   canStart,
   initialMode,
   initialProject,
@@ -101,6 +105,8 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
     loadingPictures: pictures.loading,
   });
   const drop = useDropZone((files) => void pictures.add(files), !asking && !starting);
+  const backlog = useBacklog(draft.project, draft.workstream && draft.project !== "");
+  const tasks = useMemo(() => spawnableTasks(backlog.data ?? []), [backlog.data]);
 
   useEffect(() => {
     if (!asking) area.current?.focus();
@@ -110,7 +116,14 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
     if (!gate.ok || !draftStore.beginStart()) return;
     setError(null);
     try {
-      const resp = await client.startSession(buildStartRequest(full));
+      let sessionId: string;
+      if (draft.workstream) {
+        const resp = await client.spawnWorkstream(buildWorkstreamRequest(full, tasks.find((t) => t.id === draft.taskId)));
+        sessionId = resp.workstream?.sessionId ?? "";
+        void qc.invalidateQueries({ queryKey: queryKeys.workstreamsAll });
+      } else {
+        sessionId = (await client.startSession(buildStartRequest(full))).sessionId;
+      }
       track.submit("new_session", {
         via,
         mode: draft.mode,
@@ -118,12 +131,13 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         prompt: draft.prompt.trim() !== "",
         pictures: pictures.pictures.length > 0,
         model: draft.model ? "override" : "default",
+        workstream: draft.workstream,
       });
       lastMode.set(draft.mode);
       if (draft.project) lastViewedProject.set(draft.project);
       draftStore.clear();
       void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
-      navigate(paths.session(draft.project, resp.sessionId));
+      navigate(sessionId ? paths.session(draft.project, sessionId) : paths.workstreams(draft.project));
     } catch (err) {
       draftStore.startFailed();
       if (isUnauthorized(err)) {
@@ -189,7 +203,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                 type="button"
                 className="choice-card add-card"
                 data-track="new_session.add_project"
-                onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })))}
+                onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "", taskId: "" })))}
               >
                 <span className="choice-title">+ Add project…</span>
                 <span className="choice-sub">Register another workspace on the daemon host</span>
@@ -279,10 +293,10 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                 onChange={(e) => {
                   const value = e.target.value;
                   if (value === ADD_PROJECT) {
-                    openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })));
+                    openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "", taskId: "" })));
                     return;
                   }
-                  setDraft((d) => ({ ...d, project: value, preset: "" }));
+                  setDraft((d) => ({ ...d, project: value, preset: "", taskId: "" }));
                 }}
               >
                 {!draft.project && <option value="">Choose…</option>}
@@ -302,7 +316,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               disabled={starting}
               title="Register another workspace on the daemon host"
               data-track="new_session.add_project"
-              onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "" })))}
+              onClick={() => openAddProject((p) => setDraft((d) => ({ ...d, project: p.name, preset: "", taskId: "" })))}
             >
               + Add project…
             </button>
@@ -344,7 +358,60 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
             </span>
           )}
           {draft.preset && <span className="tag">preset: {draft.preset}</span>}
+          {projectList.length > 0 && (
+            <label className="chip-toggle" title="Run in its own git worktree and branch instead of the project’s checkout">
+              <input
+                type="checkbox"
+                checked={draft.workstream}
+                disabled={starting}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  track.action("new_session.workstream", "click", { on });
+                  setDraft((d) => ({ ...d, workstream: on }));
+                }}
+              />
+              <Icon name="workstreams" size={13} />
+              Separate workstream
+            </label>
+          )}
         </div>
+        {draft.workstream && (
+          <div className="workstream-options">
+            <p className="muted small">
+              Gets its own git worktree and branch, so it can’t collide with other sessions; it merges back using the
+              project’s integration setting. <Link to={paths.workstreams(draft.project || null)}>Workstreams</Link>
+            </p>
+            <div className="option-chips">
+              <label className="chip-select">
+                <span>Task</span>
+                <select
+                  aria-label="Backlog task for the workstream"
+                  value={draft.taskId}
+                  disabled={starting || backlog.isPending}
+                  onChange={(e) => setDraft((d) => ({ ...d, taskId: e.target.value }))}
+                >
+                  <option value="">None (optional)</option>
+                  {tasks.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.id} · {t.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="chip-select">
+                <span>Base</span>
+                <input
+                  className="field mono chip-input"
+                  aria-label="Branch or commit to start the workstream from"
+                  value={draft.baseRef}
+                  disabled={starting}
+                  placeholder="HEAD"
+                  onChange={(e) => setDraft((d) => ({ ...d, baseRef: e.target.value }))}
+                />
+              </label>
+            </div>
+          </div>
+        )}
         <PictureStrip pictures={pictures.pictures} onRemove={pictures.remove} disabled={starting} />
         {pictures.error && <p className="error small">{pictures.error}</p>}
         <div className="composer-row">
@@ -385,7 +452,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
             }}
           />
           <button type="submit" className="btn primary" disabled={!gate.ok} title={gate.reason}>
-            {starting ? "Starting…" : "Start"}
+            {starting ? "Starting…" : draft.workstream ? "Start workstream" : "Start"}
           </button>
         </div>
         <div className="new-session-foot muted small">

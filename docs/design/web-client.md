@@ -21,7 +21,9 @@ regions:
 
 - a sidebar with the project switcher, the personal session inbox (meaningful state, needs-answer,
   follow-up and unread markers), and one row of icon links (labels as tooltips) to Backlog, Work
-  loop, Workstreams, Usage, Files, Memory/Plans, and Settings, so the inbox keeps the height;
+  loop, Workstreams, Usage, Files, Memory/Plans, and Settings, so the inbox keeps the height. While
+  workstreams are in flight, a labelled one-line Workstreams status sits under the work-loop lines,
+  and workstream sessions carry a branch mark linking to them;
 - a main pane showing the selected surface, typically a session transcript with its composer;
 - a closable, resizable inspector pane for contextual detail: task detail, commit or working-tree
   diffs, file contents, and expanded tool or reasoning rows, so detail opens beside the transcript
@@ -141,6 +143,9 @@ one first. Per-session reasoning and role models are changed with `SetThinking` 
 `SetRoleConfig` scoped to the session; per-session usage is `GetUsage` grouped by session and model,
 filtered to that session.
 
+New session's **Separate workstream** toggle (off for every new draft) sends the same mode, model,
+preset, prompt, and pictures through `SpawnWorkstream` instead of `StartSession`, with an optional
+backlog task and base ref, then opens the workstream's session.
 An unsent new-session draft keeps its prompt, project, mode, model, preset, and picture previews in
 memory for the life of the tab, across route changes but not reload or tab closure. Reopening it
 through a project route (New session with a sidebar project selected, or switching that project

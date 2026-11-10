@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"image"
+	"image/png"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -429,4 +431,53 @@ func containsStr(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// New Session's workstream option goes through SpawnWorkstream with the rest
+// of the New Session choices; the session is listed with its project, marked
+// with its workstream. Inputs StartSession would refuse are refused here too,
+// before any worktree exists.
+func TestSpawnWorkstreamNewSessionFields(t *testing.T) {
+	client, mgr, _, _ := newWorkstreamServer(t)
+	ctx := context.Background()
+	var pic bytes.Buffer
+	if err := png.Encode(&pic, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{
+		Project: "demo", Prompt: "what is this?", Mode: "chat", CoordinatorModel: "a",
+		Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/png", Filename: "shot.png"}},
+	}))
+	if err != nil {
+		t.Fatalf("SpawnWorkstream: %v", err)
+	}
+	ws := resp.Msg.GetWorkstream()
+	defer mgr.Stop(ws.GetSessionId())
+	hist, err := client.ListSessionHistory(ctx, connect.NewRequest(&v1.ListSessionHistoryRequest{Project: "demo"}))
+	if err != nil {
+		t.Fatalf("ListSessionHistory: %v", err)
+	}
+	var row *v1.SessionSummary
+	for _, s := range hist.Msg.GetSessions() {
+		if s.GetSessionId() == ws.GetSessionId() {
+			row = s
+		}
+	}
+	if row == nil || row.GetWorkstreamId() != ws.GetId() || row.GetMode() != "chat" {
+		t.Fatalf("history row = %+v, want the chat session of %s", row, ws.GetId())
+	}
+
+	for name, req := range map[string]*v1.SpawnWorkstreamRequest{
+		"bad picture":   {Project: "demo", Prompt: "hi", Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/jpeg"}}},
+		"credential":    {Project: "demo", Prompt: "my key is sk-test-WORKSTREAM-SENTINEL-CREDENTIAL-0518"},
+		"unknown model": {Project: "demo", Prompt: "hi", CoordinatorModel: "nope"},
+	} {
+		if _, err := client.SpawnWorkstream(ctx, connect.NewRequest(req)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Errorf("%s: err = %v, want InvalidArgument", name, err)
+		}
+	}
+	if got := mgr.Workstreams("demo"); len(got) != 1 {
+		t.Fatalf("workstreams after rejected spawns = %d, want 1", len(got))
+	}
 }

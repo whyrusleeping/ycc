@@ -1010,6 +1010,14 @@ public nonisolated struct Ycc_V1_SessionSummary: @unchecked Sendable {
     set {_uniqueStorage()._readThrough = newValue}
   }
 
+  /// The workstream this session belongs to (its work session or integration
+  /// recovery session); empty for sessions in the project's own tree. In-flight
+  /// workstream sessions are listed with their project's history.
+  public var workstreamID: String {
+    get {_storage._workstreamID}
+    set {_uniqueStorage()._workstreamID = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4017,7 +4025,7 @@ public nonisolated struct Ycc_V1_WorkstreamInfo: Sendable {
 }
 
 /// SpawnWorkstream creates a worktree + branch off the project's base and starts a
-/// `work` session inside it. The session_id for Subscribe rides
+/// session inside it. The session_id for Subscribe rides
 /// inside the returned WorkstreamInfo.
 public nonisolated struct Ycc_V1_SpawnWorkstreamRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -4035,6 +4043,18 @@ public nonisolated struct Ycc_V1_SpawnWorkstreamRequest: Sendable {
 
   /// optional initial prompt for the session
   public var prompt: String = String()
+
+  /// The remaining fields mirror StartSessionRequest so New Session can start
+  /// the same session in a workstream: mode (empty => "work"), a session-only
+  /// coordinator override, the opening-prompt preset, and opening pictures
+  /// (same limits and validation as StartSessionRequest.images).
+  public var mode: String = String()
+
+  public var coordinatorModel: String = String()
+
+  public var preset: String = String()
+
+  public var images: [Ycc_V1_ImageAttachment] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -6563,7 +6583,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0\u{3}read_through\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0\u{3}read_through\0\u{3}workstream_id\0")
 
   fileprivate class _StorageClass {
     var _sessionID: String = String()
@@ -6587,6 +6607,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     var _origin: String = String()
     var _humanParticipated: Bool = false
     var _readThrough: String = String()
+    var _workstreamID: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -6618,6 +6639,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       _origin = source._origin
       _humanParticipated = source._humanParticipated
       _readThrough = source._readThrough
+      _workstreamID = source._workstreamID
     }
   }
 
@@ -6657,6 +6679,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         case 19: try { try decoder.decodeSingularStringField(value: &_storage._origin) }()
         case 20: try { try decoder.decodeSingularBoolField(value: &_storage._humanParticipated) }()
         case 21: try { try decoder.decodeSingularStringField(value: &_storage._readThrough) }()
+        case 22: try { try decoder.decodeSingularStringField(value: &_storage._workstreamID) }()
         default: break
         }
       }
@@ -6728,6 +6751,9 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       if !_storage._readThrough.isEmpty {
         try visitor.visitSingularStringField(value: _storage._readThrough, fieldNumber: 21)
       }
+      if !_storage._workstreamID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._workstreamID, fieldNumber: 22)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -6758,6 +6784,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         if _storage._origin != rhs_storage._origin {return false}
         if _storage._humanParticipated != rhs_storage._humanParticipated {return false}
         if _storage._readThrough != rhs_storage._readThrough {return false}
+        if _storage._workstreamID != rhs_storage._workstreamID {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -12413,7 +12440,7 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpawnWorkstreamRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{c}\u{5}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{2}\u{2}mode\0\u{3}coordinator_model\0\u{1}preset\0\u{1}images\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12425,6 +12452,10 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
       case 2: try { try decoder.decodeSingularStringField(value: &self.baseRef) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.mode) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.coordinatorModel) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.preset) }()
+      case 9: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
       default: break
       }
     }
@@ -12443,6 +12474,18 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if !self.prompt.isEmpty {
       try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 4)
     }
+    if !self.mode.isEmpty {
+      try visitor.visitSingularStringField(value: self.mode, fieldNumber: 6)
+    }
+    if !self.coordinatorModel.isEmpty {
+      try visitor.visitSingularStringField(value: self.coordinatorModel, fieldNumber: 7)
+    }
+    if !self.preset.isEmpty {
+      try visitor.visitSingularStringField(value: self.preset, fieldNumber: 8)
+    }
+    if !self.images.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.images, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12451,6 +12494,10 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if lhs.baseRef != rhs.baseRef {return false}
     if lhs.taskID != rhs.taskID {return false}
     if lhs.prompt != rhs.prompt {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.coordinatorModel != rhs.coordinatorModel {return false}
+    if lhs.preset != rhs.preset {return false}
+    if lhs.images != rhs.images {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

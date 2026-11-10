@@ -117,6 +117,7 @@ export function SessionRowView({
             loop
           </span>
         )}
+        <WorkstreamMark row={row} className="row-ws" />
         {showProject && project && <span className="project">{project}</span>}
         {chips.map((c) =>
           ids.includes(c) ? (
@@ -133,6 +134,22 @@ export function SessionRowView({
         {when && <span className="when">{when}</span>}
       </div>
     </div>
+  );
+}
+
+/** A workstream session's branch marker; it links to the project's workstreams. */
+function WorkstreamMark({ row, className }: { row: FeedRow; className: string }) {
+  if (!row.session.workstreamId) return null;
+  return (
+    <Link
+      to={paths.workstreams(row.project || null)}
+      className={className}
+      title={`Runs in workstream ${row.session.workstreamId} (its own worktree and branch) — open workstreams`}
+      aria-label="Workstream session: open workstreams"
+      data-track="sessions.workstream"
+    >
+      <Icon name="workstreams" size={11} />
+    </Link>
   );
 }
 
@@ -193,7 +210,7 @@ function SidebarRow({
   const state = compactState(s);
   const age = compactAge(s.lastActivity || s.startedAt, now);
   const asks = needsAnswer(s);
-  const hasLead = !!project || chips.length > 0 || loopOwned;
+  const hasLead = !!project || chips.length > 0 || loopOwned || !!s.workstreamId;
   const trail = (
     <span className="row-trail">
       <FollowUpFlag s={s} pending={followUpPending} onToggle={onToggleFollowUp} />
@@ -230,6 +247,7 @@ function SidebarRow({
         {hasLead && (
           <div className="row-head">
             <span className="row-where">
+              <WorkstreamMark row={row} className="row-ws" />
               {project && <span className="project">{project}</span>}
               {chips.map((c) =>
                 ids.includes(c) ? (

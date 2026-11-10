@@ -1,7 +1,18 @@
 import { MAX_PICTURES, type DraftPicture } from "../attachments/attachments";
 import type { NewSessionDraft } from "./model";
 
-const emptyDraft = (): NewSessionDraft => ({ project: "", mode: "", model: "", prompt: "", preset: "", pictures: [] });
+const emptyDraft = (): NewSessionDraft => ({
+  project: "",
+  mode: "",
+  model: "",
+  prompt: "",
+  preset: "",
+  pictures: [],
+  // Separate workstream is off for every new draft.
+  workstream: false,
+  taskId: "",
+  baseRef: "",
+});
 
 interface Snapshot {
   draft: NewSessionDraft;
@@ -45,7 +56,7 @@ export class NewSessionDraftStore {
   seedProject(project: string, routed = false) {
     const { draft, projectSeeded } = this.snapshot;
     if (!projectSeeded) this.publish({ projectSeeded: true, draft: { ...draft, project } });
-    else if (routed && project && project !== draft.project) this.publish({ draft: { ...draft, project, preset: "" } });
+    else if (routed && project && project !== draft.project) this.publish({ draft: { ...draft, project, preset: "", taskId: "" } });
   }
 
   add = async (files: File[]) => {

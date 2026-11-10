@@ -2460,13 +2460,20 @@ type SpawnWorkstreamConfig struct {
 	// TaskID optionally records the backlog task this workstream targets and is
 	// appended to the branch name.
 	TaskID string
-	// Prompt seeds the work session (optional).
+	// Prompt seeds the session (optional).
 	Prompt string
+	// Mode is the session mode; empty means "work".
+	Mode string
+	// CoordinatorModel, Preset, and Images apply to the workstream's session
+	// exactly as the same Config fields do for StartSession.
+	CoordinatorModel string
+	Preset           string
+	Images           []engine.Image
 }
 
 // SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
-// parent project's primary tree and starts a `work` session scoped to that
-// worktree, recording the pair in the workstream registry. It
+// parent project's primary tree and starts a session (work mode by default)
+// scoped to that worktree, recording the pair in the workstream registry. It
 // preserves the single-writer invariant: at most one active workstream per
 // worktree path, and no second live session for the same path. On any failure
 // after the worktree exists it best-effort tears it down (remove + delete
@@ -2481,6 +2488,14 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	primary, ok := m.projects.Resolve(cfg.Project)
 	if !ok {
 		return workstream.Workstream{}, nil, fmt.Errorf("unknown project %q", cfg.Project)
+	}
+	// Reject a bad model choice before any git work; start resolves it again.
+	if _, _, err := m.initialCoordinator(cfg.Preset, cfg.CoordinatorModel); err != nil {
+		return workstream.Workstream{}, nil, err
+	}
+	mode := cfg.Mode
+	if mode == "" {
+		mode = "work"
 	}
 	spawnToken := m.ownership.NewToken(fmt.Sprintf("workstream spawn for project %s", cfg.Project))
 	spawnLease, err := m.acquireSection(primary, spawnToken)
@@ -2604,9 +2619,12 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	}
 
 	s, err := m.start(Config{
-		Workspace: dir,
-		Mode:      "work",
-		Prompt:    cfg.Prompt,
+		Workspace:        dir,
+		Mode:             mode,
+		Prompt:           cfg.Prompt,
+		CoordinatorModel: cfg.CoordinatorModel,
+		Preset:           cfg.Preset,
+		Images:           cfg.Images,
 	}, false)
 	if err != nil {
 		cleanup()

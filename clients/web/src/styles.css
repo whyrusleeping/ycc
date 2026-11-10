@@ -994,6 +994,20 @@ a.row-task:hover {
   text-decoration: underline;
 }
 
+/* Workstream sessions: a small branch mark, linkable above the stretched link. */
+.row-ws {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.row-ws:hover {
+  color: var(--accent-strong);
+}
+
 .row-trail {
   flex: none;
   margin-left: auto;
@@ -2608,6 +2622,36 @@ pre.clamp {
 
 .chip-note {
   font-size: var(--fs-xs);
+}
+
+.chip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.chip-toggle input {
+  margin: 0;
+}
+
+.workstream-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chip-select .chip-input {
+  width: 14ch;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+}
+
+.chip-select select {
+  max-width: 40ch;
 }
 
 .new-session-foot {
@@ -4515,9 +4559,31 @@ th[aria-sort="descending"] .sort-btn {
   background: var(--fg-subtle);
 }
 
-.loop-mark.tone-running::before {
+.loop-mark.tone-running::before,
+.loop-mark.tone-live::before {
   background: var(--ok);
   animation: pulse 1.6s ease-in-out infinite;
+}
+
+.loop-mark.tone-attention::before {
+  background: var(--error);
+}
+
+/* Directly under loop lines, the workstreams line needs no second gap. */
+.loop-status + .ws-status {
+  margin-top: -8px;
+}
+
+/* The label stays whole; the state gives way to an ellipsis. */
+.ws-status .loop-status-title {
+  flex: none;
+}
+
+.ws-status .loop-status-head > a:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loop-mark.tone-waiting::before {
@@ -4600,7 +4666,8 @@ th[aria-sort="descending"] .sort-btn {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .loop-mark.tone-running::before {
+  .loop-mark.tone-running::before,
+  .loop-mark.tone-live::before {
     animation: none;
   }
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
 // SessionSummary is a read-only digest of one session — live or persisted on
@@ -56,6 +57,9 @@ type SessionSummary struct {
 	// ReadThrough is the user's shared read mark (MarkSessionsRead), else the
 	// workspace's read baseline; zero when no read state exists yet.
 	ReadThrough time.Time
+	// WorkstreamID names the workstream whose tree this session ran in (its
+	// work or integration session); empty for the project's own sessions.
+	WorkstreamID string
 }
 
 // ModelUsage is the total recorded token usage for one logical model name in a
@@ -558,6 +562,25 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 		byID[s.ID] = i
 	}
 
+	// An in-flight workstream's sessions keep their logs in its worktree until
+	// merge/discard preserves them here; list them with the project.
+	owners, worktrees := m.workstreamSessionOwners(absWS)
+	for wt, wsID := range worktrees {
+		rows, err := m.scanSessionHistoryCached(wt)
+		if err != nil {
+			log.Printf("ycc: session history: skipping workstream %s: %v", wsID, err)
+			continue
+		}
+		for _, row := range rows {
+			if _, dup := byID[row.ID]; dup {
+				continue
+			}
+			owners[row.ID] = wsID
+			byID[row.ID] = len(summaries)
+			summaries = append(summaries, row)
+		}
+	}
+
 	// Snapshot the live sessions for this workspace under lock, then read their
 	// state outside it: the job-continuation check consults the job registry and
 	// must not nest inside the manager lock.
@@ -566,23 +589,27 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 	for _, s := range m.sessions {
 		if s.Workspace == absWS {
 			liveSessions = append(liveSessions, s)
+		} else if wsID, ok := worktrees[s.Workspace]; ok {
+			owners[s.ID] = wsID
+			liveSessions = append(liveSessions, s)
 		}
 	}
 	m.mu.Unlock()
 	type liveInfo struct {
-		id       string
-		mode     string
-		status   event.Status
-		waiting  bool
-		awaiting bool
-		origin   string
-		human    bool
+		id        string
+		workspace string
+		mode      string
+		status    event.Status
+		waiting   bool
+		awaiting  bool
+		origin    string
+		human     bool
 	}
 	live := make([]liveInfo, 0, len(liveSessions))
 	for _, s := range liveSessions {
 		status, awaiting := s.StatusWithJobContinuation()
 		origin, human := s.liveParticipation()
-		live = append(live, liveInfo{id: s.ID, mode: s.Mode, status: status, waiting: s.PendingQuestion(), awaiting: awaiting, origin: origin, human: human})
+		live = append(live, liveInfo{id: s.ID, workspace: s.Workspace, mode: s.Mode, status: status, waiting: s.PendingQuestion(), awaiting: awaiting, origin: origin, human: human})
 	}
 
 	now := time.Now()
@@ -605,13 +632,16 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 			HumanParticipated: li.human,
 			Mode:              li.mode,
 			Status:            li.status,
-			Workspace:         absWS,
+			Workspace:         li.workspace,
 			StartedAt:         now,
 			LastActivity:      now,
 			Live:              true,
 			Waiting:           li.waiting,
 			AwaitingJobs:      li.awaiting,
 		})
+	}
+	for i := range summaries {
+		summaries[i].WorkstreamID = owners[summaries[i].ID]
 	}
 
 	// A persisted log can end without a terminal event when its owning daemon is
@@ -659,6 +689,35 @@ func (m *Manager) ListSessionHistory(project string) ([]SessionSummary, error) {
 
 // ErrInvalidHistoryCursor indicates an invalid or unusable history keyset.
 var ErrInvalidHistoryCursor = errors.New("invalid session history cursor")
+
+// workstreamSessionOwners maps the recorded sessions of every workstream of
+// the project at absWS (any status, so preserved logs stay marked) to their
+// workstream id, and returns the in-flight worktrees under the daemon's root
+// with the workstream each belongs to.
+func (m *Manager) workstreamSessionOwners(absWS string) (owners map[string]string, worktrees map[string]string) {
+	owners, worktrees = map[string]string{}, map[string]string{}
+	if m.workstreams == nil {
+		return owners, worktrees
+	}
+	for _, ws := range m.workstreams.List() {
+		primary, ok := m.projects.Resolve(ws.Project)
+		if !ok {
+			continue
+		}
+		if p, err := filepath.Abs(primary); err != nil || p != absWS {
+			continue
+		}
+		for _, id := range []string{ws.SessionID, ws.IntegrateSessionID} {
+			if id != "" {
+				owners[id] = ws.ID
+			}
+		}
+		if ws.Status.InFlight() && workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath) == nil {
+			worktrees[filepath.Clean(ws.WorktreePath)] = ws.ID
+		}
+	}
+	return owners, worktrees
+}
 
 // ListSessionHistoryPage applies a keyset after the live overlay and sort. A
 // refreshed first page discovers rows whose activity moved ahead of the cursor.
