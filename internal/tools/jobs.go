@@ -212,7 +212,29 @@ func waitTool(ws *Workspace) *gollama.Tool {
 			if timeout <= 0 {
 				timeout = defaultWaitTimeout
 			}
-			reports, running := ws.Jobs.Wait(ctx, ids, mode, timeout)
+			waitCtx, wake := ctx, (<-chan struct{})(nil)
+			if ws.InputWake != nil {
+				wake = ws.InputWake()
+				var cancel context.CancelFunc
+				waitCtx, cancel = context.WithCancel(ctx)
+				defer cancel()
+				go func() {
+					select {
+					case <-wake:
+						cancel()
+					case <-waitCtx.Done():
+					}
+				}()
+			}
+			reports, running := ws.Jobs.Wait(waitCtx, ids, mode, timeout)
+			interrupted := false
+			if len(running) > 0 && wake != nil {
+				select {
+				case <-wake:
+					interrupted = true
+				default:
+				}
+			}
 			if ws.Emitter != nil {
 				for _, report := range reports {
 					if report.ClaimedNotification {
@@ -237,8 +259,14 @@ func waitTool(ws *Workspace) *gollama.Tool {
 				if b.Len() > 0 {
 					b.WriteString("\n\n")
 				}
-				fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
-					timeout, strings.Join(running, ", "))
+				if interrupted {
+					fmt.Fprintf(&b, "wait returned early because the user sent a message (it follows); still running: %s "+
+						"(their completion is still notified automatically; wait again, check job_output, or kill_job)",
+						strings.Join(running, ", "))
+				} else {
+					fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
+						timeout, strings.Join(running, ", "))
+				}
 			}
 			return okResult(b.String()), nil
 		},

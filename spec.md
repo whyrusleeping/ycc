@@ -473,7 +473,9 @@ Background shell commands and subagents share stable session-owned job ids and f
 cancels. `job_output` with only an id returns live output/activity or the terminal final report;
 explicit cursor/limit or tail requests read retained captured output. Peeks never affect notifications.
 Automatic final notifications are claimed exactly once at a checkpoint; an explicit wait suppresses
-a later notification. Final reports remain repeatable through either read path. A tracked process or subagent
+a later notification. A user message to the coordinator ends its blocking wait early so the message is
+delivered at the next checkpoint rather than queued behind the jobs. Final reports remain repeatable
+through either read path. A tracked process or subagent
 publishes its terminal report before its execution ends, so its automatic notification only becomes
 claimable once that execution has actually stopped and released its leases. A coordinator that has
 already returned a final response while its jobs run is woken by the completion itself: every report

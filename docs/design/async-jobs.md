@@ -24,6 +24,9 @@ Completion notification and evidence access are separate:
 
 - an automatic final notification is claimed exactly once at an engine checkpoint;
 - an explicit `wait` synchronizes with completion, returns the retained report, and suppresses a later
+  automatic notification. A user message queued for the coordinator (already pending or arriving
+  mid-wait) makes its `wait` return early with finished reports and the still-running ids; the message
+  is then delivered at the checkpoint after that tool result, and the running jobs keep their
   automatic notification;
 - `job_output` peeks without affecting notification state: with only a job id it returns live
   output/activity or the retained final report when terminal; explicit cursor/limit or tail requests

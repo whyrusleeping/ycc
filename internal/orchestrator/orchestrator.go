@@ -174,6 +174,9 @@ type Deps struct {
 	// When set it enables background bash plus job discovery, progress, retained
 	// result, wait, and cancellation tools; the session kills all jobs on end.
 	Jobs *jobs.Registry
+	// InputWake is the coordinator workspace's tools.Workspace.InputWake: it lets
+	// a user message cut the coordinator's blocking wait short. Nil disables it.
+	InputWake func() <-chan struct{}
 
 	// Ownership is shared by every session in the daemon. CoordinatorToken is
 	// scoped to this session's direct mutations; delegated mutators use child tokens.

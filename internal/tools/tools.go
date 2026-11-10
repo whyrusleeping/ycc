@@ -303,6 +303,11 @@ type Workspace struct {
 	// events tagged with that actor (which also owns the job for checkpoint drain).
 	// Required alongside Jobs for background bash.
 	Emitter *event.Emitter
+	// InputWake, when set, returns a channel that is closed once user input is
+	// queued for this agent's next checkpoint (already closed if some is pending).
+	// A blocking wait returns early on it so the message is not held behind the
+	// jobs. Only the session coordinator, which receives user input, sets it.
+	InputWake func() <-chan struct{}
 	// Ownership and MutationToken scope file writes: each write holds the
 	// worktree's operation section only while it runs and is claimed for the
 	// token's attribution scope (see workspacelease).

@@ -210,7 +210,8 @@ type Session struct {
 	resumeReq       bool
 	corrections     []correction
 	resumeCh        chan struct{}
-	rolloverPending bool // explicit request accepted; idle input is queued until its durable view boundary
+	inputWakeCh     chan struct{} // closed (then cleared) when a correction is queued; see inputWake
+	rolloverPending bool          // explicit request accepted; idle input is queued until its durable view boundary
 
 	// Plan-only guardrail (chat only), guarded by planMu. planOnly is the
 	// user's current choice (plan_only_changed); planOnlyTold is what the
@@ -510,6 +511,10 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 			return fmt.Errorf("session event log failed: %w", err)
 		}
 		s.corrections = append(s.corrections, correction{message: input, seq: ev.Seq})
+		if s.inputWakeCh != nil {
+			close(s.inputWakeCh)
+			s.inputWakeCh = nil
+		}
 		s.steerMu.Unlock()
 		return nil
 	}
@@ -538,6 +543,24 @@ func (s *Session) SendInputMessage(input engine.UserMessage) error {
 	}
 	s.messageCh <- input
 	return nil
+}
+
+// inputWake implements tools.Workspace.InputWake for the coordinator: the
+// returned channel is closed when a user message is queued as a correction (or
+// is already closed if one is pending), so a blocking wait returns and the
+// message is delivered at the checkpoint after that tool result.
+func (s *Session) inputWake() <-chan struct{} {
+	s.steerMu.Lock()
+	defer s.steerMu.Unlock()
+	if len(s.corrections) > 0 {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	if s.inputWakeCh == nil {
+		s.inputWakeCh = make(chan struct{})
+	}
+	return s.inputWakeCh
 }
 
 // Answer responds to a pending question. Errors if none is pending.
@@ -2980,6 +3003,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	// of enabled models at loop construction; spawn validation remains live.
 	deps.ResolveAgent = s.agentSpec
 	deps.AgentModels = s.agentModels
+	deps.InputWake = s.inputWake
 
 	// buildLoop assembles the agent loop for a mode; reused on mode transitions.
 	// It reads the session's current coordinator assignment so a mid-session

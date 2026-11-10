@@ -73,6 +73,7 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		WriteRoots:    tools.NormalizeRoots(d.WriteRoots),
 		Jobs:          d.Jobs,
 		Emitter:       d.Emitter,
+		InputWake:     d.InputWake,
 		Ownership:     d.Ownership,
 		MutationToken: d.CoordinatorToken,
 		DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
