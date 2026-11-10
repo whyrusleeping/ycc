@@ -1285,14 +1285,16 @@ public final class YccClient: Sendable {
         switch error.code {
         case .canceled:
             return CancellationError()
-        case .unavailable, .deadlineExceeded, .resourceExhausted, .aborted,
-             .internalError, .unknown:
+        // `unknown` also covers network failures and broken bodies.
+        case .unavailable, .deadlineExceeded, .resourceExhausted, .aborted, .unknown:
             return YccError.rpc(message: sessionTransportMessage(error))
+        case .internalError:
+            return SessionTransportError.server(message: sessionTransportMessage(error))
         case .unauthenticated, .permissionDenied, .notFound, .failedPrecondition:
             return map(error)
         case .ok, .invalidArgument, .alreadyExists, .outOfRange, .unimplemented,
              .dataLoss:
-            return TerminalSessionTransportError.terminal(
+            return SessionTransportError.terminal(
                 message: sessionTransportMessage(error))
         }
     }

@@ -290,6 +290,72 @@ private final class KeepaliveStreamSource: SessionTranscriptSource, @unchecked S
     }
 }
 
+/// An indexed source whose snapshots and subscriptions fail as scripted: each
+/// GetSessionView pops one `snapshotErrors` entry, each SubscribeSessionView
+/// pops one `subscriptionScripts` entry (updates, then an optional error);
+/// with no script left a subscription stays open.
+private final class ScriptedFailureSource: SessionTranscriptSource, @unchecked Sendable {
+    let view: Ycc_V1_GetSessionViewResponse
+    private let lock = NSLock()
+    private var _snapshotErrors: [Error] = []
+    private var _scripts: [(updates: [Ycc_V1_SessionViewUpdate], error: Error?)] = []
+    private var _snapshots = 0
+    private var _fromSeqs: [Int64] = []
+    private var open: [AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error>.Continuation] = []
+
+    init(view: Ycc_V1_GetSessionViewResponse) { self.view = view }
+
+    var snapshotErrors: [Error] {
+        get { locked { _snapshotErrors } }
+        set { locked { _snapshotErrors = newValue } }
+    }
+    var subscriptionScripts: [(updates: [Ycc_V1_SessionViewUpdate], error: Error?)] {
+        get { locked { _scripts } }
+        set { locked { _scripts = newValue } }
+    }
+    var snapshots: Int { locked { _snapshots } }
+    var fromSeqs: [Int64] { locked { _fromSeqs } }
+    var isHoldingOpen: Bool { locked { !open.isEmpty } }
+
+    var supportsIndexedSessionView: Bool { true }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse {
+        let error = locked { () -> Error? in
+            _snapshots += 1
+            return _snapshotErrors.isEmpty ? nil : _snapshotErrors.removeFirst()
+        }
+        if let error { throw error }
+        return view
+    }
+    func subscribeSessionView(sessionId: String, fromSeq: Int64, indexGeneration: Int64) -> AsyncThrowingStream<Ycc_V1_SessionViewUpdate, Error> {
+        let script = locked { () -> (updates: [Ycc_V1_SessionViewUpdate], error: Error?)? in
+            _fromSeqs.append(fromSeq)
+            return _scripts.isEmpty ? nil : _scripts.removeFirst()
+        }
+        return AsyncThrowingStream { continuation in
+            guard let script else {
+                self.locked { self.open.append(continuation) }
+                return
+            }
+            for update in script.updates { continuation.yield(update) }
+            continuation.finish(throwing: script.error)
+        }
+    }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound(message: "attachment not found")
+    }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+
+    @discardableResult
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
 /// Holds a detail response until the test opens it.
 private final class DetailGate: @unchecked Sendable {
     private let lock = NSLock()
@@ -1286,6 +1352,102 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2", "seq-4"])
         XCTAssertEqual(source.subscriptions.map(\.fromSeq), [5, 4])
         XCTAssertEqual(source.subscriptions.map(\.indexGeneration), [0, 9])
+        vm.stop()
+    }
+
+    private func failureView() -> Ycc_V1_GetSessionViewResponse {
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 3
+        view.state.phase = "running"
+        var row = Ycc_V1_SessionPresentationRow()
+        row.id = "seq-2"
+        row.positionSeq = 2
+        row.updatedSeq = 2
+        row.events = [event(2, "model_turn", #"{"text":"hello"}"#)]
+        view.rows = [row]
+        return view
+    }
+
+    private func serverError(_ message: String) -> Error {
+        YccClient.mapSessionTransport(ConnectError(code: .internalError, message: message))
+    }
+
+    func testRepeatedServerErrorFailsWithItsMessageUntilRetried() async {
+        let source = ScriptedFailureSource(view: failureView())
+        var progress = Ycc_V1_SessionViewUpdate()
+        progress.seq = 3
+        progress.state = source.view.state
+        source.subscriptionScripts = [
+            ([], serverError("index broken")),
+            ([], serverError("index broken")),
+            // A different message starts a new count…
+            ([], serverError("other failure")),
+            ([], serverError("index broken")),
+            // …and so does a durable update; keepalives do not count as one.
+            ([Ycc_V1_SessionViewUpdate(), progress], serverError("index broken")),
+            ([Ycc_V1_SessionViewUpdate()], serverError("index broken")),
+            ([], serverError("index broken")),
+        ]
+        let vm = SessionViewModel(source: source, sessionID: "broken", mode: .live,
+                                  backoff: .init(initial: 1_000_000, maximum: 1_000_000), publishInterval: 0)
+        vm.start()
+        await waitUntil { vm.state == .failed("index broken") }
+        XCTAssertEqual(vm.state, .failed("index broken"))
+        XCTAssertEqual(source.fromSeqs.count, 7)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(source.fromSeqs.count, 7, "a repeated server error must stop reconnecting")
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2"], "the transcript stays on screen")
+
+        // Retry starts over: a fresh snapshot and a fresh budget.
+        let snapshots = source.snapshots
+        source.subscriptionScripts = [
+            ([], serverError("index broken")),
+            ([], serverError("index broken")),
+        ]
+        vm.retryConnection()
+        await waitUntil { source.isHoldingOpen && vm.state == .streaming }
+        XCTAssertEqual(vm.state, .streaming)
+        XCTAssertEqual(source.fromSeqs.count, 10)
+        XCTAssertEqual(source.snapshots, snapshots + 3)
+        vm.stop()
+    }
+
+    func testRepeatedServerErrorFailsPersistedLoadAndRetryReloads() async {
+        let source = ScriptedFailureSource(view: failureView())
+        source.snapshotErrors = (0..<3).map { _ in serverError("index unreadable") }
+        let vm = SessionViewModel(source: source, sessionID: "old", mode: .persisted,
+                                  backoff: .init(initial: 1_000_000, maximum: 1_000_000), publishInterval: 0)
+        vm.start()
+        await waitUntil { vm.state == .failed("index unreadable") }
+        XCTAssertEqual(vm.state, .failed("index unreadable"))
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(source.snapshots, 3)
+
+        vm.retryConnection()
+        await waitUntil { vm.state == .finished }
+        XCTAssertEqual(vm.state, .finished)
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2"])
+        XCTAssertEqual(source.snapshots, 4)
+    }
+
+    func testNetworkDropsAndUnavailableReconnectWithoutLimit() async {
+        let source = ScriptedFailureSource(view: failureView())
+        let unavailable = YccClient.mapSessionTransport(
+            ConnectError(code: .unavailable, message: "daemon restarting"))
+        let dropped = YccClient.mapSessionTransport(URLError(.networkConnectionLost))
+        let unknown = YccClient.mapSessionTransport(
+            ConnectError(code: .unknown, message: "connection reset"))
+        source.subscriptionScripts = (0..<4).flatMap { _ in
+            [([], unavailable), ([], dropped), ([], unknown)] as [([Ycc_V1_SessionViewUpdate], Error?)]
+        }
+        let vm = SessionViewModel(source: source, sessionID: "flaky", mode: .live,
+                                  backoff: .init(initial: 1_000_000, maximum: 1_000_000), publishInterval: 0)
+        vm.start()
+        await waitUntil { source.isHoldingOpen && vm.state == .streaming }
+        XCTAssertEqual(vm.state, .streaming)
+        XCTAssertEqual(source.fromSeqs, Array(repeating: 3, count: 13),
+                       "every attempt resumes from the installed cursor")
+        XCTAssertEqual(vm.durableRows.map(\.id), ["seq-2"])
         vm.stop()
     }
     func testIndexRebuildDropsExpandedAndInFlightDetails() async {

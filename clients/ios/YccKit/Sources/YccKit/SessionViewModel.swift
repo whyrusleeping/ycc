@@ -797,6 +797,22 @@ public final class SessionViewModel {
         else { startLiveLoop() }
     }
 
+    /// Start over after the stream ended in ``ConnectionState/failed(_:)``
+    /// (the user tapped Retry): a fresh snapshot and a fresh retry budget, for
+    /// a failed persisted load as well as a failed live stream.
+    public func retryConnection() {
+        guard case .failed = state, !unauthorized, parkedAt == nil else { return }
+        stoppedByOwner = false
+        halt()
+        // Not startLoading() over an installed transcript: that would re-arm
+        // the new-session "working" hint.
+        if hasCompletedInitialReplay, source.supportsIndexedSessionView {
+            startIndexedLoop(stream: mode == .live)
+        } else {
+            startLoading()
+        }
+    }
+
     // MARK: - Indexed presentation
 
     /// `subscribeFromInstalled` skips the first snapshot and subscribes from
@@ -830,6 +846,7 @@ public final class SessionViewModel {
             // a snapshot, so a not-found must still catch the transcript up.
             var subscribedWithoutSnapshot = false
             var probingLive = probeLive
+            var serverErrors = ServerErrorRepeats()
             while self.isCurrent(generation), !Task.isCancelled {
                 if !skipSnapshot, !revalidating {
                     self.state = self.hasCompletedInitialReplay ? .reconnecting : .loading
@@ -917,6 +934,7 @@ public final class SessionViewModel {
                         // Idle-stream keepalives carry nothing to fold; enqueuing
                         // them would bump transcriptRevision and re-render.
                         guard !update.isKeepalive else { continue }
+                        if update.hasState { serverErrors.reset() }
                         if checkCatchUp, update.hasState {
                             checkCatchUp = false
                             if update.upsertedRows.count > Self.maxCursorCatchUpRows {
@@ -952,7 +970,11 @@ public final class SessionViewModel {
                         self.state = .reconnecting
                         continue
                     }
-                    switch Self.classify(error) {
+                    var disposition = Self.classify(error)
+                    if disposition == .server {
+                        disposition = serverErrors.exhausted(by: Self.message(error)) ? .terminal : .transient
+                    }
+                    switch disposition {
                     case .transient:
                         self.state = .reconnecting
                         // A drop of a cursor-only resume keeps the cached
@@ -978,7 +1000,7 @@ public final class SessionViewModel {
                     case .missing:
                         if streaming || self.mode == .live { self.mode = .persisted }
                         self.clearTransientPresentation(); self.state = .finished; return
-                    case .terminal:
+                    case .terminal, .server:
                         self.clearTransientPresentation(); self.state = .failed(Self.message(error)); return
                     }
                 }
@@ -1047,7 +1069,7 @@ public final class SessionViewModel {
                     self.state = .idle
                 case .unauthorized:
                     self.failUnauthorized()
-                case .missing, .terminal, .transient:
+                case .missing, .terminal, .transient, .server:
                     self.state = .failed(Self.message(error))
                 }
             }
@@ -1079,8 +1101,10 @@ public final class SessionViewModel {
                     break // A successful empty snapshot may subscribe from zero.
                 } catch {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
+                    // Legacy sources predate the indexed view; only test
+                    // fakes still use them, so server errors stay transient.
                     switch Self.classify(error) {
-                    case .transient:
+                    case .transient, .server:
                         self.state = .reconnecting
                         do {
                             try await self.sleep(delay)
@@ -1135,7 +1159,7 @@ public final class SessionViewModel {
                     guard self.isCurrent(generation), !Task.isCancelled else { return }
                     self.publishPendingUpdates()
                     switch Self.classify(error) {
-                    case .transient:
+                    case .transient, .server:
                         self.state = .reconnecting
                     case .cancelled:
                         self.clearTransientPresentation()
@@ -1191,7 +1215,7 @@ public final class SessionViewModel {
                 state = .idle
             case .unauthorized:
                 failUnauthorized()
-            case .missing, .terminal, .transient:
+            case .missing, .terminal, .transient, .server:
                 state = .failed(Self.message(error))
             }
         }
@@ -1903,10 +1927,36 @@ public final class SessionViewModel {
 
     private enum FailureDisposition: Equatable {
         case transient
+        /// A daemon-side failure: retried like ``transient`` until it repeats
+        /// (see ``ServerErrorRepeats``).
+        case server
         case unauthorized
         case missing
         case cancelled
         case terminal
+    }
+
+    /// The same daemon-side error on consecutive attempts, with no durable
+    /// update in between, is permanent (e.g. a broken session index): the
+    /// stream ends in ``ConnectionState/failed(_:)`` with the server's message
+    /// rather than reconnecting forever.
+    private struct ServerErrorRepeats {
+        static let limit = 3
+        private var message: String?
+        private var count = 0
+
+        /// Count `message`; true once it has failed ``limit`` times in a row.
+        mutating func exhausted(by message: String) -> Bool {
+            count = message == self.message ? count + 1 : 1
+            self.message = message
+            return count >= Self.limit
+        }
+
+        /// Durable progress: an earlier server error did not recur.
+        mutating func reset() {
+            message = nil
+            count = 0
+        }
     }
 
     private static func classify(_ error: Error) -> FailureDisposition {
@@ -1916,8 +1966,11 @@ public final class SessionViewModel {
         if let urlError = error as? URLError, urlError.code == .cancelled {
             return .cancelled
         }
-        if error is TerminalSessionTransportError {
-            return .terminal
+        if let transport = error as? SessionTransportError {
+            switch transport {
+            case .terminal: return .terminal
+            case .server: return .server
+            }
         }
         guard let ycc = error as? YccError else {
             return .terminal

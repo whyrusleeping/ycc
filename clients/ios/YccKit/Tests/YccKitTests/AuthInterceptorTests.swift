@@ -71,6 +71,15 @@ final class AuthInterceptorTests: XCTestCase {
             YccClient.mapSessionTransport(
                 ConnectError(code: .unavailable, message: "down")) as? YccError,
             YccError.rpc(message: "down"))
+        XCTAssertEqual(
+            YccClient.mapSessionTransport(
+                ConnectError(code: .unknown, message: "reset")) as? YccError,
+            YccError.rpc(message: "reset"))
+        XCTAssertEqual(
+            YccClient.mapSessionTransport(
+                ConnectError(code: .internalError, message: "index broken"))
+                as? SessionTransportError,
+            SessionTransportError.server(message: "index broken"))
 
         XCTAssertTrue(
             YccClient.mapSessionTransport(
@@ -79,12 +88,12 @@ final class AuthInterceptorTests: XCTestCase {
         XCTAssertEqual(
             YccClient.mapSessionTransport(
                 ConnectError(code: .invalidArgument, message: "bad cursor"))
-                as? TerminalSessionTransportError,
-            TerminalSessionTransportError.terminal(message: "bad cursor"))
+                as? SessionTransportError,
+            SessionTransportError.terminal(message: "bad cursor"))
         XCTAssertEqual(
             YccClient.mapSessionTransport(
                 ConnectError(code: .unimplemented, message: "unsupported"))
-                as? TerminalSessionTransportError,
-            TerminalSessionTransportError.terminal(message: "unsupported"))
+                as? SessionTransportError,
+            SessionTransportError.terminal(message: "unsupported"))
     }
 }

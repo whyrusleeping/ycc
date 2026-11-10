@@ -1,7 +1,7 @@
 ---
 id: "0536"
 title: 'iOS: stop retrying a session stream that keeps failing with the same server error'
-status: todo
+status: done
 priority: 3
 created: "2026-11-10"
 updated: "2026-11-10"
@@ -10,6 +10,7 @@ spec_refs: []
 ---
 
 ## Description
+
 Split from 0509, whose acceptance asked to check iOS and fix it there or file it separately. The web fix is in `clients/web/src/features/session/controller.ts`.
 
 **Problem:** YccKit has the same endless-reconnect issue. `YccClient.mapSessionTransport` maps `.internalError` (and `.unknown`) to `YccError.rpc`, and `SessionViewModel.classify` treats every `.rpc` as `.transient`. A SessionView/SubscribeSessionView that fails with `internal` on every attempt (for example a broken session index) therefore sits in `.reconnecting` forever with backoff, and the server message never shows.
@@ -20,8 +21,13 @@ Split from 0509, whose acceptance asked to check iOS and fix it there or file it
 - A manual retry or reopening the session retries from scratch, including a failed persisted reload.
 
 ## Acceptance criteria
+
 - A session stream that fails with the same `internal` error on consecutive attempts ends in `.failed` showing the server message, and stops reconnecting.
 - Network drops, `unavailable` and daemon restarts still reconnect without limit and resume from the cursor.
 - A YccKit test covers both cases. `swift test` passes on the configured Mac.
 
-## Work log
+## Outcome
+
+YccClient.mapSessionTransport maps `internal` to SessionTransportError.server (renamed from TerminalSessionTransportError); `unknown`/`unavailable`/network drops stay transient. The indexed loop counts consecutive identical server errors (reset only by a durable state update, not keepalives) and ends in .failed(message) after 3. New SessionViewModel.retryConnection() restarts with a fresh snapshot and budget (live or failed persisted load); SessionView shows a "Couldn't load: <message>" banner with Retry. Legacy loop (test-only sources) treats server errors as transient. YccKit tests cover repeat→failed+retry, persisted failure+retry, unlimited reconnect from cursor for unavailable/network/unknown, and the mapping; swift test (592) passes and the app builds on the Mac.
+
+Commit: iOS: a session stream that keeps failing with the same server (internal) error ends in failed with the message and a Retry banner instead of reconnecting forever (0536)

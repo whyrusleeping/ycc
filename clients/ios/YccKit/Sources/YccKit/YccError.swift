@@ -1,14 +1,18 @@
 import Foundation
 
-/// A terminal Connect status retained only for transcript/subscription calls,
-/// whose reconnect loop must distinguish it from a transient ``YccError/rpc``.
+/// Connect statuses retained only for transcript/subscription calls, whose
+/// reconnect loop must distinguish them from a transient ``YccError/rpc``.
 /// Other RPC surfaces keep their existing UI-facing `YccError` mapping.
-enum TerminalSessionTransportError: Error, Equatable, Sendable, LocalizedError {
+enum SessionTransportError: Error, Equatable, Sendable, LocalizedError {
+    /// Retrying cannot help (bad request, unsupported RPC).
     case terminal(message: String)
+    /// The daemon itself failed (`internal`). Retried, but the same failure on
+    /// consecutive attempts is treated as permanent.
+    case server(message: String)
 
     var errorDescription: String? {
         switch self {
-        case .terminal(let message): return message
+        case .terminal(let message), .server(let message): return message
         }
     }
 }

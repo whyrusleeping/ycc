@@ -460,6 +460,7 @@ struct SessionView: View {
             if let pending = pendingQuickReply {
                 quickReplyUndoBar(pending)
             }
+            streamFailureBanner
             if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
@@ -472,6 +473,23 @@ struct SessionView: View {
         // covers the gap while the keyboard animates.
         .padding(.bottom, keyboard.overlap)
         .background(.bar)
+    }
+
+    /// The transcript stream gave up (a server error that kept repeating, a
+    /// terminal status, a failed load): say why and offer a fresh start.
+    @ViewBuilder
+    private var streamFailureBanner: some View {
+        if case .failed(let message) = model.state {
+            banner(
+                message.isEmpty ? "Couldn't load this session" : "Couldn't load: \(message)",
+                systemImage: "exclamationmark.triangle.fill",
+                tint: Theme.danger,
+                action: ("Retry", {
+                    Analytics.action("session.stream_retry")
+                    model.retryConnection()
+                })
+            )
+        }
     }
 
     /// When a question is pending but the sheet was swipe-dismissed, offer a way
