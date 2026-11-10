@@ -196,6 +196,19 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// The daemon's built-in quick replies followed by the project's own.
+    public func getQuickReplies(project: String) async throws -> [Ycc_V1_QuickReply] {
+        var request = Ycc_V1_GetQuickRepliesRequest()
+        request.project = project
+        let response = await generated.getQuickReplies(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.builtin + message.project
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Set or manually clear a session's durable follow-up flag.
     public func setSessionFollowUp(
         project: String, sessionID: String, followUp: Bool

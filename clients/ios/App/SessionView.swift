@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import YccKit
+import YccProto
 
 /// Read-only-plus-interactive session transcript feed projected from the event
 /// log. Live sessions
@@ -123,6 +124,17 @@ struct SessionView: View {
     @State private var workingChangesTarget: WorkingChangesTarget?
     /// Presents the file browser rooted at this session's workspace.
     @State private var showFiles = false
+    /// The daemon's built-in and this project's quick replies (empty: the
+    /// swipe menu is off, e.g. against a daemon without them).
+    @State private var quickReplies: [Ycc_V1_QuickReply] = []
+    /// A picked quick reply waiting out its undo window before it is sent.
+    @State private var pendingQuickReply: PendingQuickReply?
+    private struct PendingQuickReply: Equatable {
+        let id = UUID()
+        let reply: Ycc_V1_QuickReply
+        let via: UsageAnalytics.Via
+    }
+    private static let quickReplyUndoSeconds: Double = 2
     /// This screen's claim on the (possibly cached) model: the model streams
     /// while some screen presents it and parks when the last one really
     /// leaves. Created on first appearance, never in `init` (which SwiftUI
@@ -181,6 +193,8 @@ struct SessionView: View {
         // Modifier order is unchanged: navigation, then presentations, then
         // lifecycle.
         withLifecycle(withPresentations(withNavigation(transcriptStage)))
+            .modifier(QuickReplyMenuModifier(
+                replies: quickReplies, isAvailable: quickRepliesAvailable, onPick: queueQuickReply))
     }
 
     /// The scrolling transcript with follow-mode pill and anchor restoration.
@@ -394,7 +408,12 @@ struct SessionView: View {
             // returning (e.g. from a diff) to a model that is still streaming.
             // A persisted session is re-opened transparently by its first send.
             .task { model.present() }
+            .task(id: project) {
+                quickReplies = (try? await client.getQuickReplies(project: project)) ?? []
+            }
             .onDisappear {
+                // Leaving inside the undo window means "send it", not "drop it".
+                sendPendingQuickReply()
                 // Leaving the transcript is the moment the user has "read" it: record
                 // the newest event they were shown, so later agent activity — a turn
                 // that lands, or the session finishing while the phone is away —
@@ -438,6 +457,9 @@ struct SessionView: View {
     @ViewBuilder
     private var bottomChrome: some View {
         VStack(spacing: 0) {
+            if let pending = pendingQuickReply {
+                quickReplyUndoBar(pending)
+            }
             if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
@@ -637,6 +659,64 @@ struct SessionView: View {
             suppressAutocorrect = false
         }
         Task { await model.send(text: text, images: images) }
+    }
+
+    // MARK: - Quick replies
+
+    /// The swipe menu answers a finished turn: not while the agent is running,
+    /// a question is waiting, a stop is pending, something is typed or
+    /// attached, or another pick is still in its undo window.
+    private var quickRepliesAvailable: Bool {
+        if model.mode == .live, model.displayPhase == .running { return false }
+        return model.pendingQuestion == nil && !model.isStopPending && pendingQuickReply == nil
+            && pictures.isEmpty && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Hold a picked reply for the undo window, then send it.
+    private func queueQuickReply(_ reply: Ycc_V1_QuickReply, via: UsageAnalytics.Via) {
+        let pending = PendingQuickReply(reply: reply, via: via)
+        withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = pending }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.quickReplyUndoSeconds * 1_000_000_000))
+            guard pendingQuickReply?.id == pending.id else { return }
+            sendPendingQuickReply()
+        }
+    }
+
+    private func sendPendingQuickReply() {
+        guard let pending = pendingQuickReply else { return }
+        withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = nil }
+        // The kind, never the text: project replies are user-written.
+        Analytics.action("composer.quick_reply", via: pending.via, attrs: [
+            "phase": composerPhase,
+            "kind": pending.reply.id.isEmpty ? "project" : pending.reply.id,
+        ])
+        Task { await model.send(text: pending.reply.text, images: []) }
+    }
+
+    private func quickReplyUndoBar(_ pending: PendingQuickReply) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Sending “\(pending.reply.label)”…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer()
+            Button("Undo") {
+                Analytics.action("composer.quick_reply_undo", attrs: [
+                    "kind": pending.reply.id.isEmpty ? "project" : pending.reply.id,
+                ])
+                withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = nil }
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accentFill.opacity(0.12))
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     /// Take a failed provisional message — text and pictures — back into the

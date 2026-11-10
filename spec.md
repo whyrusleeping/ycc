@@ -1084,7 +1084,13 @@ Because the list is personal state, it is not committed. A quick reply is an ord
 Clients offer quick replies only when no turn is running, no question has its own answer surface,
 and the draft is empty. They record `composer.quick_reply` with the built-in id or `project`,
 never the text. Desktop web shows quick replies as chips above the composer, with an Edit link and
-a Projects-page entry that open the editor.
+a Projects-page entry that open the editor. On iOS they are a press-drag-release menu in the session
+view. A drag that starts at the trailing screen edge blurs the transcript and fans the replies out
+around the finger. A row is picked only once the finger reaches it, and a release over a row picks
+it. A flick leaves the menu open for tapping, and a release at the edge or away from the rows
+cancels. A pick waits out a 2-second Undo bar before it is sent, and leaving the session sends it
+immediately. A faint handle on the trailing edge marks the gesture, and VoiceOver gets the replies
+as actions on the handle.
 
 ### 18.7 Interrupt and steer
 
