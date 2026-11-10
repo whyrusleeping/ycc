@@ -51,6 +51,8 @@
   --ok: #1a7329;
   /* An "on" LED: the glow around running sessions (fill only, never text). */
   --live-glow: #26cf47;
+  /* The pulsing square on working sessions: brighter than --ok, still 3:1. */
+  --live-dot: #16a34a;
   --warn: #a33f00;
   --warn-soft: #fae5d4;
   --error: #c42a20;
@@ -99,6 +101,7 @@
     --selected: #222521;
     --ok: #5dff72;
     --live-glow: #4dff6a;
+    --live-dot: #5dff72;
     --warn: #ff7a2e;
     --warn-soft: #2a170c;
     --error: #ff5d52;
@@ -428,15 +431,45 @@ textarea {
   color: var(--ok);
 }
 
-.badge-running::before {
+.badge-running::before,
+.badge-background::before {
   content: "";
   display: inline-block;
   width: 6px;
   height: 6px;
   margin-right: 6px;
-  background: currentColor;
   vertical-align: 1px;
-  animation: pulse 1.6s ease-in-out infinite;
+}
+
+/* Any session doing something (a turn or background jobs) wears a lit square
+ * that sends out a ring, readable on light grounds where a dimming dark-green
+ * square was not. */
+.badge-running::before,
+.badge-background::before,
+.row-state.tone-running::before,
+.row-state.tone-background::before {
+  background: var(--live-dot);
+  animation: live-pulse 1.6s ease-out infinite;
+}
+
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--live-glow) 80%, transparent);
+  }
+
+  80%,
+  100% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--live-glow) 0%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-running::before,
+  .badge-background::before,
+  .row-state.tone-running::before,
+  .row-state.tone-background::before {
+    animation: none;
+  }
 }
 
 /* Task ids and similar tokens: a hairline box, like a field reference. */
@@ -844,7 +877,7 @@ a.nav-item:hover,
 
 .session-row.active {
   background: var(--bg-sunk);
-  box-shadow: inset 2px 0 0 var(--accent-strong);
+  box-shadow: inset 4px 0 0 var(--accent-strong);
 }
 
 .session-row-title {
@@ -1026,15 +1059,14 @@ a.row-task:hover {
   color: var(--ok);
 }
 
-.row-state.tone-running::before {
+.row-state.tone-running::before,
+.row-state.tone-background::before {
   content: "";
   display: inline-block;
   width: 6px;
   height: 6px;
   margin-right: 5px;
-  background: currentColor;
   vertical-align: 1px;
-  animation: pulse 1.6s ease-in-out infinite;
 }
 
 .row-state.tone-paused {
@@ -1075,7 +1107,6 @@ a.row-task:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .row-state.tone-running::before,
   .nav-dot.tone-live {
     animation: none;
   }
@@ -1336,7 +1367,14 @@ a.row-task:hover {
 }
 
 .session-meta .status-ok::before {
-  animation: pulse 1.6s ease-in-out infinite;
+  background: var(--live-dot);
+  animation: live-pulse 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-meta .status-ok::before {
+    animation: none;
+  }
 }
 
 .status-ok {
