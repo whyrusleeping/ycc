@@ -407,8 +407,8 @@ func daemonCheck(addr, token string) check {
 	return check{
 		status: statusWarn,
 		label:  "daemon",
-		detail: "no persistent daemon running (plain `ycc` starts a one-shot in-process daemon)",
-		remedy: "run `ycc daemon` or use `ycc --background` for persistence",
+		detail: "no persistent daemon running (CLI commands start a one-shot in-process daemon)",
+		remedy: "run `ycc daemon` (under tmux or a service manager) for persistence",
 	}
 }
 

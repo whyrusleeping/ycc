@@ -115,18 +115,3 @@ func TestProbeLocalCredentials(t *testing.T) {
 		t.Fatal("discovery accepted invalid credentials")
 	}
 }
-
-func TestBackgroundTokenUsesLocalFile(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	token, err := backgroundToken("")
-	if err != nil || token == "" || token != ReadLocalToken() {
-		t.Fatalf("background token did not use local file: %v", err)
-	}
-	_, env := backgroundDaemonCmdline("", "", token, nil)
-	if len(env) != 1 || env[0] != "YCC_TOKEN="+token {
-		t.Fatal("generated token not passed to background daemon")
-	}
-	if explicit, err := backgroundToken("explicit"); err != nil || explicit != "explicit" {
-		t.Fatal("explicit background token overridden")
-	}
-}

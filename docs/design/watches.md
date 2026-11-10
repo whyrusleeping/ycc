@@ -8,7 +8,7 @@
 Users ask a session to check a live system on a schedule, report, and raise a question when
 something needs attention. Without daemon support the model builds this from a background
 `sleep` and a long `wait` inside one turn that never ends. A wheeler session ran this way for
-13 checks over two days (`s_7aac4d11912b6830`, from 2026-10-31) and showed these failures:
+13 checks over two days (session s_7aac4d11912b6830, from 2026-10-31) and showed these failures:
 
 - `ask_user` blocks the turn, and the next sleep starts only after the answer. Three questions
   produced gaps of 1.5, 1.5 and 12 hours with no checks, during the incidents being reported.

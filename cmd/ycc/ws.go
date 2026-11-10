@@ -87,7 +87,7 @@ func (a *app) workstreamPath(ctx context.Context, id string, out io.Writer) erro
 }
 
 func (a *app) listWorkstreams(ctx context.Context, project string) ([]*v1.WorkstreamInfo, error) {
-	client, _, cleanup, err := a.dial()
+	client, cleanup, err := a.dial()
 	if err != nil {
 		return nil, err
 	}

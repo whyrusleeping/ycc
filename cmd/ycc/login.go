@@ -16,7 +16,6 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
-	"github.com/whyrusleeping/ycc/internal/setup"
 )
 
 // loginCommand authenticates a provider subscription via OAuth.
@@ -163,9 +162,9 @@ func (a *app) configureSubscriptionModel(backend string) {
 	created := false
 	switch {
 	case path == "":
-		// No config anywhere: create one in the user config dir (the same
-		// place the first-run wizard writes).
-		p, err := setup.ConfigPath()
+		// No config anywhere: create one in the user config dir, the second
+		// place DiscoverConfig looks.
+		p, err := daemon.UserConfigPath()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ycc: cannot resolve config path: %v\n", err)
 			manual()

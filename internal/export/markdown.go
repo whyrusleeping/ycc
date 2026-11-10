@@ -1,5 +1,5 @@
 // Package export renders a session's event log into shareable markdown. It
-// reuses the transcript-folding semantics the TUI applies:
+// reuses the clients' transcript-folding semantics:
 // tool_result folds into its tool_call as one collapsed line, an ask_user
 // round-trip collapses to a single Q/A block, empty (tool-calls-only)
 // model_turns and echoed session_idle rows are dropped, and the final report is

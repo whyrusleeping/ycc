@@ -43,12 +43,12 @@ func TestDaemonCommandLocalToken(t *testing.T) {
 func TestResolveDaemonPassesInProcessToken(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	addr, token, persistent, shutdown, err := resolveDaemon("", "", false, t.TempDir(), "")
+	addr, token, shutdown, err := resolveDaemon("", "", t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer shutdown()
-	if token == "" || persistent || !daemon.Reachable(addr, token) {
+	if token == "" || addr == daemon.LocalAddr || !daemon.Reachable(addr, token) {
 		t.Fatal("in-process resolution did not return usable credentials")
 	}
 	if daemon.Reachable(addr, "") {

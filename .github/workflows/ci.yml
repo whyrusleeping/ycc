@@ -28,14 +28,14 @@ jobs:
         run: go vet ./...
       - name: Test (uncached)
         run: go test -count=1 ./...
-      - name: Require the PTY end-to-end suite to execute
+      - name: Require the daemon/CLI end-to-end suite to execute
         shell: bash
         run: |
           set -o pipefail
           output="$(mktemp)"
           go test -count=1 -v ./internal/e2e | tee "$output"
           if grep -q -- '--- SKIP:' "$output"; then
-            echo "The PTY end-to-end suite skipped a test" >&2
+            echo "The end-to-end suite skipped a test" >&2
             exit 1
           fi
           grep -q -- '--- PASS: TestE2E' "$output"

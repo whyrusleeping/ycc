@@ -18,7 +18,7 @@ import (
 
 // taskCommand implements `ycc task <add|list|show|compact>`: backlog capture and
 // browsing from the shell. It lets you jot a task from anywhere — a
-// git hook, another tool, or just the CLI — without opening the TUI.
+// git hook, another tool, or just the CLI — without opening a client.
 //
 // Daemon resolution (deliberately NOT a.dial(), which would spin up a one-shot
 // in-process daemon just to touch backlog files): use the explicit --addr
@@ -33,7 +33,7 @@ func (a *app) taskCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "task",
 		Usage: "capture and browse backlog tasks from the shell",
-		Description: "Add, list, and show backlog tasks without opening the TUI.\n" +
+		Description: "Add, list, and show backlog tasks without opening a client.\n" +
 			"Uses a running daemon when reachable (or --addr); otherwise operates directly\n" +
 			"on <workspace>/backlog with no daemon. --project targets a registered project\n" +
 			"and requires a daemon.",

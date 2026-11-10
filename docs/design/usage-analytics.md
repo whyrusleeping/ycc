@@ -7,7 +7,7 @@ daemon; there is no third-party service.
 ## Flow
 
 ```
-web / iOS / TUI ──RecordUiEvents (batched, best-effort)──▶ daemon ──▶ <state>/ycc/analytics/
+web / iOS       ──RecordUiEvents (batched, best-effort)──▶ daemon ──▶ <state>/ycc/analytics/
                                                                          events-YYYY-MM.jsonl
 ycc analytics / GetUiAnalytics ◀── summarised report ◀───────────────── catalog.json
 ```
@@ -17,7 +17,7 @@ ycc analytics / GetUiAnalytics ◀── summarised report ◀──────
   block UI, or retry aggressively. Recording must stay a few microseconds per event.
 - Only a persistent daemon stores events (owner-only files, retained 12 months). The one-shot
   in-process daemon accepts and discards them (`stored=false`).
-- `ycc analytics [--days N] [--client web|ios|tui] [--json]` prints the summary. It uses a reachable
+- `ycc analytics [--days N] [--client web|ios] [--json]` prints the summary. It uses a reachable
   daemon (or `--addr`) and otherwise reads the local state directory directly. The report names
   the raw JSONL directory so an agent can dig deeper with grep/jq.
 
@@ -41,7 +41,7 @@ substitute for clients following this rule.
 | `duration_ms` | `view`: visible dwell time; `action`: optional operation latency |
 | `attrs`       | ≤8 enum-valued key/values, e.g. `from=backlog`, `code=unavailable`, `outcome=cancel` |
 
-Request-level fields: `client` (`web`/`ios`/`tui`), `client_version`, `visit_id` (random per page
+Request-level fields: `client` (`web`/`ios`; records from before the terminal UI was retired may say `tui`), `client_version`, `visit_id` (random per page
 load / app foreground; groups events into visits), and an optional `catalog`.
 
 ### Kinds
@@ -74,11 +74,6 @@ Clients use the same names for equivalent screens so usage can be compared acros
 The iOS client instead treats backgrounding as leaving: it closes the current view's dwell,
 flushes, and starts a new visit on the next foreground. The web client pauses a view's clock while the tab is hidden and ends its views on `pagehide`, so
 one `view` event covers a visit to a screen across tab switches.
-
-The TUI derives views from render precedence (including modal surfaces) and records key actions
-with `via=keyboard`. It flushes to the attached daemon every 30s or at 100 buffered events,
-and closes the final view's dwell and flushes best-effort on exit. Each TUI run is one visit;
-there is no background state.
 
 ### Catalog
 

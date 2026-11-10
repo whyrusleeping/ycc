@@ -1,14 +1,12 @@
-// Command ycc is the single ycc entrypoint: client, TUI, and daemon in one
-// binary. With no subcommand it launches the interactive TUI. Persistence is
-// opt-in: plain `ycc` attaches to a persistent local daemon if one is already
-// running, otherwise it starts the daemon in-process on an ephemeral loopback
-// address tied to this process and torn down on exit (closing it ends in-flight
-// agent work). `ycc daemon` is the explicit, persistent, foreground service;
-// `ycc --background` spawns a detached persistent daemon and attaches; `--addr`
-// attaches to a remote/explicit daemon.
+// Command ycc is the single ycc entrypoint: CLI client and daemon in one
+// binary. `ycc daemon` is the explicit, persistent, foreground service (add
+// --web to serve the web client). CLI subcommands attach to a persistent local
+// daemon if one is already running, otherwise they start the daemon in-process
+// on an ephemeral loopback address tied to this process and torn down on exit
+// (closing it ends in-flight agent work); `--addr` attaches to a
+// remote/explicit daemon. With no subcommand, ycc prints its help.
 //
-//	ycc                                  # TUI home menu (one-shot in-process daemon)
-//	ycc --background                     # spawn a detached persistent daemon and attach
+//	ycc daemon --web                     # persistent daemon serving the web client
 //	ycc start "add a hello.txt"          # start a session, stream it; type to prod
 //	ycc attach s_abc123 --from 0         # re-attach, replay from a seq offset
 //	ycc list | ycc modes
@@ -42,8 +40,6 @@ import (
 	"github.com/whyrusleeping/ycc/internal/daemon"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/secrets"
-	"github.com/whyrusleeping/ycc/internal/setup"
-	"github.com/whyrusleeping/ycc/internal/tui"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 	"github.com/whyrusleeping/ycc/proto/ycc/v1/yccv1connect"
 )
@@ -56,7 +52,6 @@ type app struct {
 	token      string // bearer token for --addr
 	workspace  string // workspace for new sessions (resolved to cwd if empty)
 	configPath string // TOML model config for the local daemon
-	background bool   // spawn a detached persistent daemon and attach
 }
 
 func main() {
@@ -102,20 +97,14 @@ func newRootCommand(a *app) *cli.Command {
 			Destination: &a.configPath,
 			Local:       true,
 		},
-		&cli.BoolFlag{
-			Name:        "background",
-			Usage:       "spawn a detached persistent daemon and attach (opt-in persistence)",
-			Destination: &a.background,
-			Local:       true,
-		},
 	}
 
 	return &cli.Command{
 		Name:  "ycc",
-		Usage: "coding-agent client, TUI, and daemon in one binary",
-		Description: "With no subcommand, ycc launches the interactive TUI (home menu).\n" +
-			"By default the daemon runs in-process and is torn down on exit (no persistence);\n" +
-			"use `ycc daemon` or `ycc --background` for a persistent daemon.",
+		Usage: "coding-agent daemon and CLI client in one binary",
+		Description: "Run `ycc daemon --web` for a persistent daemon and open its address in a browser;\n" +
+			"`ycc login anthropic|openai` connects a subscription model. Other commands attach to\n" +
+			"a running local daemon, or run one in-process that is torn down on exit (no persistence).",
 		Flags: globalFlags,
 		// Shell completion: `ycc completion bash|zsh|fish|pwsh` emits a script to
 		// source. Un-hide the built-in completion command so it shows in --help.
@@ -130,8 +119,8 @@ func newRootCommand(a *app) *cli.Command {
 			}
 			return ctx, nil
 		},
-		// No subcommand: launch the TUI.
-		Action: a.runTUI,
+		// No subcommand: print the help.
+		Action: a.runRoot,
 		Commands: []*cli.Command{
 			a.startCommand(),
 			a.attachCommand(),
@@ -155,43 +144,23 @@ func newRootCommand(a *app) *cli.Command {
 
 // dial resolves the daemon to talk to, installs a signal-driven teardown for any
 // one-shot in-process daemon, and returns a connected client plus a cleanup func
-// the caller must defer. persistent reports whether the daemon is multi-project.
-// On error no client is returned and cleanup is a no-op.
-func (a *app) dial() (client yccv1connect.SessionServiceClient, persistent bool, cleanup func(), err error) {
-	target, tok, persistent, shutdown, err := resolveDaemon(a.addr, a.token, a.background, a.workspace, a.configPath)
+// the caller must defer. On error no client is returned and cleanup is a no-op.
+func (a *app) dial() (client yccv1connect.SessionServiceClient, cleanup func(), err error) {
+	target, tok, shutdown, err := resolveDaemon(a.addr, a.token, a.workspace, a.configPath)
 	if err != nil {
-		return nil, false, func() {}, err
+		return nil, func() {}, err
 	}
 	installSignalShutdown(shutdown)
-	return daemon.DialClient(target, tok), persistent, shutdown, nil
+	return daemon.DialClient(target, tok), shutdown, nil
 }
 
-// runTUI is the no-subcommand action: optionally run the first-run setup wizard,
-// then attach a client and launch the interactive TUI.
-func (a *app) runTUI(ctx context.Context, cmd *cli.Command) error {
-	// An unrecognised subcommand lands here as a leftover positional; reject it
-	// rather than silently launching the TUI.
+// runRoot is the no-subcommand action: print the help. An unrecognised
+// subcommand lands here as a leftover positional; reject it instead.
+func (a *app) runRoot(ctx context.Context, cmd *cli.Command) error {
 	if cmd.Args().Present() {
 		return fmt.Errorf("unknown command %q (run `ycc --help`)", cmd.Args().First())
 	}
-	// First-run setup wizard: when launching the TUI with no usable model
-	// configuration and no fallback env key, guide the user through configuring
-	// providers + roles and write ~/.config/ycc/ycc.toml, then feed that path
-	// into daemon resolution.
-	if a.addr == "" && !a.background && a.configPath == "" && setup.NeedsSetup(a.workspace) {
-		if p, err := setup.Run(a.workspace); err == nil && p != "" {
-			a.configPath = p
-		}
-	}
-	client, persistent, cleanup, err := a.dial()
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	if err := tui.Run(ctx, client, a.workspace, persistent); err != nil {
-		return fmt.Errorf("tui: %w", err)
-	}
-	return nil
+	return cli.ShowRootCommandHelp(cmd)
 }
 
 // startCommand starts a session and streams it; the task is an optional leading
@@ -213,7 +182,7 @@ func (a *app) startCommand() *cli.Command {
 			if ws == "" {
 				ws = a.workspace
 			}
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
@@ -250,7 +219,7 @@ func (a *app) attachCommand() *cli.Command {
 			if id == "" {
 				return fmt.Errorf("usage: ycc attach <session-id> [--from N]")
 			}
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
@@ -267,7 +236,7 @@ func (a *app) listCommand() *cli.Command {
 		Name:  "list",
 		Usage: "list sessions",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
@@ -294,7 +263,7 @@ func (a *app) modesCommand() *cli.Command {
 		Name:  "modes",
 		Usage: "list available session modes",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
@@ -323,7 +292,7 @@ func (a *app) stopCommand() *cli.Command {
 			if id == "" {
 				return fmt.Errorf("usage: ycc stop <session-id>")
 			}
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
@@ -367,7 +336,7 @@ func (a *app) projectCommand() *cli.Command {
 					if abs, err := filepath.Abs(path); err == nil {
 						path = abs
 					}
-					client, _, cleanup, err := a.dial()
+					client, cleanup, err := a.dial()
 					if err != nil {
 						return err
 					}
@@ -391,7 +360,7 @@ func (a *app) projectCommand() *cli.Command {
 					if name == "" {
 						return fmt.Errorf("usage: ycc project remove <name>")
 					}
-					client, _, cleanup, err := a.dial()
+					client, cleanup, err := a.dial()
 					if err != nil {
 						return err
 					}
@@ -413,7 +382,7 @@ func (a *app) projectCommand() *cli.Command {
 					if name == "" || newName == "" {
 						return fmt.Errorf("usage: ycc project rename <name> <new-name>")
 					}
-					client, _, cleanup, err := a.dial()
+					client, cleanup, err := a.dial()
 					if err != nil {
 						return err
 					}
@@ -439,7 +408,7 @@ func (a *app) projectCommand() *cli.Command {
 }
 
 func (a *app) projectList(ctx context.Context) error {
-	client, _, cleanup, err := a.dial()
+	client, cleanup, err := a.dial()
 	if err != nil {
 		return err
 	}
@@ -481,7 +450,7 @@ func (a *app) costCommand() *cli.Command {
 					groupBy = append(groupBy, g)
 				}
 			}
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
@@ -744,33 +713,23 @@ func daemonCommand() *cli.Command {
 }
 
 // resolveDaemon decides which daemon the client should talk to and returns its
-// base URL, bearer token, whether it is a persistent/remote (multi-project)
-// daemon, and a teardown func (a no-op for everything except a one-shot
-// in-process daemon, which the caller must shut down on exit).
+// base URL, bearer token, and a teardown func (a no-op for everything except a
+// one-shot in-process daemon, which the caller must shut down on exit).
 //
-//   - --addr:        attach to the explicit/remote daemon.
-//   - --background:  spawn (if needed) a detached persistent daemon and attach.
-//   - default:       attach to a persistent local daemon if one is already
-//     running, else start the daemon in-process on an ephemeral
-//     address tied to this process (no persistence).
-func resolveDaemon(addr, token string, background bool, ws, configPath string) (target, tok string, persistent bool, shutdown func(), err error) {
+//   - --addr:  attach to the explicit/remote daemon.
+//   - default: attach to a persistent local daemon if one is already running,
+//     else start the daemon in-process on an ephemeral address tied to this
+//     process (no persistence).
+func resolveDaemon(addr, token, ws, configPath string) (target, tok string, shutdown func(), err error) {
 	noop := func() {}
 
 	if addr != "" {
-		return addr, token, true, noop, nil
-	}
-
-	if background {
-		accepted, err := daemon.EnsureBackgroundDaemon(ws, configPath, token)
-		if err != nil {
-			return "", "", false, noop, err
-		}
-		return daemon.LocalAddr, accepted, true, noop, nil
+		return addr, token, noop, nil
 	}
 
 	// Attach using explicit credentials or the private local token file.
 	if accepted, ok := daemon.ProbeLocal(token); ok {
-		return daemon.LocalAddr, accepted, true, noop, nil
+		return daemon.LocalAddr, accepted, noop, nil
 	}
 
 	// Otherwise: one-shot in-process daemon on an ephemeral loopback address,
@@ -784,11 +743,11 @@ func resolveDaemon(addr, token string, background bool, ws, configPath string) (
 		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: config.DefaultMaxTokens,
 	})
 	if err != nil {
-		return "", "", false, noop, fmt.Errorf("start in-process daemon: %w", err)
+		return "", "", noop, fmt.Errorf("start in-process daemon: %w", err)
 	}
 	fmt.Fprintln(os.Stderr, "ycc: running one-shot in-process daemon (no persistence); closing ycc ends in-flight work.")
-	fmt.Fprintln(os.Stderr, "ycc: use `ycc daemon` or `ycc --background` to keep work running after exit.")
-	return ip.Addr, ip.Token, false, func() { _ = ip.Shutdown() }, nil
+	fmt.Fprintln(os.Stderr, "ycc: run `ycc daemon` to keep work running after exit.")
+	return ip.Addr, ip.Token, func() { _ = ip.Shutdown() }, nil
 }
 
 // installSignalShutdown runs the teardown hook on SIGINT/SIGTERM so a one-shot

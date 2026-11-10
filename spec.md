@@ -46,7 +46,7 @@ The design follows these principles:
                                 │
              ┌──────────────────┼──────────────────┐
              │                  │                  │
-          TUI / CLI        embedded web       native iOS
+             CLI           embedded web       native iOS
 ```
 
 The daemon owns model execution, filesystem mutation, event persistence, project state, and
@@ -63,11 +63,12 @@ unary commands, and server streaming. `proto/ycc/v1/ycc.proto` is the authoritat
 
 Persistence is opt-in:
 
-- Plain `ycc` attaches to a reachable persistent local daemon when one exists; otherwise it runs
-  an in-process daemon tied to that client's lifetime. The current directory is its sole ordinary
+- `ycc daemon` runs a persistent multi-project service explicitly (`--web` also serves the web
+  client); run it under tmux or a service manager to outlive the shell.
+- CLI commands attach to a reachable persistent local daemon when one exists; otherwise they run
+  an in-process daemon tied to that command's lifetime. The current directory is its sole ordinary
   named project.
-- `ycc --background` starts a detached persistent daemon and attaches to it.
-- `ycc daemon` runs a persistent multi-project service explicitly.
+- Plain `ycc` with no command prints help pointing at `ycc daemon --web` and `ycc login`.
 - `ycc --addr <URL>` attaches to the specified daemon.
 
 A persistent daemon stores its project name-to-path registry in its state directory. Projects may
@@ -359,7 +360,7 @@ a separate total-request backstop defaults to one hour. Non-SSE responses have o
 limit. Caller/session cancellation remains independent and is never classified as a provider
 stall. Every registry-built streaming provider requires a terminal event before a response
 succeeds: OpenAI-compatible/Ollama SSE needs `[DONE]` or a finish reason, Anthropic needs
-`message_stop`, and Codex needs `response.completed`/`response.incomplete`. EOF after partial
+message_stop, and Codex needs `response.completed`/`response.incomplete`. EOF after partial
 output without that signal is a retryable failure, not success. Standalone provider clients
 built outside the registry retain their own transport defaults.
 
@@ -490,9 +491,8 @@ recovery also waits for delegated continuation. Clients present such a session a
 finished: session lists (`awaiting_jobs` on live `SessionInfo`/`SessionSummary` rows) and the
 session view (`SessionViewState.awaiting_jobs`, qualifying phase idle until the next
 coordinator-side phase change, false once the session is no longer live) show it as waiting on
-background jobs, subagent activity never changes the coordinator's phase, the TUI does not offer
-or perform the finished-session exit (which would stop the session and kill its jobs), and the
-idle push/bell is withheld until the post-wake report. Outcomes that nothing will wake stay terminal for
+background jobs, subagent activity never changes the coordinator's phase, and the idle push/bell
+is withheld until the post-wake report. Outcomes that nothing will wake stay terminal for
 those observers, so a blocked session never waits on delegated work forever.
 Output reads are non-consuming and use explicit absolute byte cursors/ranges or retained-tail
 requests, with retained intervals and
@@ -626,13 +626,12 @@ and `.ycc`, `node_modules`, `vendor`, `dist`, and `build` trees are additionally
 `include_ignored`, `include_hidden`, and `include_generated` independently and explicitly override
 those policies.
 
-The reproducible fixture in `TestSearchRepresentativeComparison` compares representative Search
-calls with Bash+rg tool calls. Both return the same references in one call (one model round trip per
-operation). Reference response sizes were 131 versus 227 bytes for a quoting-sensitive literal, 604
+A reproducible fixture (since pruned) compared representative Search calls with Bash+rg tool
+calls. Both returned the same references in one call (one model round trip per operation). Reference response sizes were 131 versus 227 bytes for a quoting-sensitive literal, 604
 versus 703 for 20 scoped regex matches, and 464 versus 563 for 30 per-file counts (Search versus
 Bash+rg). Search also supplies the explicit scope, mode, status, and continuation metadata above.
-The ignore, Unicode, context, large-result, pagination, error, and cancellation fixtures beside it
-cover the remaining contracts; this is a deterministic tool comparison, not a claim of unperformed
+The ignore, Unicode, context, large-result, pagination, error, and cancellation fixtures in the
+Search tests cover the remaining contracts; this is a deterministic tool comparison, not a claim of unperformed
 live-model evaluation.
 
 Read accepts paths outside the workspace, except the ycc user config/secrets directory and
@@ -1004,7 +1003,7 @@ and apply to the next review spawn.
 Workspace state and session logs remain on the daemon host. Remote clients dial that daemon
 directly over Connect; there is no daemon-to-daemon log replication. This preserves one writer for
 each event log and makes reconnect equivalent to subscribe-from-sequence. The embedded web client
-and native iOS app use the same boundary as the TUI and CLI.
+and native iOS app use the same boundary as the CLI.
 
 Best-effort daemon notifications can report questions, idle completion, errors, blocked work, and
 work-loop digests through an ntfy-compatible webhook. Delivery never blocks or fails a session.
@@ -1071,13 +1070,13 @@ model setup.
 
 ## 18. Client interaction model
 
-All clients project the same session/backlog/workstream state and may differ in layout. The TUI is
-the primary local surface; the embedded web client is a desktop-browser surface targeting TUI/iOS
-parity (`docs/design/web-client.md`); the iOS client adds native persistence, notifications, and
-phone navigation. Its backlog task detail can edit the task's
+All clients project the same session/backlog/workstream state and may differ in layout. The
+embedded web client is the desktop surface, at parity with iOS (`docs/design/web-client.md`); the
+CLI covers scripting and quick terminal use (starting and streaming sessions, backlog capture,
+cost, export), and its command usage belongs in `docs/cli.md`. The iOS client adds native
+persistence, notifications, and phone navigation. Its backlog task detail can edit the task's
 user-maintained frontmatter and Markdown body through the daemon, retaining failed drafts and
-replacing its projection with the canonical saved response. Detailed command usage belongs in
-`docs/cli.md`, and the TUI ownership map is in `docs/tui-components.md`.
+replacing its projection with the canonical saved response.
 
 Durable events render as a transcript with model/user turns prominent and tool, reasoning,
 review, and system detail foldable. Agents show pictures as markdown images naming workspace
@@ -1169,9 +1168,7 @@ lists without bookmarks. History summaries (including pinned rows) overlay these
 fields after the event-log cache, and the first bounded history page pins flagged rows beyond it
 alongside live ones. Desktop web and iOS lists show flagged sessions in a "Follow up" section at
 the top (below "Needs answer"). Clearing is **manual only**: sending input, answering a question,
-and reopening do not clear a bookmark. The TUI session browser and its transcript-browsing modal
-show `⚑` on flagged rows; `f` toggles the selected bookmark and `F` filters to follow-ups. Optional
-notes, remind-at/snooze reminders, and
+and reopening do not clear a bookmark. Optional notes, remind-at/snooze reminders, and
 opt-in auto-clearing are deferred; the current API stores only the flag and timestamp.
 
 Unread state belongs to the user, not to a device. Read marks are kept on the daemon, so a session
@@ -1222,7 +1219,7 @@ retries a parked retryable model failure.
 ### 18.8 Usage analytics
 
 Clients report what the user actually does so improvement work can follow real usage. The web
-client, iOS app, and TUI batch best-effort `visit`/`view`/`action`/`error` events to the daemon
+client and iOS app batch best-effort `visit`/`view`/`action`/`error` events to the daemon
 (`RecordUiEvents`); recording never blocks UI or surfaces errors. Events carry identifiers from a
 fixed vocabulary only — screen names, action ids, input method, error codes — never prompts,
 titles, paths, or ids; the daemon enforces a no-spaces charset and bounds and drops failing
@@ -1237,14 +1234,12 @@ improvement loop; an agent is pointed at the report on request. Event vocabulary
 
 ### 19.1 Machine setup
 
-Machine setup must work before a model does, so it is never an agent flow. There are three entry
+Machine setup must work before a model does, so it is never an agent flow. There are two entry
 points, and each leaves the same `ycc.toml`:
 
 - `ycc login anthropic|openai` stores the subscription login and adds an `auth = "oauth"` model,
   creating the config with all roles on it when none exists. A daemon already running keeps the
   config it loaded, so the command tells the user to restart it.
-- Plain `ycc` runs a TUI form when no usable configuration or fallback credential exists. The form
-  collects providers and role assignments and performs subscription login.
 - `ycc daemon` without a config runs the built-in Anthropic fallback. At startup it prints the web
   address, where the access token comes from (the generated token file or `YCC_TOKEN`), and what
   is missing: a usable coordinator model, or any project.

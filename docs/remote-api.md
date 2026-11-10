@@ -3,7 +3,7 @@
 This document describes how to talk to a **ycc workspace daemon** from a phone, a
 web app, or `curl` over a private network. It is the phone-facing surface referred
 to in spec §14: there is **no separate REST/SSE facade** — the daemon serves plain
-HTTP/JSON directly from the same [Connect](https://connectrpc.com) handlers the TUI
+HTTP/JSON directly from the same [Connect](https://connectrpc.com) handlers the CLI
 uses, so this HTTP/JSON surface *is* the phone API.
 
 Official Connect client libraries handle the wire protocol (framing, auth headers,
@@ -43,8 +43,8 @@ machine's tailnet IP, e.g. `http://100.64.0.1:8787`.
 ### Bearer token
 
 Every CLI daemon requires a token, including loopback listeners. If `YCC_TOKEN`
-(or `--token`) is unset, `ycc daemon` on loopback and `ycc --background` create or
-reuse `$XDG_STATE_HOME/ycc/daemon-token` (default
+(or `--token`) is unset, `ycc daemon` on loopback creates or
+reuses `$XDG_STATE_HOME/ycc/daemon-token` (default
 `~/.local/state/ycc/daemon-token`), stored with mode **0600**. Local clients,
 including `ycc doctor` and shell completion, read this file automatically when no
 explicit `--addr` is set. An in-process one-shot daemon instead uses a random
@@ -428,7 +428,7 @@ root is used and the response sets `rootFallback: true`. Every response echoes
 the absolute `root` it resolved against.
 
 Confinement: absolute paths and `..` escapes → `invalid_argument`; symlinks
-resolving outside the root and anything inside `.git/` → `permission_denied`;
+resolving outside the root and anything inside `.git/` → permission_denied;
 missing → `not_found`; `ListFiles` on a file or `ReadFile` on a directory or
 special file → `invalid_argument`. Listings omit dotfiles and dot-directories;
 an explicitly requested dotfile path (e.g. `.github/workflows/ci.yml`) can still
@@ -1178,8 +1178,8 @@ double; `priceStatus` is `priced` | `unpriced` | `partial`:
 ### GetBudget
 
 Return the configured spend-guard caps (spec §20.6). Session caps are enforced
-daemon-side at safe checkpoints; the loop caps let a client (the TUI work-loop
-driver) enforce the per-loop-run cap. Every field is `0` when unset (unlimited);
+daemon-side at safe checkpoints; the loop caps let a client that drives a work loop
+itself enforce the per-loop-run cap. Every field is `0` when unset (unlimited);
 `sessionCost`/`loopCost` are US dollars, `sessionTokens`/`loopTokens` count total
 tokens. Empty request.
 
@@ -1408,12 +1408,12 @@ used or could not safely preserve authority, so another rollover must not be off
    `fromSeq: <last-persisted-seq>`. The server replays only `seq > fromSeq`, then
    tails live — no gap, no duplication.
 
-The TUI automatically retries dropped subscriptions with bounded backoff. It
-requests replay from the sequence before its last applied durable event, so an idle
-stream can confirm reconnection by replaying that event; the duplicate is ignored. Authentication
-and missing-session errors require manual recovery (`ctrl+y` in the session view);
-transient actor tails are discarded on disconnect, while the draft and transcript
-remain available.
+Interactive clients should retry dropped subscriptions with bounded backoff,
+requesting replay from the sequence before their last applied durable event so an
+idle stream can confirm reconnection by replaying that event; the duplicate is
+ignored. Authentication and missing-session errors need user action rather than
+retries; transient actor tails are discarded on disconnect, while the draft and
+transcript remain available.
 
 ### Transient events (must be tolerated)
 

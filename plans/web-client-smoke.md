@@ -11,7 +11,7 @@ lifecycle, layout, and interaction.
 Build or install the release-candidate binary and start it with web serving and a bearer token.
 Use a desktop browser window about 1280px wide. Have at least two registered projects, one live
 attended session that can be made to ask a single and a batch question, one persisted (finished)
-session, a second client (TUI or iOS) on the same daemon, and a few pictures: an ordinary PNG or
+session, a second client (the CLI or iOS) on the same daemon, and a few pictures: an ordinary PNG or
 JPEG screenshot, one over 5 MiB, and a non-picture file. For the rich-transcript checks, also have
 a chat session whose reply contains markdown (a table, a task list, fenced Go code, a `diff` fence,
 an `https:` link, a `javascript:` link, and raw `<script>`/`<img onerror>` HTML), a session that
@@ -265,7 +265,7 @@ YCC_TOKEN=<token> ycc daemon --web --addr 127.0.0.1:8791
     N, L, Tab) are untouched. A toast raised repeatedly shows once with a "×N" count.
 39. Unread. A fresh browser profile shows the daemon's shared unread state, not an all-read
     baseline. Send input to a
-    session from the TUI or iOS: once it finishes, its row gets a blue dot and bold title, the
+    session from the CLI or iOS: once it finishes, its row gets a blue dot and bold title, the
     project switcher option counts it ("alpha · 1 waiting · 1 unread"), and the sidebar and Recent
     page offer Mark read / Mark all read. A running session never shows unread. Reload: still
     unread. Clicking the dot marks it read without opening it; opening a session marks it read up

@@ -4,12 +4,12 @@
 
 ## Context
 
-The daemon's Connect API already carries everything the TUI and iOS app do. A laptop user should be
-able to drive ycc from a desktop browser with the same reach as those clients instead of using the
-TUI. The first embedded web client was a deliberately narrow, phone-sized, dependency-free page
+The daemon's Connect API already carries everything the iOS app does. A laptop user should be
+able to drive ycc from a desktop browser with the same reach as that client; the terminal UI that
+once filled this role has been retired. The first embedded web client was a deliberately narrow, phone-sized, dependency-free page
 that watched and steered existing sessions through 11 of the service's RPCs. The native iOS app now
 covers the phone, so the web client is redesigned as a desktop-first client targeting full
-TUI/iOS parity.
+iOS parity.
 
 ## Decisions
 
@@ -231,7 +231,7 @@ token enforcement applies regardless of whether web assets are enabled.
 ### Verification
 
 Projection and reducer logic is unit-tested with Vitest, including the shared
-`testdata/event-contract/` fixtures that the TUI and YccKit also consume. Go tests cover asset
+`testdata/event-contract/` fixtures that YccKit also consumes. Go tests cover asset
 routing, history fallback, cache headers, authentication boundaries, and bundle freshness. Manual
 browser verification follows `plans/web-client-smoke.md`.
 

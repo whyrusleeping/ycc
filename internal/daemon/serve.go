@@ -1,7 +1,7 @@
 // Package daemon hosts the ycc service (session manager + Connect-RPC) and the
 // client-side helpers to reach it. Persistence is opt-in: a one-shot in-process
 // daemon (StartInProcess) is tied to the client's lifetime, while `ycc daemon`
-// (Serve) and `ycc --background` (EnsureBackgroundDaemon) run a persistent one.
+// (Serve) runs a persistent one.
 package daemon
 
 import (
@@ -57,8 +57,8 @@ type Options struct {
 	// Connect handler. The static assets
 	// are unauthenticated; the RPC surface stays behind the bearer
 	// AuthInterceptor unchanged. Off by default and forced off for the one-shot
-	// in-process path (that daemon is a private loopback backing the local TUI,
-	// not a remote-access surface).
+	// in-process path (that daemon is a private loopback backing one CLI
+	// command, not a remote-access surface).
 	Web bool
 }
 
@@ -334,8 +334,8 @@ type InProcess struct {
 // down by the caller (defer Shutdown / Close) so no listener survives exit.
 func StartInProcess(o Options) (*InProcess, error) {
 	o.Addr = "127.0.0.1:0"
-	// The one-shot in-process daemon is a private loopback backing the local
-	// TUI, not a remote-access surface, so it never serves the web client even
+	// The one-shot in-process daemon is a private loopback backing one CLI
+	// command, not a remote-access surface, so it never serves the web client even
 	// if the caller sets Web (matching how Addr is forced above).
 	o.Web = false
 	if o.Token == "" {
@@ -414,8 +414,8 @@ func persistPath(o Options) string {
 	if o.ConfigPath != "" {
 		return o.ConfigPath
 	}
-	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "ycc", "ycc.toml")
+	if p, err := UserConfigPath(); err == nil {
+		return p
 	}
 	return ""
 }

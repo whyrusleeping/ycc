@@ -1,28 +1,19 @@
 package e2e
 
 import (
-	"regexp"
+	"context"
+	"encoding/json"
+	"os/exec"
+	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-// TestE2EChatHappyPath is the first scenario proving the harness end-to-end. It
-// drives the REAL ycc binary under a PTY:
-//
-//  1. launch ycc one-shot in a temp workspace → the home menu renders;
-//  2. type an opening prompt and press enter → a chat session starts;
-//  3. the scripted model replies with a tool call (Read hello.txt), the engine
-//     executes it against the real workspace, then the model replies with a
-//     unique final marker;
-//  4. the marker becomes visible on the rendered screen;
-//  5. a PNG screenshot of the real screen is written (when YCC_TUI_SNAPSHOT_DIR
-//     is set) and the process quits cleanly.
-//
-// Assertions run only against the emulator's text grid — no pixel comparison.
-func TestE2EChatHappyPath(t *testing.T) {
-	const marker = "E2E-MARKER-42"
-
-	h := launch(t, []scriptedTurn{
-		// Turn 1: acknowledge, then call the real Read tool on the seeded file.
+// readScript is a chat turn that calls the real Read tool on the seeded file,
+// then (after the tool result) replies with marker.
+func readScript(marker string) []scriptedTurn {
+	return []scriptedTurn{
 		{
 			Text: "Reading the file first.",
 			ToolCalls: []scriptedToolCall{{
@@ -31,89 +22,122 @@ func TestE2EChatHappyPath(t *testing.T) {
 				Arguments: `{"file_path":"hello.txt"}`,
 			}},
 		},
-		// Turn 2 (after the tool result): final answer carrying the marker.
 		{Text: "All set — " + marker + " confirmed.", Finish: "stop"},
-	})
-
-	// The home menu renders the mode list; sync on a stable description line.
-	h.waitForText("Pick a backlog task")
-	h.screenshot("01_home_menu")
-
-	// Type an opening prompt (chat is the default-selected mode) and start it.
-	h.send("read the hello file")
-	h.waitForText("read the hello file")
-	h.send(keyEnter)
-
-	// The scripted model's final marker appears in the transcript.
-	h.waitForText(marker)
-	h.screenshot("02_chat_reply")
-
-	// The tool call round-tripped through the real engine: the model was asked
-	// for at least two turns (initial + post-tool-result).
-	if n := h.stub.requestCount(); n < 2 {
-		t.Fatalf("expected >= 2 LLM requests (initial + after tool result), got %d", n)
 	}
 }
 
-// TestE2EResize verifies the harness can resize the terminal and the real TUI
-// re-renders at the new width. It reuses the home-menu screen (no session) so it
-// stays fast, and asserts the menu still renders after a resize.
-func TestE2EResize(t *testing.T) {
-	h := launch(t, nil)
-	h.waitForText("Pick a backlog task")
+// TestE2EDaemonChatToolRoundTrip drives the persistent path end to end: a real
+// `ycc daemon` process, `ycc --addr … start` streaming a chat session whose
+// scripted model calls Read against the real workspace, and `ycc list` seeing
+// the session afterwards.
+func TestE2EDaemonChatToolRoundTrip(t *testing.T) {
+	const marker = "E2E-MARKER-42"
+	e := newEnv(t, readScript(marker))
+	e.startDaemon()
 
-	// Grow the PTY and tell the emulator; the running TUI redraws via SIGWINCH.
-	h.resize(150, 48)
-	// The title bar and the mode list survive the reflow.
-	h.waitForRegex(regexp.MustCompile(`ycc\s+—\s+home`))
-	h.waitForText("Pick a backlog task")
-	h.screenshot("03_resized_menu")
+	p := e.spawn(e.environ("YCC_TOKEN="+e.token), "--addr", e.addr, "start", "--mode", "chat", "read the hello file")
+	id := p.sessionID()
+	p.waitFor("Read(")
+	p.waitFor("hello from the e2e workspace") // the real tool result
+	p.waitFor(marker)
+
+	// The tool call round-tripped through the real engine: the model was asked
+	// for at least two turns (initial + post-tool-result).
+	if n := e.stub.requestCount(); n < 2 {
+		t.Fatalf("expected >= 2 LLM requests (initial + after tool result), got %d", n)
+	}
+	if out := e.cli("list"); !strings.Contains(out, id) || !strings.Contains(out, "chat") {
+		t.Fatalf("ycc list does not show chat session %s:\n%s", id, out)
+	}
 }
 
-// TestE2ESettingsOverlay verifies the modal settings overlay (esc from the home
-// menu) renders over the real TUI.
-func TestE2ESettingsOverlay(t *testing.T) {
-	h := launch(t, nil)
-	h.waitForText("Pick a backlog task")
-
-	h.send(keyEsc)
-	h.waitForText("coordinator model")
-	h.waitForText("model backends")
-	h.screenshot("04_settings_overlay")
-}
-
-// TestE2EAskUserPicker drives the ask_user option picker end-to-end: the
-// scripted model asks a question with suggested options, the real TUI renders
-// the picker, the harness picks an option by number, and the model's follow-up
-// (carrying a marker) confirms the answer round-tripped back through the engine.
-func TestE2EAskUserPicker(t *testing.T) {
+// TestE2EDaemonAskUser covers a parked question: the scripted model calls
+// ask_user, the CLI stream shows it, the answer arrives over the daemon API (as
+// web and iOS send it), and the model's follow-up confirms the round trip.
+func TestE2EDaemonAskUser(t *testing.T) {
 	const marker = "E2E-PICKER-7"
-
-	h := launch(t, []scriptedTurn{
-		// Turn 1: ask the user to choose a database, offering two options.
+	e := newEnv(t, []scriptedTurn{
 		{ToolCalls: []scriptedToolCall{{
 			ID:        "call_ask",
 			Name:      "ask_user",
 			Arguments: `{"question":"Which database should we use?","options":["postgres","sqlite"]}`,
 		}}},
-		// Turn 2 (after the answer): confirm with a marker.
 		{Text: "Great, going with your choice. " + marker, Finish: "stop"},
 	})
+	e.startDaemon()
 
-	h.waitForText("Pick a backlog task")
+	p := e.spawn(e.environ("YCC_TOKEN="+e.token), "--addr", e.addr, "start", "--mode", "chat", "help me pick a database")
+	id := p.sessionID()
+	p.waitFor("question_asked")
+	e.answer(id, 1)
+	p.waitFor(marker)
 
-	// Start a chat session that will immediately ask a question.
-	h.send("help me pick a database")
-	h.waitForText("help me pick a database")
-	h.send(keyEnter)
+	// The chosen option reached the model as the ask_user tool result.
+	e.stub.mu.Lock()
+	last := e.stub.requests[len(e.stub.requests)-1]
+	e.stub.mu.Unlock()
+	msgs, _ := last["messages"].([]any)
+	var result string
+	for _, m := range msgs {
+		if m, ok := m.(map[string]any); ok && m["role"] == "tool" && m["tool_call_id"] == "call_ask" {
+			result = fmtJSON(m["content"])
+		}
+	}
+	if !strings.Contains(result, "sqlite") || strings.Contains(result, "postgres") {
+		t.Fatalf("ask_user result does not carry the chosen option: %q\nmessages: %s", result, fmtJSON(msgs))
+	}
+}
 
-	// The picker renders the offered options.
-	h.waitForText("postgres")
-	h.waitForText("sqlite")
-	h.screenshot("05_ask_user_picker")
+// TestE2EOneShotInProcess covers the no-daemon path: `ycc start` with no
+// persistent daemon reachable runs one in-process, streams the session, and
+// tears the daemon down on ctrl-c.
+func TestE2EOneShotInProcess(t *testing.T) {
+	const marker = "E2E-ONESHOT-3"
+	e := newEnv(t, readScript(marker))
 
-	// Pick option 1 by number, then the model confirms.
-	h.send("1")
-	h.waitForText(marker)
-	h.screenshot("06_ask_user_answered")
+	p := e.spawn(e.environ(), "start", "--mode", "chat", "read the hello file")
+	p.waitFor("one-shot in-process daemon")
+	p.sessionID()
+	p.waitFor(marker)
+
+	if err := p.cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.exited:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("ycc did not exit after ctrl-c\n%s", p.output())
+	}
+}
+
+// TestE2ENoSubcommand checks plain `ycc` prints help pointing at the daemon and
+// web client, and an unknown command fails.
+func TestE2ENoSubcommand(t *testing.T) {
+	e := newEnv(t, nil)
+	run := func(args ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, yccBin, args...)
+		cmd.Dir = e.workspace
+		cmd.Env = e.environ()
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	out, err := run()
+	if err != nil {
+		t.Fatalf("ycc with no arguments failed: %v\n%s", err, out)
+	}
+	for _, want := range []string{"ycc daemon --web", "COMMANDS", "start"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help output lacks %q:\n%s", want, out)
+		}
+	}
+	if out, err := run("bogus"); err == nil || !strings.Contains(out, `unknown command "bogus"`) {
+		t.Fatalf("ycc bogus: err=%v\n%s", err, out)
+	}
+}
+
+func fmtJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

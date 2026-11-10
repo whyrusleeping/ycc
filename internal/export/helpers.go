@@ -9,10 +9,9 @@ import (
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
 )
 
-// This file ports the transcript-folding helpers from internal/tui/tui.go so the
-// markdown export applies the same fold/hide semantics without importing the TUI
-// (whose versions are entangled with the model struct). Pairing scans are
-// same-actor and id-matched to mirror the TUI.
+// This file holds the transcript-folding helpers the markdown export uses to
+// fold and hide events the way the clients' transcripts do. Pairing scans are
+// same-actor and id-matched.
 
 // mergedResultIdx reports the index of the tool_result folded into the tool_call
 // at i (rendered as one combined row), or -1 when there is no adjacent matching
@@ -233,7 +232,7 @@ func dropDuplicatePrefix(s, prev string) string {
 	return s
 }
 
-// --- data helpers (ported from tui.go) ---
+// --- data helpers ---
 
 func dataField(ev *v1.Event, key string) string {
 	if ev == nil || ev.DataJson == "" {
@@ -429,8 +428,7 @@ func argField(call *v1.Event, key string) string {
 	return ""
 }
 
-// detailLine renders a terse one-liner for bookkeeping event types, mirroring
-// the TUI's detailLine. Returns "" for types the export renders elsewhere or
+// detailLine renders a terse one-liner for bookkeeping event types. Returns "" for types the export renders elsewhere or
 // omits.
 func detailLine(ev *v1.Event) string {
 	switch ev.Type {

@@ -26,13 +26,13 @@ import (
 func (a *app) analyticsCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "analytics",
-		Usage: "show which parts of the web/iOS/TUI clients are actually used",
+		Usage: "show which parts of the web and iOS clients are actually used",
 		Description: "Summarises usage events the clients report to the daemon: screens and dwell time,\n" +
 			"actions and how they were invoked, navigation paths, errors, abandoned flows, and\n" +
 			"features never used. Raw events are JSONL under the printed storage directory.",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: "days", Value: 30, Usage: "trailing window in `days`"},
-			&cli.StringFlag{Name: "client", Usage: "only this client (web, ios, tui)"},
+			&cli.StringFlag{Name: "client", Usage: "only this client (web, ios)"},
 			&cli.IntFlag{Name: "top", Value: 25, Usage: "max rows per section (0 = all)"},
 			&cli.BoolFlag{Name: "json", Usage: "print the raw report as JSON"},
 		},

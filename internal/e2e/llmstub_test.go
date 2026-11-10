@@ -1,14 +1,13 @@
-// Package e2e is the end-to-end TUI test harness (task 0175). It drives the
-// REAL ycc binary under a pseudo-terminal against a scripted OpenAI-compatible
-// LLM stub, pipes the binary's terminal output into an in-process VT emulator,
-// and synchronizes tests on screen-content predicates over the emulator's text
-// grid. Optional PNG screenshots of the real rendered screen are written (via
-// the internal/tui/snapshot rasterizer) when YCC_TUI_SNAPSHOT_DIR is set.
+// Package e2e is the end-to-end harness for the daemon and CLI. It builds the
+// REAL ycc binary, runs it as a persistent `ycc daemon` (or as a one-shot
+// in-process daemon behind `ycc start`) against a scripted OpenAI-compatible
+// LLM stub, and synchronizes tests on the CLI's streamed event lines.
 //
 // The LLM is the ONLY mocked seam: everything else — the built binary, the
-// one-shot in-process daemon, the engine loop, tool execution, and the Bubble
-// Tea runtime — is real. See docs/e2e-tui.md for the layered design and how to
-// add scenarios.
+// daemon, its Connect API, the engine loop, and tool execution — is real. Add a
+// scenario by scripting model turns with newEnv and driving it through
+// spawn/cli (and the daemon API for actions the CLI lacks, like answering a
+// question).
 package e2e
 
 import (

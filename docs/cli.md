@@ -1,6 +1,6 @@
 # ycc CLI reference
 
-`ycc` is a single binary that is client, TUI, and daemon in one. The command tree
+`ycc` is a single binary that is CLI client and daemon in one. The command tree
 is built with [urfave/cli], so everything is discoverable from the binary itself:
 
 ```sh
@@ -14,7 +14,8 @@ This document mirrors that built-in help as a single reference.
 ycc [global options] [command [command options]] [arguments]
 ```
 
-With **no command**, `ycc` launches the interactive TUI (home menu).
+With **no command**, `ycc` prints its help. The interactive clients are the web app
+(`ycc daemon --web`) and the iOS app.
 
 ## Global options
 
@@ -26,20 +27,14 @@ These precede the subcommand (e.g. `ycc --addr URL list`).
 | `--token T` | bearer token for daemon access; prefer `YCC_TOKEN` to keep secrets out of process listings. Without `--addr`, local clients also try the private local token file (see [Connection & auth](remote-api.md#connection--auth)) |
 | `--workspace DIR` | workspace for new sessions (default: current directory) |
 | `--config FILE` | TOML model config for the local daemon |
-| `--background` | spawn a detached persistent daemon and attach (opt-in persistence) |
 | `--help, -h` | show help |
 
-See the README for the persistence model behind `--addr` / `--background` / the
-default in-process daemon.
+Without `--addr`, a command attaches to a persistent local daemon if one is
+running, otherwise it runs a one-shot daemon in-process that ends with the
+command. Run [`ycc daemon`](#ycc-daemon--run-the-persistent-daemon) for
+persistence.
 
 ## Commands
-
-### `ycc` (no subcommand) — TUI
-
-Launches the interactive home menu. On a persistent/remote (multi-project) daemon
-it shows the project picker first; a one-shot in-process daemon has a single
-implicit project (the current directory). If there is no usable model config, a
-first-run setup wizard runs and writes `~/.config/ycc/ycc.toml`.
 
 ### `ycc start [task]` — start a session and stream it
 
@@ -159,7 +154,7 @@ marks fully unpriced rows.
 
 ### `ycc analytics` — client usage report
 
-Summarises the usage events the web/iOS/TUI clients report to the daemon
+Summarises the usage events the web and iOS clients report to the daemon
 (`docs/design/usage-analytics.md`): screens with visit counts and dwell time,
 actions with how they were invoked (shortcut/palette/click/…) and on which
 screen, navigation paths, user-visible errors by code, abandoned flows, catalog
@@ -170,13 +165,13 @@ store directly; the header names the raw JSONL directory for deeper digging.
 | Flag | Description |
 |------|-------------|
 | `--days N` | trailing window (default 30) |
-| `--client NAME` | only `web`, `ios`, or `tui` |
+| `--client NAME` | only `web` or `ios` |
 | `--top N` | max rows per section (default 25, 0 = all) |
 | `--json` | print the raw `GetUiAnalytics` response |
 
 ### `ycc task <add|list|show|compact>` — capture & browse the backlog from the shell
 
-Jot, list, and read backlog tasks without opening the TUI — from a terminal, a
+Jot, list, and read backlog tasks without opening a client — from a terminal, a
 git hook, or another tool. Like `spec-check`, it **works with no daemon**: it
 uses a running daemon when one is reachable (or `--addr`), otherwise it operates
 directly on `<workspace>/backlog` via the same store the daemon uses.

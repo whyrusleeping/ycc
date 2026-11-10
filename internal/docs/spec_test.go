@@ -242,10 +242,8 @@ func TestRepositoryDocsConfig(t *testing.T) {
 		"docs/design/watches.md",
 		"docs/design/web-client.md",
 		"docs/design/workstream-integration.md",
-		"docs/e2e-tui.md",
 		"docs/model-ux-evaluations.md",
 		"docs/remote-api.md",
-		"docs/tui-components.md",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("configured docs set = %v, want %v", got, want)
@@ -255,7 +253,7 @@ func TestRepositoryDocsConfig(t *testing.T) {
 			t.Errorf("configured docs set missing %q", path)
 		}
 	}
-	for _, path := range []string{"memory.md", "backlog/0206-task.md", "docs/reports/report.md", "docs/tui.png"} {
+	for _, path := range []string{"memory.md", "backlog/0206-task.md", "docs/reports/report.md", "docs/images/ios/bug-fixed.png"} {
 		if got[path] {
 			t.Errorf("configured docs set includes non-normative %q", path)
 		}

@@ -35,7 +35,7 @@ func (a *app) exportCommand() *cli.Command {
 			}
 			project := cmd.String("project")
 
-			client, _, cleanup, err := a.dial()
+			client, cleanup, err := a.dial()
 			if err != nil {
 				return err
 			}
