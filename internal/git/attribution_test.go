@@ -49,9 +49,9 @@ func TestChangesForSharedWorktree(t *testing.T) {
 		!reflect.DeepEqual(cb.Deferred, []string{"x.go"}) || len(cb.Preexisting) != 0 {
 		t.Fatalf("B attribution foreign=%v shared=%v deferred=%v preexisting=%v", cb.Foreign, cb.Shared, cb.Deferred, cb.Preexisting)
 	}
-	// Strict (unattributed) inspection keeps refusing the ambiguous overlap.
-	if _, err := r.Changes(baseB); err == nil || !strings.Contains(err.Error(), "already dirty") {
-		t.Fatalf("strict changeset accepted ambiguous overlap: %v", err)
+	// Unattributed inspection includes the changed pre-dirty file whole.
+	if strict, err := r.Changes(baseB); err != nil || !reflect.DeepEqual(strict.Preexisting, []string{"x.go"}) {
+		t.Fatalf("strict changeset did not include changed pre-dirty file: %+v, %v", strict, err)
 	}
 
 	// A commits first.
@@ -183,9 +183,9 @@ func TestCommitPreservesIndexChangesMadeDuringHooks(t *testing.T) {
 }
 
 // A baseline-dirty path changed by an unclaimed writer (e.g. this session's own
-// `go mod tidy` rewriting an already-dirty go.sum) is still refused as
-// ambiguous rather than silently dropped from the commit.
-func TestChangesForRefusesUnclaimedChangeToPreexistingPath(t *testing.T) {
+// `go mod tidy` rewriting an already-dirty go.sum) is included whole and
+// reported, rather than refused or silently dropped from the commit.
+func TestChangesForIncludesUnclaimedChangeToPreexistingPath(t *testing.T) {
 	r, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -197,8 +197,9 @@ func TestChangesForRefusesUnclaimedChangeToPreexistingPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(r.Dir, "go.sum"), "a\nuser\ntidy\n")
-	_, err = r.ChangesFor(base, &Attribution{Mine: map[string]bool{}, Foreign: map[string]bool{}})
-	if err == nil || !strings.Contains(err.Error(), "go.sum") {
-		t.Fatalf("unclaimed change to a baseline-dirty path = %v", err)
+	c, err := r.ChangesFor(base, &Attribution{Mine: map[string]bool{}, Foreign: map[string]bool{}})
+	if err != nil || !reflect.DeepEqual(c.Paths, []string{"go.sum"}) || !reflect.DeepEqual(c.Preexisting, []string{"go.sum"}) ||
+		!reflect.DeepEqual(c.Unclaimed, []string{"go.sum"}) || !strings.Contains(c.Diff, "+user") || !strings.Contains(c.Diff, "+tidy") {
+		t.Fatalf("unclaimed change to a baseline-dirty path = %+v, %v", c, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -36,6 +37,13 @@ type finalizationRecord struct {
 	Completion     *docs.Completion    `json:"completion"`
 	Commit         *git.CommitRecovery `json:"commit,omitempty"`
 	SHA            string              `json:"sha,omitempty"`
+	// Paths are the extra files the commit call named (adopted whole).
+	Paths []string `json:"paths,omitempty"`
+	// Scope is the repository-relative path scope when the finalization was
+	// prepared. Carry lists earlier-baseline scope files adopted explicitly
+	// after the journal was re-anchored on a later session's baseline.
+	Scope []string `json:"scope,omitempty"`
+	Carry []string `json:"carry,omitempty"`
 }
 
 type finalizationJournal interface {
@@ -53,36 +61,42 @@ func (j fileFinalizationJournal) Save(record *finalizationRecord) error {
 	return saveFinalization(j.path, record)
 }
 
-func finalizeTask(ctx context.Context, d *Deps, taskID, message, outcome string) (string, error) {
+// finalizeTask accepts and commits taskID. paths names extra files to adopt
+// whole. notes report what the commit carried beyond the session's own edits
+// (preexisting changes, a re-anchored baseline, a shortened subject).
+func finalizeTask(ctx context.Context, d *Deps, taskID, message, outcome string, paths []string) (string, []string, error) {
 	if err := finalizationCanProceed(ctx, d); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	task, err := d.Docs.Get(taskID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// Docs accepts numeric aliases (for example "1" for "0001"). Recovery
 	// state and emitted identities must always use the durable canonical ID.
 	taskID = task.ID
 	path, err := d.Repo.FinalizationPath(taskID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return finalizeTaskWithJournal(ctx, d, taskID, message, outcome, fileFinalizationJournal{path: path})
+	var notes []string
+	sha, err := finalizeTaskWithJournal(ctx, d, taskID, message, outcome, paths, fileFinalizationJournal{path: path}, &notes)
+	return sha, notes, err
 }
 
-func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outcome string, journal finalizationJournal) (string, error) {
+func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outcome string, paths []string, journal finalizationJournal, notes *[]string) (string, error) {
 	task, err := d.Docs.Get(taskID)
 	if err != nil {
 		return "", err
 	}
 	taskID = task.ID
+	paths = normalizePaths(paths)
 	record, err := journal.Load()
 	if err != nil {
 		return "", err
 	}
 	if record == nil {
-		preflight, err := d.changeset(taskID)
+		preflight, err := d.changeset(taskID, paths...)
 		if err != nil {
 			return "", fmt.Errorf("unsafe changeset: %w", err)
 		}
@@ -111,7 +125,7 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 		if err != nil {
 			return "", err
 		}
-		record = newFinalizationRecord(taskID, message, outcome, preflight.BaselineOrigin, preflight.ID, completion)
+		record = newFinalizationRecord(taskID, message, outcome, paths, preflight, completion)
 		if err := journal.Save(record); err != nil {
 			return "", fmt.Errorf("persist finalization intent: %w", err)
 		}
@@ -123,13 +137,16 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 			return "", fmt.Errorf("finalization journal belongs to task %s, not %s", record.TaskID, taskID)
 		}
 		if record.Phase == finalizationPrepared {
-			if err := renewUncommittedFinalization(d, journal, record, message, outcome); err != nil {
+			if err := renewUncommittedFinalization(d, journal, record, message, outcome, paths, notes); err != nil {
 				return "", err
 			}
 		}
-		if record.Message != message || record.Outcome != outcome {
-			return "", fmt.Errorf("task %s has a different pending or completed finalization; retry with its original message and outcome", taskID)
+		if record.Message != message || record.Outcome != outcome || !slices.Equal(record.Paths, paths) {
+			return "", fmt.Errorf("task %s has a different pending or completed finalization; retry with its original message, outcome and paths", taskID)
 		}
+	}
+	if _, shortened := docs.CommitSubject(message); shortened && record.Phase == finalizationPrepared {
+		*notes = append(*notes, "the task records the commit subject shortened to 240 characters; git keeps the full message")
 	}
 
 	if record.Phase == finalizationPrepared || record.Phase == finalizationTaskCompleted {
@@ -156,7 +173,7 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 		if sectionErr != nil {
 			return "", restoreAfterUncommittedFailure(d.Docs, journal, record, sectionErr)
 		}
-		sha, state, classified, commitErr := finishGitCommit(d, record, journal)
+		sha, state, classified, commitErr := finishGitCommit(d, record, journal, notes)
 		if commitErr == nil {
 			d.releaseCommittedClaims(record.Commit)
 		}
@@ -216,18 +233,80 @@ func sameSessionBaseline(baselineID string, changes *git.Changeset) bool {
 	return baselineID == changes.BaselineOrigin || baselineID == changes.BaselineID
 }
 
-func newFinalizationRecord(taskID, message, outcome, baselineID, finalizationID string, completion *docs.Completion) *finalizationRecord {
+func newFinalizationRecord(taskID, message, outcome string, paths []string, preflight *git.Changeset, completion *docs.Completion) *finalizationRecord {
 	return &finalizationRecord{
 		Version: finalizationRecordVersion, TaskID: taskID,
-		Message: message, Outcome: outcome, BaselineID: baselineID, FinalizationID: finalizationID,
+		Message: message, Outcome: outcome, BaselineID: preflight.BaselineOrigin, FinalizationID: preflight.ID,
 		Phase: finalizationPrepared, Completion: completion,
+		Paths: paths, Scope: append([]string(nil), preflight.Paths...),
 	}
 }
 
+// finalizationChanges inspects the task's changeset with the record's explicit
+// paths. A journal prepared under another session baseline (an earlier session
+// of this task) is re-anchored on the current one: the files it scoped are
+// adopted explicitly, so its accepted work is carried rather than narrowed
+// away. It reports whether the record was re-anchored; the caller saves it.
+func finalizationChanges(d *Deps, record *finalizationRecord, notes *[]string) (*git.Changeset, bool, error) {
+	adopted, err := finalizationAdoptions(d, record.Paths, record.Carry)
+	if err != nil {
+		return nil, false, err
+	}
+	changes, err := d.changeset(record.TaskID, adopted...)
+	if err != nil || sameSessionBaseline(record.BaselineID, changes) {
+		return changes, false, err
+	}
+	carry := append(append([]string(nil), record.Carry...), record.Scope...)
+	if record.Commit != nil {
+		carry = append(carry, record.Commit.Paths...)
+	}
+	carry = normalizePaths(carry)
+	if adopted, err = finalizationAdoptions(d, record.Paths, carry); err != nil {
+		return nil, false, err
+	}
+	if changes, err = d.changeset(record.TaskID, adopted...); err != nil {
+		return nil, false, err
+	}
+	*notes = append(*notes, fmt.Sprintf("finalization was prepared under an earlier session baseline (%s); re-anchored on this session's baseline (%s), carrying the %d files it scoped",
+		shortCommit(record.BaselineID), shortCommit(changes.BaselineOrigin), len(carry)))
+	record.BaselineID, record.Carry = changes.BaselineOrigin, carry
+	return changes, true, nil
+}
+
+// finalizationAdoptions resolves a record's explicit paths: the commit call's
+// paths as given, plus carried repository-relative scope files.
+func finalizationAdoptions(d *Deps, paths, carry []string) ([]string, error) {
+	if len(carry) == 0 {
+		return paths, nil
+	}
+	top, err := d.Repo.TopLevel()
+	if err != nil {
+		return nil, fmt.Errorf("locate carried finalization files: %w", err)
+	}
+	out := append([]string(nil), paths...)
+	for _, path := range carry {
+		out = append(out, filepath.Join(top, filepath.FromSlash(path)))
+	}
+	return out, nil
+}
+
+// normalizePaths trims, sorts and deduplicates paths; nil when empty.
+func normalizePaths(paths []string) []string {
+	var out []string
+	for _, path := range paths {
+		if path = strings.TrimSpace(path); path != "" {
+			out = append(out, path)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // renewUncommittedFinalization lets a rejected pre-commit attempt incorporate
-// source fixes and additional task evidence. Once git has durably created an
-// exact commit, its task transition and scoped identity remain strict.
-func renewUncommittedFinalization(d *Deps, journal finalizationJournal, record *finalizationRecord, message, outcome string) error {
+// source fixes, additional task evidence and different explicit paths. Once
+// git has durably created an exact commit, its task transition and scoped
+// identity remain strict.
+func renewUncommittedFinalization(d *Deps, journal finalizationJournal, record *finalizationRecord, message, outcome string, paths []string, notes *[]string) error {
 	current, err := d.Docs.Get(record.TaskID)
 	if err != nil {
 		return err
@@ -248,21 +327,33 @@ func renewUncommittedFinalization(d *Deps, journal finalizationJournal, record *
 			return nil
 		}
 	}
-	preflight, err := d.changeset(record.TaskID)
+	if sameFinalizationTask(current, record.Completion.After) {
+		// Interrupted after applying completion; resume the saved transition
+		// (re-anchoring it if this is a later session).
+		reanchor := *record
+		if _, moved, err := finalizationChanges(d, &reanchor, notes); err != nil {
+			return fmt.Errorf("unsafe changeset while renewing finalization: %w", err)
+		} else if moved {
+			reanchor.Commit = nil
+			*record = reanchor
+			if err := journal.Save(record); err != nil {
+				return fmt.Errorf("re-anchor finalization: %w", err)
+			}
+		}
+		return nil
+	}
+	probe := *record
+	probe.Paths = paths
+	preflight, _, err := finalizationChanges(d, &probe, notes)
 	if err != nil {
 		return fmt.Errorf("unsafe changeset while renewing finalization: %w", err)
-	}
-	if !sameSessionBaseline(record.BaselineID, preflight) {
-		return fmt.Errorf("task %s finalization belongs to original baseline %s, not current baseline %s; reopen the original session baseline rather than narrowing accepted work", record.TaskID, record.BaselineID, preflight.BaselineID)
-	}
-	if sameFinalizationTask(current, record.Completion.After) {
-		return nil // interrupted after applying completion; resume the saved transition
 	}
 	completion, err := d.Docs.PrepareCompletion(record.TaskID, outcome, message)
 	if err != nil {
 		return err
 	}
-	fresh := newFinalizationRecord(record.TaskID, message, outcome, record.BaselineID, preflight.ID, completion)
+	fresh := newFinalizationRecord(record.TaskID, message, outcome, paths, preflight, completion)
+	fresh.Carry = probe.Carry
 	*record = *fresh
 	if err := journal.Save(record); err != nil {
 		return fmt.Errorf("renew rejected finalization: %w", err)
@@ -281,7 +372,7 @@ func restoreAfterUncommittedFailure(store *docs.Store, journal finalizationJourn
 	return cause
 }
 
-func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJournal) (string, git.CommitState, bool, error) {
+func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJournal, notes *[]string) (string, git.CommitState, bool, error) {
 	if record.Commit != nil {
 		state, sha, err := d.Repo.CommitStatus(record.Commit, record.Message)
 		if err != nil {
@@ -308,12 +399,15 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 			return recoveredOr(sha, latestSHA), latest, true, recoverErr
 		}
 	}
-	changes, err := d.changeset(record.TaskID)
+	changes, moved, err := finalizationChanges(d, record, notes)
 	if err != nil {
 		return "", git.CommitUncreated, true, fmt.Errorf("unsafe changeset after task finalization: %w", err)
 	}
-	if !sameSessionBaseline(record.BaselineID, changes) {
-		return "", git.CommitUncreated, true, fmt.Errorf("task %s finalization belongs to original baseline %s, not current baseline %s; reopen the original session baseline rather than narrowing accepted work", record.TaskID, record.BaselineID, changes.BaselineID)
+	if moved {
+		record.Commit = nil // never created (checked above); bound to the old baseline's scope
+		if err := journal.Save(record); err != nil {
+			return "", git.CommitUncreated, true, fmt.Errorf("re-anchor finalization: %w", err)
+		}
 	}
 	if record.Commit == nil {
 		record.Commit = changes.Recovery()
@@ -325,6 +419,7 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 	}
 	sha, err := d.Repo.Commit(changes, record.Message)
 	if err == nil {
+		*notes = append(*notes, changesetNotes(changes)...)
 		return sha, git.CommitInstalled, true, nil
 	}
 	state, knownSHA, statusErr := d.Repo.CommitStatus(record.Commit, record.Message)
@@ -332,6 +427,22 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 		return knownSHA, state, false, fmt.Errorf("commit changeset %s: %v; inspect commit state: %v", changes.ID, err, statusErr)
 	}
 	return knownSHA, state, true, fmt.Errorf("commit changeset %s: %w", changes.ID, err)
+}
+
+// changesetNotes reports what a committed changeset carried beyond this
+// session's own edits, for the commit tool's result.
+func changesetNotes(changes *git.Changeset) []string {
+	var notes []string
+	if len(changes.Preexisting) > 0 {
+		notes = append(notes, fmt.Sprintf("included whole, with changes already uncommitted before this session (%d): %s", len(changes.Preexisting), boundedPathList(changes.Preexisting, 1024)))
+	}
+	if len(changes.Shared) > 0 {
+		notes = append(notes, fmt.Sprintf("included whole, also written by another session (%d): %s", len(changes.Shared), boundedPathList(changes.Shared, 1024)))
+	}
+	if changes.MovedFrom != "" {
+		notes = append(notes, fmt.Sprintf("HEAD had moved outside the session baseline's history (from %s); the baseline was re-anchored on the current HEAD, so files that move left differing from HEAD were committed as changes", shortCommit(changes.MovedFrom)))
+	}
+	return notes
 }
 
 func recoveredOr(fallback, recovered string) string {

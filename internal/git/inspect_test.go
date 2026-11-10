@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -46,8 +47,8 @@ func TestInspectChangesReadOnlyScopedAndStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(r.Dir, "user.txt"), "overlapping edit\n")
-	if _, _, err := r.InspectChanges(b); err == nil || !strings.Contains(err.Error(), "overlap") {
-		t.Fatalf("expected baseline ownership overlap: %v", err)
+	if overlap, _, err := r.InspectChanges(b); err != nil || !reflect.DeepEqual(overlap.Preexisting, []string{"user.txt"}) {
+		t.Fatalf("changed baseline-dirty file not included whole: %+v, %v", overlap, err)
 	}
 	writeFile(t, filepath.Join(r.Dir, "user.txt"), "baseline dirty\n")
 	writeFile(t, filepath.Join(r.Dir, "task.txt"), "newer\n")
@@ -65,7 +66,11 @@ func TestInspectChangesReadOnlyScopedAndStale(t *testing.T) {
 	tree := gitAt(t, r.Dir, "rev-parse", "HEAD^{tree}")
 	unrelated := gitAt(t, r.Dir, "commit-tree", tree, "-m", "unrelated history")
 	gitAt(t, r.Dir, "update-ref", "HEAD", unrelated)
-	if _, _, err := r.InspectChanges(b); err == nil || !strings.Contains(err.Error(), "stale") {
-		t.Fatalf("expected stale baseline: %v", err)
+	// A move outside the baseline's history re-anchors the baseline instead of
+	// going stale, and is reported.
+	writeFile(t, filepath.Join(r.Dir, "task.txt"), "after rewrite\n")
+	rewritten, _, err := r.InspectChanges(b)
+	if err != nil || rewritten.MovedFrom == "" || !reflect.DeepEqual(rewritten.Paths, []string{"task.txt"}) {
+		t.Fatalf("non-fast-forward re-anchor: %+v, %v", rewritten, err)
 	}
 }

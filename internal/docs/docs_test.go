@@ -130,19 +130,16 @@ func TestCompleteCompactsBodyAndMetadataStillResolvesDependency(t *testing.T) {
 	}
 }
 
-func TestCompleteOmitsMissingCriteriaAndRejectsOverlongRecords(t *testing.T) {
+func TestCompleteOmitsMissingCriteriaAndKeepsLongRecords(t *testing.T) {
+	// Long outcomes and subjects no longer fail completion (task 0462).
 	s := NewStore(t.TempDir())
 	task, err := s.Create("no criteria", "## Description\nIntent only.\n\n## Work log\n", 1, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Complete(task.ID, strings.Repeat("word ", maxOutcomeRunes), "feat: concise"); err == nil {
-		t.Fatal("overlong outcome accepted")
-	}
-	if _, err := s.Complete(task.ID, "Readable outcome.", strings.Repeat("x", maxCommitRunes+1)); err == nil {
-		t.Fatal("overlong commit subject accepted")
-	}
-	if _, err := s.Complete(task.ID, "Readable outcome.", "feat: concise"); err != nil {
+	long := strings.TrimSpace(strings.Repeat("word ", maxOutcomeRunes))
+	message := strings.Repeat("x", maxCommitRunes+10) + "\n\nbody line"
+	if _, err := s.Complete(task.ID, long, message); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Get(task.ID)
@@ -151,6 +148,13 @@ func TestCompleteOmitsMissingCriteriaAndRejectsOverlongRecords(t *testing.T) {
 	}
 	if strings.Contains(got.Body, "## Acceptance criteria") {
 		t.Fatalf("missing criteria rendered as an empty section:\n%s", got.Body)
+	}
+	subject, shortened := CommitSubject(message)
+	if !shortened || len([]rune(subject)) != maxCommitRunes || !strings.HasSuffix(subject, "…") {
+		t.Fatalf("subject = %q (shortened %v)", subject, shortened)
+	}
+	if !strings.Contains(got.Body, long) || !strings.Contains(got.Body, "Commit: "+subject+"\n") || strings.Contains(got.Body, "body line") {
+		t.Fatalf("long outcome or subject not recorded:\n%s", got.Body)
 	}
 }
 

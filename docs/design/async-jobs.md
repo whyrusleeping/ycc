@@ -114,11 +114,13 @@ even when already dirty. A session's changeset:
 
 - excludes paths only other sessions claimed;
 - includes and flags paths several sessions wrote;
-- adopts baseline-dirty paths the session edited itself, and changed bookkeeping;
-- defers baseline-dirty paths another session is writing.
+- adopts baseline-dirty paths that changed since the baseline, whole;
+- defers baseline-dirty paths only another session is writing.
 
-A baseline-dirty path changed by a writer nobody claimed is refused as ambiguous rather than silently
-left out. Typically that writer is the user editing files by hand.
+A baseline-dirty path changed by a writer nobody claimed, typically the user editing files by hand,
+is included whole rather than refused or silently left out. Precise hunk attribution was judged not
+worth its complexity: refusing pushed agents to split tasks or leave reviewed work uncommitted over a
+few lines in a file that also held another task's changes.
 
 When another session commits, HEAD fast-forwards. Each session's baseline is rebased by overlaying
 the newly committed paths, so the next changeset neither goes stale nor re-attributes work already in

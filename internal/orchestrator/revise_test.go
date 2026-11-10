@@ -846,15 +846,28 @@ func TestFreshReReviewRefusesWhenCurrentChangesetCannotBeDerived(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git commit: %v: %s", err, out)
 	}
-	// A fast-forward is absorbed by rebasing the baseline; rewriting history
-	// (here: replacing HEAD with an unrelated root commit) is not.
-	cmd = exec.Command("sh", "-c", `git update-ref HEAD "$(git commit-tree "$(git rev-parse 'HEAD^{tree}')" -m unrelated)"`)
-	cmd.Dir = ws
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("rewrite history: %v: %s", err, out)
+	// A fast-forward is absorbed by rebasing the baseline (and so is a history
+	// rewrite); a distinct staged variant of the task document cannot be
+	// committed without losing it, so the changeset cannot be derived.
+	task, err := store.Get("0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(task.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(task.Path, append(original, "staged variant\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", ws, "add", "-A").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	if err := os.WriteFile(task.Path, append(original, "worktree variant\n"...), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	res, _ := reReview(d).Call(context.Background(), map[string]any{"task_id": "0001", "context_mode": "fresh"})
-	if !res.IsError || !strings.Contains(res.Content, "HEAD moved") {
+	if !res.IsError || !strings.Contains(res.Content, "distinct staged content") {
 		t.Fatalf("fresh re-review did not propagate changeset failure: %+v", res)
 	}
 	if reviewer.i != 1 {

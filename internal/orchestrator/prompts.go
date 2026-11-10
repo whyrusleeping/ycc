@@ -106,6 +106,9 @@ do not infer parent completion solely from child statuses.
 Once criteria are met and review is accepted, call commit with the task and concise outcome,
 then finish. Commit owns the done transition and task compaction; do not mark done first or
 mutate the accepted tree afterward. An accepted review alone does not prove unmet criteria complete.
+A commit may carry other uncommitted work in files you changed, and its paths argument adds whole
+files that must land together; name co-included tasks in the message or outcome rather than
+splitting or abandoning work to avoid that.
 In attended work, after about three unsuccessful review rounds, leave in_review with remaining work.
 
 Ask only for user intent or hard-to-reverse decisions you cannot responsibly resolve. An

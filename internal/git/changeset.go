@@ -91,6 +91,10 @@ type Changeset struct {
 	// or generator output, structured docs writes, or another writer that left
 	// no claim); their attribution is approximate.
 	Unclaimed []string
+	// MovedFrom is the baseline commit when HEAD has since moved outside its
+	// history (reset, rebase, checkout). The baseline was re-anchored on the
+	// current HEAD, so files the move left differing from HEAD count as changes.
+	MovedFrom string
 
 	baseline *Baseline
 	adopted  []string // canonical repo-relative files, retained for commit revalidation
@@ -334,16 +338,17 @@ func (r *Repo) requireObject(object, wantType string) error {
 	return nil
 }
 
-// Changes returns the exact task-owned snapshot relative to baseline. Any path
-// that was dirty at baseline is excluded while unchanged; if either its index
-// or worktree state changed, ownership is ambiguous and Changes refuses it.
+// Changes returns the task-owned snapshot relative to baseline. A path that was
+// dirty at baseline is excluded while unchanged; once its index or worktree
+// state changes it is included whole, earlier changes and all, and reported in
+// Preexisting. A path that never changed since the baseline is never included.
 func (r *Repo) Changes(b *Baseline) (*Changeset, error) {
 	return r.inspectIncluding(b, nil, nil, true)
 }
 
 // ChangesIncluding explicitly adopts individual files, including their preexisting
 // worktree content. Paths are absolute or relative to Repo.Dir, not pathspecs.
-// All other dirty baseline paths retain the strict Changes ownership checks.
+// All other dirty baseline paths follow the Changes rules.
 func (r *Repo) ChangesIncluding(b *Baseline, paths ...string) (*Changeset, error) {
 	adopted, err := r.canonicalAdoptedPaths(paths)
 	if err != nil {
@@ -410,7 +415,13 @@ func (r *Repo) canonicalAdoptedPaths(paths []string) ([]string, error) {
 		adopted = append(adopted, path)
 	}
 	sort.Strings(adopted)
-	return adopted, nil
+	unique := adopted[:0]
+	for i, path := range adopted {
+		if i == 0 || path != adopted[i-1] {
+			unique = append(unique, path)
+		}
+	}
+	return unique, nil
 }
 
 func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution, persist bool) (*Changeset, error) {
@@ -421,16 +432,19 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	if err != nil {
 		return nil, fmt.Errorf("inspect changeset HEAD: %w", err)
 	}
+	movedFrom := ""
 	if head != b.head {
 		// Another session (or this one) committed. A fast-forward is absorbed by
-		// treating the newly committed paths as clean baseline state; anything
-		// else (reset, rebase, checkout) leaves ownership unreconstructable.
+		// treating the newly committed paths as clean baseline state. A move
+		// outside the baseline's history (reset, rebase, checkout) re-anchors the
+		// baseline the same way: the work is still in the worktree, so it stays
+		// committable, and MovedFrom tells the caller ownership is approximate.
 		forward, err := r.IsAncestor(b.head, head)
 		if err != nil {
 			return nil, fmt.Errorf("inspect changeset HEAD history: %w", err)
 		}
 		if !forward {
-			return nil, fmt.Errorf("changeset baseline %s is stale: HEAD moved from %s to %s outside its history; start a new task/session baseline before committing", b.ID, shortSHA(b.head), shortSHA(head))
+			movedFrom = b.head
 		}
 		if b, err = r.rebaseBaseline(b, head); err != nil {
 			return nil, fmt.Errorf("rebase changeset baseline onto %s: %w", shortSHA(head), err)
@@ -461,11 +475,11 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	if err != nil {
 		return nil, err
 	}
-	// A baseline-dirty path that changed since the baseline is ambiguous only
-	// while it still differs from HEAD: once it matches HEAD (another session
-	// committed it, or its earlier changes were discarded) nothing of it can
-	// enter this changeset.
-	ambiguous := func(path string) bool {
+	// A baseline-dirty path that changed since the baseline is included whole
+	// (Preexisting) while it still differs from HEAD: once it matches HEAD
+	// (another session committed it, or its earlier changes were discarded)
+	// nothing of it can enter this changeset.
+	changedSince := func(path string) bool {
 		_, inIndex := indexChanged[path]
 		_, inWorktree := worktreeChanged[path]
 		if !inIndex && !inWorktree {
@@ -476,36 +490,37 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		return differs || staged
 	}
 	explicit := adopted
-	var preexisting, deferred []string
-	if attr != nil {
-		// Baseline-dirty paths changed since the baseline: this scope's own
-		// file-tool edits are adopted (with the same staged-variant safety
-		// checks), and paths another scope is writing are deferred to it.
-		// Unclaimed changes (shell output, a user's edits, writes from before
-		// a daemon restart) stay ambiguous and are refused below.
-		isAdopted := make(map[string]bool, len(adopted))
-		for _, path := range adopted {
-			isAdopted[path] = true
-		}
-		for path := range b.dirtyPaths {
-			if isAdopted[path] || !ambiguous(path) {
-				continue
-			}
-			if attr.Mine[path] || (attr.Bookkeeping != nil && attr.Bookkeeping(path)) {
-				preexisting = append(preexisting, path)
-			} else if attr.Foreign[path] {
-				deferred = append(deferred, path)
-			}
-		}
-		sort.Strings(preexisting)
-		sort.Strings(deferred)
-		adopted = append(append([]string(nil), adopted...), preexisting...)
-		sort.Strings(adopted)
+	var preexisting, deferred, reported []string
+	isAdopted := make(map[string]bool, len(adopted))
+	for _, path := range adopted {
+		isAdopted[path] = true
 	}
-	deferredSet := make(map[string]bool, len(deferred))
-	for _, path := range deferred {
-		deferredSet[path] = true
+	for path := range b.dirtyPaths {
+		if isAdopted[path] {
+			// Explicitly adopted whole; still disclose its earlier changes.
+			if _, differs := currentPaths[path]; differs {
+				reported = append(reported, path)
+			}
+			continue
+		}
+		if !changedSince(path) {
+			continue
+		}
+		// With an Attribution, a path only another scope is writing is
+		// deferred to it. Everything else that changed — this scope's edits,
+		// shared bookkeeping, unclaimed shell output or hand edits — rides
+		// along whole, with the same staged-variant safety checks below.
+		if attr != nil && attr.Foreign[path] && !attr.Mine[path] && (attr.Bookkeeping == nil || !attr.Bookkeeping(path)) {
+			deferred = append(deferred, path)
+		} else {
+			preexisting = append(preexisting, path)
+		}
 	}
+	reported = append(reported, preexisting...)
+	sort.Strings(reported)
+	sort.Strings(deferred)
+	adopted = append(append([]string(nil), adopted...), preexisting...)
+	sort.Strings(adopted)
 	owned := make(map[string]bool, len(adopted))
 	for _, path := range adopted {
 		// Compare staged variants in each snapshot before assigning ownership;
@@ -522,27 +537,14 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 			entries[i] = entry
 		}
 		if entries[1] != entries[0] && entries[1] != entries[2] {
-			return nil, fmt.Errorf("cannot adopt %s: baseline index holds distinct staged content; preserve or resolve it before proceeding", path)
+			return nil, fmt.Errorf("cannot include %s: baseline index holds distinct staged content; preserve or resolve it before proceeding", path)
 		}
 		// An unchanged index may still name the adopted baseline document after
 		// task bookkeeping edits it. That is not a separate staged variant.
 		if entries[3] != entries[0] && entries[3] != entries[1] && entries[3] != entries[4] {
-			return nil, fmt.Errorf("cannot adopt %s: current index holds distinct staged content; preserve or resolve it before proceeding", path)
+			return nil, fmt.Errorf("cannot include %s: current index holds distinct staged content; preserve or resolve it before proceeding", path)
 		}
 		owned[path] = true
-	}
-	var overlaps []string
-	for path := range b.dirtyPaths {
-		if owned[path] || deferredSet[path] {
-			continue
-		}
-		if ambiguous(path) {
-			overlaps = append(overlaps, path)
-		}
-	}
-	if len(overlaps) > 0 {
-		sort.Strings(overlaps)
-		return nil, fmt.Errorf("task changes overlap paths that were already dirty at baseline %s: %s; restore those paths to their captured staged/worktree state, move the task to a clean worktree, or start a new baseline after resolving ownership", b.ID, strings.Join(overlaps, ", "))
 	}
 
 	paths := make([]string, 0, len(currentPaths))
@@ -598,9 +600,9 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	}
 	return &Changeset{
 		ID: id, BaselineID: b.ID, BaselineOrigin: b.Origin(), BaseCommit: head, Tree: tree, Paths: paths, Diff: diff,
-		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: preexisting, Deferred: deferred,
-		Unclaimed: unclaimed,
-		baseline:  b, adopted: append([]string(nil), explicit...), attr: attr,
+		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: reported, Deferred: deferred,
+		Unclaimed: unclaimed, MovedFrom: movedFrom,
+		baseline: b, adopted: append([]string(nil), explicit...), attr: attr,
 	}, nil
 }
 

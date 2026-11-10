@@ -13,20 +13,18 @@ import (
 
 // Attribution narrows a changeset to one scope's work in a worktree shared
 // with other sessions or agents. Paths are repository-relative (slash
-// separated). A nil *Attribution keeps the strict single-owner rules: every
-// change since the baseline belongs to the caller and a baseline-dirty path that
-// changed again is refused as ambiguous.
+// separated). A nil *Attribution keeps the single-owner rules: every change
+// since the baseline belongs to the caller, and a baseline-dirty path that
+// changed again is included whole (Preexisting).
 //
 // With an Attribution:
 //   - a path that only other scopes wrote (Foreign and not Mine) is excluded;
 //   - a path both wrote is included and reported as Shared;
-//   - a baseline-dirty path this scope edited, or shared bookkeeping, is
-//     adopted (Preexisting);
-//   - a baseline-dirty path another scope is writing is left out (Deferred)
-//     instead of failing the whole changeset (an unclaimed change to one is
-//     still refused as ambiguous);
+//   - a baseline-dirty path that changed since the baseline is included whole
+//     (Preexisting) unless only another scope is writing it, in which case it
+//     is left out (Deferred);
 //   - unclaimed changes (shell output, structured docs writes) remain
-//     attributed to whichever scope inspects them, as before.
+//     attributed to whichever scope inspects them, and are reported.
 type Attribution struct {
 	Mine    map[string]bool
 	Foreign map[string]bool
@@ -47,7 +45,8 @@ func (c *Changeset) Baseline() *Baseline {
 	return c.baseline
 }
 
-// rebaseBaseline moves b onto head, a descendant of b.head. A path changed by
+// rebaseBaseline moves b onto head, usually a descendant of b.head (a head
+// outside its history is handled the same way, approximately). A path changed by
 // the intervening commits takes its committed content in both the baseline
 // index and worktree snapshots — so it counts as clean pre-task state and work
 // another scope already committed is never re-attributed — when it was clean at

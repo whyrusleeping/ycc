@@ -170,7 +170,7 @@ func TestScopedCommitPreservesDirtyBaseline(t *testing.T) {
 	}
 }
 
-func TestChangesRefusesDirtyBaselineOverlap(t *testing.T) {
+func TestChangesRefusesDistinctStagedVariantOfDirtyPath(t *testing.T) {
 	r, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -184,10 +184,47 @@ func TestChangesRefusesDirtyBaselineOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeFile(t, filepath.Join(r.Dir, "mixed.txt"), "task touched ambiguous path\n")
+	writeFile(t, filepath.Join(r.Dir, "mixed.txt"), "task touched partly staged path\n")
 	_, err = r.Changes(baseline)
-	if err == nil || !strings.Contains(err.Error(), "already dirty") || !strings.Contains(err.Error(), "mixed.txt") || !strings.Contains(err.Error(), "clean worktree") {
-		t.Fatalf("overlap error is not actionable: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "mixed.txt") || !strings.Contains(err.Error(), "distinct staged content") {
+		t.Fatalf("staged variant error is not actionable: %v", err)
+	}
+}
+
+// A file that already held uncommitted changes at the baseline and was edited
+// again is committed whole; dirty files the task never touched stay out.
+func TestCommitIncludesChangedPreexistingFileWhole(t *testing.T) {
+	r, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTracked(t, r, map[string]string{"shared.go": "head\n", "untouched.go": "head\n"})
+	writeFile(t, filepath.Join(r.Dir, "shared.go"), "head\nother task\n")
+	writeFile(t, filepath.Join(r.Dir, "untouched.go"), "head\nother task\n")
+	gitAt(t, r.Dir, "add", "untouched.go")
+	baseline, err := r.CaptureBaseline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(r.Dir, "shared.go"), "head\nother task\nthis task\n")
+	changes, err := r.Changes(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(changes.Paths, []string{"shared.go"}) || !reflect.DeepEqual(changes.Preexisting, []string{"shared.go"}) {
+		t.Fatalf("paths=%v preexisting=%v", changes.Paths, changes.Preexisting)
+	}
+	if _, err := r.Commit(changes, "task with shared file"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitAt(t, r.Dir, "show", "HEAD:shared.go"); got != "head\nother task\nthis task" {
+		t.Fatalf("committed shared.go = %q", got)
+	}
+	if got := gitAt(t, r.Dir, "show", "HEAD:untouched.go"); got != "head" {
+		t.Fatalf("committed untouched file: %q", got)
+	}
+	if got := gitAt(t, r.Dir, "show", ":untouched.go"); got != "head\nother task" {
+		t.Fatalf("lost staged untouched file: %q", got)
 	}
 }
 

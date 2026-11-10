@@ -42,8 +42,10 @@ func TestAdoptedFileCommitPreservesOtherBaselineWork(t *testing.T) {
 			}
 			writeFile(t, filepath.Join(r.Dir, "backlog/0001-task.md"), "selected task\nimplementation evidence\n")
 			writeFile(t, filepath.Join(r.Dir, "new.go"), "task source\n")
-			if _, err := r.Changes(baseline); err == nil {
-				t.Fatal("strict Changes adopted dirty task")
+			// Without explicit adoption, the changed dirty document still rides
+			// along whole and is reported as preexisting.
+			if strict, err := r.Changes(baseline); err != nil || !reflect.DeepEqual(strict.Preexisting, []string{task}) {
+				t.Fatalf("changed dirty task not included as preexisting: %+v, %v", strict, err)
 			}
 			changes, err := r.ChangesIncluding(baseline, "backlog/0001-task.md")
 			if err != nil {
@@ -90,7 +92,10 @@ func TestAdoptedFileCommitPreservesOtherBaselineWork(t *testing.T) {
 	}
 }
 
-func TestAdoptionRefusesOverlapsAndDistinctStagedVariants(t *testing.T) {
+// A baseline-dirty path changed again rides along whole (Preexisting); a
+// distinct staged variant still refuses, and every change invalidates the
+// reviewed snapshot.
+func TestAdoptionIncludesChangedDirtyPathsAndRefusesDistinctStagedVariants(t *testing.T) {
 	for _, conflict := range []string{"source", "other task", "baseline index", "current index"} {
 		t.Run(conflict, func(t *testing.T) {
 			r, err := Open(t.TempDir())
@@ -129,8 +134,17 @@ func TestAdoptionRefusesOverlapsAndDistinctStagedVariants(t *testing.T) {
 			}
 			index := readIndex(t, r)
 			head := gitAt(t, r.Dir, "rev-parse", "HEAD")
-			if _, err := r.ChangesIncluding(baseline, "task.md"); err == nil {
-				t.Fatal("unsafe adoption accepted")
+			current, err := r.ChangesIncluding(baseline, "task.md")
+			switch conflict {
+			case "source", "other task":
+				want := map[string]string{"source": "source.go", "other task": "other.md"}[conflict]
+				if err != nil || !reflect.DeepEqual(current.Preexisting, []string{want, "task.md"}) || !strings.Contains(current.Diff, "+overlap") {
+					t.Fatalf("changed dirty path not included whole: %+v, %v", current, err)
+				}
+			default:
+				if err == nil || !strings.Contains(err.Error(), "distinct staged content") {
+					t.Fatalf("unsafe adoption accepted: %v", err)
+				}
 			}
 			if reviewed != nil {
 				if _, err := r.Commit(reviewed, "unsafe"); err == nil {

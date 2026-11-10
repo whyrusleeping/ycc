@@ -293,7 +293,7 @@ func (d *Deps) implementer() AgentSpec {
 	return d.Implementer
 }
 
-func (d *Deps) changeset(taskID string) (*git.Changeset, error) {
+func (d *Deps) changeset(taskID string, extra ...string) (*git.Changeset, error) {
 	if d.Repo == nil {
 		return nil, fmt.Errorf("git repository is not available")
 	}
@@ -319,10 +319,13 @@ func (d *Deps) changeset(taskID string) (*git.Changeset, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Extra paths (commit's explicit paths) are adopted whole like the task
+	// document; relative ones resolve against the repository's workspace.
+	paths := append([]string{path}, extra...)
 	if attr := d.attribution(); attr != nil {
-		return d.Repo.ChangesFor(d.Baseline, attr, path)
+		return d.Repo.ChangesFor(d.Baseline, attr, paths...)
 	}
-	return d.Repo.ChangesIncluding(d.Baseline, path)
+	return d.Repo.ChangesIncluding(d.Baseline, paths...)
 }
 
 // attribution narrows this session's changeset in a worktree shared with other
@@ -1562,21 +1565,26 @@ func FormatAskManyAnswers(qs []Question, ans []string) string {
 func commitTool(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "commit",
-		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Detailed execution remains in session events and git history.",
+		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Files the session changed are committed whole, including other uncommitted work already in them (the result lists those). Detailed execution remains in session events and git history.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id being committed"),
 			"message": tools.StrProp("concise commit message"),
 			"outcome": tools.StrProp("concise accepted outcome retained with the completed task"),
+			"paths":   tools.StrArrProp("optional extra files to commit whole (workspace-relative), e.g. another task's work that must land together"),
 		}, "task_id", "message", "outcome"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			msg, _ := tools.GetString(params, "message")
 			outcome, _ := tools.GetString(params, "outcome")
-			sha, err := finalizeTask(ctx, d, id, msg, outcome)
+			sha, notes, err := finalizeTask(ctx, d, id, msg, outcome, tools.GetStringSlice(params, "paths"))
 			if err != nil {
 				return tools.ErrResult("commit: %v", err), nil
 			}
-			return tools.OkResult("committed " + sha), nil
+			out := "committed " + sha
+			for _, note := range notes {
+				out += "\n- " + note
+			}
+			return tools.OkResult(out), nil
 		},
 	}
 }
@@ -1810,6 +1818,9 @@ func attributionNote(changes *git.Changeset) string {
 	line("Excluded — written only by another session", changes.Foreign)
 	line("Included — already dirty before this session; earlier changes ride along", changes.Preexisting)
 	line("Excluded — dirty before this session and since written by another session", changes.Deferred)
+	if changes.MovedFrom != "" {
+		fmt.Fprintf(&b, "HEAD moved outside the baseline's history (from %s); the baseline was re-anchored on HEAD, so verify every path belongs\n", shortCommit(changes.MovedFrom))
+	}
 	if b.Len() > 0 {
 		// Only worth flagging when the tree is visibly shared: unclaimed paths
 		// (shell/generator output, other writers' shell edits) are attributed to

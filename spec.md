@@ -206,8 +206,9 @@ in the design set.
 The backlog stores one Markdown file per task under `backlog/`, with YAML frontmatter for id,
 title, status, priority, dates, dependencies, and spec references. Active-task bodies carry a
 description, acceptance criteria, an optional plan, and a work log. On accepted completion the body
-is compacted in place to the original intent, acceptance criteria when present, a bounded outcome,
-and commit subject. Session event logs are the source of detailed execution and usage history; git
+is compacted in place to the original intent, acceptance criteria when present, the outcome, and the
+commit subject (the message's first line, shortened to 240 characters; git keeps the full message).
+Session event logs are the source of detailed execution and usage history; git
 retains the prior task body and is the reversible migration/rollback path. Backlog summaries and
 dependency checks read frontmatter only, while lookup by id loads the selected body in full.
 
@@ -221,11 +222,17 @@ children finished. Child statuses alone do not establish parent completion.
 
 The selected task's canonical document is explicitly included in its changeset even when it was
 untracked, unstaged, or staged at session startup. Review sees its full change against HEAD, and
-acceptance commits it with the implementation. Only that document is adopted: unrelated baseline-dirty
-source and backlog files remain excluded, and subsequent overlapping edits still refuse review/commit.
-Adoption refuses a baseline index version distinct from both HEAD and the baseline worktree, or a
-new staged version distinct from HEAD, the accepted baseline index, and the current worktree. Normal
-bookkeeping can thus update an already-staged task without discarding independently staged content.
+acceptance commits it with the implementation. Other baseline-dirty files stay excluded while
+unchanged. Once the session changes one again, it is included whole, earlier uncommitted changes and
+all, and the manifest and commit result list it as preexisting; precise hunk attribution is not
+attempted. The `commit` tool's optional `paths` adopts further whole files the same way, such as
+another task's work that must land together. A commit may therefore carry other uncommitted work in
+shared files: the agent names co-included tasks in its message or outcome rather than splitting or
+abandoning work to avoid it. Files the session neither changed nor named are never committed, and
+whole-tree commits are never made. Inclusion refuses a baseline index version distinct from both
+HEAD and the baseline worktree, or a new staged version distinct from HEAD, the accepted baseline
+index, and the current worktree. Normal bookkeeping can thus update an already-staged task without
+discarding independently staged content.
 The persisted baseline is unchanged; explicit task identity restores the same scope after reopen,
 without relying on session focus. A preexisting dirty `done` task alone is not proof of acceptance.
 
@@ -234,8 +241,9 @@ original task and completion intent, the compact task is applied, the exact scop
 commit identity are persisted, HEAD advances, only the selected index paths are published, and
 acceptance events are emitted last. A failure before the HEAD update restores the active task; a
 rejected attempt with no created commit may renew its scoped snapshot after source or task-evidence
-fixes only against the original persisted baseline. A differently scoped session must not narrow that
-ownership. Once a commit identity is created, retries remain bound to it unless HEAD has since moved
+fixes. A later session retrying a journal prepared under an earlier session baseline re-anchors it on
+its own baseline and explicitly adopts the files the journal scoped, so accepted work is carried
+rather than narrowed. Once a commit identity is created, retries remain bound to it unless HEAD has since moved
 past its parent without containing it (another session committed first); that identity is then
 abandoned and the scoped changes are re-inspected and committed on the new HEAD. After HEAD advances the
 completed task is truthful and retries finish pending index/event publication without creating another
@@ -510,14 +518,14 @@ claimed. A session's changeset — reviewed, inspected by clients, and committed
 
 - excludes paths that only other scopes claimed;
 - includes paths both claimed, reporting them as shared;
-- adopts baseline-dirty paths this session edited, and changed shared bookkeeping, reporting the
-  earlier changes that ride along;
-- leaves out baseline-dirty paths another scope has written since.
+- adopts baseline-dirty paths that changed since the baseline, whole, reporting the earlier changes
+  that ride along;
+- leaves out baseline-dirty paths only another scope has written since.
 
-A baseline-dirty path changed by a writer nobody claimed (typically the user) is still refused as
-ambiguous, so a commit never silently drops it. Other unclaimed changes are attributed to whichever
-session commits them. When the tree is shared, the change manifest and review evidence list them as
-unclaimed, alongside the other classifications.
+A baseline-dirty path changed by a writer nobody claimed (typically the user, or this session's own
+shell) is included rather than refused or silently dropped. Other unclaimed changes are attributed
+to whichever session commits them. When the tree is shared, the change manifest and review evidence
+list them as unclaimed, alongside the other classifications.
 
 Claims persist per worktree in its git directory (`ycc/claims.json`), so they survive daemon restarts.
 They also outlive the writing session, which keeps a stopped session's uncommitted work attributed to
@@ -530,7 +538,9 @@ clean at the baseline, or when the commit took exactly its baseline content. A p
 partly committed keeps its leftover changes as pre-existing state. Concurrent sessions therefore keep
 reviewing and committing on one linear history. A prepared commit whose parent was overtaken is
 abandoned and redone on the new HEAD at the next attempt. A HEAD move outside the baseline's history
-(reset, rebase, checkout) still makes the baseline stale. Distinct worktrees (workstreams, §14.1)
+(reset, rebase, checkout) re-anchors the baseline on the new HEAD the same way instead of making it
+stale: the work is still in the worktree, so it stays committable, and the commit result reports the
+move because files it left differing from HEAD count as changes. Distinct worktrees (workstreams, §14.1)
 remain the way to isolate builds and tests completely.
 `docs/design/async-jobs.md` explains the single-delivery and concurrent-mutation
 rationale.

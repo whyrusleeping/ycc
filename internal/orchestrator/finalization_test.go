@@ -370,7 +370,7 @@ func TestCommitFinalizationRestoresTaskWhenCompletedCheckpointFails(t *testing.T
 		t.Fatal(err)
 	}
 	journal := &failSaveJournal{inner: fileFinalizationJournal{path: path}, failAt: 2}
-	_, err = finalizeTaskWithJournal(context.Background(), d, "0001", "finish safely", "Implemented and verified recovery.", journal)
+	_, err = finalizeTaskWithJournal(context.Background(), d, "0001", "finish safely", "Implemented and verified recovery.", nil, journal, new([]string))
 	if err == nil || !strings.Contains(err.Error(), "record completed task state") || !strings.Contains(err.Error(), "task was restored") {
 		t.Fatalf("completed checkpoint failure = %v", err)
 	}
@@ -538,14 +538,16 @@ func TestCommitFinalizationResumesInterruptedTaskTransition(t *testing.T) {
 	}
 }
 
-func TestCommitFinalizationRefusesRenewalFromDifferentBaseline(t *testing.T) {
+// A later session retrying a finalization prepared under an earlier baseline
+// re-anchors it on its own baseline and carries the earlier scope, so the
+// accepted implementation is committed rather than narrowed away.
+func TestCommitFinalizationReanchorsRenewalFromDifferentBaseline(t *testing.T) {
 	ws, repo, baseline, store := setupFinalizationRepo(t)
 	hook := filepath.Join(ws, ".git", "hooks", "pre-commit")
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	original := finalizationDeps(ws, repo, baseline, store, &captureRec{})
-	beforeHead := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD"))
 	if got, failed := callCommit(t, original); !failed {
 		t.Fatalf("hook failure unexpectedly succeeded: %q", got)
 	}
@@ -553,8 +555,7 @@ func TestCommitFinalizationRefusesRenewalFromDifferentBaseline(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A new session now sees the implementation as preexisting work. It must not
-	// silently renew the journal to a narrower task-document-only changeset.
+	// A new session sees the implementation as preexisting, unchanged work.
 	freshRepo, err := git.Open(ws)
 	if err != nil {
 		t.Fatal(err)
@@ -564,17 +565,14 @@ func TestCommitFinalizationRefusesRenewalFromDifferentBaseline(t *testing.T) {
 		t.Fatal("fresh session unexpectedly captured the original baseline")
 	}
 	fresh := finalizationDeps(ws, freshRepo, freshBaseline, docs.NewStore(ws), &captureRec{})
-	if got, failed := callCommit(t, fresh); !failed || !strings.Contains(got, "belongs to original baseline") {
+	if got, failed := callCommit(t, fresh); failed || !strings.Contains(got, "re-anchored") {
 		t.Fatalf("different-baseline retry = error %v, %q", failed, got)
 	}
-	if got := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD")); got != beforeHead {
-		t.Fatalf("different-baseline retry moved HEAD: before=%s after=%s", beforeHead, got)
+	if task, _ := store.Get("0001"); task.Status != docs.StatusDone {
+		t.Fatalf("different-baseline retry left task undone: %+v", task)
 	}
-	if task, _ := store.Get("0001"); task.Status == docs.StatusDone {
-		t.Fatalf("different-baseline retry left task misleadingly done: %+v", task)
-	}
-	if got := gitRun(t, ws, "show", "HEAD:owned.txt"); got != "before\n" {
-		t.Fatalf("implementation was unexpectedly committed: %q", got)
+	if got := gitRun(t, ws, "show", "HEAD:owned.txt"); got != "after\n" {
+		t.Fatalf("implementation was not carried into the commit: %q", got)
 	}
 }
 
@@ -769,5 +767,71 @@ func TestCommitRetryAfterHookFailureAndConcurrentCommit(t *testing.T) {
 	}
 	if got := gitRun(t, ws, "show", "--name-only", "--format=", "HEAD"); strings.Contains(got, "other.txt") || !strings.Contains(got, "owned.txt") {
 		t.Fatalf("task commit files:\n%s", got)
+	}
+}
+
+// The commit tool includes files the session changed whole, even when they
+// already held other uncommitted work; commits named paths; survives a HEAD
+// move outside the baseline's history; and accepts long outcomes and subjects.
+// Dirty files the session neither touched nor named stay out.
+func TestCommitToolCarriesPreexistingWorkNamedPathsAndMovedHead(t *testing.T) {
+	ws, _, _, store := setupFinalizationRepo(t)
+	for name, content := range map[string]string{"shared.txt": "other task\n", "named.txt": "other task\n"} {
+		if err := os.WriteFile(filepath.Join(ws, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := finalizationDeps(ws, repo, repo.OpenBaseline(), store, &captureRec{})
+	if err := os.WriteFile(filepath.Join(ws, "shared.txt"), []byte("other task\nthis task\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Amend-style rewrite: HEAD moves outside the baseline's history.
+	amended := strings.TrimSpace(gitRun(t, ws, "commit-tree", "HEAD^{tree}", "-p", "HEAD^", "-m", "amended"))
+	gitRun(t, ws, "update-ref", "HEAD", amended)
+
+	subject := strings.Repeat("s", 300)
+	message := subject + "\n\nbody"
+	outcome := strings.TrimSpace(strings.Repeat("outcome ", 200))
+	result, err := commitTool(d).Call(context.Background(), map[string]any{
+		"task_id": "0001", "message": message, "outcome": outcome, "paths": []any{"named.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("commit refused: %s", result.Content)
+	}
+	for _, want := range []string{"shared.txt", "named.txt", "HEAD had moved", "shortened to 240"} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("result does not report %q: %s", want, result.Content)
+		}
+	}
+	for file, want := range map[string]string{"shared.txt": "other task\nthis task\n", "named.txt": "other task\n", "owned.txt": "before\n"} {
+		if got := gitRun(t, ws, "show", "HEAD:"+file); got != want {
+			t.Fatalf("HEAD:%s = %q, want %q", file, got, want)
+		}
+	}
+	if got := gitRun(t, ws, "ls-tree", "--name-only", "HEAD", "--", "unrelated.txt"); got != "" {
+		t.Fatalf("committed untouched staged file: %q", got)
+	}
+	if got := gitRun(t, ws, "show", ":unrelated.txt"); got != "user work\n" {
+		t.Fatalf("lost staged untouched file: %q", got)
+	}
+	if got := strings.TrimSpace(gitRun(t, ws, "log", "-1", "--format=%B")); got != message {
+		t.Fatalf("commit message = %q", got)
+	}
+	if got := strings.TrimSpace(gitRun(t, ws, "rev-parse", "HEAD^")); got != amended {
+		t.Fatalf("commit parent = %s, want rewritten HEAD %s", got, amended)
+	}
+	task, err := store.Get("0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != docs.StatusDone || !strings.Contains(task.Body, outcome) {
+		t.Fatalf("task not completed with full outcome: %+v", task)
 	}
 }

@@ -452,14 +452,17 @@ type Completion struct {
 }
 
 // PrepareCompletion validates and builds a completion without changing the task.
-func (s *Store) PrepareCompletion(id, outcome, commitSubject string) (*Completion, error) {
+// The outcome is kept whole; the commit subject is the message's first line,
+// shortened to maxCommitRunes (see CommitSubject).
+func (s *Store) PrepareCompletion(id, outcome, commitMessage string) (*Completion, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	outcome, err := completedText("outcome", outcome, maxOutcomeRunes)
+	outcome, err := completedText("outcome", outcome, 0)
 	if err != nil {
 		return nil, err
 	}
-	commitSubject, err = completedText("commit subject", commitSubject, maxCommitRunes)
+	commitSubject, _ := CommitSubject(commitMessage)
+	commitSubject, err = completedText("commit subject", commitSubject, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -651,9 +654,26 @@ func legacyLineComplete(lines []string, i int) bool {
 }
 
 const (
+	// Legacy migration only accepts history within these bounds; new
+	// completions keep the whole outcome and shorten the subject.
 	maxOutcomeRunes = 1000
 	maxCommitRunes  = 240
 )
+
+// CommitSubject returns the subject recorded with a completed task: the first
+// non-blank line of message with whitespace collapsed, shortened to 240
+// characters. shortened reports whether it was cut.
+func CommitSubject(message string) (subject string, shortened bool) {
+	for _, line := range strings.Split(message, "\n") {
+		if subject = strings.Join(strings.Fields(line), " "); subject != "" {
+			break
+		}
+	}
+	if runes := []rune(subject); len(runes) > maxCommitRunes {
+		return strings.TrimSpace(string(runes[:maxCommitRunes-1])) + "…", true
+	}
+	return subject, false
+}
 
 func compactCompletedBody(body, outcome, commitSubject string) string {
 	description := collectSectionContent(body, "description")
@@ -726,7 +746,7 @@ func completedText(name, s string, limit int) (string, error) {
 	if strings.Contains(s, "…[truncated]") {
 		return "", fmt.Errorf("%s is truncated", name)
 	}
-	if len([]rune(s)) > limit {
+	if limit > 0 && len([]rune(s)) > limit {
 		return "", fmt.Errorf("%s exceeds %d characters", name, limit)
 	}
 	return s, nil

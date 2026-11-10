@@ -1,15 +1,16 @@
 ---
 id: "0462"
 title: 'commit tool: loosen restrictions — allow committing alongside other uncommitted work instead of refusing or splitting'
-status: todo
+status: done
 priority: 2
 created: "2026-10-12"
-updated: "2026-11-09"
+updated: "2026-11-10"
 depends_on: []
 spec_refs: []
 ---
 
 ## Description
+
 **Evidence (vals, 2026-10-11):** sessions for 0369, 0380, 0425 and 0387 split tasks into fragments or left reviewed work uncommitted. In each case a file they needed also held another task's uncommitted hunks. The tool stages whole files, and agents (guided by vals memory) treated "my commit would include someone else's work" as forbidden. 0387 ended up in_review and uncommitted over a 3-line accessor in a file that held 0371's changes. The tool rarely refused outright. The cost came from agents avoiding a whole-file commit.
 
 Across all projects' sessions, 207 `commit` calls failed. 190 were length limits: outcome over 1000 chars (114) or subject over 240 chars (76). About 15 were ownership/baseline refusals: "overlap paths that were already dirty at baseline", "baseline is stale: HEAD moved", and "finalization belongs to original baseline".
@@ -31,6 +32,8 @@ Across all projects' sessions, 207 `commit` calls failed. 190 were length limits
 - Existing safety that still matters stays covered by tests: no whole-tree commits by default, and no committing paths the session never touched or named.
 - Spec and prompt text are updated to match.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Changesets now include a baseline-dirty file whole once the session changes it, instead of refusing it as ambiguous; files only another scope is writing are still deferred. These files are reported as Preexisting in the manifest and the commit result, and so are explicitly adopted dirty files. The commit tool gained an optional `paths` argument to adopt extra whole files. A HEAD move outside the baseline's history now re-anchors the baseline (MovedFrom is reported) instead of going stale. A finalization journal from an earlier session baseline is re-anchored, with its scope carried. The full outcome is stored, and the task's subject is the message's first line cut to 240 characters, with a note. Distinct staged variants still refuse. Untouched, unnamed dirty files stay out, and there are no whole-tree commits. Tests cover each case. The spec, async-jobs design, changesets plan, coordinator prompt and memory are updated.
+
+Commit: commit tool: include changed dirty files whole, add paths, re-anchor moved HEAD/baselines, drop length failures (0462)

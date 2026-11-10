@@ -109,6 +109,16 @@ func (r *Repo) FinalizationPath(taskID string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
+// TopLevel returns the worktree's top-level directory, the root that
+// repository-relative changeset paths are relative to.
+func (r *Repo) TopLevel() (string, error) {
+	out, err := r.run("rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // RevParse resolves a ref (branch, tag, or commit-ish) to its full commit sha.
 func (r *Repo) RevParse(ref string) (string, error) {
 	out, err := r.run("rev-parse", ref)

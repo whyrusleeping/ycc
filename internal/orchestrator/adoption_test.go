@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -71,8 +72,9 @@ func TestBaselineUntrackedTaskDelegationReviewAndReopenCommit(t *testing.T) {
 	invoke(proposePlan(d), map[string]any{"task_id": task.ID, "plan": "A selected task plan."})
 	invoke(spawnImplementer(d), map[string]any{"task_id": task.ID, "plan": "Implement the selected task."})
 	invoke(sendToImplementer(d), map[string]any{"task_id": task.ID, "instructions": "Verify again.", "context_mode": "fresh"})
-	if _, err := repo.Changes(baseline); err == nil {
-		t.Fatal("strict changes unexpectedly adopted backlog")
+	// Unadopted, the changed task document still rides along whole.
+	if strict, err := repo.Changes(baseline); err != nil || !reflect.DeepEqual(strict.Preexisting, []string{filepath.Base(filepath.Dir(task.Path)) + "/" + filepath.Base(task.Path)}) {
+		t.Fatalf("strict changes did not include the changed task document: %+v, %v", strict, err)
 	}
 	before := d.reviewDiff(task.ID)
 	if before.Err != nil {
