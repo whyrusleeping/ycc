@@ -2,32 +2,46 @@ import SwiftUI
 import YccKit
 import YccProto
 
-/// Asks which project a chat started from the unscoped Recent feed should work
-/// in. The feed has no project of its own and silently inheriting one put chats
-/// in the wrong workspace, so the choice stays explicit — but the most recently
-/// active project comes preselected, so the common case is a single tap on
-/// Start.
+/// Asks which project an action started from the unscoped Recent feed — a new
+/// chat, opening a backlog — should apply to. The feed has no project of its
+/// own and silently inheriting one put chats in the wrong workspace, so the
+/// choice stays explicit — but a likely project comes preselected, so the
+/// common case is a single tap on the action button.
 ///
 /// Projects are listed most recently active first (the scope chips' order),
 /// each with its branch, sync badge, last-activity age, and activity counts.
 /// The order is snapshotted when the sheet opens so a background refresh can't
 /// reorder rows under the user's thumb.
-struct NewChatProjectSheet: View {
+struct ProjectChoiceSheet: View {
     let model: SessionListModel
-    /// Called with the chosen project; the parent swaps this sheet for the
-    /// composer.
-    let onStart: (String) -> Void
+    /// The navigation title, e.g. "New chat".
+    let title: String
+    /// The action button's text before the chosen project, e.g. "Start in".
+    let actionPrefix: String
+    /// Called with the chosen project.
+    let onChoose: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var projects: [Ycc_V1_ProjectInfo]
     @State private var selection: String
 
-    init(model: SessionListModel, onStart: @escaping (String) -> Void) {
+    /// `preferred` is preselected when it is a registered project; otherwise
+    /// the most recently active one is.
+    init(
+        model: SessionListModel,
+        title: String,
+        actionPrefix: String,
+        preferred: String? = nil,
+        onChoose: @escaping (String) -> Void
+    ) {
         self.model = model
-        self.onStart = onStart
+        self.title = title
+        self.actionPrefix = actionPrefix
+        self.onChoose = onChoose
         let projects = model.projectsByRecency
         _projects = State(initialValue: projects)
-        _selection = State(initialValue: projects.first?.name ?? "")
+        let initial = projects.first(where: { $0.name == preferred }) ?? projects.first
+        _selection = State(initialValue: initial?.name ?? "")
     }
 
     var body: some View {
@@ -41,25 +55,25 @@ struct NewChatProjectSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
             }
-            .navigationTitle("New chat")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .safeAreaInset(edge: .bottom) { startBar }
+            .safeAreaInset(edge: .bottom) { actionBar }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
-    private var startBar: some View {
+    private var actionBar: some View {
         Button {
             guard !selection.isEmpty else { return }
-            onStart(selection)
+            onChoose(selection)
         } label: {
-            Text("Start in \(Text(selection).monospaced().fontWeight(.semibold))")
+            Text("\(actionPrefix) \(Text(selection).monospaced().fontWeight(.semibold))")
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
         }

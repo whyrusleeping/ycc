@@ -99,28 +99,26 @@ struct LandingView: View {
     /// The sheets, dialogs, and alerts hung off the shell.
     private func presentations(_ content: some View) -> some View {
         content
-        .confirmationDialog(
-            "Open backlog for…",
-            isPresented: $showBacklogProjectPicker,
-            titleVisibility: .visible
-        ) {
+        .sheet(isPresented: $showBacklogProjectPicker) {
             if let model {
-                ForEach(newSessionProjectChoices(model), id: \.self) { project in
-                    Button(project) {
-                        router.open(.backlog(project: project))
-                    }
+                // Preselect the project the user last browsed: the backlog
+                // they most likely mean.
+                ProjectChoiceSheet(
+                    model: model, title: "Backlog",
+                    actionPrefix: "Open backlog for",
+                    preferred: lastViewedProject
+                ) { project in
+                    showBacklogProjectPicker = false
+                    router.open(.backlog(project: project))
                 }
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Choose which project's backlog to open.")
         }
         .sheet(item: $newSessionRequest) { request in
             if request.choosingProject, let model {
                 // Same request id, so picking a project swaps this sheet's
                 // content for the composer in place instead of dismissing
                 // and re-presenting.
-                NewChatProjectSheet(model: model) { project in
+                ProjectChoiceSheet(model: model, title: "New chat", actionPrefix: "Start in") { project in
                     newSessionRequest?.project = project
                     newSessionRequest?.choosingProject = false
                 }
@@ -308,9 +306,8 @@ struct LandingView: View {
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
-        // Remember the scope the user actually browses, so New chat from the
-        // unscoped feed lands where they were rather than wherever they last
-        // happened to start a session.
+        // Remember the scope the user actually browses, so Backlog from the
+        // unscoped feed preselects where they were.
         .onChange(of: model?.selectedProject) { _, project in
             if let project, !project.isEmpty { lastViewedProject = project }
         }
@@ -439,8 +436,7 @@ struct LandingView: View {
                 }
             } else {
                 Button {
-                    guard let model else { return }
-                    let choices = newSessionProjectChoices(model)
+                    guard let choices = model?.newSessionProjectChoices else { return }
                     if choices.count > 1 {
                         showBacklogProjectPicker = true
                     } else if let project = choices.first {
@@ -569,16 +565,6 @@ struct LandingView: View {
             // the composer resolve it and show its project chip.
             newSessionRequest = NewSessionRequest(project: choices.first)
         }
-    }
-
-    /// Registered projects for the unscoped feed's backlog chooser, with the
-    /// last project the user viewed hoisted to the top as the likely intent.
-    private func newSessionProjectChoices(_ model: SessionListModel) -> [String] {
-        let choices = model.newSessionProjectChoices
-        guard !lastViewedProject.isEmpty, choices.contains(lastViewedProject) else {
-            return choices
-        }
-        return [lastViewedProject] + choices.filter { $0 != lastViewedProject }
     }
 
     // MARK: - Session list
