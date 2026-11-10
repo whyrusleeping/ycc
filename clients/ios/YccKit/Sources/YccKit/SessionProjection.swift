@@ -33,6 +33,46 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         case error
     }
 
+    /// A `review_submitted` verdict, kept in parts so the view can lead with the
+    /// verdict and set the reviewer's summary apart instead of one dense line.
+    public struct Review: Equatable, Sendable {
+        /// Reviewer name, with its logical model when that differs (`sol (gpt)`).
+        public var reviewer: String
+        public var round: Int?
+        /// Upper-cased verdict: ACCEPT, REVISE, or UNKNOWN.
+        public var verdict: String
+        /// Finding count plus severity breakdown (`2 findings (high:1, low:1)`),
+        /// empty when the event carried no count.
+        public var findings: String
+        /// First non-empty line of the reviewer's summary.
+        public var summary: String
+        public var task: String
+        public var reviewedSnapshot: String
+
+        public init(
+            reviewer: String, round: Int? = nil, verdict: String, findings: String = "",
+            summary: String = "", task: String = "", reviewedSnapshot: String = ""
+        ) {
+            self.reviewer = reviewer
+            self.round = round
+            self.verdict = verdict
+            self.findings = findings
+            self.summary = summary
+            self.task = task
+            self.reviewedSnapshot = reviewedSnapshot
+        }
+
+        /// The whole verdict as one line (accessibility and plain system rows).
+        public var text: String {
+            let round = round.map { " round \($0)" } ?? ""
+            let findings = findings.isEmpty ? "" : " · \(findings)"
+            let scope = reviewedSnapshot.isEmpty
+                ? "" : " · reviewed snapshot \(String(reviewedSnapshot.prefix(12))) only"
+            let label = "\(reviewer)\(round) — \(verdict)\(findings)\(scope)"
+            return summary.isEmpty ? label : "\(label): \(summary)"
+        }
+    }
+
     /// The kind of row and its rendered payload.
     public enum Kind: Equatable, Sendable {
         /// A `user_input` message with byte-free picture references.
@@ -59,7 +99,7 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         /// when the event carried none (then it renders as a plain system row).
         case commit(text: String, sha: String)
         /// Verdict and exact reviewed snapshot, with a read-only inspection action.
-        case review(text: String, task: String, reviewedSnapshot: String)
+        case review(Review)
         /// The transient live tail: the in-progress model turn text streamed via
         /// `turn_delta`. Never persisted; replaced on each delta.
         case liveTail(text: String)
@@ -383,10 +423,7 @@ public struct SessionProjection: Sendable, Equatable {
             }
             if let text {
                 if event.type == "review_submitted" {
-                    appendDurable(event, .review(text: text,
-                        task: (data["task"] as? String) ?? "",
-                        reviewedSnapshot: (data["reviewed_snapshot_id"] as? String) ?? ""),
-                        actor: relatedActor)
+                    appendDurable(event, .review(Self.review(data)), actor: relatedActor)
                 } else {
                     let failed = !Self.stringField(data, "error").isEmpty
                     appendDurable(event, .system(text: text), actor: relatedActor,
@@ -554,18 +591,26 @@ public struct SessionProjection: Sendable, Equatable {
     }
 
     private static func reviewSummary(_ data: [String: Any]) -> String {
+        review(data).text
+    }
+
+    private static func review(_ data: [String: Any]) -> TranscriptRow.Review {
         let reviewer = (data["reviewer"] as? String) ?? (data["model"] as? String) ?? "reviewer"
         let model = (data["logical_model"] as? String) ?? ""
-        let verdict = ((data["verdict"] as? String) ?? "unknown").uppercased()
-        let round = integerField(data, "round").map { " round \($0)" } ?? ""
-        let findings = integerField(data, "findings").map { " · \($0) findings" } ?? ""
         let severities = (data["findings_by_severity"] as? [String: Int]) ?? [:]
         let counts = severities.keys.sorted().map { "\($0):\(severities[$0] ?? 0)" }.joined(separator: ", ")
-        let snapshot = (data["reviewed_snapshot_id"] as? String) ?? ""
-        let scope = snapshot.isEmpty ? "" : " · reviewed snapshot \(String(snapshot.prefix(12))) only"
-        let summary = firstLine((data["summary"] as? String) ?? "")
-        let label = "\(reviewer)\(model.isEmpty || model == reviewer ? "" : " (\(model))")\(round) — \(verdict)\(findings)\(counts.isEmpty ? "" : " (\(counts))")\(scope)"
-        return summary.isEmpty ? label : "\(label): \(summary)"
+        let findings = integerField(data, "findings").map { n in
+            let base = n == 1 ? "1 finding" : "\(n) findings"
+            return counts.isEmpty ? base : "\(base) (\(counts))"
+        } ?? ""
+        return TranscriptRow.Review(
+            reviewer: model.isEmpty || model == reviewer ? reviewer : "\(reviewer) (\(model))",
+            round: integerField(data, "round"),
+            verdict: ((data["verdict"] as? String) ?? "unknown").uppercased(),
+            findings: findings,
+            summary: firstLine((data["summary"] as? String) ?? ""),
+            task: (data["task"] as? String) ?? "",
+            reviewedSnapshot: (data["reviewed_snapshot_id"] as? String) ?? "")
     }
 
     private static func liveTailRowID(for actor: String) -> String {

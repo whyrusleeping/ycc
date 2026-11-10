@@ -116,8 +116,8 @@ final class EventContractTests: XCTestCase {
             answers.append(obj(["question_seq": .number(Int(question.seq)), "provenance": .string(provenance)]))
         }
         let reviews: [JSONValue] = projection.durableRows.compactMap { row in
-            guard case .review(let summary, _, _) = row.kind else { return nil }
-            let verdict = summary.contains("— ACCEPT") ? "accept" : summary.contains("— REVISE") ? "revise" : "unknown"
+            guard case .review(let review) = row.kind else { return nil }
+            let verdict = ["ACCEPT", "REVISE"].contains(review.verdict) ? review.verdict.lowercased() : "unknown"
             return obj(["seq": .number(Int(row.seq)), "verdict": .string(verdict)])
         }
         var tails: [String: JSONValue] = [:]

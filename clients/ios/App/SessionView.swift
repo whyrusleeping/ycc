@@ -1729,11 +1729,9 @@ struct TranscriptRowView: View, Equatable {
             }
         case .system(let text):
             systemRow(text)
-        case .review(let text, let task, let snapshot):
-            VStack(alignment: .leading) {
-                systemRow(text)
-                Button("View working changes") { onOpenReview(task, snapshot) }
-                    .font(.caption)
+        case .review(let review):
+            ReviewRowView(review: review) {
+                onOpenReview(review.task, review.reviewedSnapshot)
             }
         case .commit(let text, let sha):
             commitRow(text, sha: sha)
@@ -1862,8 +1860,14 @@ struct TranscriptRowView: View, Equatable {
     }
 
     private func systemRow(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "circle.fill").font(.system(size: 4)).foregroundStyle(.tertiary)
+        // First-baseline alignment keeps the bullet on the first line of a
+        // wrapped note instead of floating at its vertical middle.
+        HStack(alignment: .firstTextBaseline, spacing: RowGutter.spacing) {
+            Text("•")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .frame(width: RowGutter.iconWidth)
+                .accessibilityHidden(true)
             Text(text)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1881,13 +1885,16 @@ struct TranscriptRowView: View, Equatable {
             Button {
                 onOpenCommit(sha)
             } label: {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: RowGutter.spacing) {
                     Image(systemName: "arrow.triangle.branch")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
+                        .frame(width: RowGutter.iconWidth)
+                    // The full message is one tap away in the diff view.
                     Text(text)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Image(systemName: "chevron.right")
                         .font(.caption2)
@@ -2073,6 +2080,104 @@ private struct IncrementalStreamingText: UIViewRepresentable {
     }
 }
 
+/// The leading column shared by compact transcript rows (tool calls, thinking,
+/// lifecycle notes, commits, reviews): every icon or bullet is centred in the
+/// same fixed-width slot so icons and text line up down the transcript.
+private enum RowGutter {
+    static let iconWidth: CGFloat = 16
+    static let spacing: CGFloat = 6
+    /// Leading inset that puts follow-on lines under a row's text column.
+    static var textInset: CGFloat { iconWidth + spacing }
+}
+
+/// A `review_submitted` verdict: a scannable verdict line, then the reviewer's
+/// summary in its own clamped paragraph (tap to expand), then the action to
+/// inspect exactly the snapshot that was reviewed.
+private struct ReviewRowView: View {
+    let review: TranscriptRow.Review
+    let onOpen: () -> Void
+
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: RowGutter.spacing) {
+                Image(systemName: symbol)
+                    .font(.caption)
+                    .foregroundStyle(tint)
+                    .frame(width: RowGutter.iconWidth)
+                Text(verdictLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .layoutPriority(1)
+                Text(meta)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .accessibilityElement(children: .combine)
+
+            Group {
+                if !review.summary.isEmpty {
+                    Text(review.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(expanded ? nil : 3)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityHint(expanded ? "Collapses the summary" : "Shows the full summary")
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Button("View reviewed changes", action: onOpen)
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                    if !review.reviewedSnapshot.isEmpty {
+                        Text(String(review.reviewedSnapshot.prefix(7)))
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .accessibilityLabel("Snapshot \(review.reviewedSnapshot.prefix(7))")
+                    }
+                }
+            }
+            .padding(.leading, RowGutter.textInset)
+        }
+    }
+
+    private var meta: String {
+        [review.reviewer, review.round.map { "round \($0)" } ?? "", review.findings]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    private var verdictLabel: String {
+        switch review.verdict {
+        case "ACCEPT": return "Accepted"
+        case "REVISE": return "Revise"
+        default: return review.verdict.capitalized
+        }
+    }
+
+    private var symbol: String {
+        switch review.verdict {
+        case "ACCEPT": return "checkmark.seal.fill"
+        case "REVISE": return "arrow.uturn.backward.circle.fill"
+        default: return "questionmark.circle"
+        }
+    }
+
+    private var tint: Color {
+        switch review.verdict {
+        case "ACCEPT": return Theme.live
+        case "REVISE": return Theme.attention
+        default: return .secondary
+        }
+    }
+}
+
 /// A collapsed one-liner that expands to reveal detail text on tap.
 private struct ExpandableRow: View {
     let title: String
@@ -2096,10 +2201,11 @@ private struct ExpandableRow: View {
                 withAnimation(.snappy) { expanded.toggle() }
                 if opening, let loadDetail { Task { await loadDetail() } }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: RowGutter.spacing) {
                     Image(systemName: systemImage)
                         .font(.caption)
                         .foregroundStyle(tint)
+                        .frame(width: RowGutter.iconWidth)
                     Text(title)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -2172,11 +2278,11 @@ private struct ToolRowView: View {
                 withAnimation(.snappy) { expanded.toggle() }
                 if opening, let loadDetail { Task { await loadDetail() } }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: RowGutter.spacing) {
                     Image(systemName: ToolPreview.symbol(for: name))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(width: 16)
+                        .frame(width: RowGutter.iconWidth)
                     Text(name)
                         .font(.caption.monospaced())
                         .foregroundStyle(.primary)
