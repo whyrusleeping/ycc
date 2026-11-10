@@ -632,6 +632,22 @@ func TestAssembleInjectsMemory(t *testing.T) {
 	}
 }
 
+// Committed project instructions reach the prompt ahead of advisory memory.
+func TestAssembleInjectsProjectInstructionsBeforeMemory(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "CLAUDE.md"), []byte("run make check before committing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "memory.md"), []byte("# Project memory\n\n## Lessons learned\n- 2026-01-01: use -run while iterating\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prompt := inspectSys("BASE PROMPT", ws)
+	instr, mem := strings.Index(prompt, "run make check before committing"), strings.Index(prompt, "PROJECT MEMORY")
+	if instr < 0 || mem < 0 || instr > mem || !strings.Contains(prompt, "committed CLAUDE.md") {
+		t.Fatalf("instructions missing or misplaced:\n%s", prompt)
+	}
+}
+
 func TestFreshSessionPromptOmitsSupersededPolicy(t *testing.T) {
 	d := depsFor(t)
 	when := time.Date(2026, 8, 29, 10, 0, 0, 0, time.UTC)

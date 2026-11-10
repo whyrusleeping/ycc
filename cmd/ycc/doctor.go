@@ -528,8 +528,9 @@ func forgeChecks() []check {
 	return checks
 }
 
-// docsChecks reports the spec entry point and the backlog directory. Both are
-// informational (⚠, never hard) since ycc creates them on demand.
+// docsChecks reports the spec entry point, the backlog directory, and the
+// project instruction file when one is picked up. All are informational (⚠,
+// never hard) since ycc creates the first two on demand.
 func docsChecks(ws string) []check {
 	store := docs.NewStore(ws)
 	var out []check
@@ -574,6 +575,15 @@ func docsChecks(ws string) []check {
 			label:  "backlog",
 			detail: "no backlog/ yet (created when the first task is added)",
 		})
+	}
+	if pi, ok := docs.LoadProjectInstructions(ws); ok {
+		c := check{status: statusOK, label: "instructions", detail: fmt.Sprintf("%s picked up for agent prompts (%d bytes)", pi.Name, pi.Size)}
+		if pi.Truncated {
+			c.status = statusWarn
+			c.detail = fmt.Sprintf("%s is %d bytes; agent prompts get only the first %d KiB", pi.Name, pi.Size, docs.MaxProjectInstructions>>10)
+			c.remedy = "shorten " + pi.Name + " or move detail into linked docs"
+		}
+		out = append(out, c)
 	}
 	return out
 }

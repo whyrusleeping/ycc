@@ -71,7 +71,12 @@ Persistence is opt-in:
 - `ycc --addr <URL>` attaches to the specified daemon.
 
 A persistent daemon stores its project name-to-path registry in its state directory. Projects may
-be added, renamed, and removed without changing workspace contents. Starting a session in an
+be added, renamed, and removed without changing workspace contents. Adding a project registers an
+existing directory, or first makes a new one: an empty git repository (`git init`) or a clone. A
+clone runs on the daemon host without prompting, through an authenticated `gh` for GitHub
+repositories when one is available and plain git with the daemon user's credentials otherwise.
+The add flow suggests the most recently active git repositories beside registered projects and
+defaults new ones to the directory holding most projects. Starting a session in an
 unknown workspace registers it. `ycc daemon` registers its startup directory when it is named with
 `--workspace`, or when it is a git work tree other than the home directory; a daemon started from
 an arbitrary shell directory therefore does not adopt it (or `~`) as a project. A request may
@@ -297,6 +302,19 @@ The `spec-doctor` pm preset combines that evidence with a section-by-section com
 code. It reports contradictions, significant undocumented interfaces, and register drift; it
 does not demand code-level detail from a deliberately higher-level spec. Suggested edits and
 backlog items still require the ordinary user-approved document workflow.
+
+### 6.5 Project instructions
+
+A committed `AGENTS.md` at the session's workspace root (the worktree, for workstream sessions)
+supplies project instructions such as build and test commands and conventions; `CLAUDE.md` is
+the fallback when `AGENTS.md` yields nothing. Every agent prompt that carries project memory also
+carries this file, placed after the system and mode policy and before memory. It is framed as the
+project's conventions: it ranks below that policy and the user, and it grants no authorization,
+so it cannot widen scope or access or bypass confirmation and review gates. Unlike memory, it is
+not advisory. Injection is capped at 32 KiB with a visible truncation marker. A missing, empty,
+unreadable, or non-regular file, or a symlink resolving outside the workspace, adds nothing and
+is not an error. `ycc doctor` names the file it picked up. Nested per-directory files and
+user-global instructions are not read.
 
 ## 7. Agent engine
 
