@@ -61,8 +61,32 @@ final class RetryGuardHTTPClient: URLSessionHTTPClient, @unchecked Sendable {
         return super.unary(request: request, onMetrics: onMetrics) { response in
             // Always complete the callback, including cancelled requests, so
             // Connect's awaiting continuation is resumed exactly once.
-            queue.async { onResponse(response) }
+            queue.async { onResponse(Self.failingTransport(response)) }
         }
+    }
+
+    /// When the connection fails after the response headers arrived (e.g. iOS
+    /// suspended the app mid-download, or the request was cancelled), the
+    /// stock client still reports the HTTP status with whatever body arrived.
+    /// Connect then reads a 200 with a missing or truncated body as a protocol
+    /// error (`internal`: "unexpected encoding" when gzip-encoded) or even as
+    /// a valid message. Report the transport failure instead. Responses that
+    /// failed before any headers already carry a mapped `ConnectError`.
+    static func failingTransport(_ response: HTTPResponse) -> HTTPResponse {
+        guard let error = response.error, !(error is ConnectError) else { return response }
+        let code: Code
+        switch (error as? URLError)?.code {
+        case .cancelled?: code = .canceled
+        case .timedOut?: code = .deadlineExceeded
+        default: code = .unavailable
+        }
+        // No headers: Connect would otherwise try to decompress the missing
+        // body per Content-Encoding and fail as `internal` again.
+        return HTTPResponse(
+            code: code, headers: [:], message: nil, trailers: [:],
+            error: ConnectError(code: code, message: error.localizedDescription, exception: error,
+                                details: [], metadata: [:]),
+            tracingInfo: response.tracingInfo)
     }
 
     override func urlSession(

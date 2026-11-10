@@ -10,6 +10,7 @@ import os
 final class LatencyInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked Sendable {
     static let headerName = "Ycc-Request-Id"
     private let diagnostics: LatencyDiagnostics
+    private let analytics: UsageAnalytics
     private let id = String(UUID().uuidString.prefix(16))
     private let lock = NSLock()
     private var procedure = ""
@@ -18,10 +19,13 @@ final class LatencyInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked 
     private var firstMessageMS: Double?
     private var messages = 0
 
-    init(diagnostics: LatencyDiagnostics) { self.diagnostics = diagnostics }
+    init(diagnostics: LatencyDiagnostics, analytics: UsageAnalytics = .shared) {
+        self.diagnostics = diagnostics
+        self.analytics = analytics
+    }
 
-    static func factory(diagnostics: LatencyDiagnostics) -> InterceptorFactory {
-        InterceptorFactory { _ in LatencyInterceptor(diagnostics: diagnostics) }
+    static func factory(diagnostics: LatencyDiagnostics, analytics: UsageAnalytics = .shared) -> InterceptorFactory {
+        InterceptorFactory { _ in LatencyInterceptor(diagnostics: diagnostics, analytics: analytics) }
     }
 
     private func elapsed() -> Double { (ProcessInfo.processInfo.systemUptime - started) * 1000 }
@@ -57,8 +61,6 @@ final class LatencyInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked 
                                  roundTripMS: ms,
                                  serverMS: LatencyDiagnostics.serverDuration(Self.header(response.headers, "Server-Timing")),
                                  outcome: String(describing: response.code), firstMessageMS: nil, messages: 0))
-        // Failed requests feed usage analytics: which operations fail, and how.
-        UsageAnalytics.shared.rpcFailed(procedure: path, code: response.code.name)
         proceed(response)
     }
 
@@ -70,7 +72,13 @@ final class LatencyInterceptor: UnaryInterceptor, StreamInterceptor, @unchecked 
         lock.lock()
         let span = decodeSpan
         decodeSpan = nil
+        let path = procedure
         lock.unlock()
+        // Failed requests feed usage analytics: which operations fail, and how.
+        // Use the error's decoded code: the response code of a daemon error is
+        // derived from its HTTP status, which reads invalid_argument (400) as
+        // `internal` and not_found (404) as `unimplemented`.
+        analytics.rpcFailed(procedure: path, code: (response.error?.code ?? response.code).name)
         if let span {
             var events = 0
             var rows = 0
