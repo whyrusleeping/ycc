@@ -236,6 +236,10 @@ spec_path = "spec.md"
 doc_globs = ["docs/*.md", "docs/design/*.md"]
 ```
 
+Chat sessions commit finished, verified work without asking: only the files the session changed.
+In the same file, `[chat] finished_work = "ask"` makes the agent ask first, and
+`"commit+push"` also pushes the current branch.
+
 ## Credentials and secrets
 
 - **Subscriptions:** `ycc login anthropic|openai`. Tokens stay on the daemon's machine and

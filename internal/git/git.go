@@ -5,6 +5,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -254,6 +255,41 @@ func (r *Repo) Fetch() error {
 
 func (r *Repo) run(args ...string) (string, error) {
 	return r.runWithEnv(nil, args...)
+}
+
+// PushUpstream pushes the current branch, and only it, to its configured
+// upstream (branch.<name>.remote and .merge). The explicit refspec keeps
+// push.default and remote push refspecs from widening the push. Credential
+// prompts are disabled and daemon credentials scrubbed, as for Fetch. It
+// returns git's summary.
+func (r *Repo) PushUpstream(ctx context.Context) (string, error) {
+	ref, err := r.run("symbolic-ref", "--quiet", "HEAD")
+	ref = strings.TrimSpace(ref)
+	if err != nil || !strings.HasPrefix(ref, "refs/heads/") {
+		return "", fmt.Errorf("HEAD is not on a branch")
+	}
+	branch := strings.TrimPrefix(ref, "refs/heads/")
+	remote, _ := r.run("config", "--get", "branch."+branch+".remote")
+	merge, _ := r.run("config", "--get", "branch."+branch+".merge")
+	remote, merge = strings.TrimSpace(remote), strings.TrimSpace(merge)
+	switch {
+	case remote == "" || merge == "":
+		return "", fmt.Errorf("branch %s has no upstream", branch)
+	case remote == ".":
+		return "", fmt.Errorf("branch %s tracks a local branch, not a remote", branch)
+	}
+	cmd := exec.CommandContext(ctx, "git", "push", "--", remote, ref+":"+merge)
+	cmd.Dir = r.Dir
+	cmd.Env = append(credenv.Scrub(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=")
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", fmt.Errorf("git push: %w", ctxErr)
+		}
+		return "", fmt.Errorf("git push %s %s: %v: %s", remote, branch, err, text)
+	}
+	return text, nil
 }
 
 func (r *Repo) runWithEnv(env []string, args ...string) (string, error) {

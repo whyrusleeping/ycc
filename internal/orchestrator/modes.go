@@ -84,10 +84,11 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 	reg := tools.New()
 	switch mode {
 	case "chat":
+		policy := d.Docs.ChatFinishedWork()
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
-			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d))
-		base := chatModeSystem
+			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d), chatCommitTool(d, policy))
+		base := chatModeSystem + "\n\n" + chatFinishGuidance(policy)
 		if d.ScheduleWatch != nil {
 			reg.Add(scheduleWatch(d))
 			base += "\n\n" + watchProposalGuidance

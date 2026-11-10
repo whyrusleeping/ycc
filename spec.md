@@ -692,7 +692,15 @@ surface; `docs/design/forge-integration.md` records that trust-boundary decision
   `docs/design/doc-style.md`, editing only backlog files and flagging what evidence does not
   settle); an optional preset-to-model binding supplies an independent editorial perspective
   without changing role defaults.
-- **chat** is free-form assistance with direct worker tools and no fixed workflow.
+- **chat** is free-form assistance with direct worker tools and no fixed workflow. Finished,
+  verified work is committed by default, through a `commit` tool that takes the files the
+  session changed, whole, plus any named paths. Given a task, it also completes that task in the
+  same commit. `[chat] finished_work` in a project's `.ycc/config.toml` sets the policy: `commit`
+  (the default), `commit+push` (the tool then pushes the current branch to its upstream; a failed
+  push leaves the commit and is reported), or `ask` (the agent asks with `ask_user` first). The
+  final reply names what was committed and pushed. Before this, finished chat work sat uncommitted
+  behind a closing "should I commit?" or "changes are uncommitted", and about 12% of the owner's
+  follow-up messages were some form of "commit".
 - **work** drives one accepted task through implementation, proportional review, backlog update,
   and commit.
 

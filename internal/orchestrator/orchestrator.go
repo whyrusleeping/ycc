@@ -294,6 +294,28 @@ func (d *Deps) implementer() AgentSpec {
 }
 
 func (d *Deps) changeset(taskID string, extra ...string) (*git.Changeset, error) {
+	return d.scopedChangeset(func() ([]string, error) {
+		task, err := d.Docs.Get(taskID)
+		if err != nil {
+			return nil, err
+		}
+		path, err := filepath.Abs(task.Path)
+		if err != nil {
+			return nil, err
+		}
+		// Extra paths (commit's explicit paths) are adopted whole like the task
+		// document; relative ones resolve against the repository's workspace.
+		return append([]string{path}, extra...), nil
+	})
+}
+
+// sessionChangeset is this session's attributed changes since its baseline,
+// with paths adopted whole; unlike changeset it names no task.
+func (d *Deps) sessionChangeset(paths ...string) (*git.Changeset, error) {
+	return d.scopedChangeset(func() ([]string, error) { return paths, nil })
+}
+
+func (d *Deps) scopedChangeset(adopt func() ([]string, error)) (*git.Changeset, error) {
 	if d.Repo == nil {
 		return nil, fmt.Errorf("git repository is not available")
 	}
@@ -311,17 +333,10 @@ func (d *Deps) changeset(taskID string, extra ...string) (*git.Changeset, error)
 	if d.Baseline == nil {
 		return nil, fmt.Errorf("session has no persisted git baseline; start a new session before reviewing or committing because change ownership cannot be reconstructed safely")
 	}
-	task, err := d.Docs.Get(taskID)
+	paths, err := adopt()
 	if err != nil {
 		return nil, err
 	}
-	path, err := filepath.Abs(task.Path)
-	if err != nil {
-		return nil, err
-	}
-	// Extra paths (commit's explicit paths) are adopted whole like the task
-	// document; relative ones resolve against the repository's workspace.
-	paths := append([]string{path}, extra...)
 	if attr := d.attribution(); attr != nil {
 		return d.Repo.ChangesFor(d.Baseline, attr, paths...)
 	}

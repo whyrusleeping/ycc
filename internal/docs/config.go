@@ -30,7 +30,20 @@ type specConfig struct {
 		// backlog-groom runs for this project; false opts the project out.
 		AutoGroom *bool `toml:"auto_groom"`
 	} `toml:"backlog"`
+	// Chat holds per-project chat-session policy.
+	Chat struct {
+		// FinishedWork says what a chat agent does with finished, verified
+		// work: "commit" (default), "commit+push", or "ask".
+		FinishedWork string `toml:"finished_work"`
+	} `toml:"chat"`
 }
+
+// Policies for finished chat work ([chat] finished_work).
+const (
+	ChatCommit     = "commit"
+	ChatCommitPush = "commit+push"
+	ChatAsk        = "ask"
+)
 
 // defaultSpecPath is the workspace-relative spec entry point when none is
 // configured: spec.md at the workspace root, alongside backlog/.
@@ -54,6 +67,7 @@ func loadSpecConfig(workspaceRoot string) specConfig {
 	}
 	cfg.DocGlobs = raw.DocGlobs
 	cfg.Backlog = raw.Backlog
+	cfg.Chat = raw.Chat
 	return cfg
 }
 
@@ -61,6 +75,18 @@ func loadSpecConfig(workspaceRoot string) specConfig {
 // grooming ([backlog] auto_groom in .ycc/config.toml; default true).
 func (s *Store) BacklogAutoGroom() bool {
 	return s.cfg.Backlog.AutoGroom == nil || *s.cfg.Backlog.AutoGroom
+}
+
+// ChatFinishedWork returns the project's policy for finished chat work
+// ([chat] finished_work): ChatCommit, ChatCommitPush, or ChatAsk. A missing or
+// unrecognized value is ChatCommit, so pushing always needs the exact setting.
+func (s *Store) ChatFinishedWork() string {
+	switch v := strings.ToLower(strings.TrimSpace(s.cfg.Chat.FinishedWork)); v {
+	case ChatCommitPush, ChatAsk:
+		return v
+	default:
+		return ChatCommit
+	}
 }
 
 // cleanRelPath normalizes a configured workspace-relative path to a clean slash
