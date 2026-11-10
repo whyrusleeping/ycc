@@ -14,7 +14,8 @@ import { Composer, type ComposerHandle } from "./Composer";
 import type { SessionController, SessionSnapshot } from "./controller";
 import { Transcript } from "./Transcript";
 import { useSessionController, useSessionSnapshot } from "./useSession";
-import { compactTokenCount } from "../sessions/feed";
+import { compactTokenCount, formatSessionDuration, sessionDurationMs } from "../sessions/feed";
+import type { SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 import { useDropZone } from "../attachments/pictures";
 import { useTranscriptSearch } from "./SearchBar";
 import { FileLinksProvider } from "../files/FileRef";
@@ -168,12 +169,31 @@ function Controls({ controller, snap }: { controller: SessionController; snap: S
   );
 }
 
+/** Header readout of how long the session has run since it started. */
+function RunningFor({ timing }: { timing: Pick<SessionSummary, "startedAt" | "lastActivity" | "live"> }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!timing.live) return;
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, [timing.live]);
+  const ran = sessionDurationMs(timing, now);
+  if (ran === null) return null;
+  const text = formatSessionDuration(ran);
+  return (
+    <span className="meta-minor" title={`Started ${new Date(timing.startedAt).toLocaleString()}`}>
+      {timing.live ? "up" : "ran"} {text}
+    </span>
+  );
+}
+
 export function SessionView({
   project,
   sessionId,
   title,
   focusTasks = [],
   mode,
+  timing,
 }: {
   project: string;
   sessionId: string;
@@ -182,6 +202,8 @@ export function SessionView({
   focusTasks?: readonly string[];
   /** The session's mode from its history summary, when known. */
   mode?: string;
+  /** Start, last activity and liveness from its history summary, when known. */
+  timing?: Pick<SessionSummary, "startedAt" | "lastActivity" | "live">;
 }) {
   const controller = useSessionController(project, sessionId);
   const snap = useSessionSnapshot(controller);
@@ -328,6 +350,7 @@ export function SessionView({
                 </button>
               );
             })}
+            {timing && <RunningFor timing={timing} />}
             {snap.coordinatorModel && <span className="meta-minor">{snap.coordinatorModel}</span>}
             {ctx && (
               <span className="meta-minor" title="Context the coordinator is carrying">

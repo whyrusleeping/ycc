@@ -5,11 +5,13 @@ import { ProjectInfoSchema, SessionSummarySchema, type SessionSummary } from "..
 import {
   buildFeed,
   displayTitle,
+  formatSessionDuration,
   historyTargets,
   lifecycleLabel,
   mergePage,
   onlyFollowUp,
   sections,
+  sessionDurationMs,
   withFollowUp,
   type HistoryLoad,
 } from "../src/features/sessions/feed";
@@ -152,5 +154,24 @@ describe("labels", () => {
     expect(lifecycleLabel(s("x", 1, { status: "idle" }))).toBeNull();
     expect(lifecycleLabel(s("x", 1, { live: true, status: "idle" }))).toBeNull();
     expect(lifecycleLabel(s("x", 1, { status: "error" }))).toBe("Error");
+  });
+
+  it("formats session durations to the minute", () => {
+    const min = 60_000;
+    expect(formatSessionDuration(59_999)).toBe("<1m");
+    expect(formatSessionDuration(59 * min)).toBe("59m");
+    expect(formatSessionDuration(60 * min)).toBe("1h 00m");
+    expect(formatSessionDuration((47 * 60 + 59) * min)).toBe("47h 59m");
+    expect(formatSessionDuration(48 * 60 * min)).toBe("2d 0h");
+  });
+
+  it("measures a session from its start to now while live, else to its last activity", () => {
+    const start = "2026-01-01T00:00:00.000Z";
+    const now = Date.parse("2026-01-01T03:00:00.000Z");
+    const last = "2026-01-01T01:30:00.000Z";
+    expect(sessionDurationMs({ startedAt: start, lastActivity: last, live: true }, now)).toBe(3 * 3_600_000);
+    expect(sessionDurationMs({ startedAt: start, lastActivity: last, live: false }, now)).toBe(90 * 60_000);
+    expect(sessionDurationMs({ startedAt: start, lastActivity: "", live: false }, now)).toBe(3 * 3_600_000);
+    expect(sessionDurationMs({ startedAt: "", lastActivity: last, live: true }, now)).toBeNull();
   });
 });

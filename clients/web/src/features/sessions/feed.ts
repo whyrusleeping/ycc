@@ -305,6 +305,28 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   return new Date(t).toLocaleDateString();
 }
 
+/**
+ * How long the session has run: from its start to now while the daemon holds
+ * it, else to its last activity. Null when the start is unknown.
+ */
+export function sessionDurationMs(s: Pick<SessionSummary, "startedAt" | "lastActivity" | "live">, now: number = Date.now()): number | null {
+  const start = Date.parse(s.startedAt);
+  if (Number.isNaN(start)) return null;
+  const last = Date.parse(s.lastActivity);
+  const end = s.live || Number.isNaN(last) ? now : last;
+  return Math.max(0, end - start);
+}
+
+/** Minute-grained duration: "<1m", "42m", "2h 05m", "3d 4h". */
+export function formatSessionDuration(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ${String(m % 60).padStart(2, "0")}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
 /** relativeTime without the " ago" suffix, for right-aligned row ages. */
 export function compactAge(iso: string, now: number = Date.now()): string {
   return relativeTime(iso, now).replace(/ ago$/, "");

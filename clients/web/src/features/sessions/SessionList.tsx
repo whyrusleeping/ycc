@@ -16,6 +16,7 @@ import {
   compactState,
   displayProject,
   displayTitle,
+  formatSessionDuration,
   lifecycleLabel,
   lifecycleTone,
   metadataItems,
@@ -23,6 +24,7 @@ import {
   onlyFollowUp,
   relativeTime,
   sections,
+  sessionDurationMs,
   taskChipLabels,
   taskIds,
   type FeedRow,
@@ -131,9 +133,27 @@ export function SessionRowView({
           ),
         )}
         {variant === "page" && metadataItems(s).map((m) => <span key={m}>{m}</span>)}
-        {when && <span className="when">{when}</span>}
+        {isWorking(s) ? <RunTime s={s} now={now} /> : when && <span className="when">{when}</span>}
       </div>
     </div>
+  );
+}
+
+/** Work in flight, whose row shows how long it has run rather than "now". */
+function isWorking(s: SessionSummary): boolean {
+  const tone = lifecycleTone(s);
+  return tone === "running" || tone === "background";
+}
+
+/** How long a session has run since it started, with the start in the tooltip. */
+export function RunTime({ s, now, className = "when" }: { s: SessionSummary; now: number; className?: string }) {
+  const ran = sessionDurationMs(s, now);
+  if (ran === null) return null;
+  const text = formatSessionDuration(ran);
+  return (
+    <span className={className} title={`Started ${new Date(s.startedAt).toLocaleString()} · ${text} so far`}>
+      {text}
+    </span>
   );
 }
 
@@ -215,7 +235,10 @@ function SidebarRow({
     <span className="row-trail">
       <FollowUpFlag s={s} pending={followUpPending} onToggle={onToggleFollowUp} />
       {state ? (
-        <span className={`row-state tone-${state.tone}`}>{state.label}</span>
+        <>
+          <span className={`row-state tone-${state.tone}`}>{state.label}</span>
+          {isWorking(s) && <RunTime s={s} now={now} />}
+        </>
       ) : (
         age && <span className="when" title={new Date(s.lastActivity || s.startedAt).toLocaleString()}>{age}</span>
       )}
