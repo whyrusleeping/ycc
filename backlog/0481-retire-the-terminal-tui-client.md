@@ -1,10 +1,10 @@
 ---
 id: "0481"
 title: Retire the terminal TUI client
-status: proposed
+status: todo
 priority: 4
 created: "2026-10-26"
-updated: "2026-10-26"
+updated: "2026-11-10"
 depends_on: []
 spec_refs: []
 ---
