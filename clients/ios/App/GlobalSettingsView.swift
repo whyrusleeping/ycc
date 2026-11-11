@@ -226,7 +226,7 @@ struct GlobalSettingsView: View {
                 Label("Quick replies", systemImage: "text.bubble")
             }
         } footer: {
-            Text("Canned messages offered in every session’s swipe-in menu.")
+            Text("Canned messages for the session swipe-in menu, for every session or one project’s.")
         }
     }
 

@@ -452,6 +452,9 @@ message QuickReply {
   string id = 1;
   string label = 2; // short button text
   string text = 3;  // the message sent
+  // Icon name from the clients' shared set (e.g. "check", "test"); empty
+  // for the default look. Clients show unknown names as the default.
+  string icon = 4;
 }
 // An empty project skips the project's replies when the daemon has no single
 // default project (e.g. the Settings editor).
@@ -462,8 +465,9 @@ message GetQuickRepliesResponse {
 }
 // SetQuickReplies replaces one list: the daemon-wide list when global is set,
 // otherwise the project's. Labels and texts are trimmed and must be non-empty;
-// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes. Only
-// a default reply's id is kept (daemon-wide list); other ids are dropped.
+// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes, icons
+// up to 32 lowercase letters, digits or underscores. Only a default reply's id
+// is kept (daemon-wide list); other ids are dropped.
 message SetQuickRepliesRequest {
   string project = 1;
   repeated QuickReply replies = 2;

@@ -1277,6 +1277,10 @@ public nonisolated struct Ycc_V1_QuickReply: Sendable {
   /// the message sent
   public var text: String = String()
 
+  /// Icon name from the clients' shared set (e.g. "check", "test"); empty
+  /// for the default look. Clients show unknown names as the default.
+  public var icon: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1312,8 +1316,9 @@ public nonisolated struct Ycc_V1_GetQuickRepliesResponse: Sendable {
 
 /// SetQuickReplies replaces one list: the daemon-wide list when global is set,
 /// otherwise the project's. Labels and texts are trimmed and must be non-empty;
-/// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes. Only
-/// a default reply's id is kept (daemon-wide list); other ids are dropped.
+/// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes, icons
+/// up to 32 lowercase letters, digits or underscores. Only a default reply's id
+/// is kept (daemon-wide list); other ids are dropped.
 public nonisolated struct Ycc_V1_SetQuickRepliesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -7469,7 +7474,7 @@ nonisolated extension Ycc_V1_MarkSessionsReadResponse: SwiftProtobuf.Message, Sw
 
 nonisolated extension Ycc_V1_QuickReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QuickReply"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}label\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}label\0\u{1}text\0\u{1}icon\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7480,6 +7485,7 @@ nonisolated extension Ycc_V1_QuickReply: SwiftProtobuf.Message, SwiftProtobuf._M
       case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.label) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.icon) }()
       default: break
       }
     }
@@ -7495,6 +7501,9 @@ nonisolated extension Ycc_V1_QuickReply: SwiftProtobuf.Message, SwiftProtobuf._M
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 3)
     }
+    if !self.icon.isEmpty {
+      try visitor.visitSingularStringField(value: self.icon, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -7502,6 +7511,7 @@ nonisolated extension Ycc_V1_QuickReply: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.id != rhs.id {return false}
     if lhs.label != rhs.label {return false}
     if lhs.text != rhs.text {return false}
+    if lhs.icon != rhs.icon {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

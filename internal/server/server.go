@@ -370,7 +370,7 @@ func (s *Server) SetSessionFollowUp(_ context.Context, req *connect.Request[v1.S
 func quickRepliesProto(replies []session.QuickReply) []*v1.QuickReply {
 	out := make([]*v1.QuickReply, 0, len(replies))
 	for _, r := range replies {
-		out = append(out, &v1.QuickReply{Id: r.ID, Label: r.Label, Text: r.Text})
+		out = append(out, &v1.QuickReply{Id: r.ID, Label: r.Label, Text: r.Text, Icon: r.Icon})
 	}
 	return out
 }
@@ -398,7 +398,7 @@ func (s *Server) GetQuickReplies(_ context.Context, req *connect.Request[v1.GetQ
 func (s *Server) SetQuickReplies(_ context.Context, req *connect.Request[v1.SetQuickRepliesRequest]) (*connect.Response[v1.SetQuickRepliesResponse], error) {
 	in := make([]session.QuickReply, 0, len(req.Msg.Replies))
 	for _, r := range req.Msg.Replies {
-		in = append(in, session.QuickReply{ID: r.GetId(), Label: r.GetLabel(), Text: r.GetText()})
+		in = append(in, session.QuickReply{ID: r.GetId(), Label: r.GetLabel(), Text: r.GetText(), Icon: r.GetIcon()})
 	}
 	var stored []session.QuickReply
 	var err error

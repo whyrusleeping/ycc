@@ -1195,15 +1195,23 @@ reordered or removed. It is stored in the daemon state dir as `quick-replies.jso
 memory for a one-shot daemon. Once saved, even an empty list stays empty rather than reverting to
 the defaults. `SetQuickReplies` replaces one list: the daemon-wide list when `global` is set,
 otherwise the project's. Either list holds up to 12 trimmed, non-empty label/text pairs, with
-labels up to 32 characters. Project extras live in the project's root workspace at
-`.ycc/quick-replies.json` (`{"replies":[{"label":…,"text":…}]}`). Because they are personal state,
-they are not committed. A quick reply is an ordinary user message.
+labels up to 32 characters. A reply may also name an icon, up to 32 lowercase letters, digits or
+underscores. The daemon keeps the name without checking it. Clients share the set of names and show
+an unknown or missing name as the default's own icon, else a bolt. Project extras live in the
+project's root workspace at `.ycc/quick-replies.json` (`{"replies":[{"label":…,"text":…,"icon":…}]}`).
+Because they are personal state, they are not committed. A quick reply is an ordinary user message.
+In either editor, typing a label into an empty message fills in the message. The message follows
+the label until the user edits the message itself. iOS Settings edits the daemon-wide list and every
+project's extras on one screen. Each reply has an icon picker and a Project picker (Global by
+default). Moving a reply to another list puts it at the end of that list, and Save writes each list
+that changed.
 Clients offer quick replies only when no turn is running, no question has its own answer surface,
 and the draft is empty. They record `composer.quick_reply` with a kind: the default's id, else
 `global` or `project`. The text is never recorded. Desktop web shows quick replies as chips above
 the composer. Project extras are edited from the Projects page or the chips' Edit link. On iOS they are a press-drag-release menu in the session
 view. A drag that starts at the trailing screen edge blurs the transcript and fans the replies out
-around the finger. A row is picked only once the finger reaches it, and a release over a row picks
+around the finger. The rows spring out of the edge at the finger, nearest first, sweeping up into
+place with a little overshoot, and they tuck back in when the menu closes. A row is picked only once the finger reaches it, and a release over a row picks
 it. A flick leaves the menu open for tapping, and a release at the edge or away from the rows
 cancels. A pick waits out a 2-second Undo bar before it is sent, and leaving the session sends it
 immediately. A faint handle on the trailing edge marks the gesture, and VoiceOver gets the replies

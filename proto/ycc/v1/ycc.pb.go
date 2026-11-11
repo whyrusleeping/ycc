@@ -3610,9 +3610,12 @@ type QuickReply struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Stable id of a default reply (analytics), kept while it is edited;
 	// empty for replies the user added.
-	Id            string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Label         string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"` // short button text
-	Text          string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`   // the message sent
+	Id    string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Label string `protobuf:"bytes,2,opt,name=label,proto3" json:"label,omitempty"` // short button text
+	Text  string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`   // the message sent
+	// Icon name from the clients' shared set (e.g. "check", "test"); empty
+	// for the default look. Clients show unknown names as the default.
+	Icon          string `protobuf:"bytes,4,opt,name=icon,proto3" json:"icon,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3664,6 +3667,13 @@ func (x *QuickReply) GetLabel() string {
 func (x *QuickReply) GetText() string {
 	if x != nil {
 		return x.Text
+	}
+	return ""
+}
+
+func (x *QuickReply) GetIcon() string {
+	if x != nil {
+		return x.Icon
 	}
 	return ""
 }
@@ -3768,8 +3778,9 @@ func (x *GetQuickRepliesResponse) GetProject() []*QuickReply {
 
 // SetQuickReplies replaces one list: the daemon-wide list when global is set,
 // otherwise the project's. Labels and texts are trimmed and must be non-empty;
-// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes. Only
-// a default reply's id is kept (daemon-wide list); other ids are dropped.
+// at most 12 replies, labels up to 32 characters, texts up to 4000 bytes, icons
+// up to 32 lowercase letters, digits or underscores. Only a default reply's id
+// is kept (daemon-wide list); other ids are dropped.
 type SetQuickRepliesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
@@ -14759,12 +14770,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12-\n" +
 	"\x05marks\x18\x02 \x03(\v2\x17.ycc.v1.SessionReadMarkR\x05marks\"I\n" +
 	"\x18MarkSessionsReadResponse\x12-\n" +
-	"\x05marks\x18\x01 \x03(\v2\x17.ycc.v1.SessionReadMarkR\x05marks\"F\n" +
+	"\x05marks\x18\x01 \x03(\v2\x17.ycc.v1.SessionReadMarkR\x05marks\"Z\n" +
 	"\n" +
 	"QuickReply\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text\"2\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\x12\x12\n" +
+	"\x04icon\x18\x04 \x01(\tR\x04icon\"2\n" +
 	"\x16GetQuickRepliesRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\"s\n" +
 	"\x17GetQuickRepliesResponse\x12*\n" +

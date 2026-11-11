@@ -1,6 +1,7 @@
 // Editor for a list of quick replies: the daemon-wide list (Settings) or a
 // project's extras (Projects page dialog). Rows keep their id so an edited
 // default keeps its analytics id; order is the order clients offer them in.
+// Icons are picked on iOS; rows keep theirs so a web save doesn't drop them.
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
@@ -11,10 +12,11 @@ import type { GetQuickRepliesResponse, QuickReply } from "../../gen/ycc/v1/ycc_p
 import { toast } from "../../ui/toast";
 
 export const MAX_QUICK_REPLIES = 12;
-type Row = { key: number; id: string; label: string; text: string };
+// follows: the message is a copy of the label made by typing the label.
+type Row = { key: number; id: string; label: string; text: string; icon: string; follows?: boolean };
 let rowKey = 0;
 const toRows = (replies: readonly QuickReply[]): Row[] =>
-  replies.map((r) => ({ key: ++rowKey, id: r.id, label: r.label, text: r.text }));
+  replies.map((r) => ({ key: ++rowKey, id: r.id, label: r.label, text: r.text, icon: r.icon }));
 const same = (rows: Row[], replies: readonly QuickReply[]) =>
   rows.length === replies.length && rows.every((r, i) => r.label === replies[i].label && r.text === replies[i].text);
 
@@ -44,6 +46,12 @@ export function QuickRepliesForm({
   const incomplete = rows.some((r) => !r.label.trim() || !r.text.trim());
   const dirty = !same(rows, saved);
   const update = (key: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  // Typing a label into an empty message fills it in, and the message keeps
+  // following the label until it is edited itself.
+  const setLabel = (key: number, label: string) =>
+    setRows((rs) =>
+      rs.map((r) => (r.key !== key ? r : r.text === "" || r.follows ? { ...r, label, text: label, follows: true } : { ...r, label })),
+    );
   const move = (index: number, by: number) =>
     setRows((rs) => {
       const next = [...rs];
@@ -62,7 +70,7 @@ export function QuickRepliesForm({
       const resp = await client.setQuickReplies({
         global: scope.global,
         project: scope.global ? "" : scope.project,
-        replies: rows.map((r) => ({ id: r.id, label: r.label, text: r.text })),
+        replies: rows.map((r) => ({ id: r.id, label: r.label, text: r.text, icon: r.icon })),
       });
       const stored = resp.replies;
       if (scope.global) {
@@ -107,7 +115,7 @@ export function QuickRepliesForm({
               maxLength={32}
               placeholder="Deploy"
               autoFocus={i === rows.length - 1 && r.label === "" && r.text === ""}
-              onChange={(e) => update(r.key, { label: e.target.value })}
+              onChange={(e) => setLabel(r.key, e.target.value)}
             />
           </label>
           <label className="field-label">
@@ -117,7 +125,7 @@ export function QuickRepliesForm({
               rows={2}
               value={r.text}
               placeholder="Deploy to prod following the deploy runbook"
-              onChange={(e) => update(r.key, { text: e.target.value })}
+              onChange={(e) => update(r.key, { text: e.target.value, follows: false })}
             />
           </label>
           <div className="quick-reply-row-actions">
@@ -148,7 +156,7 @@ export function QuickRepliesForm({
         type="button"
         className="btn ghost small"
         disabled={busy || rows.length >= MAX_QUICK_REPLIES}
-        onClick={() => setRows((rs) => [...rs, { key: ++rowKey, id: "", label: "", text: "" }])}
+        onClick={() => setRows((rs) => [...rs, { key: ++rowKey, id: "", label: "", text: "", icon: "" }])}
       >
         + Add reply
       </button>

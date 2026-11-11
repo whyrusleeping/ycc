@@ -217,11 +217,26 @@ public final class YccClient: Sendable {
         try await quickReplies(project: "").global
     }
 
-    /// Replace the daemon-wide quick replies, returning the stored (trimmed)
-    /// list. Send each existing reply's `id` back so edited defaults keep it.
-    public func setGlobalQuickReplies(_ replies: [Ycc_V1_QuickReply]) async throws -> [Ycc_V1_QuickReply] {
+    /// A project's own quick replies (its extras on top of the daemon-wide list).
+    public func getProjectQuickReplies(project: String) async throws -> [Ycc_V1_QuickReply] {
+        try await quickReplies(project: project).project
+    }
+
+    /// The names of the daemon's registered projects.
+    public func listProjectNames() async throws -> [String] {
+        try await listProjects().map(\.name)
+    }
+
+    /// Replace one quick-reply list, returning the stored (trimmed) list. Send
+    /// each existing reply's `id` back so edited defaults keep it.
+    public func setQuickReplies(
+        _ replies: [Ycc_V1_QuickReply], scope: QuickReplyScope
+    ) async throws -> [Ycc_V1_QuickReply] {
         var request = Ycc_V1_SetQuickRepliesRequest()
-        request.global = true
+        switch scope {
+        case .global: request.global = true
+        case .project(let name): request.project = name
+        }
         request.replies = replies
         let response = await generated.setQuickReplies(request: request)
         switch response.result {

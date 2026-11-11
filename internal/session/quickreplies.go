@@ -17,13 +17,15 @@ type QuickReply struct {
 	ID    string `json:"id,omitempty"`
 	Label string `json:"label"`
 	Text  string `json:"text"`
+	// Icon names one of the clients' shared icons; empty for the default.
+	Icon string `json:"icon,omitempty"`
 }
 
 // DefaultQuickReplies is the daemon-wide list until the user first edits it.
 var DefaultQuickReplies = []QuickReply{
-	{ID: "go_ahead", Label: "Go ahead", Text: "Go ahead"},
-	{ID: "continue", Label: "Continue", Text: "Continue"},
-	{ID: "commit_push", Label: "Commit & push", Text: "Commit and push"},
+	{ID: "go_ahead", Label: "Go ahead", Text: "Go ahead", Icon: "check"},
+	{ID: "continue", Label: "Continue", Text: "Continue", Icon: "forward"},
+	{ID: "commit_push", Label: "Commit & push", Text: "Commit and push", Icon: "upload"},
 }
 
 const (
@@ -31,6 +33,7 @@ const (
 	maxQuickReplies      = 12
 	maxQuickReplyLabel   = 32
 	maxQuickReplyTextLen = 4000
+	maxQuickReplyIcon    = 32
 )
 
 // ErrInvalidQuickReplies reports a SetQuickReplies list that fails validation.
@@ -130,7 +133,7 @@ func cleanQuickReplies(replies []QuickReply, keepDefaultIDs bool) ([]QuickReply,
 	}
 	clean := make([]QuickReply, 0, len(replies))
 	for i, r := range replies {
-		label, text := strings.TrimSpace(r.Label), strings.TrimSpace(r.Text)
+		label, text, icon := strings.TrimSpace(r.Label), strings.TrimSpace(r.Text), strings.TrimSpace(r.Icon)
 		switch {
 		case label == "" || text == "":
 			return nil, fmt.Errorf("%w: reply %d needs a label and a message", ErrInvalidQuickReplies, i+1)
@@ -138,14 +141,30 @@ func cleanQuickReplies(replies []QuickReply, keepDefaultIDs bool) ([]QuickReply,
 			return nil, fmt.Errorf("%w: label %q is longer than %d characters", ErrInvalidQuickReplies, label, maxQuickReplyLabel)
 		case len(text) > maxQuickReplyTextLen:
 			return nil, fmt.Errorf("%w: the message for %q is longer than %d bytes", ErrInvalidQuickReplies, label, maxQuickReplyTextLen)
+		case !validQuickReplyIcon(icon):
+			return nil, fmt.Errorf("%w: icon %q for %q is not a name of up to %d lowercase letters, digits or underscores", ErrInvalidQuickReplies, icon, label, maxQuickReplyIcon)
 		}
 		id := ""
 		if keepDefaultIDs && isDefaultQuickReplyID(r.ID) {
 			id = r.ID
 		}
-		clean = append(clean, QuickReply{ID: id, Label: label, Text: text})
+		clean = append(clean, QuickReply{ID: id, Label: label, Text: text, Icon: icon})
 	}
 	return clean, nil
+}
+
+// validQuickReplyIcon accepts an empty icon or a short snake_case name; the
+// daemon does not know the clients' icon set, so unknown names are kept.
+func validQuickReplyIcon(icon string) bool {
+	if len(icon) > maxQuickReplyIcon {
+		return false
+	}
+	for _, c := range icon {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 func isDefaultQuickReplyID(id string) bool {

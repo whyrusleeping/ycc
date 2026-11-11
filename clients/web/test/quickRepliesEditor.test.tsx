@@ -26,15 +26,21 @@ afterEach(async () => {
 });
 
 const defaults = [
-  { id: "go_ahead", label: "Go ahead", text: "Go ahead" },
-  { id: "continue", label: "Continue", text: "Continue" },
-  { id: "commit_push", label: "Commit & push", text: "Commit and push" },
+  { id: "go_ahead", label: "Go ahead", text: "Go ahead", icon: "check" },
+  { id: "continue", label: "Continue", text: "Continue", icon: "" },
+  { id: "commit_push", label: "Commit & push", text: "Commit and push", icon: "upload" },
 ] as never[];
+
+const type = (field: HTMLInputElement | HTMLTextAreaElement, value: string) =>
+  act(() => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(field, value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 
 const button = (label: string) =>
   [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label || b.getAttribute("aria-label") === label)!;
 
-it("saves the daemon-wide list edited, reordered and trimmed, keeping each default's id", async () => {
+it("saves the daemon-wide list edited, reordered and trimmed, keeping each default's id and icon", async () => {
   rpc.setQuickReplies.mockImplementation(async (req: { replies: unknown[] }) => ({ replies: req.replies }));
   const qc = new QueryClient();
   await act(() =>
@@ -57,9 +63,29 @@ it("saves the daemon-wide list edited, reordered and trimmed, keeping each defau
     global: true,
     project: "",
     replies: [
-      { id: "continue", label: "Keep going", text: "Continue" },
-      { id: "go_ahead", label: "Go ahead", text: "Go ahead" },
+      { id: "continue", label: "Keep going", text: "Continue", icon: "" },
+      { id: "go_ahead", label: "Go ahead", text: "Go ahead", icon: "check" },
     ],
   });
   expect(button("Save").disabled).toBe(true); // saved state is the new baseline
+});
+
+it("fills a new reply's message from its label until the message is edited", async () => {
+  const qc = new QueryClient();
+  await act(() =>
+    root.render(
+      <QueryClientProvider client={qc}>
+        <QuickRepliesForm scope={{ global: true }} initial={[]} emptyText="none" />
+      </QueryClientProvider>,
+    ),
+  );
+  await act(() => button("+ Add reply").click());
+  const label = container.querySelector<HTMLInputElement>("input")!;
+  const message = container.querySelector<HTMLTextAreaElement>("textarea")!;
+  await type(label, "D");
+  await type(label, "Deploy");
+  expect(message.value).toBe("Deploy");
+  await type(message, "Deploy to prod");
+  await type(label, "Ship");
+  expect(message.value).toBe("Deploy to prod");
 });

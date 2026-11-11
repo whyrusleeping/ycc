@@ -40,14 +40,14 @@ func TestQuickRepliesRPC(t *testing.T) {
 	// drops invented ids, and can remove defaults.
 	set, err := srv.SetQuickReplies(ctx, connect.NewRequest(&v1.SetQuickRepliesRequest{Global: true, Replies: []*v1.QuickReply{
 		{Id: "continue", Label: "Keep going", Text: "Keep going"},
-		{Id: "made_up", Label: "Ship it", Text: "Ship it"},
+		{Id: "made_up", Label: "Ship it", Text: "Ship it", Icon: "rocket"},
 	}}))
-	if err != nil || len(set.Msg.Replies) != 2 || set.Msg.Replies[0].Id != "continue" || set.Msg.Replies[1].Id != "" {
+	if err != nil || len(set.Msg.Replies) != 2 || set.Msg.Replies[0].Id != "continue" || set.Msg.Replies[1].Id != "" || set.Msg.Replies[1].Icon != "rocket" {
 		t.Fatalf("set global: %+v %v", set, err)
 	}
 
 	set, err = srv.SetQuickReplies(ctx, connect.NewRequest(&v1.SetQuickRepliesRequest{Replies: []*v1.QuickReply{
-		{Id: "go_ahead", Label: " Deploy ", Text: " Deploy to prod following the runbook\n"},
+		{Id: "go_ahead", Label: " Deploy ", Text: " Deploy to prod following the runbook\n", Icon: "upload"},
 	}}))
 	if err != nil || len(set.Msg.Replies) != 1 || set.Msg.Replies[0].Label != "Deploy" || set.Msg.Replies[0].Id != "" {
 		t.Fatalf("set project: %+v %v", set, err)
@@ -56,7 +56,8 @@ func TestQuickRepliesRPC(t *testing.T) {
 	// A fresh manager reads both lists back; an emptied daemon-wide list
 	// stays empty rather than reverting to the defaults.
 	got := get(newServer())
-	if len(got.Global) != 2 || got.Global[0].Label != "Keep going" || len(got.Project) != 1 || got.Project[0].Text != "Deploy to prod following the runbook" {
+	if len(got.Global) != 2 || got.Global[0].Label != "Keep going" || len(got.Project) != 1 || got.Project[0].Text != "Deploy to prod following the runbook" ||
+		got.Global[1].Icon != "rocket" || got.Project[0].Icon != "upload" {
 		t.Fatalf("reload: %+v", got)
 	}
 	if _, err := srv.SetQuickReplies(ctx, connect.NewRequest(&v1.SetQuickRepliesRequest{Global: true})); err != nil {
@@ -70,6 +71,7 @@ func TestQuickRepliesRPC(t *testing.T) {
 		"empty text": {{Label: "Deploy", Text: "  "}},
 		"long label": {{Label: "This label is far too long for a quick reply chip", Text: "x"}},
 		"too many":   make([]*v1.QuickReply, 13),
+		"bad icon":   {{Label: "Deploy", Text: "Deploy", Icon: "Rocket Ship"}},
 	} {
 		for _, global := range []bool{false, true} {
 			_, err := srv.SetQuickReplies(ctx, connect.NewRequest(&v1.SetQuickRepliesRequest{Global: global, Replies: replies}))
