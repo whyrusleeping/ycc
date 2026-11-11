@@ -155,10 +155,11 @@ final class SessionModelCacheTests: XCTestCase {
         return view
     }
 
-    private func earlierPage() -> Ycc_V1_GetSessionViewPageResponse {
+    private func earlierPage(earlierCursor: String = "") -> Ycc_V1_GetSessionViewPageResponse {
         var page = Ycc_V1_GetSessionViewPageResponse()
         page.indexedThroughSeq = 20
         page.rows = [row(2, "older")]
+        page.earlierCursor = earlierCursor
         return page
     }
 
@@ -443,6 +444,23 @@ final class SessionModelCacheTests: XCTestCase {
         XCTAssertEqual(model.durableRows.map(\.id), ["seq-2", "seq-10", "seq-20"], "installed synchronously")
         XCTAssertEqual(model.earlierRowCount, 0)
         XCTAssertEqual(source.pageRequests, 1)
+        presentation.end()
+    }
+
+    func testLoadedEarlierPagePrefetchesTheNextFullPage() async {
+        let source = CachedSessionSource(
+            view: view(through: 20, rows: [10, 20], earlierCursor: "older"),
+            page: earlierPage(earlierCursor: "oldest"))
+        let model = makeModel(source, prefetch: true)
+        let presentation = show(model)
+        await waitUntil { model.hasPrefetchedEarlierPage }
+        model.loadEarlierRows()
+        XCTAssertEqual(model.earlierRowCount, 1)
+        // Paging through history: the next page is fetched ahead, full-size,
+        // so scrolling up keeps installing pages without a round trip.
+        await waitUntil { model.hasPrefetchedEarlierPage }
+        XCTAssertEqual(source.pageLimits, [YccClient.initialViewRows, -1])
+        XCTAssertFalse(model.isLoadingEarlier, "a prefetch is not a visible load")
         presentation.end()
     }
 

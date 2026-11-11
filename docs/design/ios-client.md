@@ -30,7 +30,8 @@ Unary transport response decoding and history reduction run off the UI executor.
 atomically, discarding cancelled or superseded loads. Transient initial-fetch failures retry with
 backoff rather than bypassing bulk replay through an event-by-event subscription. Initial rendering
 mounts only the latest 200 durable rows; **Load earlier** reveals preceding pages while retaining the
-previous first row as the reading anchor. The full projection remains available for lifecycle,
+previous first row as the reading anchor. Scrolling up to that row loads the page by itself once the
+finger lifts, and each loaded page prefetches the next, so long sessions page in continuously. The full projection remains available for lifecycle,
 questions, tool pairing, and reconnect cursors. This bounds initial eager layout without reintroducing
 lazy-stack geometry failures during streaming; explicitly loaded pages and subsequent live rows can
 grow the mounted history. A one-shot successful-replay edge replaces the loading scroll container

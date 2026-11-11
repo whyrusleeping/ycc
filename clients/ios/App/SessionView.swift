@@ -59,6 +59,8 @@ struct SessionView: View {
         var watchdogScheduled = false
         var sawLiveEdge = false
         var lastTopY = CGFloat.nan
+        /// A scroll-triggered earlier-page load is queued for the next turn.
+        var autoLoadQueued = false
     }
     @State private var dragActivity = DragActivity()
     /// Geometry measured during layout. Nothing in `body` reads these, so they
@@ -162,6 +164,11 @@ struct SessionView: View {
     private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let dragQuietPeriod: TimeInterval = 0.35
     private static let dragActivityStalePeriod: TimeInterval = 1.0
+    /// How close to the top of the mounted history (points) scrolling must
+    /// come before the earlier page loads by itself — about where the Load
+    /// earlier row comes into view, so restoring the reading anchor to the
+    /// top barely moves the rows.
+    private static let autoLoadEarlierReach: CGFloat = 80
     init(
         client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "",
         models: SessionModelCache? = nil, sessionList: SessionListModel? = nil
@@ -905,6 +912,7 @@ struct SessionView: View {
             if moved, dragging, !measured.latestVisible {
                 dragActivity.sawLiveEdge = false
             }
+            if moved { autoLoadEarlierIfAtTop() }
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 4)
@@ -935,6 +943,7 @@ struct SessionView: View {
                                 }
                             }
                             isDraggingTranscript = false
+                            autoLoadEarlierIfAtTop()
                             if measured.latestVisible || dragActivity.sawLiveEdge,
                                !isFollowingLatest, !isBrowsingEarlier {
                                 isFollowingLatest = true
@@ -959,6 +968,7 @@ struct SessionView: View {
                     // already disabled as soon as the drag moved off the live edge.
                     isDraggingTranscript = false
                     dragActivity.last = Date()
+                    autoLoadEarlierIfAtTop()
                     // Even if the marker is or recently was within tolerance at
                     // release, do not re-pin against a downward fling toward older
                     // content.
@@ -1012,6 +1022,32 @@ struct SessionView: View {
             invalidateScrollRequests()
             historyAnchor = anchor
             model.loadEarlierRows()
+        }
+    }
+
+    /// Scrolling up to the top of the mounted history loads the page before
+    /// it, as tapping Load earlier does. Only once the finger has lifted: a
+    /// drag clears the reading anchor, so a page prepended mid-drag would
+    /// shove the rows down. Only from user scrollback: opening at an unread
+    /// reply, paging, and expanding a run set `isBrowsingEarlier` until the
+    /// next drag, so a page restored near the top does not chain-load more.
+    private func autoLoadEarlierIfAtTop() {
+        guard model.hasCompletedInitialReplay, didRunInitialPin,
+              model.earlierRowCount > 0, !model.isLoadingEarlier,
+              !isFollowingLatest, !isBrowsingEarlier, !dragActivity.autoLoadQueued,
+              dragActivity.lastTopY >= -Self.autoLoadEarlierReach else { return }
+        let dragAge = Date().timeIntervalSince(dragActivity.last)
+        guard !isDraggingTranscript || dragAge >= Self.dragActivityStalePeriod else { return }
+        dragActivity.autoLoadQueued = true
+        // Out of the layout/gesture callback that noticed the top: paging
+        // writes view state, and the geometry may have moved on by then.
+        Task { @MainActor in
+            defer { dragActivity.autoLoadQueued = false }
+            guard model.earlierRowCount > 0, !model.isLoadingEarlier,
+                  !isFollowingLatest, !isBrowsingEarlier,
+                  dragActivity.lastTopY >= -Self.autoLoadEarlierReach else { return }
+            Analytics.action("transcript.load_earlier", via: .gesture)
+            loadEarlierRows()
         }
     }
 
@@ -1491,14 +1527,23 @@ private struct DurableTranscriptRows: View {
         // Keep immutable history separate from rapidly-changing tails.
         // Building one combined array every 100ms made SwiftUI diff the
         // entire transcript for every snapshot.
+        // Scrolling up to this row loads the page by itself
+        // (``SessionView/autoLoadEarlierIfAtTop()``); the button remains for
+        // VoiceOver, and to retry a failed load.
         if model.earlierRowCount > 0 {
-            Button {
-                onLoadEarlier()
-            } label: {
-                Label("Load earlier", systemImage: "arrow.up")
-                    .frame(maxWidth: .infinity)
+            if model.isLoadingEarlier {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .accessibilityLabel("Loading earlier")
+            } else {
+                Button {
+                    onLoadEarlier()
+                } label: {
+                    Label("Load earlier", systemImage: "arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
         }
         let rows = model.visibleDurableRows
         // One flat list of rows and run headers, so a row keeps its identity

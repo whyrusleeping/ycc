@@ -388,7 +388,9 @@ public final class SessionViewModel {
     public private(set) var earlierPageRevision: UInt64 = 0
     private static let transcriptPageSize = 200
     @ObservationIgnored private var earlierCursor = ""
-    @ObservationIgnored private var loadingEarlier = false
+    /// True while an earlier page is being fetched (not prefetched), so the
+    /// view can show progress instead of a button that already fired.
+    public private(set) var isLoadingEarlier = false
     @ObservationIgnored private var loadingDetailIDs: Set<String> = []
 
     /// One earlier page fetched and decoded in the background after the
@@ -416,7 +418,7 @@ public final class SessionViewModel {
             earlierRowCount = max(0, earlierRowCount - Self.transcriptPageSize)
             return
         }
-        guard !earlierCursor.isEmpty, !loadingEarlier else { return }
+        guard !earlierCursor.isEmpty, !isLoadingEarlier else { return }
         if let prefetched = prefetchedEarlier {
             prefetchedEarlier = nil
             if prefetched.cursor == earlierCursor, prefetched.epoch == snapshotEpoch {
@@ -426,12 +428,15 @@ public final class SessionViewModel {
                 return
             }
         }
-        loadingEarlier = true
+        // A prefetch still in flight would only duplicate this fetch, and
+        // would block the follow-on prefetch once this page installs.
+        cancelEarlierPrefetch()
+        isLoadingEarlier = true
         let cursor = earlierCursor
         let generation = streamGeneration
         Task { [weak self] in
             guard let self else { return }
-            defer { self.loadingEarlier = false }
+            defer { self.isLoadingEarlier = false }
             do {
                 let page = try await self.source.getSessionViewPage(
                     project: self.project, sessionId: self.sessionID, cursor: cursor)
@@ -455,17 +460,22 @@ public final class SessionViewModel {
         earlierRowCount = page.earlierCursor.isEmpty ? 0 : 1
         earlierPageRevision &+= 1
         transcriptRevision &+= 1
+        // The reader is paging back through history (the view loads pages
+        // automatically as they scroll up): have the next page ready too.
+        prefetchEarlierPage(followOn: true)
     }
 
     /// Fetch and decode the next earlier page in the background, holding it
     /// for ``loadEarlierRows()`` instead of installing it: an automatic prepend
-    /// above an eager VStack would move whatever the user is reading.
-    private func prefetchEarlierPage() {
+    /// above an eager VStack would move whatever the user is reading. The
+    /// open-time prefetch waits out first display and is first-page sized; a
+    /// `followOn` prefetch (after a page was loaded) is immediate and full-size.
+    private func prefetchEarlierPage(followOn: Bool = false) {
         guard prefetchesEarlierPage, source.supportsIndexedSessionView,
               !earlierCursor.isEmpty, prefetchTask == nil, prefetchedEarlier == nil else { return }
         let cursor = earlierCursor
         let epoch = snapshotEpoch
-        let delay = earlierPrefetchDelay
+        let delay = followOn ? 0 : earlierPrefetchDelay
         let sleep = self.sleep
         prefetchToken &+= 1
         let token = prefetchToken
@@ -478,11 +488,15 @@ public final class SessionViewModel {
                 if delay > 0 { try await sleep(delay) }
                 guard let self, cursor == self.earlierCursor, epoch == self.snapshotEpoch,
                       !Task.isCancelled else { return }
-                // First-page sized: a glance should not cost a deep page over
-                // a cellular tunnel. Later Load earlier pages are full-size.
-                let page = try await self.source.getSessionViewPage(
-                    project: self.project, sessionId: self.sessionID, cursor: cursor,
-                    maxRows: YccClient.initialViewRows, maxBytes: YccClient.initialViewBytes)
+                // First-page sized on open: a glance should not cost a deep
+                // page over a cellular tunnel. Once the reader is paging, the
+                // next page is a full one.
+                let page = followOn
+                    ? try await self.source.getSessionViewPage(
+                        project: self.project, sessionId: self.sessionID, cursor: cursor)
+                    : try await self.source.getSessionViewPage(
+                        project: self.project, sessionId: self.sessionID, cursor: cursor,
+                        maxRows: YccClient.initialViewRows, maxBytes: YccClient.initialViewBytes)
                 let decoded = try await Self.decodeIndexedRows(page.rows, priority: .utility)
                 guard cursor == self.earlierCursor, epoch == self.snapshotEpoch,
                       !Task.isCancelled else { return }

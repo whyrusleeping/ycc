@@ -126,8 +126,10 @@ Use a long live session over the real (cellular/ngrok) link, with Instruments at
    question banner/sheet appears, and the persisted one switches to live.
 3. Tap a commit row (and View working changes) to push a diff, wait, then go Back: the stream
    stayed live (new output arrived meanwhile, no reload/scroll jump).
-4. Scroll up and tap Load earlier once shortly after opening (prefetched page, instant) and again
-   (fetched page): the row you were looking at stays in place both times.
+4. Scroll up to the top of a long session shortly after opening and keep going: each earlier page
+   loads by itself as you reach it (no tap; the next page is prefetched, so instant), the row you
+   were looking at stays in place, and holding a finger at the top waits until release. Load
+   earlier still works as a button (VoiceOver, retry after a failed load).
 5. While a turn streams, record SwiftUI view body counts: the session toolbar/banners/menus and the
    durable rows are not re-evaluated per streamed snapshot (only the live tail section is).
 6. Switch server profile (or disconnect/reconnect) and reopen a previously viewed session: it
