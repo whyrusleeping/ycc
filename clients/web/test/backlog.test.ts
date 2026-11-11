@@ -19,6 +19,7 @@ import {
   filterTasks,
   groomFailed,
   groomLine,
+  lastGroomLine,
   isActionable,
   moveCursor,
   normalizeTaskId,
@@ -232,6 +233,21 @@ describe("automatic backlog groom line", () => {
     expect(groomLine(status({ autoGroom: true }), now)).toBe("Not run yet");
     expect(groomLine(status({ autoGroom: false }), now)).toBe("Automatic grooming off");
     expect(groomFailed(status({ autoGroom: true }))).toBe(false);
+  });
+
+  it("shows progress toward the next groom when the daemon reports it", () => {
+    const finished = { ...run, finishedUnix: unix(170), outcome: "finished" };
+    const p = (pendingChanged: number, nextEligibleUnix = 0n, autoGroom = true) =>
+      status({ autoGroom, pendingChanged, churnThreshold: 10, nextEligibleUnix, lastGroom: finished });
+    expect(groomLine(p(4), now)).toBe("4 of 10 tasks changed");
+    expect(groomLine(p(12), now)).toBe("Due · 12 changed · starts with the next session");
+    expect(groomLine(p(12, unix(-300)), now)).toBe("Due in 5h · 12 changed");
+    expect(groomLine(p(12, unix(-40)), now)).toBe("Due in 40m · 12 changed");
+    expect(groomLine(p(12, 0n, false), now)).toBe("Automatic grooming off · 12 changed");
+    expect(lastGroomLine(p(4), now)).toBe("Finished 3h ago · reviewed 3 changed tasks");
+    // A running or failed run outranks progress.
+    const failed = status({ autoGroom: true, pendingChanged: 12, churnThreshold: 10, lastGroom: { ...run, finishedUnix: unix(120), outcome: "error" } });
+    expect(groomLine(failed, now)).toBe("Error 2h ago · 12 changed tasks still to review");
   });
 
   it("describes a running, finished, failed, and interrupted run", () => {

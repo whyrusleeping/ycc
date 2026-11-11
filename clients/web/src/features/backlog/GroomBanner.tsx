@@ -12,7 +12,7 @@ import { queryKeys, useBacklogGroom } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { toast } from "../../ui/toast";
 import { Markdown } from "../markdown/Markdown";
-import { groomFailed, groomLine } from "./model";
+import { groomFailed, groomLine, lastGroomLine } from "./model";
 import { TaskLink } from "./parts";
 
 export function GroomBanner({ project }: { project: string }) {
@@ -51,8 +51,12 @@ export function GroomBanner({ project }: { project: string }) {
           {run && (
             <>
               {" · "}
-              <Link to={paths.session(project, run.sessionId)} data-track="backlog.groom_session">
-                session
+              <Link
+                to={paths.session(project, run.sessionId)}
+                title={lastGroomLine(status)}
+                data-track="backlog.groom_session"
+              >
+                {running === run.sessionId ? "session" : "last run"}
               </Link>
             </>
           )}

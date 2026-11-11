@@ -408,8 +408,12 @@ struct BacklogView: View {
         NavigationStack {
             List {
                 Section {
-                    Text(BacklogGroomSummary.line(status))
+                    if status.autoGroom, status.hasPendingChanged,
+                       !BacklogGroomSummary.isRunning(status), !BacklogGroomSummary.failed(status) {
+                        LabeledContent("Next groom", value: BacklogGroomSummary.line(status))
+                    }
                     if status.hasLastGroom {
+                        Text(BacklogGroomSummary.lastRunLine(status))
                         let run = status.lastGroom
                         LabeledContent("Changed tasks", value: "\(run.changed)")
                         if !run.batch.isEmpty {
@@ -436,10 +440,12 @@ struct BacklogView: View {
                     }
                     groomActionButton(status, project: project, compact: false)
                 } header: {
-                    Text("Latest automatic groom")
+                    Text("Automatic grooming")
                 } footer: {
                     Text(status.autoGroom
-                        ? "The daemon grooms the backlog on its own once enough tasks have changed, at most once a day. "
+                        ? "The daemon grooms the backlog on its own when a session starts and "
+                            + (status.churnThreshold > 0 ? "\(status.churnThreshold)" : "enough")
+                            + " tasks have changed since the last groom, at most once a day. "
                             + "Flags it can’t settle go in one proposed task, “Backlog groom: decisions needed”."
                         : "Automatic grooming is off for this project ([backlog] auto_groom). Groom now still works.")
                 }

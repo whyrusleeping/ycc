@@ -2935,11 +2935,30 @@ public nonisolated struct Ycc_V1_GetBacklogGroomResponse: Sendable {
   /// the grooms' flags for the user; "" when there is none.
   public var decisionsTaskID: String = String()
 
+  /// Progress toward the next automatic groom. A groom starts at the next
+  /// session start once pending_changed reaches churn_threshold and
+  /// next_eligible_unix has passed.
+  public var pendingChanged: Int32 {
+    get {_pendingChanged ?? 0}
+    set {_pendingChanged = newValue}
+  }
+  /// Returns true if `pendingChanged` has been explicitly set.
+  public var hasPendingChanged: Bool {self._pendingChanged != nil}
+  /// Clears the value of `pendingChanged`. Subsequent reads from it will return its default value.
+  public mutating func clearPendingChanged() {self._pendingChanged = nil}
+
+  /// pending_changed that triggers a groom
+  public var churnThreshold: Int32 = 0
+
+  /// end of the cooldown after the last start; 0 when none applies
+  public var nextEligibleUnix: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _lastGroom: Ycc_V1_BacklogGroomRun? = nil
+  fileprivate var _pendingChanged: Int32? = nil
 }
 
 /// One daemon-scheduled automatic backlog groom.
@@ -10458,7 +10477,7 @@ nonisolated extension Ycc_V1_GetBacklogGroomRequest: SwiftProtobuf.Message, Swif
 
 nonisolated extension Ycc_V1_GetBacklogGroomResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetBacklogGroomResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}auto_groom\0\u{3}groom_session_id\0\u{3}last_groom\0\u{3}decisions_task_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}auto_groom\0\u{3}groom_session_id\0\u{3}last_groom\0\u{3}decisions_task_id\0\u{3}pending_changed\0\u{3}churn_threshold\0\u{3}next_eligible_unix\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10470,6 +10489,9 @@ nonisolated extension Ycc_V1_GetBacklogGroomResponse: SwiftProtobuf.Message, Swi
       case 2: try { try decoder.decodeSingularStringField(value: &self.groomSessionID) }()
       case 3: try { try decoder.decodeSingularMessageField(value: &self._lastGroom) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.decisionsTaskID) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self._pendingChanged) }()
+      case 6: try { try decoder.decodeSingularInt32Field(value: &self.churnThreshold) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.nextEligibleUnix) }()
       default: break
       }
     }
@@ -10492,6 +10514,15 @@ nonisolated extension Ycc_V1_GetBacklogGroomResponse: SwiftProtobuf.Message, Swi
     if !self.decisionsTaskID.isEmpty {
       try visitor.visitSingularStringField(value: self.decisionsTaskID, fieldNumber: 4)
     }
+    try { if let v = self._pendingChanged {
+      try visitor.visitSingularInt32Field(value: v, fieldNumber: 5)
+    } }()
+    if self.churnThreshold != 0 {
+      try visitor.visitSingularInt32Field(value: self.churnThreshold, fieldNumber: 6)
+    }
+    if self.nextEligibleUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.nextEligibleUnix, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10500,6 +10531,9 @@ nonisolated extension Ycc_V1_GetBacklogGroomResponse: SwiftProtobuf.Message, Swi
     if lhs.groomSessionID != rhs.groomSessionID {return false}
     if lhs._lastGroom != rhs._lastGroom {return false}
     if lhs.decisionsTaskID != rhs.decisionsTaskID {return false}
+    if lhs._pendingChanged != rhs._pendingChanged {return false}
+    if lhs.churnThreshold != rhs.churnThreshold {return false}
+    if lhs.nextEligibleUnix != rhs.nextEligibleUnix {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

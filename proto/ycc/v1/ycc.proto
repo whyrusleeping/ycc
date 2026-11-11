@@ -949,6 +949,12 @@ message GetBacklogGroomResponse {
   // The standing proposed task "Backlog groom: decisions needed" that collects
   // the grooms' flags for the user; "" when there is none.
   string decisions_task_id = 4;
+  // Progress toward the next automatic groom. A groom starts at the next
+  // session start once pending_changed reaches churn_threshold and
+  // next_eligible_unix has passed.
+  optional int32 pending_changed = 5; // tasks created or changed since the last finished groom; unset before the first check
+  int32 churn_threshold = 6;          // pending_changed that triggers a groom
+  int64 next_eligible_unix = 7;       // end of the cooldown after the last start; 0 when none applies
 }
 
 // One daemon-scheduled automatic backlog groom.

@@ -99,6 +99,13 @@ func TestBacklogGroomRunsOnChurnOncePerProjectWithPersistedCooldown(t *testing.T
 	if !strings.Contains(groom.prompt, strings.Join(st.Batch, ", ")) || !strings.Contains(groom.prompt, "2 more changed tasks") {
 		t.Fatalf("groom prompt = %q", groom.prompt)
 	}
+	if !info.NextEligible.Equal(st.LastStarted.Add(backlogGroomCooldown)) {
+		t.Fatalf("next eligible = %v, want %v", info.NextEligible, st.LastStarted.Add(backlogGroomCooldown))
+	}
+	// Until the run finishes, its churn still counts toward the next one.
+	if info.Pending != len(created) || info.Threshold != backlogGroomChurn {
+		t.Fatalf("pending = %d of %d, want %d of %d", info.Pending, info.Threshold, len(created), backlogGroomChurn)
+	}
 
 	// At most one per project: another session start does not add a second.
 	m.maybeGroomBacklog(ws)

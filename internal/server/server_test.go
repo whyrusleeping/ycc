@@ -709,7 +709,8 @@ func TestGetBacklogGroom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBacklogGroom (fresh): %v", err)
 	}
-	if m := got.Msg; !m.GetAutoGroom() || m.GetGroomSessionId() != "" || m.GetLastGroom() != nil || m.GetDecisionsTaskId() != "" {
+	if m := got.Msg; !m.GetAutoGroom() || m.GetGroomSessionId() != "" || m.GetLastGroom() != nil || m.GetDecisionsTaskId() != "" ||
+		m.PendingChanged != nil || m.GetChurnThreshold() != 10 || m.GetNextEligibleUnix() != 0 {
 		t.Fatalf("GetBacklogGroom (fresh) = %+v", m)
 	}
 
@@ -762,6 +763,11 @@ func TestGetBacklogGroom(t *testing.T) {
 	}
 	if got.Msg.GetDecisionsTaskId() != wantDecisions || wantDecisions == "" {
 		t.Fatalf("decisions task = %q, want %q", got.Msg.GetDecisionsTaskId(), wantDecisions)
+	}
+	// The three tasks created since the recorded baseline count toward the
+	// next groom, which the 24-hour cooldown from the last start also gates.
+	if m := got.Msg; m.PendingChanged == nil || m.GetPendingChanged() != 3 || m.GetNextEligibleUnix() != started.Add(24*time.Hour).Unix() {
+		t.Fatalf("GetBacklogGroom progress = pending %v, next %d", m.PendingChanged, m.GetNextEligibleUnix())
 	}
 
 	if err := os.WriteFile(filepath.Join(ws, ".ycc", "config.toml"), []byte("[backlog]\nauto_groom = false\n"), 0o644); err != nil {

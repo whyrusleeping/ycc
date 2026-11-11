@@ -1107,8 +1107,14 @@ groom session (`groomSessionId`, empty when none), the latest automatic groom
 `outcome`, `changed` (the churn that triggered it), `batch` (changed task ids it
 reviewed first), `deferred`, and `report`, the run's clipped final report), and
 `decisionsTaskId`, the standing proposed task "Backlog groom: decisions needed"
-that collects the grooms' flags (empty when there is none). To groom on demand,
-call `StartSession` with `mode: "pm"`, `preset: "backlog-groom"` and no prompt.
+that collects the grooms' flags (empty when there is none). Progress toward the
+next automatic groom: `pendingChanged`, the tasks created or changed since the
+last finished groom (absent until the daemon's first check has recorded a
+baseline), `churnThreshold`, the count that triggers one, and
+`nextEligibleUnix`, when the 24-hour cooldown from the last start ends (0 when
+none applies). A groom starts at the next session start once both hold. To
+groom on demand, call `StartSession` with `mode: "pm"`, `preset: "backlog-groom"`
+and no prompt.
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
@@ -1119,7 +1125,8 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
 {"autoGroom":true,
  "lastGroom":{"sessionId":"s_1a2b3c4d5e6f7a8b","startedUnix":"1790000000","finishedUnix":"1790000420",
   "outcome":"finished","changed":12,"batch":["0412","0415"],"report":"...Flagged for the user: 1 (task 0533)"},
- "decisionsTaskId":"0533"}
+ "decisionsTaskId":"0533",
+ "pendingChanged":4,"churnThreshold":10,"nextEligibleUnix":"1790086400"}
 ```
 
 ### GetMemory

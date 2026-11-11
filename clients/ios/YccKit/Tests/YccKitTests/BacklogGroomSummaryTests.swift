@@ -36,6 +36,33 @@ final class BacklogGroomSummaryTests: XCTestCase {
         XCTAssertFalse(BacklogGroomSummary.isRunning(status(running: "s_other")))
     }
 
+    func testProgressTowardNextGroom() {
+        let now = Date(timeIntervalSince1970: 5000)
+        func progress(_ pending: Int32, next: Int64 = 0, auto: Bool = true) -> Ycc_V1_GetBacklogGroomResponse {
+            var s = status(auto: auto) { $0.finishedUnix = 1400; $0.outcome = "finished" }
+            s.pendingChanged = pending
+            s.churnThreshold = 10
+            s.nextEligibleUnix = next
+            return s
+        }
+        func line(_ s: Ycc_V1_GetBacklogGroomResponse) -> String {
+            BacklogGroomSummary.line(s, now: now, relative: relative)
+        }
+        XCTAssertEqual(line(progress(4)), "4 of 10 tasks changed")
+        XCTAssertEqual(line(progress(12)), "Due · 12 changed · starts with the next session")
+        XCTAssertEqual(line(progress(12, next: 4000)), "Due · 12 changed · starts with the next session")
+        XCTAssertEqual(line(progress(12, next: 9000)), "Due @9000 · 12 changed")
+        XCTAssertEqual(line(progress(12, auto: false)), "Automatic grooming off · 12 changed")
+        XCTAssertEqual(
+            BacklogGroomSummary.lastRunLine(progress(4), relative: relative),
+            "Finished @1400 · reviewed 3 changed tasks")
+
+        // A failed run outranks progress.
+        var failed = progress(12)
+        failed.lastGroom.outcome = "error"
+        XCTAssertEqual(line(failed), "Error @1400 · 12 changed tasks still to review")
+    }
+
     func testRunningFinishedFailedInterrupted() {
         let running = status(running: "s_g") { $0.deferred = 2 }
         XCTAssertTrue(BacklogGroomSummary.isRunning(running))

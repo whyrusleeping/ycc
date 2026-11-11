@@ -1530,7 +1530,13 @@ func (s *Server) GetBacklogGroom(_ context.Context, req *connect.Request[v1.GetB
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	resp := &v1.GetBacklogGroomResponse{AutoGroom: info.Enabled, GroomSessionId: info.RunningSession}
+	resp := &v1.GetBacklogGroomResponse{AutoGroom: info.Enabled, GroomSessionId: info.RunningSession, ChurnThreshold: int32(info.Threshold)}
+	if info.Pending >= 0 {
+		resp.PendingChanged = proto.Int32(int32(info.Pending))
+	}
+	if !info.NextEligible.IsZero() {
+		resp.NextEligibleUnix = info.NextEligible.Unix()
+	}
 	if last := info.Last; last.LastSession != "" {
 		run := &v1.BacklogGroomRun{
 			SessionId: last.LastSession, StartedUnix: last.LastStarted.Unix(), Outcome: last.Outcome,

@@ -97,6 +97,13 @@ type BacklogGroomInfo struct {
 	// RunningSession is the live automatic groom session id, or "".
 	RunningSession string
 	Last           BacklogGroomState
+	// Pending is the churn counted toward the next groom, or -1 before the
+	// first check has recorded a baseline. A groom starts at the next session
+	// start once Pending reaches Threshold and NextEligible (the cooldown's
+	// end; zero when none applies) has passed.
+	Pending      int
+	Threshold    int
+	NextEligible time.Time
 }
 
 // BacklogGroomInfo returns automatic backlog-groom status for a registered
@@ -114,8 +121,21 @@ func (m *Manager) BacklogGroomInfo(project string) (BacklogGroomInfo, error) {
 		running = ""
 	}
 	last := loadBacklogGroomState(primary)
+	info := BacklogGroomInfo{
+		Enabled: m.backlogAutoGroom(primary), RunningSession: running,
+		Pending: -1, Threshold: backlogGroomChurn,
+	}
+	if !last.LastStarted.IsZero() {
+		info.NextEligible = last.LastStarted.Add(backlogGroomCooldown)
+	}
+	if !last.BaselineAt.IsZero() {
+		if files, err := snapshotBacklog(primary); err == nil {
+			info.Pending = len(backlogChurn(last.Baseline, files))
+		}
+	}
 	last.Baseline = nil
-	return BacklogGroomInfo{Enabled: m.backlogAutoGroom(primary), RunningSession: running, Last: last}, nil
+	info.Last = last
+	return info, nil
 }
 
 func (m *Manager) backlogAutoGroom(primary string) bool {

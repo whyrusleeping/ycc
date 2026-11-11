@@ -423,14 +423,12 @@ export function groomFailed(status: GetBacklogGroomResponse): boolean {
 }
 
 /**
- * The backlog page's one-line account of automatic grooming (GetBacklogGroom):
- * the latest run's state, when, and how many changed tasks it took on.
+ * The latest automatic groom (GetBacklogGroom): its state, when, and how many
+ * changed tasks it took on. "" when none has run.
  */
-export function groomLine(status: GetBacklogGroomResponse, now: number = Date.now()): string {
+export function lastGroomLine(status: GetBacklogGroomResponse, now: number = Date.now()): string {
   const run = status.lastGroom;
-  if (!run) {
-    return status.autoGroom ? "Not run yet" : "Automatic grooming off";
-  }
+  if (!run) return "";
   const at = (unix: bigint) => relativeTime(new Date(Number(unix) * 1000).toISOString(), now);
   const tasks = (n: number) => `${n} changed ${n === 1 ? "task" : "tasks"}`;
   const left = run.deferred > 0 ? `, ${run.deferred} left for the next run` : "";
@@ -445,4 +443,26 @@ export function groomLine(status: GetBacklogGroomResponse, now: number = Date.no
   return outcome === "finished"
     ? `${head} · reviewed ${tasks(run.batch.length)}${left}`
     : `${head} · ${tasks(run.changed)} still to review`;
+}
+
+/**
+ * The groom strip's one line: a running or failed latest run, else how close
+ * the next automatic groom is (changed tasks against the threshold, then the
+ * cooldown). Daemons that do not report progress get the latest run.
+ */
+export function groomLine(status: GetBacklogGroomResponse, now: number = Date.now()): string {
+  const run = status.lastGroom;
+  const running = !!run && status.groomSessionId !== "" && status.groomSessionId === run.sessionId;
+  if (running || groomFailed(status)) return lastGroomLine(status, now);
+  const pending = status.pendingChanged;
+  const changed = pending === undefined ? "" : ` · ${pending} changed`;
+  if (!status.autoGroom) return `Automatic grooming off${changed}`;
+  if (pending === undefined) return run ? lastGroomLine(status, now) : "Not run yet";
+  if (pending < status.churnThreshold) return `${pending} of ${status.churnThreshold} tasks changed`;
+  const wait = Number(status.nextEligibleUnix) * 1000 - now;
+  if (wait > 0) {
+    const m = Math.ceil(wait / 60_000);
+    return `Due in ${m < 60 ? `${m}m` : `${Math.round(m / 60)}h`}${changed}`;
+  }
+  return `Due${changed} · starts with the next session`;
 }

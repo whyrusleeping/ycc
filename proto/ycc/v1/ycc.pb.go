@@ -8011,8 +8011,14 @@ type GetBacklogGroomResponse struct {
 	// The standing proposed task "Backlog groom: decisions needed" that collects
 	// the grooms' flags for the user; "" when there is none.
 	DecisionsTaskId string `protobuf:"bytes,4,opt,name=decisions_task_id,json=decisionsTaskId,proto3" json:"decisions_task_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Progress toward the next automatic groom. A groom starts at the next
+	// session start once pending_changed reaches churn_threshold and
+	// next_eligible_unix has passed.
+	PendingChanged   *int32 `protobuf:"varint,5,opt,name=pending_changed,json=pendingChanged,proto3,oneof" json:"pending_changed,omitempty"`   // tasks created or changed since the last finished groom; unset before the first check
+	ChurnThreshold   int32  `protobuf:"varint,6,opt,name=churn_threshold,json=churnThreshold,proto3" json:"churn_threshold,omitempty"`         // pending_changed that triggers a groom
+	NextEligibleUnix int64  `protobuf:"varint,7,opt,name=next_eligible_unix,json=nextEligibleUnix,proto3" json:"next_eligible_unix,omitempty"` // end of the cooldown after the last start; 0 when none applies
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GetBacklogGroomResponse) Reset() {
@@ -8071,6 +8077,27 @@ func (x *GetBacklogGroomResponse) GetDecisionsTaskId() string {
 		return x.DecisionsTaskId
 	}
 	return ""
+}
+
+func (x *GetBacklogGroomResponse) GetPendingChanged() int32 {
+	if x != nil && x.PendingChanged != nil {
+		return *x.PendingChanged
+	}
+	return 0
+}
+
+func (x *GetBacklogGroomResponse) GetChurnThreshold() int32 {
+	if x != nil {
+		return x.ChurnThreshold
+	}
+	return 0
+}
+
+func (x *GetBacklogGroomResponse) GetNextEligibleUnix() int64 {
+	if x != nil {
+		return x.NextEligibleUnix
+	}
+	return 0
 }
 
 // One daemon-scheduled automatic backlog groom.
@@ -15121,14 +15148,18 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x12CreateTaskResponse\x12&\n" +
 	"\x04task\x18\x01 \x01(\v2\x12.ycc.v1.TaskDetailR\x04task\"2\n" +
 	"\x16GetBacklogGroomRequest\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\"\xc6\x01\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"\xdf\x02\n" +
 	"\x17GetBacklogGroomResponse\x12\x1d\n" +
 	"\n" +
 	"auto_groom\x18\x01 \x01(\bR\tautoGroom\x12(\n" +
 	"\x10groom_session_id\x18\x02 \x01(\tR\x0egroomSessionId\x126\n" +
 	"\n" +
 	"last_groom\x18\x03 \x01(\v2\x17.ycc.v1.BacklogGroomRunR\tlastGroom\x12*\n" +
-	"\x11decisions_task_id\x18\x04 \x01(\tR\x0fdecisionsTaskId\"\xf6\x01\n" +
+	"\x11decisions_task_id\x18\x04 \x01(\tR\x0fdecisionsTaskId\x12,\n" +
+	"\x0fpending_changed\x18\x05 \x01(\x05H\x00R\x0ependingChanged\x88\x01\x01\x12'\n" +
+	"\x0fchurn_threshold\x18\x06 \x01(\x05R\x0echurnThreshold\x12,\n" +
+	"\x12next_eligible_unix\x18\a \x01(\x03R\x10nextEligibleUnixB\x12\n" +
+	"\x10_pending_changed\"\xf6\x01\n" +
 	"\x0fBacklogGroomRun\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
@@ -16284,6 +16315,7 @@ func file_ycc_v1_ycc_proto_init() {
 	file_ycc_v1_ycc_proto_msgTypes[87].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[89].OneofWrappers = []any{}
 	file_ycc_v1_ycc_proto_msgTypes[120].OneofWrappers = []any{}
+	file_ycc_v1_ycc_proto_msgTypes[125].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
