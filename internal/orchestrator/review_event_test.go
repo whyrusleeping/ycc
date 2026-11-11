@@ -84,3 +84,39 @@ func TestReviewSubmissionEvidence(t *testing.T) {
 		})
 	}
 }
+
+// A direct work session that resumes an already in_progress task may never call
+// update_task; reviewing it still focuses the task (0544) so the session title
+// and loop record name it. re_review of the same task does not duplicate it.
+func TestReviewEstablishesTaskFocus(t *testing.T) {
+	ws := t.TempDir()
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := docs.NewStore(ws)
+	if _, err := store.CreateWithStatus("resumed task", "## Work log\n", 1, nil, nil, docs.StatusInProgress); err != nil {
+		t.Fatal(err)
+	}
+	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"revise","summary":"fix it"}`),
+		call("submit_review", `{"verdict":"accept","summary":"ok"}`),
+	}}
+	rec := &captureRec{}
+	d := &Deps{Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(rec, "coordinator"), Asker: noopAsker{},
+		Reviewers: []AgentSpec{{Name: "rev", Model: "m", NewClient: func() engine.Turner { return turner }}}}
+	ctx := context.Background()
+	// An unpadded alias still focuses the canonical id.
+	if _, err := spawnReviewers(d).Call(ctx, map[string]any{"task_id": "1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.focusTasks(); len(got) != 1 || got[0] != "0001" {
+		t.Fatalf("focus after spawn_reviewers = %v, want [0001]", got)
+	}
+	if _, err := reReview(d).Call(ctx, map[string]any{"task_id": "0001"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.focusTasks(); len(got) != 1 {
+		t.Fatalf("re_review re-emitted focus for the same task: %v", got)
+	}
+}

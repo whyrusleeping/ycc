@@ -1249,6 +1249,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("spawn_reviewers: %v", err), nil
 			}
+			// Reviewing a task makes it the session's focus even when the session
+			// resumed an already in_progress task without update_task.
+			d.emitFocus(t.ID)
 			preloadedDiff := d.reviewDiff(id)
 			if preloadedDiff.Err != nil {
 				return tools.ErrResult("spawn_reviewers: changeset evidence failed: %v", preloadedDiff.Err), nil
@@ -1392,6 +1395,7 @@ func reReview(d *Deps) *gollama.Tool {
 			if getErr != nil {
 				return tools.ErrResult("re_review: %v", getErr), nil
 			}
+			d.emitFocus(t.ID)
 			currentDiff := d.reviewDiff(id)
 			if currentDiff.Err != nil {
 				return tools.ErrResult("re_review: changeset evidence failed: %v", currentDiff.Err), nil

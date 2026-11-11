@@ -98,7 +98,8 @@ const workSystem = changeGuidance + `
 
 Use the named task's preloaded get_task result, or read it if absent. Call list_backlog only to
 select work or check information not in that task. Respect status/dependency gates, set it
-in_progress, and resume sound existing work rather than redoing it.
+in_progress (even if it already is; that records this session's focus), and resume sound
+existing work rather than redoing it.
 list_backlog ends with the daemon's record of this project's other live sessions; a ready task
 is not being worked on elsewhere. Do not infer parallel sessions from commit times, file times,
 or processes: recent commits do not mean a session is still running, an idle session holds

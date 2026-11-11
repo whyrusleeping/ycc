@@ -1290,7 +1290,9 @@ tokens remain a diagnostic subset of output.
 ### 20.2 Task attribution
 
 Task-focus events attribute subsequent usage to the active backlog task. A session may change
-focus; turns before a focus remain unattributed rather than guessed.
+focus; turns before a focus remain unattributed rather than guessed. Setting a task in_progress
+(even one already in_progress), delegating it, or requesting its review focuses it;
+re-focusing the current task records nothing.
 
 ### 20.3 Aggregation
 
