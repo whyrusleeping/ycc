@@ -19,7 +19,7 @@ The client targets laptop and desktop viewports (about 1024px wide and up). It d
 phone layout; narrow windows remain usable but are not a design target. The shell has three
 regions:
 
-- a sidebar with the project switcher, the personal session inbox (meaningful state, needs-answer,
+- a sidebar with the project switcher, the session inbox (meaningful state, needs-answer,
   follow-up and unread markers), and one row of icon links (labels as tooltips) to Backlog, Work
   loop, Workstreams, Watches, Usage, Files, Memory/Plans, and Settings, so the inbox keeps the
   height. While workstreams are in flight, a labelled one-line Workstreams status sits under the
@@ -104,10 +104,12 @@ uses the daemon's shared per-session read marks (spec §18.6), so it agrees with
 change of browser or origin. Browser storage keeps only an optimistic copy that is re-pushed until
 the daemon reflects it.
 
-The default session inbox emphasizes user-launched conversations, including automatic sessions a
-human subsequently engaged with, and manually flagged follow-ups. Routine automatic memory grooming
-and work-loop sessions remain in All history, without personal unread markers, inbox counts, or
-per-session completion/error notifications. Questions waiting for a human answer always surface,
+The default session inbox matches the iOS Recent list: every session except watch runs, with
+work-loop and other automatic sessions tagged rather than hidden. Only user-launched conversations,
+automatic sessions a human subsequently engaged with, and manually flagged follow-ups are personal:
+routine automatic memory grooming and work-loop sessions carry no personal unread markers, inbox
+counts, Unread-filter membership, or per-session completion/error notifications. Questions waiting
+for a human answer always surface,
 including through list filters and search. Above the inbox, the sidebar shows ambient status for
 each live work loop, and for each loop that finished within the last day until dismissed: its
 state, the task and session it is working on now, the tasks it completed (most recently worked

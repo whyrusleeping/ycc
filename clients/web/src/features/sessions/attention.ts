@@ -28,6 +28,16 @@ export function isInboxSession(s: SessionSummary, loopOwned = false): boolean {
   return !loopOwned;
 }
 
+/**
+ * Whether a row belongs in the default session list, like iOS's Recent: every
+ * session, automatic work included (it is tagged, not hidden), except watch
+ * runs, which live on their watch unless they ask or are flagged. Unread marks
+ * and notifications still follow isInboxSession.
+ */
+export function isListedSession(s: SessionSummary): boolean {
+  return s.origin !== "watch" || s.waitingInput || s.followUp;
+}
+
 /** A pending human question is never hidden by inbox filters or a search query. */
 export function filterSessions(
   rows: readonly FeedRow[],
@@ -45,7 +55,7 @@ export function filterSessions(
     const personal = isInboxSession(s, loopIds.has(s.sessionId));
     let include: boolean;
     switch (filter) {
-      case "inbox": include = personal; break;
+      case "inbox": include = isListedSession(s); break;
       case "unread": include = personal && unread(row); break;
       case "questions": include = false; break;
       case "followup": include = s.followUp; break;

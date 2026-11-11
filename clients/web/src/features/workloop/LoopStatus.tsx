@@ -1,7 +1,7 @@
 // Ambient work-loop status at the top of the sidebar inbox: one quiet line per
 // loop (state, finished count, blocked/in-review attention) and, while it runs,
-// the task and session it is on now. Loop sessions stay out of the personal
-// inbox, so this is status only — no unread marks or notifications.
+// the task and session it is on now. Loop sessions are listed (tagged "loop")
+// but carry no unread marks or notifications, so this is status only.
 import { useState } from "react";
 import { Link } from "react-router";
 import { useSessionFeed, useWorkLoops } from "../../api/queries";

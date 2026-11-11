@@ -24,8 +24,8 @@ const rows = [
 ];
 
 describe("personal session inbox", () => {
-  it("suppresses known routine automation without guessing unknown legacy origins", () => {
-    expect(ids(filterSessions(rows, "inbox", "", () => true, loops))).toEqual(["manual", "engaged", "flagged", "asks", "unknown"]);
+  it("lists automatic work in the inbox like iOS Recent, but keeps it out of Unread", () => {
+    expect(ids(filterSessions(rows, "inbox", "", () => true, loops))).toEqual(ids(rows));
     expect(ids(filterSessions(rows, "unread", "", () => true, loops))).toEqual(["manual", "engaged", "flagged", "asks", "unknown"]);
     expect(ids(filterSessions(rows, "all", "", () => true, loops))).toEqual(ids(rows));
     expect(isInboxSession(row("memory-groom-looking title", { mode: "pm" }).session)).toBe(true);
@@ -43,10 +43,10 @@ describe("personal session inbox", () => {
     expect(ids(filterSessions(watchRuns, "all", "", () => true, loops))).toEqual(ids(watchRuns));
   });
 
-  it("lists running automatic work under Active without adding it to the inbox", () => {
+  it("lists running automatic work under Active and in the inbox", () => {
     const running = [row("loop-live", { origin: "work_loop", live: true, status: "running" }), row("idle-manual", { origin: "user", live: true })];
     expect(ids(filterSessions(running, "active", "", () => false, loops))).toEqual(["loop-live"]);
-    expect(ids(filterSessions(running, "inbox", "", () => false, loops))).toEqual(["idle-manual"]);
+    expect(ids(filterSessions(running, "inbox", "", () => false, loops))).toEqual(["loop-live", "idle-manual"]);
   });
 
   it("always surfaces questions despite filters or search, and retains explicitly opened automatic sessions", () => {
