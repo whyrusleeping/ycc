@@ -530,6 +530,43 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertFalse(age(8 * 86_400).hasSuffix("d"))
     }
 
+    func testDurationTextBoundaries() {
+        func text(_ seconds: TimeInterval) -> String { SessionListModel.durationText(seconds) }
+        XCTAssertEqual(text(-5), "<1m")
+        XCTAssertEqual(text(0), "<1m")
+        XCTAssertEqual(text(59), "<1m")
+        XCTAssertEqual(text(60), "1m")
+        XCTAssertEqual(text(59 * 60 + 59), "59m")
+        XCTAssertEqual(text(3_600), "1h 00m")
+        XCTAssertEqual(text(2 * 3_600 + 5 * 60), "2h 05m")
+        XCTAssertEqual(text(47 * 3_600 + 59 * 60 + 59), "47h 59m")
+        XCTAssertEqual(text(48 * 3_600), "2d 0h")
+        XCTAssertEqual(text(3 * 86_400 + 4 * 3_600 + 59 * 60), "3d 4h")
+    }
+
+    func testSessionDurationEndsNowWhenLiveElseAtLastActivity() throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let started = "1970-01-12T13:00:00Z"  // now − 46 min 40 s
+        let last = "1970-01-12T13:10:00Z"
+        let startDate = try XCTUnwrap(SessionListModel.parseTimestamp(started))
+        XCTAssertEqual(
+            SessionListModel.sessionDuration(
+                session(id: "live", startedAt: started, lastActivity: last, live: true), now: now),
+            now.timeIntervalSince(startDate))
+        XCTAssertEqual(
+            SessionListModel.sessionDuration(
+                session(id: "done", startedAt: started, lastActivity: last), now: now),
+            600)
+        // A non-live row whose lastActivity doesn't parse runs to now.
+        XCTAssertEqual(
+            SessionListModel.sessionDuration(
+                session(id: "stale", startedAt: started, lastActivity: "garbage"), now: now),
+            now.timeIntervalSince(startDate))
+        XCTAssertNil(SessionListModel.sessionDuration(
+            session(id: "bad", startedAt: "not a time", live: true), now: now))
+        XCTAssertNil(SessionListModel.sessionDuration(session(id: "empty"), now: now))
+    }
+
     func testLifecycleSuppressesIdleAndPreservesExceptionalStates() {
         XCTAssertNil(SessionListModel.lifecycleLabel(for: session(id: "idle", status: "idle")))
         XCTAssertNil(SessionListModel.lifecycleLabel(for: session(id: "unknown", status: "legacy")))

@@ -1226,6 +1226,7 @@ struct SessionView: View {
                         if !project.isEmpty { Text("·") }
                         Text(model.coordinatorModel)
                     }
+                    sessionDuration
                     connectionState
                 }
                 .font(.caption2)
@@ -1234,6 +1235,31 @@ struct SessionView: View {
             }
             .frame(maxWidth: 250)
             .accessibilityElement(children: .combine)
+        }
+    }
+
+    /// How long the session has been running ("· 2h 05m"), from its listed
+    /// summary. Ticks every 30s so a live session's figure keeps up; absent
+    /// when the list model has no row for this session.
+    @ViewBuilder
+    private var sessionDuration: some View {
+        if let summary = sessionList?.session(sessionID: sessionID),
+           let started = SessionListModel.startedDate(summary) {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                if let seconds = SessionListModel.sessionDuration(summary, now: context.date) {
+                    HStack(spacing: 4) {
+                        if !project.isEmpty || !model.coordinatorModel.isEmpty { Text("·") }
+                        Text(SessionListModel.durationText(seconds))
+                            .monospacedDigit()
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        "\(summary.live ? "running for" : "ran for") "
+                            + SessionListModel.durationAccessibilityText(seconds)
+                            + ", started "
+                            + started.formatted(date: .abbreviated, time: .shortened))
+                }
+            }
         }
     }
 

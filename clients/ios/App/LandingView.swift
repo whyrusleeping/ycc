@@ -1116,6 +1116,13 @@ private struct SessionRow: View {
         visibleProject != nil || !taskLabels.isEmpty
     }
 
+    /// Actively working, foreground or background — the rows whose trailing
+    /// slot shows run time rather than activity age.
+    private var isRunning: Bool {
+        let lifecycle = SessionListModel.lifecycleLabel(for: session)
+        return lifecycle == "running" || lifecycle == "background"
+    }
+
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             if let visibleProject {
@@ -1146,7 +1153,9 @@ private struct SessionRow: View {
             .lineLimit(2)
     }
 
-    /// The follow-up flag and the compact activity age, right-aligned.
+    /// The follow-up flag and the compact activity age, right-aligned. A
+    /// running session's activity age is always ~"now", so it shows how long
+    /// the session has been running instead, ticking every 30s.
     @ViewBuilder
     private var trailingStatus: some View {
         if session.followUp {
@@ -1155,7 +1164,16 @@ private struct SessionRow: View {
                 .foregroundStyle(Theme.attention)
                 .accessibilityLabel("flagged for follow-up")
         }
-        if let date = SessionListModel.recencyDate(session) {
+        if isRunning, SessionListModel.sessionDuration(session) != nil {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                let seconds = SessionListModel.sessionDuration(session, now: context.date) ?? 0
+                Text(SessionListModel.durationText(seconds))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                    .accessibilityLabel("running for \(SessionListModel.durationAccessibilityText(seconds))")
+            }
+        } else if let date = SessionListModel.recencyDate(session) {
             Text(SessionListModel.compactAge(of: date))
                 .monospacedDigit()
                 .lineLimit(1)

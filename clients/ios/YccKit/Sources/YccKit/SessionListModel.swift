@@ -1313,6 +1313,47 @@ public final class SessionListModel {
         }
     }
 
+    /// The session's parsed `startedAt`, or `nil` when it doesn't parse.
+    public static func startedDate(_ session: Ycc_V1_SessionSummary) -> Date? {
+        parseTimestamp(session.startedAt)
+    }
+
+    /// How long a session has been running: from `startedAt` to now while it
+    /// is live, else to `lastActivity` (now when that doesn't parse). `nil`
+    /// when `startedAt` doesn't parse. Clock skew clamps to zero.
+    public static func sessionDuration(
+        _ session: Ycc_V1_SessionSummary, now: Date = Date()
+    ) -> TimeInterval? {
+        guard let start = parseTimestamp(session.startedAt) else { return nil }
+        let end = session.live ? now : (parseTimestamp(session.lastActivity) ?? now)
+        return max(0, end.timeIntervalSince(start))
+    }
+
+    /// Compact elapsed time, identical to the web client: "<1m", "42m",
+    /// "2h 05m" under 48 hours, then "3d 4h".
+    public static func durationText(_ seconds: TimeInterval) -> String {
+        let total = Int(max(0, seconds))
+        let minutes = total / 60
+        if minutes < 1 { return "<1m" }
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 48 {
+            let rest = minutes % 60
+            return "\(hours)h " + (rest < 10 ? "0\(rest)" : "\(rest)") + "m"
+        }
+        return "\(hours / 24)d \(hours % 24)h"
+    }
+
+    /// The spoken form of ``durationText(_:)``: "2 hours, 5 minutes".
+    public static func durationAccessibilityText(_ seconds: TimeInterval) -> String {
+        if seconds < 60 { return "less than a minute" }
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = seconds < 48 * 3_600 ? [.hour, .minute] : [.day, .hour]
+        formatter.unitsStyle = .full
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter.string(from: seconds) ?? durationText(seconds)
+    }
+
     /// Parse an RFC3339 / ISO8601 timestamp. Daemon timestamps may carry
     /// fractional seconds and a numeric offset, so try with fractional seconds
     /// first, then without. Empty / unparseable input returns `nil`.
