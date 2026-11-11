@@ -252,16 +252,16 @@ const backlogGroomPresetPrompt = `Groom this project's backlog as a fresh reader
 docs/design/doc-style.md (when the project has it). Edit only backlog task files: no code, spec, or memory.
 
 Work one bounded batch of about 15 tasks, fewer when they are long: tasks the user named first, else
-the oldest tasks with no "groom:" work-log entry. A whole-backlog scan may order the batch but not widen
-it: grep for "…[truncated]", LC_ALL=C.UTF-8 grep -laxv '.*' backlog/*.md for invalid UTF-8, and
+the oldest open tasks with no "groom:" work-log entry. Skip done tasks unless named: completion
+already compacted them. A whole-backlog scan may order the batch but not widen it: grep for "…[truncated]", LC_ALL=C.UTF-8 grep -laxv '.*' backlog/*.md for invalid UTF-8, and
 depends_on ids with no task file. Evidence is git history, the code, .ycc/sessions/*/events.jsonl, and
 linked bench or docs files.
 - Fix debris: "…[truncated]" fragments that carry no information, duplicate or empty headings, stray
   template text, invalid UTF-8. Edit cannot match broken bytes; rewrite such a line with a command
   limited to that file.
 - Fix stale or contradictory state when evidence settles it, otherwise flag it: a Description that
-  contradicts status, unchecked criteria on a done task, an outdated current state. Use update_task
-  for status changes.
+  contradicts status (such as an open task the code shows is done), an outdated current state. Use
+  update_task for status changes.
 - Fix insider references: gloss bare task ids and codenames at first mention, and point references
   to deleted tasks at what replaced them.
 - Flag, never invent: "slice of accepted N" chains, repeated authorization disclaimers, and user or
@@ -309,7 +309,7 @@ const BacklogGroomFollowUpTitle = "Backlog groom: decisions needed"
 // changed tasks to review first; deferred counts changed tasks left for a later
 // run.
 func BacklogAutoGroomPrompt(changed int, batch []string, deferred int) string {
-	first := "none: fill the batch with the oldest tasks with no \"groom:\" work-log entry"
+	first := "none: fill the batch with the oldest open tasks with no \"groom:\" work-log entry"
 	if len(batch) > 0 {
 		first = strings.Join(batch, ", ")
 	}
@@ -319,7 +319,8 @@ func BacklogAutoGroomPrompt(changed int, batch []string, deferred int) string {
 	}
 	return fmt.Sprintf(`Unattended backlog groom: %d tasks were created or changed since the last groom.
 Treat these as the named tasks, in order: %s.%s Fill any room left in the batch with the oldest
-tasks with no "groom:" work-log entry. Skip in_progress tasks: a work session owns them.
+open tasks with no "groom:" work-log entry. Skip in_progress tasks (a work session owns them) and
+done tasks.
 
 %s
 

@@ -60,9 +60,11 @@ func TestBacklogGroomRunsOnChurnOncePerProjectWithPersistedCooldown(t *testing.T
 		t.Fatalf("first check: starts=%d state=%+v", fakeStarts, st)
 	}
 
-	// Below the churn threshold nothing starts; in_progress tasks do not count.
+	// Below the churn threshold nothing starts; in_progress and done tasks do
+	// not count.
 	created := createTasks(t, ws, backlogGroomChurn-1, docs.StatusTodo)
 	createTasks(t, ws, 1, docs.StatusInProgress)
+	createTasks(t, ws, 2, docs.StatusDone)
 	m.maybeGroomBacklog(ws)
 	if fakeStarts != 0 {
 		t.Fatalf("churn below threshold started a groom")

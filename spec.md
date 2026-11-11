@@ -272,20 +272,21 @@ old id remain attached to its oldest claimant because any other interpretation w
 
 The daemon grooms backlogs unattended once they have churned. When a session starts, it compares
 content fingerprints of the project's primary-tree task files with the baseline recorded after the
-last finished groom. Once 10 or more tasks have been created or changed (in_progress tasks, which a
-work session owns, neither count nor get reviewed), it starts an unattended `backlog-groom` pm
-session in the primary tree. Like memory grooming (§6.3), it uses the preset binding, else the
-default coordinator, runs at most one per project, and waits out a persisted 24-hour cooldown
-from its last start, whatever that run's outcome. The trigger is churn rather than elapsed time
+last finished groom. Once 10 or more open tasks have been created or changed (in_progress tasks,
+which a work session owns, and done tasks, already compacted at completion, neither count nor get
+reviewed), it starts an unattended `backlog-groom` pm session in the primary tree. Like memory
+grooming (§6.3), it uses the preset binding, else the default coordinator, runs at most one per
+project, and waits out a persisted 24-hour cooldown from its last start, whatever that run's
+outcome. The trigger is churn rather than elapsed time
 because drift arrives in bursts of agent work, and an idle project then costs nothing. Counting
 changed files rather than tool calls covers every writer: RPCs, agents' edits, the CLI, and merges.
 The first check only records a baseline, so an existing backlog is not counted as churn. Each run
 reviews the changed tasks first, oldest id first, up to 15, and fills the rest of its batch with
-the oldest tasks that have no `groom:` work-log entry. The work-log entries record progress across
-runs. A finished run acknowledges only the tasks it reviewed, meaning those that gained a `groom:`
-entry during the run. Every other change stays churn for the next run: changed tasks beyond the
-batch, tasks it skipped, and edits other sessions made meanwhile. A run that does not finish leaves
-the baseline unchanged. Unattended runs apply only fixes that
+the oldest open tasks that have no `groom:` work-log entry. The work-log entries record progress
+across runs. A finished run acknowledges only the tasks it reviewed, meaning those that gained a
+`groom:` entry during the run. Every other change stays churn for the next run: changed tasks beyond
+the batch, tasks it skipped, and edits other sessions made meanwhile. A run that does not finish
+leaves the baseline unchanged. Unattended runs apply only fixes that
 evidence settles: debris, glosses of insider references, run-together text re-derived from
 evidence, and stale or contradictory state. They never change status or meaning otherwise and
 never promote proposed work. Everything else becomes a flag, collected in one standing proposed

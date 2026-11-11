@@ -186,14 +186,15 @@ func fingerprints(files []backlogFile) map[string]string {
 
 // backlogChurn lists the tasks created or changed since baseline that a groom
 // may review, oldest id first. in_progress tasks, which a work session owns,
-// neither count nor get reviewed until they leave that status.
+// neither count nor get reviewed until they leave that status; done tasks,
+// whose completion compaction rewrites the file, never do unless reopened.
 func backlogChurn(baseline map[string]string, files []backlogFile) []backlogFile {
 	var churn []backlogFile
 	for _, f := range files {
 		if old, ok := baseline[f.name]; ok && old == f.hash {
 			continue
 		}
-		if f.status != docs.StatusInProgress {
+		if f.status != docs.StatusInProgress && f.status != docs.StatusDone {
 			churn = append(churn, f)
 		}
 	}
