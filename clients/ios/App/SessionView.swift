@@ -282,7 +282,8 @@ struct SessionView: View {
             // File links in agent markdown (and path-like code spans) open in a
             // sheet, resolved against this session's workspace — a workstream's
             // worktree while it exists — so the transcript keeps its place.
-            .fileLinks(FileLinkContext(project: project, sessionID: sessionID))
+            .fileLinks(FileLinkContext(
+                project: project, sessionID: sessionID, absoluteRoots: fileLinkRoots))
             .sheet(isPresented: $showFiles) {
                 FileSheet(route: FileRoute(
                     project: project, sessionID: sessionID,
@@ -1275,6 +1276,18 @@ struct SessionView: View {
                 Label("Backlog", systemImage: "checklist")
             }
         }
+    }
+
+    /// Absolute daemon-host roots (the project's path and the session's
+    /// workspace, which is a workstream's worktree) that agent-written
+    /// absolute paths are stripped of, so `![x](/abs/project/shot.png)` and
+    /// absolute file links resolve like their relative forms, as on the web.
+    private var fileLinkRoots: [String] {
+        let projectPath = sessionList?.projects.first { $0.name == project }?.path ?? ""
+        let workspace = sessionList?.session(sessionID: sessionID)?.workspace ?? ""
+        // Ordered (not a Set) so the environment value stays equal across renders.
+        let roots = [projectPath, workspace].filter { !$0.isEmpty }
+        return roots.count == 2 && roots[0] == roots[1] ? [roots[0]] : roots
     }
 
     private var isFlaggedForFollowUp: Bool {
