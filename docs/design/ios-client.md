@@ -86,12 +86,13 @@ by name (spec §9): the project overflow menu has onboarding (re-onboard once on
 docs check, the backlog's overflow menu (which also holds the sort order) has backlog grooming and
 re-onboarding, and Memory keeps "Groom now". Starting from a backlog task still opens work mode.
 
-New session's **Separate workstream** chip (off for every new composer, like the web toggle) sends
-the same mode, model, applied preset, prompt, and pictures through `SpawnWorkstream` instead of
-`StartSession`, with an optional ready backlog task that stands in for an unwritten prompt, then
-opens the workstream's session. Workstream sessions carry a branch mark in the session list, and
-their context menu opens Workstreams. The home overflow menu reaches Workstreams in every scope;
-the unscoped feed opens it across all projects with its own project filter.
+New session's separate-workstream chip (labelled **Workstream**; off for every new composer, like
+the web toggle) sends the same mode, model, applied preset, prompt, and pictures through
+`SpawnWorkstream` instead of `StartSession`, with an optional ready backlog task that stands in for
+an unwritten prompt, then opens the workstream's session. Workstream sessions carry a branch mark in
+the session list, and their context menu opens Workstreams. The home overflow menu reaches
+Workstreams in every scope; the unscoped feed opens it across all projects with its own project
+filter.
 
 A project's overflow menu also opens **Watches** (docs/design/watches.md): each watch with its
 latest status, next run or paused/expired state, and any question a run is waiting on, with

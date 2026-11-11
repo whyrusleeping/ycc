@@ -132,7 +132,7 @@ struct WorkstreamsView: View {
                 "No workstreams",
                 systemImage: "arrow.triangle.branch",
                 description: Text(model.selectedProject.isEmpty
-                    ? "Start one from New session with Separate workstream on."
+                    ? "Start one from New session with the Workstream chip on."
                     : "Parallel worktrees spawned for this project show up here."))
         } else {
             workstreamList(model)

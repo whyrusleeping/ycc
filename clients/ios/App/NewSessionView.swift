@@ -245,7 +245,8 @@ struct NewSessionView: View {
     }
 
     /// The "Separate workstream" toggle, drawn as a chip that turns into the
-    /// filled accent while on.
+    /// filled accent while on. Its visible label is just "Workstream" to keep
+    /// the chip row narrow; the note above the chips explains it while on.
     private var workstreamChip: some View {
         Button {
             model.separateWorkstream.toggle()
@@ -256,7 +257,7 @@ struct NewSessionView: View {
             HStack(spacing: 4) {
                 Image(systemName: model.separateWorkstream ? "checkmark" : "arrow.triangle.branch")
                     .font(.caption2)
-                Text("Separate workstream")
+                Text("Workstream")
                     .font(.caption.weight(.medium))
             }
             .padding(.horizontal, 10)
@@ -269,6 +270,7 @@ struct NewSessionView: View {
         }
         .buttonStyle(.plain)
         .disabled(model.isStarting)
+        .accessibilityLabel("Separate workstream")
         .accessibilityAddTraits(model.separateWorkstream ? .isSelected : [])
         .accessibilityHint("Runs the session in its own git worktree and branch")
     }
