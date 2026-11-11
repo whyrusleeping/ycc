@@ -30,9 +30,7 @@ public enum BacklogGroomSummary {
         relative: (Date) -> String = { $0.formatted(.relative(presentation: .named)) }
     ) -> String {
         guard status.hasLastGroom else {
-            return status.autoGroom
-                ? "No automatic groom yet. One runs once enough tasks have changed."
-                : "Automatic grooming is off for this project."
+            return status.autoGroom ? "Not run yet" : "Automatic grooming off"
         }
         let run = status.lastGroom
         func at(_ unix: Int64) -> String { relative(Date(timeIntervalSince1970: TimeInterval(unix))) }

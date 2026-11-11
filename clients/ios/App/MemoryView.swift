@@ -112,7 +112,7 @@ struct MemoryView: View {
                 Button {
                     openSession(status.groomSessionID, live: true)
                 } label: {
-                    Label("Automatic groom running — watch", systemImage: "sparkles")
+                    Label("Automatic groom running — watch", systemImage: "eye")
                 }
             } else {
                 Button {
@@ -121,7 +121,7 @@ struct MemoryView: View {
                     if isStartingGroom {
                         Label("Starting…", systemImage: "hourglass")
                     } else {
-                        Label("Groom now", systemImage: "wand.and.stars")
+                        Label("Groom now", systemImage: "play")
                     }
                 }
                 .disabled(isStartingGroom)

@@ -28,10 +28,10 @@ final class BacklogGroomSummaryTests: XCTestCase {
     func testNoRunYet() {
         XCTAssertEqual(
             BacklogGroomSummary.line(status(), relative: relative),
-            "No automatic groom yet. One runs once enough tasks have changed.")
+            "Not run yet")
         XCTAssertEqual(
             BacklogGroomSummary.line(status(auto: false), relative: relative),
-            "Automatic grooming is off for this project.")
+            "Automatic grooming off")
         XCTAssertFalse(BacklogGroomSummary.failed(status()))
         XCTAssertFalse(BacklogGroomSummary.isRunning(status(running: "s_other")))
     }

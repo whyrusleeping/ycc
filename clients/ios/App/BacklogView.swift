@@ -344,9 +344,11 @@ struct BacklogView: View {
                 Task { await loadGroomStatus() }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: failed ? "exclamationmark.triangle" : "list.bullet.clipboard")
-                        .font(.caption)
-                        .foregroundStyle(failed ? Theme.attention : .secondary)
+                    if failed {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(Theme.attention)
+                    }
                     Text("Groom · \(line)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -383,17 +385,18 @@ struct BacklogView: View {
                 if isStartingGroom {
                     groomLabel("Starting…", systemImage: "hourglass", compact: compact)
                 } else {
-                    groomLabel("Groom now", systemImage: "wand.and.stars", compact: compact)
+                    groomLabel("Groom now", systemImage: "play", compact: compact)
                 }
             }
             .disabled(isStartingGroom)
         }
     }
 
+    /// Compact (the strip) is a short text button; the sheet keeps the icon.
     @ViewBuilder
     private func groomLabel(_ title: String, systemImage: String, compact: Bool) -> some View {
         if compact {
-            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
+            Text(title).font(.caption.weight(.semibold))
         } else {
             Label(title, systemImage: systemImage)
         }

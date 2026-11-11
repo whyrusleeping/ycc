@@ -229,8 +229,8 @@ describe("automatic backlog groom line", () => {
   const run = { sessionId: "s_g", startedUnix: unix(180), changed: 12, batch: ["0001", "0002", "0003"], deferred: 0 };
 
   it("explains a project with no run yet", () => {
-    expect(groomLine(status({ autoGroom: true }), now)).toMatch(/No automatic groom yet/);
-    expect(groomLine(status({ autoGroom: false }), now)).toBe("Automatic grooming is off for this project.");
+    expect(groomLine(status({ autoGroom: true }), now)).toBe("Not run yet");
+    expect(groomLine(status({ autoGroom: false }), now)).toBe("Automatic grooming off");
     expect(groomFailed(status({ autoGroom: true }))).toBe(false);
   });
 

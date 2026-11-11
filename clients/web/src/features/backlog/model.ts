@@ -429,9 +429,7 @@ export function groomFailed(status: GetBacklogGroomResponse): boolean {
 export function groomLine(status: GetBacklogGroomResponse, now: number = Date.now()): string {
   const run = status.lastGroom;
   if (!run) {
-    return status.autoGroom
-      ? "No automatic groom yet. One runs once enough tasks have changed."
-      : "Automatic grooming is off for this project.";
+    return status.autoGroom ? "Not run yet" : "Automatic grooming off";
   }
   const at = (unix: bigint) => relativeTime(new Date(Number(unix) * 1000).toISOString(), now);
   const tasks = (n: number) => `${n} changed ${n === 1 ? "task" : "tasks"}`;
