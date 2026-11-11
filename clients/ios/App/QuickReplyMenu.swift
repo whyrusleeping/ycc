@@ -32,6 +32,8 @@ struct QuickReplyMenuModifier: ViewModifier {
 
     /// How long the rows take to tuck back in before the menu goes.
     private static let closeDuration: Double = 0.24
+    /// How much the blurred backdrop covers the transcript while open.
+    private static let backdropOpacity: Double = 0.85
 
     @State private var menu: Menu?
     /// The content's frame in window coordinates (the recognizer's space).
@@ -165,7 +167,8 @@ struct QuickReplyMenuModifier: ViewModifier {
                     .onTapGesture { close() }
                     .accessibilityLabel("Close quick replies")
                     .accessibilityAddTraits(.isButton)
-                    .opacity(menu.closing ? 0 : 1)
+                    // Even the thinnest material hid the transcript too much.
+                    .opacity(menu.closing ? 0 : Self.backdropOpacity)
                     .animation(.easeOut(duration: Self.closeDuration), value: menu.closing)
                 let nearest = nearestRow(in: menu)
                 let count = menu.layout.frames.count
