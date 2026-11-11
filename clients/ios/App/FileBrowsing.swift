@@ -76,6 +76,7 @@ private struct FileLinksModifier: ViewModifier {
             })
             .sheet(item: $presented) { route in
                 FileSheet(route: route)
+                    .trackedView(route.reference.isDirectory ? "files" : "file")
             }
     }
 }

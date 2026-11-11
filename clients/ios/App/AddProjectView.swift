@@ -259,6 +259,11 @@ struct AddProjectView: View {
     private func submit() {
         Task {
             if let project = await model.submit() {
+                Analytics.submit("add_project", attrs: [
+                    // The web client's names for the modes.
+                    "mode": model.mode == .newFolder ? "new" : model.mode.rawValue,
+                    "named": model.mode == .existing && !model.name.trimmingCharacters(in: .whitespaces).isEmpty ? "true" : "false",
+                ])
                 dismiss()
                 onAdded(project)
             }

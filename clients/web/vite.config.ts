@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { trackedNames } from "./scripts/trackedNames";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 
@@ -10,6 +11,8 @@ export default defineConfig({
   root: here,
   base: "/",
   plugins: [react()],
+  // The analytics catalog: every literal action and view name in src.
+  define: { __YCC_TRACKED__: JSON.stringify(trackedNames(fileURLToPath(new URL("./src", import.meta.url)))) },
   build: {
     outDir: fileURLToPath(new URL("../../internal/web/dist", import.meta.url)),
     emptyOutDir: true,

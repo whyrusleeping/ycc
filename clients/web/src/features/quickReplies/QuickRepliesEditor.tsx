@@ -83,7 +83,7 @@ export function QuickRepliesForm({
         );
       }
       void qc.invalidateQueries({ queryKey: queryKeys.quickRepliesAll });
-      track.action(`${flow}.save`, "click", { count: stored.length });
+      track.action(scope.global ? "settings.quick_replies.save" : "projects.quick_replies.save", "click", { count: stored.length });
       setSaved(stored);
       setRows(toRows(stored));
       setBusy(false);

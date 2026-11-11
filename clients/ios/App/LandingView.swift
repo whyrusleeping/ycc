@@ -106,6 +106,7 @@ struct LandingView: View {
                 ProjectChoiceSheet(
                     model: model, title: "Backlog",
                     actionPrefix: "Open backlog for",
+                    flow: "project_choice_backlog",
                     preferred: lastViewedProject
                 ) { project in
                     showBacklogProjectPicker = false
@@ -118,7 +119,10 @@ struct LandingView: View {
                 // Same request id, so picking a project swaps this sheet's
                 // content for the composer in place instead of dismissing
                 // and re-presenting.
-                ProjectChoiceSheet(model: model, title: "New chat", actionPrefix: "Start in") { project in
+                ProjectChoiceSheet(
+                    model: model, title: "New chat", actionPrefix: "Start in",
+                    flow: "project_choice_new_session"
+                ) { project in
                     newSessionRequest?.project = project
                     newSessionRequest?.choosingProject = false
                 }
@@ -153,7 +157,6 @@ struct LandingView: View {
         .sheet(isPresented: $showAddProject) {
             if let client = app.client {
                 AddProjectView(client: client) { project in
-                    Analytics.submit("add_project")
                     // Select and refresh so the new project shows up in the
                     // drawer (and every other picker's next load).
                     model?.selectedProject = project.name

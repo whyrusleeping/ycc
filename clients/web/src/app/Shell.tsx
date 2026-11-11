@@ -172,6 +172,9 @@ function Sidebar() {
   const qc = useQueryClient();
   const loops = useWorkLoops();
   const workstreams = useWorkstreams(scope ?? "");
+  // The section links' data-track names are built at run time, so the
+  // build-time analytics catalog cannot see them.
+  useEffect(() => track.catalog(PROJECT_SECTIONS.map((s) => ({ kind: "action", name: `sidebar.${s.key}` }))), []);
   // Scoped: that project's activity; Recent: every project's.
   const loopBadge = loopIndicator(loops.filter((l) => scope === null || l.project === scope).map((l) => l.loop));
   const wsBadge = workstreamIndicator(workstreams.data);

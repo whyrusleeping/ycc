@@ -18,12 +18,17 @@ struct ProjectChoiceSheet: View {
     let title: String
     /// The action button's text before the chosen project, e.g. "Start in".
     let actionPrefix: String
+    /// The analytics flow this choice is recorded as, e.g.
+    /// `project_choice_backlog`.
+    let flow: String
     /// Called with the chosen project.
     let onChoose: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var projects: [Ycc_V1_ProjectInfo]
     @State private var selection: String
+    /// The preselected project, to record whether the guess was kept.
+    private let preselected: String
 
     /// `preferred` is preselected when it is a registered project; otherwise
     /// the most recently active one is.
@@ -31,17 +36,20 @@ struct ProjectChoiceSheet: View {
         model: SessionListModel,
         title: String,
         actionPrefix: String,
+        flow: String,
         preferred: String? = nil,
         onChoose: @escaping (String) -> Void
     ) {
         self.model = model
         self.title = title
         self.actionPrefix = actionPrefix
+        self.flow = flow
         self.onChoose = onChoose
         let projects = model.projectsByRecency
         _projects = State(initialValue: projects)
         let initial = projects.first(where: { $0.name == preferred }) ?? projects.first
         _selection = State(initialValue: initial?.name ?? "")
+        preselected = initial?.name ?? ""
     }
 
     var body: some View {
@@ -66,11 +74,13 @@ struct ProjectChoiceSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .trackedFlow(flow)
     }
 
     private var actionBar: some View {
         Button {
             guard !selection.isEmpty else { return }
+            Analytics.submit(flow, attrs: ["preselected": selection == preselected ? "true" : "false"])
             onChoose(selection)
         } label: {
             Text("\(actionPrefix) \(Text(selection).monospaced().fontWeight(.semibold))")

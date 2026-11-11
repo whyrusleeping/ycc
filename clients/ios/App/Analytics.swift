@@ -51,13 +51,15 @@ enum Analytics {
         "home", "session", "task", "backlog", "workloop", "workstreams", "usage", "memory", "file",
         "settings", "drawer", "connect", "new_session", "quick_capture", "add_project",
         "session_settings", "session_usage", "question", "files", "diff", "anthropic_login",
-        "model_editor", "tier_editor", "health", "watches", "watch",
+        "model_editor", "tier_editor", "health", "watches", "watch", "activity",
+        "quick_replies", "review_tiers",
     ]
 
     static let actions: [String] = [
         "composer.send", "composer.attach_image",
         "composer.quick_reply", "composer.quick_reply_undo", "settings.quick_replies.save",
         "session.interrupt", "session.resume", "session.retry", "session.rollover", "session.settings",
+        "session.activity", "session.stream_retry", "preset.start",
         "session.stop_open", "session.stop.confirm", "session.stop.cancel",
         "session.follow_up", "session.unflag",
         "question.answer",
@@ -77,7 +79,10 @@ enum Analytics {
         "watches.pause", "watches.resume", "watches.run_now", "watches.delete",
         "watches.parked", "watches.run_session", "watches.decision_session", "watches.older",
         "refresh", "health.check_now",
-    ] + ["new_session", "quick_capture", "add_project", "task_edit"].flatMap { flow in
+    ] + [
+        "new_session", "quick_capture", "add_project", "task_edit",
+        "project_choice_backlog", "project_choice_new_session",
+    ].flatMap { flow in
         ["open", "submit", "cancel"].map { "\(flow).\($0)" }
     }
 }

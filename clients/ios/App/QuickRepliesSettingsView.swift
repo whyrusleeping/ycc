@@ -154,8 +154,11 @@ struct QuickRepliesSettingsView: View {
 
     private func save() async {
         let count = model.rows.count
+        let projectCount = model.rows.filter { $0.scope != .global }.count
         if await model.save() {
-            Analytics.action("settings.quick_replies.save", attrs: ["count": String(count)])
+            Analytics.action("settings.quick_replies.save", attrs: [
+                "count": String(count), "project_count": String(projectCount),
+            ])
         }
     }
 }

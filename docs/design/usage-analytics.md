@@ -82,6 +82,12 @@ it *could* record — registered actions, screens. The daemon keeps the latest c
 the report lists catalog entries with zero recorded use in the window ("never used"), plus
 actions that have a shortcut but are mostly invoked another way ("shortcut not learned").
 
+The web client's catalog is built from its sources: `clients/web/scripts/trackedNames.ts` collects
+every literal name it records (`data-track`, `track.action`, flows, modal views, menu and palette
+action ids) and Vite defines the list at build time, so new instrumentation is catalogued without
+a hand-kept list; names built at run time are added with `track.catalog`. The iOS client keeps its
+catalog by hand in `clients/ios/App/Analytics.swift`.
+
 ## Report contents
 
 Per client: visits, active days, versions seen; views by count and total/median dwell; actions by

@@ -9,6 +9,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { YccClient } from "../../api/client";
 import { errorMessage } from "../../api/client";
+import { track } from "../../app/analytics";
 import { toImageAttachments, type DraftPicture } from "../attachments/attachments";
 import { SessionProjection, type PendingQuestion, type Phase, type TranscriptRow } from "./projection";
 import { fromEvent, fromRow, fromState } from "./wire";
@@ -449,6 +450,7 @@ export class SessionController {
               return;
             case "missing":
               if (!this.installed) {
+                track.error("session.stream", "not_found");
                 this.setConn("failed", "Session not found.");
                 this.publish();
                 return;
@@ -463,6 +465,8 @@ export class SessionController {
               this.finishReadOnly();
               return;
             case "terminal":
+              // The Retry banner is a user-visible failure.
+              track.error("session.stream", err);
               this.projection.clearLiveTails();
               this.setConn("failed", errorMessage(err));
               this.publish();

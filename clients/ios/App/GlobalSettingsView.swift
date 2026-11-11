@@ -210,6 +210,7 @@ struct GlobalSettingsView: View {
         Section {
             NavigationLink {
                 ReviewTiersView(client: client)
+                    .trackedView("review_tiers")
             } label: {
                 Label("Review tiers", systemImage: "checklist")
             }
@@ -222,6 +223,7 @@ struct GlobalSettingsView: View {
         Section {
             NavigationLink {
                 QuickRepliesSettingsView(client: client)
+                    .trackedView("quick_replies")
             } label: {
                 Label("Quick replies", systemImage: "text.bubble")
             }

@@ -69,6 +69,7 @@ export const VIEW_NAMES = [
   "loop_start",
   "workstream_spawn",
   "watch_editor",
+  "quick_replies",
 ] as const;
 
 const MAX_NAME = 80;
@@ -196,6 +197,8 @@ export interface RecorderDeps {
   visitId: string;
   clientVersion?: string;
   hidden?: boolean;
+  /** Names found in the sources at build time (scripts/trackedNames.ts). */
+  builtinCatalog?: readonly CatalogEntry[];
   /** Catalog entries remembered from earlier visits of this build. */
   loadCatalog?: () => CatalogEntry[];
   saveCatalog?: (entries: CatalogEntry[]) => void;
@@ -221,6 +224,7 @@ export class Recorder {
   constructor(private deps: RecorderDeps) {
     this.hidden = !!deps.hidden;
     for (const v of VIEW_NAMES) this.catalog.set(`view:${v}`, { kind: "view", name: v });
+    for (const e of deps.builtinCatalog ?? []) this.catalog.set(`${e.kind}:${e.name}`, { kind: e.kind, name: e.name });
     for (const e of deps.loadCatalog?.() ?? []) this.catalog.set(`${e.kind}:${e.name}`, e);
   }
 
@@ -451,9 +455,19 @@ export class Recorder {
 
 // Defined by scripts/build.mjs (the build-inputs hash prefix); absent in dev and tests.
 declare const __YCC_WEB_BUILD__: string | undefined;
+// Defined by vite.config.ts: the literal action and view names in the sources.
+declare const __YCC_TRACKED__: { actions: string[]; views: string[] } | undefined;
 
 const CATALOG_KEY = "ycc.analytics.catalog";
 const BUILD = typeof __YCC_WEB_BUILD__ === "string" ? __YCC_WEB_BUILD__ : "";
+
+function builtinCatalog(): CatalogEntry[] {
+  if (typeof __YCC_TRACKED__ !== "object" || !__YCC_TRACKED__) return [];
+  return [
+    ...__YCC_TRACKED__.actions.map((name): CatalogEntry => ({ kind: "action", name })),
+    ...__YCC_TRACKED__.views.map((name): CatalogEntry => ({ kind: "view", name })),
+  ];
+}
 
 let recorder: Recorder | null = null;
 
@@ -525,6 +539,7 @@ export function installAnalytics() {
       visitId: randomId(),
       clientVersion: BUILD || undefined,
       hidden: document.visibilityState === "hidden",
+      builtinCatalog: builtinCatalog(),
       loadCatalog,
       saveCatalog,
     });
