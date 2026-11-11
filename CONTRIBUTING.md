@@ -57,6 +57,13 @@ default deliverables.
 - For local development, `npm run dev` in `clients/web` serves the client with hot reload and
   proxies Connect calls to a daemon at `$YCC_DAEMON` (default `http://127.0.0.1:8787`).
 
+## iOS client
+
+- A Linux host cannot compile `clients/ios`. Every change there, however small (a label, a
+  modifier), is unverified until it builds on macOS with Xcode: run the iOS commands in
+  `README.md` (`swift test` for YccKit changes, `xcodegen generate` plus `xcodebuild` for the app),
+  and look at UI changes in a simulator. If no Mac is available, say the change is unbuilt.
+
 ## Review
 
 - Use self-review for tiny, low-risk changes; one focused reviewer for ordinary changes;
