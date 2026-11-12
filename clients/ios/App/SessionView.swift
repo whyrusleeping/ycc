@@ -871,6 +871,11 @@ struct SessionView: View {
             }
         }
         .coordinateSpace(name: Self.transcriptCoordinateSpace)
+        // Scrolling the transcript dismisses the keyboard (the draft stays).
+        // Not `.interactively`: UIKit posts no keyboard frame notifications
+        // while the keyboard tracks the finger, so the manually avoided input
+        // bar (KeyboardObserver) would hang in mid-air until release.
+        .scrollDismissesKeyboard(.immediately)
         .onPreferenceChange(TranscriptBottomPreferenceKey.self) { bottomY in
             let tolerance: CGFloat = 8
             let now = Date()

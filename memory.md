@@ -119,6 +119,7 @@
 - 2026-11-10 [measured observation] Redeploying the daemon that serves this session interrupts it: schedule an authorized restart after the final reply via an independent mechanism; build binaries in a clean `git worktree` when the tree is shared. <!-- ycc-memory id=m-dmrfz8cgknfp kind=observation session=s_b2f50a16b6503f64 event=178 actor=coordinator scope=workspace classified=model supersedes=m-dmhvmb69hp9p -->
 - 2026-11-10 [measured observation] Bracket `pgrep -f`/`pkill -f` patterns (they match your own shell); pass test tooling explicit daemon credentials. <!-- ycc-memory id=m-dmrfzjh9y806 kind=observation session=s_b2f50a16b6503f64 event=205 actor=coordinator scope=workspace classified=model supersedes=m-dmrfz8c6t4d2 -->
 - 2026-11-10 [measured observation] On this Linux host the default `node` is v12 (breaks tsc/vitest); prefix web commands with `PATH=$HOME/.nvm/versions/node/v24.4.1/bin:$PATH`. <!-- ycc-memory id=m-dmrwmsfwzjsh kind=observation session=s_230ab161254a009f event=211 actor=coordinator scope=workspace classified=model -->
+- 2026-11-12 [measured observation] iOS sims driven by `axe type`/`key` stay in hardware-keyboard mode (no soft keyboard, survives reboot); test keyboard behavior on a fresh `simctl create` sim, entering text via `simctl pbcopy` + long-press Paste. <!-- ycc-memory id=m-dmt2lkgkqs1w kind=observation session=s_3f77ebc895aabe56 event=270 actor=coordinator scope=workspace classified=model -->
 
 ## User preferences
 
