@@ -236,10 +236,11 @@ const (
 // gollama.Options.MaxTokens). It is deliberately large because extended-thinking
 // budgets are drawn from this same allowance: a small cap can be entirely
 // consumed by a reasoning block, cutting the turn off before the model emits any
-// tool call. The default model (Claude Opus 4) comfortably supports an output
-// cap this size. Used as the shared default across the config default, the
+// tool call. 64000 is the largest cap every discoverable Claude model accepts
+// (the 4.5 generation stops at 64K; Opus 4.6+ and Fable allow 128K, settable via
+// max_tokens). Used as the shared default across the config default, the
 // daemon options, and the CLI flag default so they stay consistent.
-const DefaultMaxTokens = 32000
+const DefaultMaxTokens = 64000
 
 // DefaultContextSafeFraction leaves headroom for the next model output and for
 // the estimator's tokenizer-independent approximation.
