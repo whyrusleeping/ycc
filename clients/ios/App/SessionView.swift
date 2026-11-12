@@ -119,6 +119,9 @@ struct SessionView: View {
     @State private var sheetQuestion: SessionProjection.PendingQuestion?
     /// Whether the destructive stop confirmation is shown.
     @State private var showStopConfirm = false
+    /// The same confirmation opened from the composer's stop button, anchored
+    /// there so its popover points at the button.
+    @State private var showInlineStopConfirm = false
     /// Whether the per-session settings sheet is shown.
     @State private var showSettings = false
     /// Presents the per-session usage sheet.
@@ -392,19 +395,7 @@ struct SessionView: View {
             } message: { message in
                 Text(message)
             }
-            .confirmationDialog(
-                "Stop this session?",
-                isPresented: $showStopConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Stop session", role: .destructive) {
-                    Analytics.action("session.stop.confirm")
-                    Task { await model.stopSession() }
-                }
-                Button("Cancel", role: .cancel) { Analytics.action("session.stop.cancel") }
-            } message: {
-                Text("This hard-terminates the agent and its background jobs. Sending a message later continues the conversation.")
-            }
+            .modifier(StopConfirmation(isPresented: $showStopConfirm, model: model))
     }
 
     /// Model-cache registration, stream lifecycle and read marks.
@@ -609,17 +600,6 @@ struct SessionView: View {
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             PictureStrip(pictures: $pictures)
-            if model.mode == .live && model.displayPhase == .running
-                && !model.displayPauseRequested && !model.isStopPending {
-                Button {
-                    Analytics.action("session.interrupt")
-                    Task { await model.interrupt() }
-                } label: {
-                    Label("Interrupt at next checkpoint", systemImage: "pause.circle")
-                        .font(.caption)
-                }
-                .disabled(model.isControlInFlight)
-            }
             HStack(spacing: 8) {
                 PicturePickerButton(pictures: $pictures, isLoading: $loadingPictures) { message in
                     model.actionError = message
@@ -638,6 +618,9 @@ struct SessionView: View {
                         }
                     }
                 )
+                if model.mode == .live && model.displayPhase == .running && !model.isStopPending {
+                    stopControl
+                }
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
@@ -656,6 +639,39 @@ struct SessionView: View {
         .onChange(of: pictures.count) { old, new in
             if new > old { Analytics.action("composer.attach_image") }
         }
+    }
+
+    /// Inline stop while the agent runs, beside send (which still steers).
+    /// Tap opens the confirmed hard stop; long-press offers the graceful pause
+    /// at the next checkpoint instead.
+    private var stopControl: some View {
+        Menu {
+            Button(role: .destructive) {
+                Analytics.action("session.stop_open", via: .contextMenu)
+                showInlineStopConfirm = true
+            } label: {
+                Label("Stop now…", systemImage: "stop.circle")
+            }
+            if !model.displayPauseRequested {
+                Button {
+                    Analytics.action("session.interrupt", via: .contextMenu)
+                    Task { await model.interrupt() }
+                } label: {
+                    Label("Pause at next checkpoint", systemImage: "pause.circle")
+                }
+            }
+        } label: {
+            Image(systemName: "stop.circle.fill")
+                .font(.title2)
+                .foregroundStyle(Theme.danger)
+        } primaryAction: {
+            Analytics.action("session.stop_open")
+            showInlineStopConfirm = true
+        }
+        .accessibilityLabel("Stop")
+        .accessibilityHint("Long-press to pause at the next checkpoint instead")
+        .disabled(model.isControlInFlight)
+        .modifier(StopConfirmation(isPresented: $showInlineStopConfirm, model: model))
     }
 
     /// The session phase a message was sent in (analytics: `running` = a
@@ -1491,6 +1507,29 @@ struct SessionView: View {
             } label: {
                 Label("Session actions", systemImage: "ellipsis.circle")
             }
+        }
+    }
+}
+
+/// The destructive hard-stop confirmation (spec: interactive clients confirm
+/// StopSession), shared by the overflow menu and the composer's stop button.
+private struct StopConfirmation: ViewModifier {
+    @Binding var isPresented: Bool
+    let model: SessionViewModel
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Stop this session?",
+            isPresented: $isPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Stop session", role: .destructive) {
+                Analytics.action("session.stop.confirm")
+                Task { await model.stopSession() }
+            }
+            Button("Cancel", role: .cancel) { Analytics.action("session.stop.cancel") }
+        } message: {
+            Text("This hard-terminates the agent and its background jobs. Sending a message later continues the conversation.")
         }
     }
 }

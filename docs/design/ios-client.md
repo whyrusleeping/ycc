@@ -138,6 +138,8 @@ pastes) — both funneled through one normalize/merge pipeline that caps count a
 the daemon's limits. In both new-session and existing-session composers, Return inserts a newline
 (with normal IME composition handling); it never submits the draft. Sending requires the explicit
 send/start control, avoiding accidental sends while composing multiline messages.
+While a live session runs, a stop control sits beside send (which still steers): a tap opens the
+confirmed hard stop, and a long-press also offers the graceful pause at the next checkpoint.
 Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
 long-running work.
 
