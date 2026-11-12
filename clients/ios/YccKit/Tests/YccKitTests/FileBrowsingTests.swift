@@ -323,6 +323,17 @@ final class FileModelsTests: XCTestCase {
         XCTAssertFalse(bad.isDirectory)
     }
 
+    /// The CSP must come before anything the page could load; a leading doctype
+    /// stays first so the page keeps standards mode.
+    func testHTMLPreviewPagePutsPolicyFirst() {
+        let page = FileViewerModel.htmlPreviewPage("\n<!DOCTYPE html><img src=\"https://x/y.png\">")
+        XCTAssertTrue(page.hasPrefix("\n<!DOCTYPE html><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none';"))
+        XCTAssertTrue(page.hasSuffix("<img src=\"https://x/y.png\">"))
+        let bare = FileViewerModel.htmlPreviewPage("<link rel=stylesheet href=a.css><p>hi")
+        XCTAssertTrue(bare.hasPrefix("<meta http-equiv=\"Content-Security-Policy\""))
+        XCTAssertTrue(bare.hasSuffix("<link rel=stylesheet href=a.css><p>hi"))
+    }
+
     func testSplitLines() {
         XCTAssertEqual(FileViewerModel.splitLines(""), [])
         XCTAssertEqual(FileViewerModel.splitLines("a"), ["a"])

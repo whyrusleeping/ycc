@@ -153,6 +153,38 @@ export function isMarkdownPath(path: string): boolean {
   return /\.(md|markdown|mdx)$/i.test(path);
 }
 
+/** HTML renders, script-free, in a sandboxed frame by default. */
+export function isHtmlPath(path: string): boolean {
+  return /\.html?$/i.test(path);
+}
+
+/**
+ * An HTML file's text prepared for the viewer's sandboxed frame: links other
+ * than in-page anchors open in a new tab (with no opener), since the frame's
+ * policy refuses to navigate it anywhere else. A srcdoc document resolves
+ * `#x` against the app's URL, so anchors name `about:srcdoc#x` to stay in-page.
+ * A leading CSP blocks every load but inline styles and `data:` images and
+ * fonts, whatever policy the embedding page has. Parsing is inert: DOMParser
+ * runs no script and loads nothing.
+ */
+export function htmlFrameDoc(text: string): string {
+  const doc = new DOMParser().parseFromString(text, "text/html");
+  const csp = doc.createElement("meta");
+  csp.httpEquiv = "Content-Security-Policy";
+  csp.content = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:";
+  doc.head.prepend(csp);
+  for (const a of doc.querySelectorAll("a[href], area[href]")) {
+    const href = a.getAttribute("href")?.trim() ?? "";
+    if (href.startsWith("#")) {
+      a.setAttribute("href", `about:srcdoc${href}`);
+      continue;
+    }
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  }
+  return (doc.doctype ? "<!doctype html>" : "") + doc.documentElement.outerHTML;
+}
+
 /** SVG arrives as text; the viewer renders it as an image by default. */
 export function isSvgPath(path: string): boolean {
   return /\.svg$/i.test(path);

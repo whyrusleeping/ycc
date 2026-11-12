@@ -123,7 +123,8 @@ describe("no HTML injection anywhere in the client", () => {
     walk(root);
     for (const f of files) {
       const src = readFileSync(f, "utf8");
-      expect(src, f).not.toMatch(/dangerouslySetInnerHTML|\.innerHTML\b|\.outerHTML\b|insertAdjacentHTML|document\.write/);
+      // Reading outerHTML only serializes (the file viewer's sandboxed HTML frame); assigning it injects.
+      expect(src, f).not.toMatch(/dangerouslySetInnerHTML|\.innerHTML\b|\.outerHTML\s*=(?!=)|insertAdjacentHTML|document\.write/);
     }
   });
 });

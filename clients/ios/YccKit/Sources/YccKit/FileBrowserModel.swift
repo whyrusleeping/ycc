@@ -79,7 +79,7 @@ public final class FileBrowserModel {
 }
 
 /// The read-only file viewer (`ReadFile`): text (syntax-highlighted off the
-/// main actor), rendered markdown or SVG, images, PDFs, or a binary placeholder.
+/// main actor), rendered markdown, SVG or HTML, images, PDFs, or a binary placeholder.
 @MainActor
 @Observable
 public final class FileViewerModel {
@@ -126,10 +126,27 @@ public final class FileViewerModel {
 
     public var isMarkdown: Bool { route.reference.isMarkdown }
 
-    /// Rendered (markdown, or SVG as an image) unless the user picks source. A
-    /// truncated SVG is a prefix that won't parse, so it stays source.
+    /// Rendered (markdown, HTML, or SVG as an image) unless the user picks
+    /// source. A truncated SVG is a prefix that won't parse, so it stays source;
+    /// a truncated HTML prefix still renders.
     public var rendersByDefault: Bool {
-        isMarkdown || (route.reference.isSVG && !truncated)
+        isMarkdown || route.reference.isHTML || (route.reference.isSVG && !truncated)
+    }
+
+    /// The page that shows an HTML file: its source with a Content-Security-Policy
+    /// that blocks every load except inline styles and `data:` images and fonts.
+    /// The meta goes first (after a leading doctype, so standards mode survives),
+    /// where the parser puts it in the head before anything it could load.
+    public static func htmlPreviewPage(_ source: String) -> String {
+        let csp = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+            + "style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'\">"
+        var head = source[...]
+        while let first = head.first, first.isWhitespace || first == "\u{FEFF}" { head = head.dropFirst() }
+        if head.prefix(9).lowercased() == "<!doctype", let end = head.firstIndex(of: ">") {
+            let afterDoctype = head.index(after: end)
+            return String(source[..<afterDoctype]) + csp + String(source[afterDoctype...])
+        }
+        return csp + source
     }
 
     public func load() async {

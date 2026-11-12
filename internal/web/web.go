@@ -38,8 +38,10 @@ const (
 	// The bundle loads only same-origin scripts, styles, and Connect calls;
 	// no event or tool text is ever inserted as HTML, and this policy keeps a
 	// regression from executing injected markup. frame-src blob: lets the file
-	// viewer frame a PDF it built from ReadFile bytes.
-	contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; " +
+	// viewer frame a PDF it built from ReadFile bytes. The viewer's sandboxed
+	// srcdoc frame for HTML files inherits this policy, so inline styles are
+	// allowed for its stylesheets; scripts stay same-origin only.
+	contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
 		"frame-src blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 )
 

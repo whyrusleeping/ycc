@@ -1,8 +1,9 @@
 // The read-only file viewer and directory listing, shared by the Files page
 // and the inspector: ReadFile text with a line-number gutter, syntax
 // highlighting over escaped text spans, a target line range (scrolled to and
-// highlighted), go-to-line, rendered markdown and SVG with a source toggle, images, PDFs,
-// and binary/truncated/not-found/fallback notes. Nothing is inserted as HTML.
+// highlighted), go-to-line, rendered markdown, SVG and HTML with a source toggle, images,
+// PDFs, and binary/truncated/not-found/fallback notes. Nothing is inserted as HTML into the
+// app's document: an HTML file renders only inside a sandboxed frame.
 import { useQuery } from "@tanstack/react-query";
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Code, ConnectError } from "@connectrpc/connect";
@@ -28,6 +29,8 @@ import {
   dirname,
   entryReference,
   formatSize,
+  htmlFrameDoc,
+  isHtmlPath,
   isMarkdownPath,
   isRasterPreviewType,
   isSvgPath,
@@ -129,8 +132,10 @@ function FileContent({
   const markdown = isText && isMarkdownPath(resp.path || target.path);
   // SVG renders as an image unless cut short (a prefix won't parse).
   const svg = isText && !resp.truncated && isSvgPath(resp.path || target.path);
-  // A line target reads in source; otherwise markdown and SVG render.
-  const [rendered, setRendered] = useState((markdown || svg) && !lines);
+  const html = isText && isHtmlPath(resp.path || target.path);
+  const frameDoc = useMemo(() => (html ? htmlFrameDoc(text) : ""), [html, text]);
+  // A line target reads in source; otherwise markdown, SVG and HTML render.
+  const [rendered, setRendered] = useState((markdown || svg || html) && !lines);
   const [wrap, setWrap] = useState(false);
   useEffect(() => {
     if (lines) setRendered(false);
@@ -160,8 +165,8 @@ function FileContent({
           {isText && <> · {fileLines.length} {fileLines.length === 1 ? "line" : "lines"}</>}
         </span>
         <span className="file-actions">
-          {(markdown || svg) && (
-            <SourceToggle rendered={rendered} onChange={setRendered} label={svg ? "SVG view" : "Markdown view"} />
+          {(markdown || svg || html) && (
+            <SourceToggle rendered={rendered} onChange={setRendered} label={svg ? "SVG view" : html ? "HTML view" : "Markdown view"} />
           )}
           {isText && !rendered && (
             <>
@@ -208,6 +213,17 @@ function FileContent({
         <div className="file-image">
           <ExpandableImage src={svgDataUrl(text)} alt={basename(target.path)} />
         </div>
+      ) : rendered && html ? (
+        <div className="file-html">
+          {/* No script, forms or top navigation, and an opaque origin; links open
+              unsandboxed new tabs. The srcdoc document inherits the app's CSP, so
+              nothing loads from other origins. */}
+          <iframe
+            sandbox="allow-popups allow-popups-to-escape-sandbox"
+            srcDoc={frameDoc}
+            title={basename(target.path)}
+          />
+        </div>
       ) : rendered ? (
         <div className="file-markdown">
           <FileLinksProvider value={links}>
@@ -232,7 +248,7 @@ function FileContent({
   );
 }
 
-/** Rendered / Source switch for markdown documents and SVG. */
+/** Rendered / Source switch for markdown documents, SVG and HTML. */
 export function SourceToggle({
   rendered,
   onChange,

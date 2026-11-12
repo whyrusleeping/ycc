@@ -104,8 +104,10 @@ question or are flagged, so a run drops back out once answered.
 
 Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`
 (from the project overflow menu, or a session's menu for its own worktree). Text files render
-with line numbers and a small built-in syntax highlighter, markdown and SVG render by default with a
-source toggle (SVG as an image in a script-disabled web view), and images and PDFs preview inline. Agent output cites files as markdown links and, far more
+with line numbers and a small built-in syntax highlighter, markdown, SVG and HTML render by default
+with a source toggle (SVG as an image, HTML as a static page, both in script-disabled web views whose
+page CSP blocks every load but inline styles and `data:` images; HTML link taps open http(s) and
+mailto outside the app and never navigate the view), and images and PDFs preview inline. Agent output cites files as markdown links and, far more
 often, as inline-code paths (`internal/x.go:42`); both are tappable wherever a file-link context is
 installed (transcripts, task bodies, memory, rendered markdown files). Code spans are recognized
 conservatively (known extensions or well-known names, no whitespace) and resolve from the project

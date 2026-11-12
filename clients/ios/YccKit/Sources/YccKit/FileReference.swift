@@ -46,6 +46,9 @@ public struct FileReference: Hashable, Sendable {
 
     /// SVG arrives as text; the viewer renders it as an image by default.
     public var isSVG: Bool { fileExtension == "svg" }
+
+    /// HTML renders as a static page (no script, no loads) by default.
+    public var isHTML: Bool { ["html", "htm"].contains(fileExtension) }
 }
 
 /// Where a file reference is opened: a project, optionally a session (so links

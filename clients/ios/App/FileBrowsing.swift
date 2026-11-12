@@ -282,8 +282,8 @@ private struct FallbackNote: View {
 // MARK: - Viewer
 
 /// The read-only file viewer: syntax-highlighted text with line numbers
-/// (scrolled to and highlighting a linked line range), rendered markdown or
-/// SVG with a source toggle, images, PDFs, or a binary placeholder.
+/// (scrolled to and highlighting a linked line range), rendered markdown, SVG
+/// or HTML with a source toggle, images, PDFs, or a binary placeholder.
 struct FileViewerView: View {
     @Environment(AppModel.self) private var app
     @State private var model: FileViewerModel
@@ -379,8 +379,12 @@ struct FileViewerView: View {
                         project: model.route.project, sessionID: model.route.sessionID,
                         baseDirectory: reference.directory),
                     presentation: .push)
+            } else if model.rendersByDefault && !showRaw && reference.isHTML {
+                // The page paints its own background; its scroll view keeps
+                // content clear of the home indicator.
+                HTMLPageView(source: text).ignoresSafeArea(edges: .bottom)
             } else if model.rendersByDefault && !showRaw {
-                // Not markdown, so SVG.
+                // Not markdown or HTML, so SVG.
                 SVGView(source: text)
             } else if lines.isEmpty {
                 ContentUnavailableView("Empty file", systemImage: "doc")
@@ -526,6 +530,49 @@ private struct SVGView: UIViewRepresentable {
             </style></head>
             <body><img src="data:image/svg+xml;base64,\(encoded)"></body></html>
             """
+    }
+}
+
+/// An HTML file as a static page: JavaScript off, no persistent storage, and
+/// a page CSP that blocks every load but inline styles and `data:` images.
+/// The page may only show itself: in-page anchors scroll, http(s) and mailto
+/// links open outside the app, and every other navigation (forms, meta
+/// refresh, other schemes) is cancelled.
+private struct HTMLPageView: UIViewRepresentable {
+    let source: String
+
+    @MainActor
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var loaded: String?
+
+        func webView(
+            _ webView: WKWebView, decidePolicyFor action: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
+            guard let url = action.request.url else { return .cancel }
+            if url.scheme == "about" { return .allow }
+            if action.navigationType == .linkActivated,
+               ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+                UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            }
+            return .cancel
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        config.defaultWebpagePreferences.allowsContentJavaScript = false
+        let view = WKWebView(frame: .zero, configuration: config)
+        view.navigationDelegate = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ view: WKWebView, context: Context) {
+        guard context.coordinator.loaded != source else { return }
+        context.coordinator.loaded = source
+        view.loadHTMLString(FileViewerModel.htmlPreviewPage(source), baseURL: nil)
     }
 }
 

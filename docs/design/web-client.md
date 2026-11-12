@@ -197,7 +197,11 @@ renders SVG only as an `<img>` from a `data:` URL (no script, no external loads,
 origin if opened alone); `blob:` URLs, which carry the app's origin, are built only for raster
 images and PDFs (`frame-src blob:` admits the PDF frame). Markdown images that name project files
 render through ReadFile under the same rules; remote images are never fetched and show as a link
-with their alt text. Markdown files in the file viewer render raw HTML as GitHub does, through its
+with their alt text. HTML files render by default (with a source toggle) in an `<iframe sandbox>`
+`srcdoc` frame: no script, forms or top navigation, an opaque origin, and a leading CSP that admits
+only inline styles and `data:` images and fonts (the frame also inherits the app's policy, whose
+`style-src` therefore allows `'unsafe-inline'`); in-page anchors stay in the frame and other links
+open an unsandboxed new tab without an opener. Markdown files in the file viewer render raw HTML as GitHub does, through its
 sanitization allowlist (unknown tags keep their text, script-like elements and comments vanish, no
 `class`, `style`, `id` or event handler survives), built as React elements with `<a>` and `<img>`
 under the markdown link and image rules; model and user text keeps raw HTML literal. The shared transcript
