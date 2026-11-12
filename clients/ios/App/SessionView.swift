@@ -1809,8 +1809,12 @@ private struct TranscriptBottomPreferenceKey: PreferenceKey {
 /// be distinguished from a streaming tail growing below a stationary viewport.
 private struct TranscriptTopPreferenceKey: PreferenceKey {
     static let defaultValue = CGFloat.nan
+    /// Keep the measured edge: sibling subtrees that never set the key reduce
+    /// in as the NaN default and would otherwise overwrite it, leaving the top
+    /// unknown (no scrollback revocation, no automatic Load earlier).
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+        let next = nextValue()
+        if !next.isNaN { value = next }
     }
 }
 

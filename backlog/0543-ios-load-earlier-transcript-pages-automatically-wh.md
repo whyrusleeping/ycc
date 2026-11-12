@@ -21,6 +21,7 @@ User request: on mobile, long sessions shouldn't need a manual tap on "Load earl
 
 ## Verification
 - Mac: `swift test` (YccKit) 601/601 pass, including new `testLoadedEarlierPagePrefetchesTheNextFullPage` (the first run hit the known 0535 GatedBacklogSource crash); `xcodebuild` simulator build succeeded.
+- 2026-11-12 fix: on device it never fired. The top-edge preference always read NaN (sibling subtrees reduced their default in over the measured value), so `lastTopY >= -80` was never true. `TranscriptTopPreferenceKey.reduce` now ignores NaN. Simulator (iOS 27): flinging up a 2.5k-event session paged in by itself back to "Session started"; Jump to latest and scrolling back down both resumed follow.
 - Still to do: on-device: fling up through several pages of a long session; check that the reading row stays put, momentum stops cleanly at each page, holding a finger at the top waits until release, and Jump to latest still works.
 
 ## Acceptance criteria
