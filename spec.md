@@ -239,6 +239,10 @@ whole-tree commits are never made. Inclusion refuses a baseline index version di
 HEAD and the baseline worktree, or a new staged version distinct from HEAD, the accepted baseline
 index, and the current worktree. Normal bookkeeping can thus update an already-staged task without
 discarding independently staged content.
+Worktree snapshots (the session baseline, changesets, and the initial commit of a workspace ycc
+initializes) leave out untracked, non-ignored files over 100 MiB rather than hashing them into the
+object store. Session start shows a warning naming them, and commit results list any still present;
+they are never reviewed or committed by ycc.
 The persisted baseline is unchanged; explicit task identity restores the same scope after reopen,
 without relying on session focus. A preexisting dirty `done` task alone is not proof of acceptance.
 

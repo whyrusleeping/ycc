@@ -57,7 +57,15 @@ func Open(dir string) (*Repo, error) {
 	if _, err := os.Stat(gitignore); os.IsNotExist(err) {
 		os.WriteFile(gitignore, []byte(".ycc/\n"), 0o644)
 	}
-	r.run("add", "-A")
+	// Oversized untracked files stay out of the initial commit too; the
+	// baseline below reports them.
+	addArgs := []string{"add", "-A", "--", "."}
+	if oversized, err := r.oversizedUntracked(nil); err == nil {
+		for _, path := range oversized {
+			addArgs = append(addArgs, ":(literal,exclude)"+path)
+		}
+	}
+	r.run(addArgs...)
 	if _, err := r.run("commit", "--allow-empty", "-m", "ycc: initialize workspace"); err != nil {
 		return nil, fmt.Errorf("git initial commit: %w", err)
 	}

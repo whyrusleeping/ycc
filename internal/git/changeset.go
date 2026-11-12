@@ -38,6 +38,19 @@ type Baseline struct {
 	indexTree    string
 	worktreeTree string
 	dirtyPaths   map[string]struct{}
+
+	// oversized lists untracked files a fresh capture left out (see
+	// maxUntrackedSnapshotBytes); it is not persisted.
+	oversized []string
+}
+
+// Oversized returns the untracked files over the snapshot size limit that
+// CaptureBaseline left out, relative to the repository's Dir.
+func (b *Baseline) Oversized() []string {
+	if b == nil {
+		return nil
+	}
+	return append([]string(nil), b.oversized...)
 }
 
 type baselineRecord struct {
@@ -95,6 +108,9 @@ type Changeset struct {
 	// history (reset, rebase, checkout). The baseline was re-anchored on the
 	// current HEAD, so files the move left differing from HEAD count as changes.
 	MovedFrom string
+	// Oversized lists untracked files over the snapshot size limit, relative to
+	// the repository's Dir; they are never part of the changeset.
+	Oversized []string
 
 	baseline *Baseline
 	adopted  []string // canonical repo-relative files, retained for commit revalidation
@@ -158,11 +174,16 @@ func (r *Repo) CaptureBaseline() (*Baseline, error) {
 	if err != nil {
 		return nil, fmt.Errorf("capture baseline index: %w", err)
 	}
-	worktreeTree, err := r.writeWorktreeTree(head, nil)
+	worktreeTree, oversized, err := r.writeWorktreeTree(head, nil)
 	if err != nil {
 		return nil, fmt.Errorf("capture baseline worktree: %w", err)
 	}
-	return r.baseline(head, indexTree, worktreeTree)
+	b, err := r.baseline(head, indexTree, worktreeTree)
+	if err != nil {
+		return nil, err
+	}
+	b.oversized = oversized
+	return b, nil
 }
 
 func (r *Repo) baseline(head, indexTree, worktreeTree string) (*Baseline, error) {
@@ -454,7 +475,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	if err != nil {
 		return nil, fmt.Errorf("inspect changeset index: %w", err)
 	}
-	worktreeTree, err := r.writeWorktreeTree(head, nil)
+	worktreeTree, oversized, err := r.writeWorktreeTree(head, nil)
 	if err != nil {
 		return nil, fmt.Errorf("inspect changeset worktree: %w", err)
 	}
@@ -579,7 +600,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	sort.Strings(foreign)
 	sort.Strings(shared)
 	sort.Strings(unclaimed)
-	tree, err := r.writeWorktreeTree(head, paths)
+	tree, _, err := r.writeWorktreeTree(head, paths)
 	if err != nil {
 		return nil, fmt.Errorf("build scoped changeset: %w", err)
 	}
@@ -601,7 +622,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	return &Changeset{
 		ID: id, BaselineID: b.ID, BaselineOrigin: b.Origin(), BaseCommit: head, Tree: tree, Paths: paths, Diff: diff,
 		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: reported, Deferred: deferred,
-		Unclaimed: unclaimed, MovedFrom: movedFrom,
+		Unclaimed: unclaimed, MovedFrom: movedFrom, Oversized: oversized,
 		baseline: b, adopted: append([]string(nil), explicit...), attr: attr,
 	}, nil
 }
@@ -1186,33 +1207,96 @@ func (r *Repo) writeIndexTree() (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// maxUntrackedSnapshotBytes bounds the untracked files a whole-worktree
+// snapshot hashes into the object store. Larger ones (datasets, build output
+// the user forgot to ignore) are left out: hashing them blocks session start for
+// minutes per GB and a persisted baseline would pin the blob forever.
+var maxUntrackedSnapshotBytes int64 = 100 << 20
+
+// MaxUntrackedSnapshotMiB reports the untracked-file snapshot limit for notices.
+func MaxUntrackedSnapshotMiB() int64 { return maxUntrackedSnapshotBytes >> 20 }
+
 // writeWorktreeTree materializes the requested worktree paths over base in a
-// temporary index. A nil path list means the whole visible worktree.
-func (r *Repo) writeWorktreeTree(base string, paths []string) (string, error) {
+// temporary index. A nil path list means the whole visible worktree, minus
+// untracked files over maxUntrackedSnapshotBytes, which it returns
+// (workspace-relative) as oversized.
+func (r *Repo) writeWorktreeTree(base string, paths []string) (tree string, oversized []string, err error) {
 	dir, err := os.MkdirTemp("", "ycc-index-*")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer os.RemoveAll(dir)
 	index := filepath.Join(dir, "index")
 	env := []string{"GIT_INDEX_FILE=" + index}
 	if _, err := r.runEnv(env, "read-tree", base); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	args := []string{"add", "-A", "--"}
 	if paths == nil {
+		if oversized, err = r.oversizedUntracked(env); err != nil {
+			return "", nil, fmt.Errorf("list untracked files: %w", err)
+		}
 		args = append(args, ".")
+		for _, path := range oversized {
+			args = append(args, ":(literal,exclude)"+path)
+		}
 	} else if len(paths) > 0 {
 		args = append(args, topLiteralPathspecs(paths)...)
 	} else {
 		out, err := r.runEnv(env, "write-tree")
-		return strings.TrimSpace(out), err
+		return strings.TrimSpace(out), nil, err
 	}
 	if _, err := r.runEnv(env, args...); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	out, err := r.runEnv(env, "write-tree")
-	return strings.TrimSpace(out), err
+	return strings.TrimSpace(out), oversized, err
+}
+
+// oversizedUntracked lists untracked, non-ignored regular files under r.Dir
+// larger than maxUntrackedSnapshotBytes, relative to r.Dir. env selects the
+// snapshot's base-seeded index, so "untracked" means absent from the base tree;
+// files the user staged in the real index stay in the snapshot because their
+// content is already in the object store.
+func (r *Repo) oversizedUntracked(env []string) ([]string, error) {
+	out, err := r.runEnv(env, "ls-files", "-z", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	var big []string
+	for _, path := range strings.Split(out, "\x00") {
+		// Nested repositories are listed as "dir/"; git add records them as gitlinks.
+		if path == "" || strings.HasSuffix(path, "/") {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(r.Dir, filepath.FromSlash(path)))
+		if err != nil || !info.Mode().IsRegular() || info.Size() <= maxUntrackedSnapshotBytes {
+			continue
+		}
+		big = append(big, path)
+	}
+	if len(big) == 0 {
+		return nil, nil
+	}
+	staged, err := r.run(append([]string{"--literal-pathspecs", "ls-files", "-z", "--cached", "--"}, big...)...)
+	if err != nil {
+		return nil, err
+	}
+	inIndex := make(map[string]bool)
+	for _, path := range strings.Split(staged, "\x00") {
+		inIndex[path] = true
+	}
+	kept := big[:0]
+	for _, path := range big {
+		if !inIndex[path] {
+			kept = append(kept, path)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	sort.Strings(kept)
+	return kept, nil
 }
 
 func (r *Repo) pathUnion(trees ...string) (map[string]struct{}, error) {

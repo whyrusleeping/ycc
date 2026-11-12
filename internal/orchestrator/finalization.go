@@ -442,6 +442,9 @@ func changesetNotes(changes *git.Changeset) []string {
 	if changes.MovedFrom != "" {
 		notes = append(notes, fmt.Sprintf("HEAD had moved outside the session baseline's history (from %s); the baseline was re-anchored on the current HEAD, so files that move left differing from HEAD were committed as changes", shortCommit(changes.MovedFrom)))
 	}
+	if len(changes.Oversized) > 0 {
+		notes = append(notes, fmt.Sprintf("left out, untracked and over %d MiB (add to .gitignore, or commit by hand if they belong in git) (%d): %s", git.MaxUntrackedSnapshotMiB(), len(changes.Oversized), boundedPathList(changes.Oversized, 1024)))
+	}
 	return notes
 }
 

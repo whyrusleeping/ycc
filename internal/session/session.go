@@ -100,9 +100,10 @@ type Session struct {
 	prompt              string
 	preset              string
 	coordinatorExplicit bool // StartSession coordinator_model won over any preset binding
-	// startupNotice is emitted as a visible, non-fatal event after the session
-	// lifecycle marker (used when a stale preset binding falls back safely).
-	startupNotice    string
+	// startupNotices are emitted as visible, non-fatal events after the session
+	// lifecycle marker (a stale preset binding falling back safely, untracked
+	// files too large to snapshot).
+	startupNotices   []string
 	loopContinuation string // startup-only synthetic context, recorded for replay
 	startupPreload   orchestrator.ExplicitTaskPreload
 	buildLoop        func(mode, prompt string) (*engine.Loop, error)
@@ -1556,8 +1557,8 @@ func (s *Session) run() {
 			reopened["question_restored"] = true
 		}
 		s.emitter.Emit(event.SessionReopened, reopened)
-		if s.startupNotice != "" {
-			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": s.startupNotice, "level": "warning"})
+		for _, notice := range s.startupNotices {
+			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": notice, "level": "warning"})
 		}
 		if s.ctx.Err() != nil {
 			return
@@ -1618,8 +1619,8 @@ func (s *Session) run() {
 			s.emitter.EmitAs("user", event.PlanOnlyChanged, map[string]any{"plan_only": true})
 		}
 		s.planMu.Unlock()
-		if s.startupNotice != "" {
-			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": s.startupNotice, "level": "warning"})
+		for _, notice := range s.startupNotices {
+			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": notice, "level": "warning"})
 		}
 		if s.ctx.Err() != nil {
 			return
@@ -2470,7 +2471,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.participation.knownOrigin = knownSessionOrigin(s.origin)
 	s.preset = cfg.Preset
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
-	s.startupNotice = startupNotice
+	if startupNotice != "" {
+		s.startupNotices = append([]string{startupNotice}, s.startupNotices...)
+	}
 	if cfg.PlanOnly {
 		// run records plan_only_changed after session_started; the first
 		// checkpoint then tells the coordinator.
@@ -2897,6 +2900,10 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 			return nil, fmt.Errorf("persist session git baseline: %w", err)
 		}
 	}
+	var startupNotices []string
+	if oversized := baseline.Oversized(); len(oversized) > 0 {
+		startupNotices = append(startupNotices, oversizedUntrackedNotice(oversized))
+	}
 	coordName := m.reg.CoordinatorName()
 	if coordOverride != "" {
 		if !m.reg.Has(coordOverride) {
@@ -2968,27 +2975,28 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Session{
-		ID:            id,
-		Workspace:     absWS,
-		Mode:          mode,
-		log:           log,
-		emitter:       emitter,
-		inter:         inter,
-		deps:          deps,
-		reg:           m.reg,
-		prompt:        prompt,
-		resumed:       resumed,
-		messageCh:     make(chan engine.UserMessage, 64),
-		retryCh:       make(chan struct{}),
-		switchRetryCh: make(chan struct{}, 1),
-		rolloverCh:    make(chan *rolloverRequest, 1),
-		ctx:           ctx,
-		cancel:        cancel,
-		status:        event.StatusRunning,
-		coordinator:   coordName,
-		implementer:   implName,
-		reviewers:     reviewerNames,
-		thinkLevels:   map[string]string{},
+		ID:             id,
+		Workspace:      absWS,
+		Mode:           mode,
+		log:            log,
+		emitter:        emitter,
+		inter:          inter,
+		deps:           deps,
+		reg:            m.reg,
+		prompt:         prompt,
+		resumed:        resumed,
+		messageCh:      make(chan engine.UserMessage, 64),
+		retryCh:        make(chan struct{}),
+		switchRetryCh:  make(chan struct{}, 1),
+		rolloverCh:     make(chan *rolloverRequest, 1),
+		ctx:            ctx,
+		cancel:         cancel,
+		status:         event.StatusRunning,
+		coordinator:    coordName,
+		startupNotices: startupNotices,
+		implementer:    implName,
+		reviewers:      reviewerNames,
+		thinkLevels:    map[string]string{},
 	}
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log
@@ -3234,7 +3242,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	s.participationCursor = len(events)
 	s.origin = s.participation.origin
 	s.preset = proj.Preset
-	s.startupNotice = startupNotice
+	if startupNotice != "" {
+		s.startupNotices = append([]string{startupNotice}, s.startupNotices...)
+	}
 	s.deps.Jobs = engine.RestoreJobs(events)
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
@@ -4062,4 +4072,15 @@ func newWorkstreamID() (string, error) {
 		return "", err
 	}
 	return "ws_" + hex.EncodeToString(b), nil
+}
+
+// oversizedUntrackedNotice tells the user which untracked files the session's
+// git snapshots leave out because of their size.
+func oversizedUntrackedNotice(paths []string) string {
+	const shown = 5
+	list := strings.Join(paths[:min(len(paths), shown)], ", ")
+	if len(paths) > shown {
+		list += fmt.Sprintf(" and %d more", len(paths)-shown)
+	}
+	return fmt.Sprintf("Untracked files over %d MiB are left out of this session's git snapshots, so they are never reviewed or committed: %s. Add them to .gitignore to silence this.", git.MaxUntrackedSnapshotMiB(), list)
 }
