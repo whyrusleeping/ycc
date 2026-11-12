@@ -2580,6 +2580,33 @@ private struct QuestionSheet: View {
             ScrollViewReader { proxy in
                 Form {
                     ForEach(Array(pending.questions.enumerated()), id: \.offset) { index, question in
+                        // The question is the point of this sheet: render it as
+                        // full-size prose, not a small-caps section header that
+                        // truncates a multi-sentence, self-contained ask. It is a
+                        // clear row in its own section (not a header, and not the
+                        // answers' first row) so the answers stay a properly
+                        // rounded card and `scrollTo` can land on it: a Form
+                        // resolves header and Section ids to the first row, so
+                        // advancing used to hide the question under the nav bar.
+                        Section {
+                            VStack(alignment: .leading, spacing: 4) {
+                                if pending.isBatch {
+                                    Text("\(index + 1)/\(pending.questions.count)")
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(Color.secondary)
+                                        .accessibilityLabel("Question \(index + 1) of \(pending.questions.count)")
+                                }
+                                MarkdownText(text: question.prompt)
+                                    .font(.callout)
+                                    .foregroundStyle(Color.primary)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(.isHeader)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 4, trailing: 16))
+                            .id(Self.anchor(forQuestion: index))
+                        }
+                        .listSectionSpacing(0)
                         Section {
                             ForEach(Array(question.options.enumerated()), id: \.offset) { optIdx, option in
                                 optionRow(index: index, optIdx: optIdx, option: option, proxy: proxy)
@@ -2595,30 +2622,8 @@ private struct QuestionSheet: View {
                             if !pending.isBatch {
                                 singleSendSection
                             }
-                        } header: {
-                            // The question is the point of this sheet: render it
-                            // as full-size prose, not a small-caps section header
-                            // that truncates a multi-sentence, self-contained ask.
-                            // As the header (not a clear first row) it sits above
-                            // a properly rounded card of answers.
-                            VStack(alignment: .leading, spacing: 4) {
-                                if pending.isBatch {
-                                    Text("\(index + 1)/\(pending.questions.count)")
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(Color.secondary)
-                                        .accessibilityLabel("Question \(index + 1) of \(pending.questions.count)")
-                                }
-                                MarkdownText(text: question.prompt)
-                                    .font(.callout)
-                                    // Color.primary, not `.primary`: the header's
-                                    // style is secondary and `.primary` is
-                                    // hierarchical relative to it.
-                                    .foregroundStyle(Color.primary)
-                            }
-                            .textCase(nil)
-                            .padding(.bottom, 4)
                         }
-                        .id(Self.anchor(forQuestion: index))
+                        .listSectionSpacing(20)
                     }
 
                     if pending.isBatch {
