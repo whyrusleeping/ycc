@@ -1,7 +1,7 @@
 ---
 id: "0547"
 title: 'iOS: create and edit watches'
-status: in_progress
+status: in_review
 priority: 3
 created: "2026-11-13"
 updated: "2026-11-13"
