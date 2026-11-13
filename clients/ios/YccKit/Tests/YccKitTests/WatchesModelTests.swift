@@ -84,6 +84,37 @@ private final class MockWatchesSource: WatchesSource, @unchecked Sendable {
         if let error { throw error }
         lock.withLock { watches.removeAll { $0.definition.name == name } }
     }
+
+    private(set) var saved: [(create: Bool, definition: Ycc_V1_WatchDefinition)] = []
+    var models = Ycc_V1_ListModelsResponse()
+
+    func createWatch(project: String, definition: Ycc_V1_WatchDefinition) async throws -> Ycc_V1_Watch {
+        if let error { throw error }
+        return lock.withLock {
+            saved.append((true, definition))
+            var w = Ycc_V1_Watch()
+            w.definition = definition
+            watches.append(w)
+            return w
+        }
+    }
+
+    func updateWatch(project: String, definition: Ycc_V1_WatchDefinition) async throws -> Ycc_V1_Watch {
+        if let error { throw error }
+        return try lock.withLock {
+            saved.append((false, definition))
+            guard let index = watches.firstIndex(where: { $0.definition.name == definition.name }) else {
+                throw YccError.notFound(message: "unknown watch")
+            }
+            watches[index].definition = definition
+            return watches[index]
+        }
+    }
+
+    func listModels() async throws -> Ycc_V1_ListModelsResponse {
+        if let error { throw error }
+        return models
+    }
 }
 
 @MainActor
@@ -228,5 +259,125 @@ final class WatchesModelTests: XCTestCase {
         XCTAssertTrue(deleted)
         await model.refresh()
         XCTAssertTrue(model.notFound)
+    }
+
+    func testDraftValidationMirrorsTheDaemon() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var draft = WatchDraft()
+        draft.name = "prod-ingest"
+        draft.brief = "check lag"
+        XCTAssertNil(draft.problem(creating: true, now: now))
+        for bad in ["", "-x", "_x", "Prod", "a b", String(repeating: "a", count: 65)] {
+            var d = draft
+            d.name = bad
+            XCTAssertNotNil(d.problem(creating: true, now: now), bad)
+        }
+        XCTAssertTrue(WatchDraft.isValidName("9_a-b"))
+        var d = draft
+        d.brief = " \n"
+        XCTAssertEqual(d.problem(creating: true, now: now), "Describe what each run checks.")
+        d = draft
+        d.every = "4"
+        XCTAssertEqual(d.problem(creating: true, now: now), "The interval must be at least 5 minutes.")
+        d.every = "abc"
+        XCTAssertNotNil(d.problem(creating: true, now: now))
+        d = draft
+        d.expires = now.addingTimeInterval(-60)
+        XCTAssertEqual(d.problem(creating: true, now: now), "The expiry is in the past.")
+        // An expired watch's past expiry may be saved while editing other fields.
+        XCTAssertNil(d.problem(creating: false, now: now))
+    }
+
+    func testDraftRoundTripsADefinition() {
+        var w = Ycc_V1_Watch()
+        w.definition.name = "disk"
+        w.definition.brief = "check disk"
+        w.definition.intervalSecs = 7_200
+        w.definition.model = "claude"
+        w.definition.probe = "df -h"
+        w.definition.probeAlways = true
+        w.definition.expires = "2027-01-02T03:04:05Z"
+        w.definition.allowedActions = ["clear tmp", "rotate logs"]
+        let draft = WatchDraft(watch: w)
+        XCTAssertEqual(draft.every, "2")
+        XCTAssertEqual(draft.unit, .hours)
+        XCTAssertEqual(draft.allowedActions, "clear tmp\nrotate logs")
+        XCTAssertEqual(draft.definition, w.definition)
+
+        // Odd agent-made intervals round to whole minutes.
+        XCTAssertEqual(WatchDraft.split(86_400 * 2).0, "2")
+        XCTAssertEqual(WatchDraft.split(86_400 * 2).1, .days)
+        XCTAssertEqual(WatchDraft.split(330).0, "6")
+        XCTAssertEqual(WatchDraft.split(330).1, .minutes)
+
+        // Blank action lines drop; probe_always needs a probe.
+        var edited = draft
+        edited.allowedActions = " a \n\n b"
+        edited.probe = "  "
+        XCTAssertEqual(edited.definition.allowedActions, ["a", "b"])
+        XCTAssertFalse(edited.definition.probeAlways)
+        edited.expires = nil
+        XCTAssertEqual(edited.definition.expires, "")
+
+        // Smart punctuation would break a shell probe.
+        edited.probe = "curl \u{2014}fail \u{201C}a b\u{201D} \u{2018}c\u{2019}"
+        XCTAssertEqual(edited.definition.probe, "curl --fail \"a b\" 'c'")
+    }
+
+    func testEditorCreatesAndUpdatesKeepingTheDraftOnFailure() async {
+        let source = MockWatchesSource()
+        var enabled = Ycc_V1_ModelInfo()
+        enabled.name = "claude"
+        var disabled = Ycc_V1_ModelInfo()
+        disabled.name = "old"
+        disabled.disabled = true
+        source.models.models = [enabled, disabled]
+        source.models.coordinator = "claude"
+
+        let creator = WatchEditorModel(project: "p", watch: nil, source: source)
+        await creator.loadModels()
+        XCTAssertEqual(creator.modelChoices.map(\.name), ["claude"])
+        XCTAssertEqual(creator.defaultModel, "claude")
+        XCTAssertFalse(creator.isDirty)
+        let invalid = await creator.save()
+        XCTAssertNil(invalid)
+        XCTAssertNotNil(creator.errorMessage)
+        XCTAssertTrue(source.saved.isEmpty)
+
+        creator.draft.name = "lag"
+        creator.draft.brief = "check lag"
+        XCTAssertTrue(creator.isDirty)
+        source.error = YccError.rpc(message: "watch \"lag\" already exists")
+        let failed = await creator.save()
+        XCTAssertNil(failed)
+        XCTAssertEqual(creator.errorMessage, "Not saved: watch \"lag\" already exists")
+        XCTAssertEqual(creator.draft.name, "lag", "keeps the draft")
+
+        source.error = nil
+        let created = await creator.save()
+        XCTAssertEqual(created?.definition.name, "lag")
+        XCTAssertNil(creator.errorMessage)
+        XCTAssertEqual(source.saved.map(\.create), [true])
+
+        // Editing keeps the original name and shows a disabled current model.
+        var existing = watch("lag")
+        existing.definition.brief = "check lag"
+        existing.definition.model = "old"
+        source.watches = [existing]
+        let editor = WatchEditorModel(project: "p", watch: existing, source: source)
+        await editor.loadModels()
+        XCTAssertEqual(editor.modelChoices.map(\.name), ["claude", "old"])
+        editor.draft.name = "renamed"
+        editor.draft.model = "claude"
+        editor.draft.every = "1"
+        editor.draft.unit = .hours
+        let updated = await editor.save()
+        XCTAssertEqual(updated?.definition.name, "lag")
+        XCTAssertEqual(updated?.definition.intervalSecs, 3_600)
+        XCTAssertEqual(source.saved.last?.create, false)
+
+        let list = WatchesModel(project: "p", source: source)
+        list.didSave(updated!)
+        XCTAssertEqual(list.watches.map(\.definition.model), ["claude"])
     }
 }

@@ -5,16 +5,18 @@ import YccProto
 /// A project's watches (docs/design/watches.md): daemon-scheduled recurring
 /// checks, each listed with its latest status, when it runs next and any
 /// question a run is waiting on. Rows drill into ``WatchDetailView``; swipe
-/// and context actions pause/resume, run now and delete. Creating and editing
-/// stay on the web client and with agents (`schedule_watch`).
+/// and context actions edit, pause/resume, run now and delete; + creates one
+/// (agents can also propose one with `schedule_watch`).
 struct WatchesView: View {
     @Environment(AppModel.self) private var app
+    @Environment(HomeRouter.self) private var router
 
     private let client: YccClient
     private let project: String
 
     @State private var model: WatchesModel?
     @State private var deleteTarget: String?
+    @State private var editorTarget: WatchEditorTarget?
 
     init(client: YccClient, project: String) {
         self.client = client
@@ -31,6 +33,25 @@ struct WatchesView: View {
         }
         .navigationTitle("Watches")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Analytics.action("watches.create")
+                    editorTarget = .new
+                } label: {
+                    Label("New watch", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(item: $editorTarget) { target in
+            WatchEditorView(client: client, project: project, target: target) { saved in
+                model?.didSave(saved)
+                if case .new = target {
+                    router.path.append(.watch(project: project, name: WatchFormat.name(saved)))
+                }
+            }
+            .trackedFlow(target.watch == nil ? "watch_create" : "watch_edit")
+        }
         .task {
             if model == nil { model = WatchesModel(project: project, source: client) }
         }
@@ -85,11 +106,18 @@ struct WatchesView: View {
                 ProgressView()
             }
         } else if model.watches.isEmpty {
-            ContentUnavailableView(
-                "No watches",
-                systemImage: "eye",
-                description: Text("A watch is a recurring check the daemon runs on a schedule. "
-                    + "Ask an agent to keep an eye on something, or create one from the web client."))
+            ContentUnavailableView {
+                Label("No watches", systemImage: "eye")
+            } description: {
+                Text("A watch is a recurring check the daemon runs on a schedule. "
+                    + "Create one here, or ask an agent to keep an eye on something.")
+            } actions: {
+                Button("Create a watch") {
+                    Analytics.action("watches.create")
+                    editorTarget = .new
+                }
+                .buttonStyle(.accent)
+            }
         } else {
             List {
                 if let error = model.errorMessage {
@@ -114,6 +142,12 @@ struct WatchesView: View {
                         }
                     }
                     .contextMenu {
+                        Button {
+                            Analytics.action("watches.edit", via: .contextMenu)
+                            editorTarget = .edit(watch)
+                        } label: {
+                            Label("Edit…", systemImage: "pencil")
+                        }
                         Button {
                             Analytics.action("watches.run_now", via: .contextMenu)
                             Task { await model.runNow(name) }
@@ -218,6 +252,7 @@ struct WatchDetailView: View {
 
     @State private var model: WatchDetailModel?
     @State private var confirmDelete = false
+    @State private var editorTarget: WatchEditorTarget?
 
     init(client: YccClient, project: String, name: String, sessionList: SessionListModel?) {
         self.client = client
@@ -236,6 +271,22 @@ struct WatchDetailView: View {
         }
         .navigationTitle(name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Edit") {
+                    guard let watch = model?.watch else { return }
+                    Analytics.action("watches.edit")
+                    editorTarget = .edit(watch)
+                }
+                .disabled(model?.watch == nil || model?.notFound == true)
+            }
+        }
+        .sheet(item: $editorTarget) { target in
+            WatchEditorView(client: client, project: project, target: target) { saved in
+                model?.didSave(saved)
+            }
+            .trackedFlow("watch_edit")
+        }
         .task {
             if model == nil { model = WatchDetailModel(project: project, name: name, source: client) }
         }
@@ -383,7 +434,7 @@ struct WatchDetailView: View {
             .disabled(model.isBusy)
         } footer: {
             if expired {
-                Text("Its expiry passed. Set a later expiry from the web client to resume it.")
+                Text("Its expiry passed. Edit it with a later expiry, or none, to resume it.")
             } else if watch.paused {
                 Text("Paused by you. Resuming doesn’t replay missed runs.")
             } else if let due = WatchFormat.date(watch.nextDue), !watch.running {

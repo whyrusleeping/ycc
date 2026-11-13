@@ -9,6 +9,10 @@ public protocol WatchesSource: Sendable {
     func setWatchPaused(project: String, name: String, paused: Bool) async throws -> Ycc_V1_Watch
     func runWatchNow(project: String, name: String) async throws
     func deleteWatch(project: String, name: String) async throws
+    func createWatch(project: String, definition: Ycc_V1_WatchDefinition) async throws -> Ycc_V1_Watch
+    func updateWatch(project: String, definition: Ycc_V1_WatchDefinition) async throws -> Ycc_V1_Watch
+    /// The editor's model picker.
+    func listModels() async throws -> Ycc_V1_ListModelsResponse
 }
 
 extension YccClient: WatchesSource {
@@ -58,6 +62,26 @@ extension YccClient: WatchesSource {
         request.name = name
         if case .failure(let error) = await generated.deleteWatch(request: request).result {
             throw Self.map(error)
+        }
+    }
+
+    public func createWatch(project: String, definition: Ycc_V1_WatchDefinition) async throws -> Ycc_V1_Watch {
+        var request = Ycc_V1_CreateWatchRequest()
+        request.project = project
+        request.definition = definition
+        switch await generated.createWatch(request: request).result {
+        case .success(let message): return message.watch
+        case .failure(let error): throw Self.map(error)
+        }
+    }
+
+    public func updateWatch(project: String, definition: Ycc_V1_WatchDefinition) async throws -> Ycc_V1_Watch {
+        var request = Ycc_V1_UpdateWatchRequest()
+        request.project = project
+        request.definition = definition
+        switch await generated.updateWatch(request: request).result {
+        case .success(let message): return message.watch
+        case .failure(let error): throw Self.map(error)
         }
     }
 }
@@ -277,6 +301,9 @@ public final class WatchesModel {
         }
     }
 
+    /// Show a watch the editor just created or saved.
+    public func didSave(_ watch: Ycc_V1_Watch) { install(watch) }
+
     private func install(_ watch: Ycc_V1_Watch) {
         guard order.accept(order.issue()) else { return }
         var list = watches
@@ -385,6 +412,11 @@ public final class WatchDetailModel {
     /// True once the watch is gone; the screen then leaves.
     public func delete() async -> Bool {
         await perform { try await self.source.deleteWatch(project: self.project, name: self.name) }
+    }
+
+    /// Show the definition the editor just saved.
+    public func didSave(_ updated: Ycc_V1_Watch) {
+        if order.accept(order.issue()) { watch = updated }
     }
 
     @discardableResult

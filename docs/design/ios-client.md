@@ -98,8 +98,10 @@ A project's overflow menu also opens **Watches** (docs/design/watches.md): each 
 latest status, next run or paused/expired state, and any question a run is waiting on, with
 pause/resume, run now and delete. A watch's screen leads with the runs waiting on an answer, then
 its controls, definition, notes, standing decisions and report timeline; runs and decisions push
-their session so Back returns to the watch. Creating and editing watches stay on the web client
-and with agents. Watch runs stay out of the session lists and drawer badges unless they ask a
+their session so Back returns to the watch. A sheet like the web editor creates a watch (the
+list's + or empty state, then its screen opens) or edits its definition (the watch's Edit, or a
+row's context menu), with the name fixed once created. Watch runs stay out of the session lists
+and drawer badges unless they ask a
 question or are flagged, so a run drops back out once answered.
 
 Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`

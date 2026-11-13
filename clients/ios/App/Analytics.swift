@@ -77,10 +77,12 @@ enum Analytics {
         "workstreams.preview", "workstreams.merge", "workstreams.retry", "workstreams.discard",
         "workstreams.mergeAll", "workstreams.open_session",
         "watches.pause", "watches.resume", "watches.run_now", "watches.delete",
+        "watches.create", "watches.edit",
         "watches.parked", "watches.run_session", "watches.decision_session", "watches.older",
         "refresh", "health.check_now",
     ] + [
         "new_session", "quick_capture", "add_project", "task_edit",
+        "watch_create", "watch_edit",
         "project_choice_backlog", "project_choice_new_session",
     ].flatMap { flow in
         ["open", "submit", "cancel"].map { "\(flow).\($0)" }
