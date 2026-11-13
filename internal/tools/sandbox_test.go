@@ -29,6 +29,29 @@ func reviewerReg(root string) *Registry {
 	return reg
 }
 
+// TestWebToolsetMembership pins which inspection tool sets carry web_search and
+// fetch_page: read-only research agents do, reviewers deliberately do not.
+func TestWebToolsetMembership(t *testing.T) {
+	ws := &Workspace{Root: t.TempDir()}
+	for name, tc := range map[string]struct {
+		toolset []*gollama.Tool
+		want    bool
+	}{
+		"read-only inspect": {ReadOnlyInspect(ws), true},
+		"reviewer":          {Reviewer(ws), false},
+	} {
+		names := map[string]bool{}
+		for _, tool := range tc.toolset {
+			names[tool.Name] = true
+		}
+		for _, web := range []string{"web_search", "fetch_page"} {
+			if names[web] != tc.want {
+				t.Errorf("%s toolset has %s = %v, want %v", name, web, names[web], tc.want)
+			}
+		}
+	}
+}
+
 func TestInspectToolsetsIncludeAdvertisedOutputRetrieval(t *testing.T) {
 	ws := &Workspace{Root: t.TempDir()}
 	for name, toolset := range map[string][]*gollama.Tool{

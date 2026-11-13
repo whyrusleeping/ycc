@@ -529,9 +529,10 @@ self-contained handoff containing the request, relevant evidence or artifact ref
 questions, and verification requirements; prior conversation and tool logs are not replayed. Generic
 lifecycle events and reports expose context mode, round, and advisory context estimates. A
 context-length failure reports an actionable explicit fresh retry rather than automatically replaying a
-turn that may have had side effects. Read-only generic agents expose file reads and a read-only shell:
-supported hosts enforce workspace non-mutation with the reviewer sandbox, and unsupported hosts
-visibly degrade to prompt-only enforcement and conservatively count the agent as a mutating job.
+turn that may have had side effects. Read-only generic agents expose file reads, a read-only shell,
+and, because research is their main use, the optional Exa web tools. Supported hosts enforce
+workspace non-mutation with the reviewer sandbox; unsupported hosts visibly degrade to prompt-only
+enforcement and conservatively count the agent as a mutating job.
 Explicitly mutating generic agents use worker tools and may run alongside other mutating work.
 Generic agent handles are live session state and are not reconstructed after daemon restart.
 
@@ -678,10 +679,11 @@ so cancellation of a stalled filesystem call remains OS/filesystem-dependent. Im
 read through the file tool become native model content when supported; their explicit size limits
 and backend degradation prevent accidental unbounded embedding.
 
-Reviewers receive read and shell inspection but no mutation tools. On supported Linux hosts their
-shell is filesystem-write-restricted with Landlock or bubblewrap; inability to establish an
-available sandbox fails closed. Hosts without either mechanism visibly degrade to prompt-only
-read-only enforcement. The lease is an
+Reviewers receive read and shell inspection but no mutation or web tools: a verdict rests on the
+assigned snapshot and its source-bound evidence, and the coordinator supplies any external facts in
+the review handoff. On supported Linux hosts their shell is filesystem-write-restricted with
+Landlock or bubblewrap; inability to establish an available sandbox fails closed. Hosts without
+either mechanism visibly degrade to prompt-only read-only enforcement. The lease is an
 execution-coordination mechanism, not a security sandbox: unrestricted shell commands can access
 paths outside the leased worktree, spawn detached processes, or otherwise bypass filesystem policy.
 

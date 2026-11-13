@@ -24,12 +24,13 @@ func ReadOnly(ws *Workspace) []*gollama.Tool {
 	return []*gollama.Tool{readFile(ws)}
 }
 
-// ReadOnlyInspect returns Read and Search plus a sandboxed shell for
-// general-purpose inspection agents. Unlike Inspect, shell commands cannot
-// mutate the workspace; on hosts without byte-and-mode confinement the shell
-// fails closed while Read and Search remain available.
+// ReadOnlyInspect returns Read and Search plus a sandboxed shell and the web
+// tools for general-purpose inspection agents, whose main use is research.
+// Unlike Inspect, shell commands cannot mutate the workspace; on hosts without
+// byte-and-mode confinement the shell fails closed while Read and Search remain
+// available. The web tools report an error when EXA_API_KEY is unset.
 func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws)}
+	return append([]*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws)}, Web()...)
 }
 
 // Reviewer returns the tool set for a review subagent: Read, Search, a sandboxed
@@ -37,6 +38,9 @@ func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
 // ends the review with a structured verdict. Reviewers must not modify the change
 // under review: the sandboxed Bash mounts the workspace read-only so mutation is
 // hard-enforced, and fails closed where no qualifying mechanism is available.
+// Reviewers deliberately lack the web tools: verdicts rest on the assigned
+// snapshot and its source-bound evidence, and the coordinator supplies any
+// external facts in the review handoff.
 func Reviewer(ws *Workspace) []*gollama.Tool {
 	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws), submitReview(ws)}
 }
