@@ -126,8 +126,8 @@ message ListDirResponse {
 // session's workspace such as a live workstream worktree. Paths are
 // root-relative ("/"-separated); absolute paths and `..` escapes are
 // InvalidArgument, symlinks resolving outside the root and `.git` internals
-// are PermissionDenied. Listings omit dotfiles; an explicitly requested
-// dotfile path can still be read. Nothing here writes. Line suffixes an agent
+// are PermissionDenied. Listings omit dotfiles unless include_hidden; an
+// explicitly requested dotfile path can still be read. Nothing here writes. Line suffixes an agent
 // may put on a reference (`:12`, `#L12`) are the client's to strip.
 message FileEntry {
   string name = 1;
@@ -141,6 +141,7 @@ message ListFilesRequest {
   string project = 1;    // registered project; empty allowed only when exactly one exists
   string session_id = 2; // optional: resolve against this session's workspace
   string path = 3;       // root-relative directory; empty => the root
+  bool include_hidden = 4; // also list dotfiles and dot-directories (never .git)
 }
 message ListFilesResponse {
   string root = 1;                  // absolute root the path resolved against

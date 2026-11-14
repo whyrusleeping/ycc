@@ -430,8 +430,9 @@ the absolute `root` it resolved against.
 Confinement: absolute paths and `..` escapes → `invalid_argument`; symlinks
 resolving outside the root and anything inside `.git/` → permission_denied;
 missing → `not_found`; `ListFiles` on a file or `ReadFile` on a directory or
-special file → `invalid_argument`. Listings omit dotfiles and dot-directories;
-an explicitly requested dotfile path (e.g. `.github/workflows/ci.yml`) can still
+special file → `invalid_argument`. Listings omit dotfiles and dot-directories
+unless `ListFiles` sets `includeHidden` (`.git` is never listed); an explicitly
+requested dotfile path (e.g. `.github/workflows/ci.yml`) can still
 be read. There are no write RPCs. Line suffixes agents put on references
 (`:42`, `#L42`) are for the client to strip before calling.
 

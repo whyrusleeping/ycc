@@ -380,8 +380,8 @@ public nonisolated struct Ycc_V1_ListDirResponse: Sendable {
 /// session's workspace such as a live workstream worktree. Paths are
 /// root-relative ("/"-separated); absolute paths and `..` escapes are
 /// InvalidArgument, symlinks resolving outside the root and `.git` internals
-/// are PermissionDenied. Listings omit dotfiles; an explicitly requested
-/// dotfile path can still be read. Nothing here writes. Line suffixes an agent
+/// are PermissionDenied. Listings omit dotfiles unless include_hidden; an
+/// explicitly requested dotfile path can still be read. Nothing here writes. Line suffixes an agent
 /// may put on a reference (`:12`, `#L12`) are the client's to strip.
 public nonisolated struct Ycc_V1_FileEntry: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -422,6 +422,9 @@ public nonisolated struct Ycc_V1_ListFilesRequest: Sendable {
 
   /// root-relative directory; empty => the root
   public var path: String = String()
+
+  /// also list dotfiles and dot-directories (never .git)
+  public var includeHidden: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5868,7 +5871,7 @@ nonisolated extension Ycc_V1_FileEntry: SwiftProtobuf.Message, SwiftProtobuf._Me
 
 nonisolated extension Ycc_V1_ListFilesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListFilesRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{1}path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{1}path\0\u{3}include_hidden\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5879,6 +5882,7 @@ nonisolated extension Ycc_V1_ListFilesRequest: SwiftProtobuf.Message, SwiftProto
       case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.includeHidden) }()
       default: break
       }
     }
@@ -5894,6 +5898,9 @@ nonisolated extension Ycc_V1_ListFilesRequest: SwiftProtobuf.Message, SwiftProto
     if !self.path.isEmpty {
       try visitor.visitSingularStringField(value: self.path, fieldNumber: 3)
     }
+    if self.includeHidden != false {
+      try visitor.visitSingularBoolField(value: self.includeHidden, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5901,6 +5908,7 @@ nonisolated extension Ycc_V1_ListFilesRequest: SwiftProtobuf.Message, SwiftProto
     if lhs.project != rhs.project {return false}
     if lhs.sessionID != rhs.sessionID {return false}
     if lhs.path != rhs.path {return false}
+    if lhs.includeHidden != rhs.includeHidden {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

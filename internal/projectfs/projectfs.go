@@ -157,9 +157,10 @@ func resolve(root, p string) (rel, real string, err error) {
 }
 
 // List returns the visible entries of a root-relative directory: dotfiles and
-// dot-directories are omitted, directories sort before files, then names
-// case-insensitively. maxEntries <= 0 uses DefaultMaxEntries.
-func List(ctx context.Context, root, p string, maxEntries int) (Listing, error) {
+// dot-directories are omitted unless includeHidden (`.git` never lists),
+// directories sort before files, then names case-insensitively. maxEntries <= 0
+// uses DefaultMaxEntries.
+func List(ctx context.Context, root, p string, maxEntries int, includeHidden bool) (Listing, error) {
 	if maxEntries <= 0 {
 		maxEntries = DefaultMaxEntries
 	}
@@ -181,7 +182,7 @@ func List(ctx context.Context, root, p string, maxEntries int) (Listing, error) 
 	entries := make([]Entry, 0, len(dirents))
 	for _, de := range dirents {
 		name := de.Name()
-		if name == "" || name[0] == '.' {
+		if name == "" || name == ".git" || (name[0] == '.' && !includeHidden) {
 			continue
 		}
 		e := Entry{Name: name, IsSymlink: de.Type()&fs.ModeSymlink != 0}

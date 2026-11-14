@@ -146,11 +146,15 @@ public final class YccClient: Sendable {
     /// List a directory inside a project (read-only, project-confined).
     /// `path` is root-relative (empty = the root); a non-empty `sessionID`
     /// resolves against that session's live worktree when it still exists.
-    public func listFiles(project: String, sessionID: String, path: String) async throws -> Ycc_V1_ListFilesResponse {
+    /// Dotfiles are listed only with `includeHidden`.
+    public func listFiles(
+        project: String, sessionID: String, path: String, includeHidden: Bool
+    ) async throws -> Ycc_V1_ListFilesResponse {
         var request = Ycc_V1_ListFilesRequest()
         request.project = project
         request.sessionID = sessionID
         request.path = path
+        request.includeHidden = includeHidden
         let response = await generated.listFiles(request: request)
         switch response.result {
         case .success(let message):

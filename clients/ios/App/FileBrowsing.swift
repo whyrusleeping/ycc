@@ -140,6 +140,8 @@ struct FileScreen: View {
 struct FileBrowserView: View {
     @Environment(AppModel.self) private var app
     @State private var model: FileBrowserModel
+    /// Shared by every folder: flipping it in one reloads the others as they reappear.
+    @AppStorage("files.showHidden") private var showHidden = false
 
     init(client: YccClient, route: FileRoute) {
         _model = State(initialValue: FileBrowserModel(source: client, route: route))
@@ -160,7 +162,29 @@ struct FileBrowserView: View {
         }
         .navigationTitle(model.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { if !model.hasLoaded { await model.load() } }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Toggle(isOn: $showHidden) {
+                        Label("Show hidden files", systemImage: "eye")
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
+                }
+            }
+        }
+        .task {
+            if !model.hasLoaded || model.showHidden != showHidden {
+                model.showHidden = showHidden
+                await model.load()
+            }
+        }
+        .onChange(of: showHidden) { _, show in
+            Analytics.action("files.show_hidden", via: .menu, attrs: ["on": String(show)])
+            model.showHidden = show
+            // Unstructured, so a reload already in flight picks up the flip.
+            Task { await model.load() }
+        }
         .onChange(of: model.unauthorized) { _, unauthorized in
             if unauthorized { app.handleUnauthorized() }
         }
@@ -226,8 +250,8 @@ private struct FileEntryRow: View {
                 }
             }
         }
-        // Gitignored entries (build output, caches) recede.
-        .opacity(entry.ignored ? 0.45 : 1)
+        // Gitignored and hidden entries (build output, caches, dotfiles) recede.
+        .opacity(entry.ignored || entry.name.hasPrefix(".") ? 0.45 : 1)
     }
 
     private var icon: String {

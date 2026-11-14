@@ -198,8 +198,12 @@ private final class MockFileSource: ProjectFileSource, @unchecked Sendable {
     var files: [String: Ycc_V1_ReadFileResponse] = [:]
     var readErrors: [String: Error] = [:]
     private(set) var reads: [(project: String, sessionID: String, path: String)] = []
+    private(set) var listedHidden: [Bool] = []
 
-    func listFiles(project: String, sessionID: String, path: String) async throws -> Ycc_V1_ListFilesResponse {
+    func listFiles(
+        project: String, sessionID: String, path: String, includeHidden: Bool
+    ) async throws -> Ycc_V1_ListFilesResponse {
+        listedHidden.append(includeHidden)
         guard let listing = listings[path] else { throw YccError.notFound(message: "no dir \(path)") }
         return listing
     }
@@ -240,6 +244,10 @@ final class FileModelsTests: XCTestCase {
                        FileRoute(project: "ycc", sessionID: "s1",
                                  reference: FileReference(path: "internal/server", isDirectory: true)))
         XCTAssertEqual(model.route(for: model.entries[1]).reference.path, "internal/a.go")
+
+        model.showHidden = true
+        await model.load()
+        XCTAssertEqual(source.listedHidden, [false, true])
 
         let rootModel = FileBrowserModel(
             source: source, route: FileRoute(project: "ycc", reference: FileReference(path: "", isDirectory: true)))

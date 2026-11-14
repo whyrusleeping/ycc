@@ -1016,8 +1016,8 @@ func (x *ListDirResponse) GetDefaultParent() string {
 // session's workspace such as a live workstream worktree. Paths are
 // root-relative ("/"-separated); absolute paths and `..` escapes are
 // InvalidArgument, symlinks resolving outside the root and `.git` internals
-// are PermissionDenied. Listings omit dotfiles; an explicitly requested
-// dotfile path can still be read. Nothing here writes. Line suffixes an agent
+// are PermissionDenied. Listings omit dotfiles unless include_hidden; an
+// explicitly requested dotfile path can still be read. Nothing here writes. Line suffixes an agent
 // may put on a reference (`:12`, `#L12`) are the client's to strip.
 type FileEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1105,9 +1105,10 @@ func (x *FileEntry) GetIgnored() bool {
 
 type ListFilesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                      // registered project; empty allowed only when exactly one exists
-	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // optional: resolve against this session's workspace
-	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                            // root-relative directory; empty => the root
+	Project       string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`                                   // registered project; empty allowed only when exactly one exists
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`              // optional: resolve against this session's workspace
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                                         // root-relative directory; empty => the root
+	IncludeHidden bool                   `protobuf:"varint,4,opt,name=include_hidden,json=includeHidden,proto3" json:"include_hidden,omitempty"` // also list dotfiles and dot-directories (never .git)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1161,6 +1162,13 @@ func (x *ListFilesRequest) GetPath() string {
 		return x.Path
 	}
 	return ""
+}
+
+func (x *ListFilesRequest) GetIncludeHidden() bool {
+	if x != nil {
+		return x.IncludeHidden
+	}
+	return false
 }
 
 type ListFilesResponse struct {
@@ -14615,12 +14623,13 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05mtime\x18\x04 \x01(\tR\x05mtime\x12\x1d\n" +
 	"\n" +
 	"is_symlink\x18\x05 \x01(\bR\tisSymlink\x12\x18\n" +
-	"\aignored\x18\x06 \x01(\bR\aignored\"_\n" +
+	"\aignored\x18\x06 \x01(\bR\aignored\"\x86\x01\n" +
 	"\x10ListFilesRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x12\n" +
-	"\x04path\x18\x03 \x01(\tR\x04path\"\xab\x01\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12%\n" +
+	"\x0einclude_hidden\x18\x04 \x01(\bR\rincludeHidden\"\xab\x01\n" +
 	"\x11ListFilesResponse\x12\x12\n" +
 	"\x04root\x18\x01 \x01(\tR\x04root\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12+\n" +

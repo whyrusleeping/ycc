@@ -5,7 +5,9 @@ import YccProto
 /// The daemon calls behind project file browsing. ``YccClient`` is the
 /// production conformer; tests inject canned sources.
 public protocol ProjectFileSource: Sendable {
-    func listFiles(project: String, sessionID: String, path: String) async throws -> Ycc_V1_ListFilesResponse
+    func listFiles(
+        project: String, sessionID: String, path: String, includeHidden: Bool
+    ) async throws -> Ycc_V1_ListFilesResponse
     func readFile(project: String, sessionID: String, path: String, maxBytes: Int64) async throws -> Ycc_V1_ReadFileResponse
 }
 
@@ -16,8 +18,8 @@ private func message(for error: Error) -> String {
 }
 
 /// One directory of the read-only project file browser (`ListFiles`). Each
-/// pushed folder gets its own model; the daemon hides dotfiles and marks
-/// gitignored entries.
+/// pushed folder gets its own model; the daemon hides dotfiles unless
+/// ``showHidden`` and marks gitignored entries.
 @MainActor
 @Observable
 public final class FileBrowserModel {
@@ -34,13 +36,17 @@ public final class FileBrowserModel {
     public private(set) var hasLoaded = false
     public var errorMessage: String?
     public private(set) var unauthorized = false
+    /// List dotfiles and dot-directories; changing it takes effect on the
+    /// next ``load()``.
+    public var showHidden: Bool
 
     private let source: ProjectFileSource
 
-    public init(source: ProjectFileSource, route: FileRoute) {
+    public init(source: ProjectFileSource, route: FileRoute, showHidden: Bool = false) {
         self.source = source
         self.route = route
         self.path = route.reference.path
+        self.showHidden = showHidden
     }
 
     /// Title for the screen: the folder name, or the project at the root.
@@ -53,22 +59,30 @@ public final class FileBrowserModel {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
-        do {
-            let response = try await source.listFiles(
-                project: route.project, sessionID: route.sessionID, path: route.reference.path)
-            entries = response.entries
-            path = response.path
-            root = response.root
-            rootFallback = response.rootFallback
-            truncated = response.truncated
-            errorMessage = nil
-            hasLoaded = true
-        } catch YccError.unauthorized {
-            unauthorized = true
-        } catch {
-            // A failed refresh over a good listing keeps the listing.
-            errorMessage = message(for: error)
-        }
+        // A ``showHidden`` flip during the request is skipped by the guard
+        // above, so list again until the listing matches it.
+        var listedHidden: Bool
+        repeat {
+            listedHidden = showHidden
+            do {
+                let response = try await source.listFiles(
+                    project: route.project, sessionID: route.sessionID, path: route.reference.path,
+                    includeHidden: listedHidden)
+                entries = response.entries
+                path = response.path
+                root = response.root
+                rootFallback = response.rootFallback
+                truncated = response.truncated
+                errorMessage = nil
+                hasLoaded = true
+            } catch YccError.unauthorized {
+                unauthorized = true
+                return
+            } catch {
+                // A failed refresh over a good listing keeps the listing.
+                errorMessage = message(for: error)
+            }
+        } while listedHidden != showHidden
     }
 
     /// The route an entry opens: a child folder or a file.
@@ -179,7 +193,8 @@ public final class FileViewerModel {
             // `ReadFile` on a directory is invalid_argument: a link that named
             // a folder without a trailing "/". Confirm with a listing.
             if (try? await source.listFiles(
-                project: route.project, sessionID: route.sessionID, path: reference.path)) != nil {
+                project: route.project, sessionID: route.sessionID, path: reference.path,
+                includeHidden: false)) != nil {
                 isDirectory = true
             } else {
                 errorMessage = message(for: error)

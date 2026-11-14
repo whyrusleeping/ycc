@@ -12,7 +12,7 @@ import (
 )
 
 // ListFiles lists a directory inside a project (or a session's live worktree)
-// for read-only remote browsing. Confinement, dotfile hiding and gitignore
+// for read-only remote browsing. Confinement, optional dotfile hiding and gitignore
 // marking live in internal/projectfs. The bearer token already permits
 // StartSession — arbitrary shell in any workspace — so project-confined reads
 // do not expand the trust surface.
@@ -21,7 +21,7 @@ func (s *Server) ListFiles(ctx context.Context, req *connect.Request[v1.ListFile
 	if err != nil {
 		return nil, fileError(err)
 	}
-	l, err := projectfs.List(ctx, root, req.Msg.Path, 0)
+	l, err := projectfs.List(ctx, root, req.Msg.Path, 0, req.Msg.IncludeHidden)
 	if err != nil {
 		return nil, fileError(err)
 	}

@@ -67,7 +67,7 @@ func TestListOrderingHiddenAndTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	l, err := List(context.Background(), root, "", 0)
+	l, err := List(context.Background(), root, "", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,14 +94,30 @@ func TestListOrderingHiddenAndTypes(t *testing.T) {
 		t.Errorf("listing meta: %+v", l)
 	}
 
-	sub, err := List(context.Background(), root, "zdir", 0)
+	sub, err := List(context.Background(), root, "zdir", 0, false)
 	if err != nil || sub.Path != "zdir" || len(sub.Entries) != 1 {
 		t.Fatalf("sub listing: %+v, %v", sub, err)
 	}
 
-	capped, err := List(context.Background(), root, "", 2)
+	capped, err := List(context.Background(), root, "", 2, false)
 	if err != nil || len(capped.Entries) != 2 || !capped.Truncated {
 		t.Fatalf("capped: %+v, %v", capped, err)
+	}
+
+	// includeHidden lists dotfiles and dot-directories, but never .git.
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	all, err := List(context.Background(), root, "", 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names = names[:0]
+	for _, e := range all.Entries {
+		names = append(names, e.Name)
+	}
+	if got, want := strings.Join(names, ","), ".ycc,adir,link,zdir,.hidden,A.md,b.go"; got != want {
+		t.Fatalf("hidden names = %s; want %s", got, want)
 	}
 }
 
@@ -109,13 +125,13 @@ func TestListErrors(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "f.txt", []byte("x"))
 	ctx := context.Background()
-	if _, err := List(ctx, root, "missing", 0); !errors.Is(err, ErrNotFound) {
+	if _, err := List(ctx, root, "missing", 0, false); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing: %v", err)
 	}
-	if _, err := List(ctx, root, "f.txt", 0); !errors.Is(err, ErrNotDir) {
+	if _, err := List(ctx, root, "f.txt", 0, false); !errors.Is(err, ErrNotDir) {
 		t.Errorf("file: %v", err)
 	}
-	if _, err := List(ctx, root, "../", 0); !errors.Is(err, ErrInvalidPath) {
+	if _, err := List(ctx, root, "../", 0, false); !errors.Is(err, ErrInvalidPath) {
 		t.Errorf("escape: %v", err)
 	}
 }
@@ -141,7 +157,7 @@ func TestListMarksGitignored(t *testing.T) {
 	write(t, root, "sub/keep.go", []byte("x"))
 	run("add", "-f", "tracked.log")
 
-	l, err := List(context.Background(), root, "", 0)
+	l, err := List(context.Background(), root, "", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +172,7 @@ func TestListMarksGitignored(t *testing.T) {
 		}
 	}
 
-	sub, err := List(context.Background(), root, "sub", 0)
+	sub, err := List(context.Background(), root, "sub", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +186,7 @@ func TestListMarksGitignored(t *testing.T) {
 func TestListNonRepoHasNoIgnored(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "a.log", []byte("x"))
-	l, err := List(context.Background(), root, "", 0)
+	l, err := List(context.Background(), root, "", 0, false)
 	if err != nil || len(l.Entries) != 1 || l.Entries[0].Ignored {
 		t.Fatalf("%+v, %v", l, err)
 	}
@@ -200,7 +216,7 @@ func TestSymlinkConfinement(t *testing.T) {
 			t.Errorf("Read(%s) err = %v; want ErrDenied", p, err)
 		}
 	}
-	if _, err := List(context.Background(), root, "escdir", 0); !errors.Is(err, ErrDenied) {
+	if _, err := List(context.Background(), root, "escdir", 0, false); !errors.Is(err, ErrDenied) {
 		t.Errorf("List(escdir) err = %v; want ErrDenied", err)
 	}
 	f, err := Read(root, "in.txt", 0)
