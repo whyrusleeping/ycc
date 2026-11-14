@@ -74,12 +74,15 @@ const imageGuidance = `To show the user an image (screenshot, chart, diagram), s
 in your reply with markdown, e.g. ![login screen](.ycc/tmp/login.png). Clients render workspace
 images inline; remote image URLs are not fetched.`
 
-const backgroundGuidance = `Use background work to overlap independent tasks or run an intentional watcher, not to
-spawn then immediately wait. Reports arrive automatically in coordinator sessions; use wait
-when the result gates progress. Do not poll or kill live work just to finish. With nothing else
-to do, report progress and wait. Mutating agents may share this worktree with each other and with
-other sessions (edits are attributed per session, not serialized); give concurrent writers
-disjoint files, and use a separate workstream when their builds or tests would interfere.`
+const backgroundGuidance = `Use background work to overlap independent tasks or track long-running work that needs
+follow-up in this session. For remote work, use a tracked background monitor that waits for
+completion and returns the result here. Watches run in separate sessions and do not resume this
+one; do not substitute a watch for this continuation. Use foreground execution for short commands.
+Reports arrive automatically in coordinator sessions; use wait when the result gates progress.
+Do not poll or kill live work just to finish. With nothing else to do, report progress and wait.
+Mutating agents may share this worktree with each other and with other sessions (edits are
+attributed per session, not serialized); give concurrent writers disjoint files, and use a
+separate workstream when their builds or tests would interfere.`
 
 // Direct and delegated work share one workflow; only the implementation role differs.
 const coordinatorSystem = `You coordinate ONE accepted backlog task to a correct, reviewed, committed state.

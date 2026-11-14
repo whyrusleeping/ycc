@@ -106,10 +106,6 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
 			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d), chatCommitTool(d, policy))
 		base := chatModeSystem + "\n\n" + chatFinishGuidance(policy)
-		if d.ScheduleWatch != nil {
-			reg.Add(scheduleWatch(d))
-			base += "\n\n" + watchProposalGuidance
-		}
 		if d.ListWatches != nil {
 			reg.Add(listWatches(d))
 		}

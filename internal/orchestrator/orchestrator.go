@@ -133,8 +133,8 @@ type Deps struct {
 	// WatchReport records a watch run's report (watch mode only) and returns a
 	// confirmation for the model.
 	WatchReport func(WatchReport) (string, error)
-	// ScheduleWatch creates a watch from a user-confirmed chat request. Only
-	// chat offers schedule_watch, and nil hides it there.
+	// ScheduleWatch is the confirmed-create hook. Agent modes do not currently
+	// expose watch creation.
 	ScheduleWatch func(context.Context, WatchSpec) (string, error)
 	// ValidateWatch preflights a definition before confirmation (true for create,
 	// false for full replacement). Mutation callbacks must still check atomically.

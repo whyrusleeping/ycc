@@ -95,25 +95,21 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 }
 
-// schedule_watch and the guidance to propose a watch for external work left
-// running travel together in chat, vanish when the session cannot create
-// watches, and are never offered in work (either strategy).
-func TestScheduleWatchOfferedWithGuidance(t *testing.T) {
-	for _, tc := range []struct {
-		mode, impl string
-		offered    bool
-	}{{"chat", "", true}, {"work", "delegate", false}, {"work", "direct", false}} {
-		d := depsFor(t)
-		d.WorkImplementation = tc.impl
-		reg, system := BuildMode(tc.mode, d, false)
-		if hasTool(reg, "schedule_watch") || strings.Contains(system, watchProposalGuidance) {
-			t.Fatalf("%s/%s: schedule_watch or its guidance offered without a ScheduleWatch hook", tc.mode, tc.impl)
-		}
-		d.ScheduleWatch = func(context.Context, WatchSpec) (string, error) { return "", nil }
-		reg, system = BuildMode(tc.mode, d, false)
-		if hasTool(reg, "schedule_watch") != tc.offered || strings.Contains(system, watchProposalGuidance) != tc.offered {
-			t.Fatalf("%s/%s: schedule_watch and its guidance offered = %v/%v, want both %v", tc.mode, tc.impl,
-				hasTool(reg, "schedule_watch"), strings.Contains(system, watchProposalGuidance), tc.offered)
+func TestScheduleWatchNotOffered(t *testing.T) {
+	for _, mode := range []string{"chat", "work", "watch", "pm", "integrate"} {
+		for _, impl := range []string{"direct", "delegate"} {
+			for _, unattended := range []bool{false, true} {
+				d := depsFor(t)
+				d.WorkImplementation = impl
+				d.ScheduleWatch = func(context.Context, WatchSpec) (string, error) {
+					t.Fatal("agent invoked watch creation")
+					return "", nil
+				}
+				reg, _ := BuildMode(mode, d, unattended)
+				if hasTool(reg, "schedule_watch") {
+					t.Fatalf("%s/%s unattended=%t: watch creation exposed", mode, impl, unattended)
+				}
+			}
 		}
 	}
 }

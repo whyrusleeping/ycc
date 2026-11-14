@@ -190,9 +190,8 @@ func TestReopenFromDisk(t *testing.T) {
 	}
 }
 
-// A work session whose history calls a tool work no longer offers
-// (schedule_watch is chat-only now) still reopens with that call and its result
-// replayed, while the rebuilt work toolset omits the tool.
+// Historic tool calls remain replayable without restoring a retired tool to
+// the current registry, even when the daemon's watch scheduler is running.
 func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 	ws := t.TempDir()
 	if _, err := git.Open(ws); err != nil {
@@ -201,7 +200,7 @@ func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 	absWS, _ := filepath.Abs(ws)
 	id := "s_retired_tool"
 	events := []event.Event{
-		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work", "workspace": absWS}},
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "chat", "workspace": absWS}},
 		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "start the soak"}},
 		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "watching it"}},
 		{Seq: 4, TS: ts(4), Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
@@ -216,11 +215,16 @@ func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 	writeSession(t, ws, id, events)
 
 	m := NewManager(testRegistry(), ws)
+	t.Cleanup(m.ReclaimAll)
+	m.StartWatches()
 	sess, err := m.Reopen("", id)
 	if err != nil {
 		t.Fatalf("Reopen: %v", err)
 	}
 	defer sess.Stop()
+	if sess.deps.GetWatch == nil {
+		t.Fatal("reopened chat lacks watch management hooks")
+	}
 
 	loop := sess.currentLoop()
 	got := loop.History()
@@ -239,7 +243,7 @@ func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 	}
 	for _, def := range loop.Tools.APIDefs() {
 		if def.Function != nil && def.Function.Name == "schedule_watch" {
-			t.Fatal("reopened work session offers schedule_watch")
+			t.Fatal("reopened chat session offers schedule_watch")
 		}
 	}
 }

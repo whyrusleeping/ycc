@@ -846,16 +846,14 @@ report does not resume the chat that created the watch or finish that chat's pen
 
 Runs act only on low-risk or pre-authorized actions and ask rather than act on anything
 attributable to another live session or an `in_progress` task. Attended chat sessions on a
-persistent daemon offer `schedule_watch`, `list_watches`, `get_watch`, `update_watch`, and
-`set_watch_paused` (work mode does not). Creation and full-definition updates validate the proposal
-and target before asking for confirmation, then recheck when applying it. Creation never replaces
-an existing watch; updates preserve notes, decisions, report history, and pause state except when
-extending an expired watch's expiry. Pause/resume also requires confirmation. The first run of a new
-watch is due immediately. The chat prompt tells the agent to inspect and reuse existing coverage,
-and propose a watch with a suitable cadence and expiry when a turn ends while external work it
-started (a remote soak, backfill, or deploy) is still running. It names the covering watch in its
-final reply. Work that finished within the turn or that a background job tracks gets no watch.
-`docs/design/watches.md` records the rationale.
+persistent daemon offer `list_watches`, `get_watch`, `update_watch`, and `set_watch_paused`
+(work mode does not). Full-definition updates validate the proposal and target before asking for
+confirmation, then recheck when applying it. Updates preserve notes, decisions, report history,
+and pause state except when extending an expired watch's expiry. Pause/resume also requires
+confirmation. Users create watches through the clients or RPC; agent modes do not expose watch
+creation. The first run of a new watch is due immediately. Work needing follow-up in the creating
+session uses a tracked background job and `wait`, including a background completion monitor for
+remote work, rather than a watch. `docs/design/watches.md` records the rationale.
 
 ## 10. Work orchestration
 

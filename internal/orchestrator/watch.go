@@ -263,7 +263,7 @@ func watchDefinitionTool(d *Deps, creating bool) *gollama.Tool {
 
 func listWatches(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
-		Name: "list_watches", Description: "List existing watches before proposing a new watch or correcting one.",
+		Name: "list_watches", Description: "List existing watches before inspecting or correcting one.",
 		Params: tools.Obj(map[string]any{}),
 		Call: func(context.Context, any) (*gollama.ToolResult, error) {
 			msg, err := d.ListWatches()
@@ -381,23 +381,6 @@ func describeWatchSpec(s WatchSpec) string {
 	}
 	return b.String()
 }
-
-// watchProposalGuidance accompanies schedule_watch in attended chat: owners
-// otherwise have to remember to ask how unattended external work is going.
-const watchProposalGuidance = `When your turn ends while long-running external work you started is still going (a remote soak,
-replay, backfill, deploy, or CI run), propose a watch with schedule_watch instead of leaving the user
-to ask how it is going. Its brief also says what marks the work finished; pick a cadence suited to
-the work and expires_hours a little past the expected end. Your final reply says what is still
-running and which watch covers it. No watch for work that finished within the turn or that a
-background job tracks; job completion already wakes this session.
-Inspect existing coverage before proposing: correct an existing watch with a confirmed full
-update, not a companion. Validate any probe before proposing it against healthy, stopped, stalled,
-and complete cases as relevant. Exit 0 suppresses the entire model brief; nonzero must wake for
-problems OR awaited completion. Detect stalls with progress/heartbeat, not just a PID. If a cheap
-probe cannot cover the promised checks, omit it or set probe_always=true.
-Watch sessions are fresh: they do not resume this chat or promise its future commits. For awaited
-completion the brief should require watch_report completed=true, which pauses future checks and
-notifies by default (notify=false suppresses completion notification).`
 
 const watchModeSystem = `You are one run of a recurring watch: a scheduled check the daemon starts in a fresh session.
 The opening message is the user's brief; the daemon's run context follows it with notes from the

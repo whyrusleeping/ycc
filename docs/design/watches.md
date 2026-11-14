@@ -90,21 +90,16 @@ rule it would still have been a question, as it was.
 
 ### Creation and surfaces
 
-Watches are created through RPC and through a `schedule_watch` tool, so a chat request like
-"check every three hours and ask me if something is wrong" becomes a watch rather than a sleep
-loop. Because a watch can act unattended, creation shows the definition and requires the
-user's confirmation. Chat also exposes inspection, confirmed full-definition editing, and
-pause/resume controls. Proposals are checked before confirmation: asking to correct an existing
-watch does not require a second watch or an approval for an operation that cannot succeed.
-Clients list each project's watches with latest status and next due time, show the report timeline,
-and keep watch run sessions out of the main recent-session list.
+Users create watches through the web and iOS clients or RPC. Agent modes do not expose watch
+creation. Chat exposes inspection, confirmed full-definition editing, and pause/resume controls.
+Updates are checked before confirmation: correcting an existing watch does not require a second
+watch or an approval for an operation that cannot succeed. Clients list each project's watches
+with latest status and next due time, show the report timeline, and keep watch run sessions out
+of the main recent-session list.
 
-Chat agents also propose a watch unprompted when a turn ends while external work they started
-keeps running. In the 2026-11-09 usage analysis, 24 owner messages were pure check-ins ("how's it
-going?"); 18 followed a turn that ended with a statement while a soak, replay, or backfill ran
-on. A background job does not need a watch, because its completion already wakes the session.
-Work sessions do not offer `schedule_watch`: work never called it, and its definition and
-guidance cost every work request about 2 KB.
+A watch is independent monitoring, not a continuation of the session that created it. When work
+needs follow-up in that session, a tracked background job and `wait` keep completion and subsequent
+actions in the original conversation. Remote work can be followed by a tracked background monitor.
 
 ## Rejected alternatives
 
