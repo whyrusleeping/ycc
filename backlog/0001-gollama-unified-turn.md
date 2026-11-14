@@ -16,11 +16,12 @@ branch per provider. Add a single dispatch method that routes to the right backe
 on the client's configured mode and normalizes the tool-call + usage shapes.
 
 ## Acceptance criteria
-- [ ] `Client.Turn(ctx, RequestOptions) (*ResponseMessageGenerate, error)` (name TBD)
-      routes to anthropic/openai/bedrock/ollama correctly
-- [ ] tool calls and usage are returned in one normalized shape regardless of backend
-- [ ] a `Backend` accessor lets the registry introspect a client
-- [ ] existing per-backend methods still work (no breaking changes)
+- [x] `Client.Turn(ctx, RequestOptions) (*ResponseMessageGenerate, error)` (name TBD)
+      routes to anthropic/openai/bedrock/ollama correctly (shipped as `Turn(opts)`;
+      gollama's turn.go now also has `TurnCtx(ctx, opts)`)
+- [x] tool calls and usage are returned in one normalized shape regardless of backend
+- [x] a `Backend` accessor lets the registry introspect a client
+- [x] existing per-backend methods still work (no breaking changes)
 
 ## Work log
 - 2026-06-25 implemented in `gollama/turn.go`: `Backend` enum + `Client.Backend()`
@@ -28,3 +29,4 @@ on the client's configured mode and normalizes the tool-call + usage shapes.
   Finding: `ChatCompletion` already dispatches Anthropic/Bedrock/OpenAI and normalizes
   tool calls into `Choices[].Message.ToolCalls`, so `Turn` is a thin, stable wrapper
   rather than a new dispatcher. `go build ./...` + `go vet ./...` pass. No breaking changes.
+- 2026-11-14 groom: checked off the criteria on this done task. The work log above and gollama's turn.go (`Backend`, `Client.Backend()`, `Client.Turn`) show them met.

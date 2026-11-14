@@ -25,4 +25,7 @@ Verified 2026-11-10: `tools.ReadOnlyInspect` (internal/tools/reviewer.go) return
 
 ReadOnlyInspect now appends Web() (web_search, fetch_page; still error without EXA_API_KEY), so read-only spawn_agent subagents can research without curl or write access. Reviewers deliberately exclude web tools (verdicts rest on the assigned snapshot and source-bound evidence; the coordinator supplies external facts in the handoff), recorded in code and spec §§ generic agents/tools. TestWebToolsetMembership pins both. tools/orchestrator suites pass; server TestGetBacklogGroom fails identically at HEAD (date-dependent, proposed 0548).
 
-Commit: tools: give read-only inspection subagents web_search/fetch_page (0539)
+Commit: 10034b7 — tools: give read-only inspection subagents web_search/fetch_page (0539)
+
+## Work log
+- 2026-11-14 groom: added the commit hash. Memory note m-dm98dgt1j4vh was retired in b1ba827, which meets the last criterion. Correction to the Outcome: the TestGetBacklogGroom failure is not date-dependent. It started at 65ff85c (done tasks no longer count toward groom churn), and 0548 (fix that test) now records that cause.

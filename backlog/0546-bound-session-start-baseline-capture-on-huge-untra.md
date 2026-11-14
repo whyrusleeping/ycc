@@ -23,4 +23,7 @@ Acceptance:
 
 Whole-worktree snapshots (CaptureBaseline, Changes, git.Open's init commit) exclude untracked, non-ignored regular files over 100 MiB (absent from HEAD and the real index) via exclude pathspecs, so they are never hashed. Baseline.Oversized()/Changeset.Oversized report them; session start emits a warning notice naming them; commit results note them. Spec documents the limit. Verified: new internal/git tests; git/orchestrator/session suites pass; simclusters baseline capture takes 0.66s with follows-dataset.csv reported. internal/server TestGetBacklogGroom fails identically on prior HEAD (stale hardcoded date).
 
-Commit: git: leave untracked files over 100 MiB out of worktree snapshots
+Commit: 109482e — git: leave untracked files over 100 MiB out of worktree snapshots
+
+## Work log
+- 2026-11-14 groom: added the commit hash. Correction to the Outcome: the TestGetBacklogGroom failure is not a stale hardcoded date. It started at 65ff85c (done tasks no longer count toward groom churn), and 0548 (fix that test) now records that cause.
