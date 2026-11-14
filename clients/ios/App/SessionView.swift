@@ -663,7 +663,7 @@ struct SessionView: View {
         } label: {
             Image(systemName: "stop.circle.fill")
                 .font(.title2)
-                .foregroundStyle(Theme.danger)
+                .foregroundStyle(Color.secondary)
         } primaryAction: {
             Analytics.action("session.stop_open")
             showInlineStopConfirm = true
