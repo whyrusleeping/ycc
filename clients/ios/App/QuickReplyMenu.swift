@@ -301,6 +301,9 @@ private struct QuickReplyRow: View {
                 selected ? Theme.accentFill : Color(.separator),
                 lineWidth: selected ? 2 : 1)
         }
+        // Colors fade without the menu's bouncy spring: overshooting would
+        // swing a deselected icon back towards the accent and flicker.
+        .animation(.easeOut(duration: 0.15), value: selected)
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
         .scaleEffect(selected ? 1.06 : 1, anchor: .trailing)
         // The row under the finger leans out towards it.
