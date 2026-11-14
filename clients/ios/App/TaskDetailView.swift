@@ -6,7 +6,9 @@ import YccProto
 /// dependencies, ready/blocked,
 /// dates) plus the markdown `body`, a status picker driving `UpdateTask`, and a
 /// "Start work on this task" action that starts a work session (`StartSession`)
-/// and navigates into its live stream. Done and proposed tasks offer no start;
+/// and navigates into its live stream; a long press on it first opens
+/// ``StartWorkOptionsView`` to pick that session's role models or a separate
+/// workstream. Done and proposed tasks offer no start;
 /// in-review tasks explain the hand-back and offer "Continue work" instead.
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var app
@@ -16,6 +18,15 @@ struct TaskDetailView: View {
     /// A start-work failure message to surface as an alert.
     @State private var startError: String?
     @State private var isStarting = false
+    /// The long-press start-work settings sheet.
+    @State private var showStartOptions = false
+    /// Set by the long press so the button's tap action, which may still fire
+    /// on release, does not also start work with the defaults.
+    @State private var startLongPressed = false
+    /// Work started from the settings sheet, acted on once the sheet is gone.
+    @State private var startedFromOptions: StartedWork?
+    /// Work started from the settings sheet whose role choice failed to apply.
+    @State private var roleWarning: StartedWork?
 
     private let taskID: String
     private let taskTitle: String
@@ -81,6 +92,30 @@ struct TaskDetailView: View {
             Button("OK", role: .cancel) { startError = nil }
         } message: { message in
             Text(message)
+        }
+        .alert(
+            "Couldn’t apply roles",
+            isPresented: Binding(
+                get: { roleWarning != nil },
+                set: { if !$0 { roleWarning = nil } }),
+            presenting: roleWarning
+        ) { started in
+            Button("Open session") {
+                roleWarning = nil
+                openStartedSession(started.sessionID)
+            }
+        } message: { started in
+            Text("The session started with the default implementer and reviewers: \(started.roleError ?? ""). Change them in the session’s settings.")
+        }
+        .sheet(isPresented: $showStartOptions, onDismiss: finishStartOptions) {
+            if let client = app.client, let task = model.task {
+                StartWorkOptionsView(
+                    client: client, project: project, taskID: task.id,
+                    prompt: Self.workPrompt(for: task),
+                    onStarted: { startedFromOptions = $0 },
+                    onUnauthorized: { app.handleUnauthorized() })
+                .trackedFlow("start_work")
+            }
         }
         .task { await model.load() }
         .onChange(of: model.unauthorized) { _, isUnauthorized in
@@ -316,7 +351,13 @@ struct TaskDetailView: View {
 
     @ViewBuilder
     private func startWorkButton(_ task: Ycc_V1_TaskDetail, title: String) -> some View {
+        // Tap starts with the default roles; long-press opens the settings
+        // sheet to pick models (or a workstream) for this session first.
         Button {
+            if startLongPressed {
+                startLongPressed = false
+                return
+            }
             startWork(task)
         } label: {
             if isStarting {
@@ -326,6 +367,39 @@ struct TaskDetailView: View {
             }
         }
         .disabled(isStarting)
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+            guard !isStarting else { return }
+            Analytics.action("task.start_work_options", via: .gesture)
+            startLongPressed = true
+            showStartOptions = true
+        })
+        .sensoryFeedback(.impact, trigger: showStartOptions) { _, isShown in isShown }
+        .accessibilityHint("Long-press to choose models first")
+        .accessibilityAction(named: "Start with settings") { showStartOptions = true }
+    }
+
+    private static func workPrompt(for task: Ycc_V1_TaskDetail) -> String {
+        let titleText = task.title.isEmpty ? "" : ": \(task.title)"
+        return "Work on task \(task.id)\(titleText)."
+    }
+
+    /// Navigate (or warn) only after the sheet's dismissal completes, so the
+    /// push or alert is not presented while the sheet is still animating away.
+    private func finishStartOptions() {
+        startLongPressed = false
+        guard let started = startedFromOptions else { return }
+        startedFromOptions = nil
+        if started.roleError != nil {
+            roleWarning = started
+        } else {
+            openStartedSession(started.sessionID)
+        }
+    }
+
+    private func openStartedSession(_ sessionID: String) {
+        router.open(.session(
+            id: sessionID, project: project,
+            live: true, title: sessionTitle))
     }
 
     /// Start a work session focused on this task, then navigate into its live
@@ -334,8 +408,7 @@ struct TaskDetailView: View {
         // StartSession must return the new id before we can navigate; the
         // button shows progress at once and a second tap is ignored.
         guard !isStarting, let client = app.client else { return }
-        let titleText = task.title.isEmpty ? "" : ": \(task.title)"
-        let prompt = "Work on task \(task.id)\(titleText)."
+        let prompt = Self.workPrompt(for: task)
         isStarting = true
         Analytics.action("task.start_work")
         Task {
@@ -343,9 +416,7 @@ struct TaskDetailView: View {
             do {
                 let sessionID = try await client.startSession(
                     project: project, mode: "work", prompt: prompt)
-                router.open(.session(
-                    id: sessionID, project: project,
-                    live: true, title: sessionTitle))
+                openStartedSession(sessionID)
             } catch YccError.unauthorized {
                 app.handleUnauthorized()
             } catch let YccError.rpc(message) {

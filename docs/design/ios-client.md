@@ -85,6 +85,11 @@ onboarding. The other presets appear where they apply, placed by `Preset.placeme
 by name (spec §9): the project overflow menu has onboarding (re-onboard once onboarded) and the
 docs check, the backlog's overflow menu (which also holds the sort order) has backlog grooming and
 re-onboarding, and Memory keeps "Groom now". Starting from a backlog task still opens work mode.
+A tap on a task's start button uses the default roles; a long press opens a sheet that picks this
+session's coordinator, implementer, and reviewers (seeded with the defaults, which stay unchanged)
+and an optional separate workstream. The coordinator rides on `StartSession`/`SpawnWorkstream`;
+changed implementer/reviewers follow at once through session-scoped `SetRoleConfig`, and if that
+fails the user is told the session runs with the default implementer and reviewers.
 
 New session's separate-workstream chip (labelled **Workstream**; off for every new composer, like
 the web toggle) sends the same mode, model, applied preset, prompt, and pictures through

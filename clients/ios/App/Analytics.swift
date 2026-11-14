@@ -72,6 +72,7 @@ enum Analytics {
         "drawer.disconnect",
         "scope.select",
         "backlog.move", "backlog.groom", "backlog.groom_details", "task.status", "task.start_work",
+        "task.start_work_options",
         "loop.start", "loop.stop",
         "new_session.workstream",
         "workstreams.preview", "workstreams.merge", "workstreams.retry", "workstreams.discard",
@@ -81,7 +82,7 @@ enum Analytics {
         "watches.parked", "watches.run_session", "watches.decision_session", "watches.older",
         "refresh", "health.check_now",
     ] + [
-        "new_session", "quick_capture", "add_project", "task_edit",
+        "new_session", "quick_capture", "add_project", "task_edit", "start_work",
         "watch_create", "watch_edit",
         "project_choice_backlog", "project_choice_new_session",
     ].flatMap { flow in
