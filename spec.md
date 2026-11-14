@@ -823,8 +823,9 @@ context states the gap. An expired watch pauses itself; resuming does not replay
 
 With a probe, the daemon runs it first (`bash -c` in the project root, five-minute limit) and records
 an `ok` report without a model call when it exits 0, unless the watch asks for a run every time.
-Otherwise a fresh `watch`-mode session (origin `watch`, attended) starts with the brief as its
-opening input and daemon context: the previous run's notes and report, the user's earlier answers
+The probe must wake the model for each condition the brief promises to handle, including awaited
+completion; process liveness alone does not establish progress. Otherwise a fresh `watch`-mode
+session (origin `watch`, attended) starts with the brief as its opening input and daemon context: the previous run's notes and report, the user's earlier answers
 to watch questions, questions still pending from parked runs, pre-authorized actions, probe output,
 and a snapshot of the project's other live sessions (omitting ones idle for over an hour) with
 their tasks and running jobs, active
@@ -835,16 +836,26 @@ restorable question, is recorded as failed. An active run is stopped after an ho
 
 An `ask_user` question parks only its own run; the schedule continues and later runs are told not
 to repeat it. Answering resumes the run (reopening it after a restart). The daemon itself appends
-each answered watch question to the watch's standing decisions (the latest 20). Watch runs never
-send idle pushes; an `alert` report sends an attention push unless the run already asked a question.
+each answered watch question to the watch's standing decisions (the latest 20). Ordinary watch runs
+send no idle pushes; an `alert` report sends an attention push unless the run already asked a question.
+A `watch_report` with `completed=true` pauses the watch with reason `completed`, preserving its
+history and notes. Completion defaults to an idle-kind notification (`notify=false` suppresses it);
+an alert and a completion in the same report send at most one push. Reporting the same run again
+does not append or notify twice. Reports without `completed` end only the current run. A completion
+report does not resume the chat that created the watch or finish that chat's pending work.
+
 Runs act only on low-risk or pre-authorized actions and ask rather than act on anything
 attributable to another live session or an `in_progress` task. Attended chat sessions on a
-persistent daemon offer `schedule_watch` (work mode does not), which creates a watch only after the
-user confirms its definition; the first run is due immediately. The chat prompt tells the agent to
-propose a watch, with a cadence suited to the work and an expiry a little past its expected end, when
-a turn ends while external work it started (a remote soak, backfill, or deploy) is still running, and
-to name the covering watch in its final reply. Work that finished within the turn or that a
-background job tracks gets no watch. `docs/design/watches.md` records the rationale.
+persistent daemon offer `schedule_watch`, `list_watches`, `get_watch`, `update_watch`, and
+`set_watch_paused` (work mode does not). Creation and full-definition updates validate the proposal
+and target before asking for confirmation, then recheck when applying it. Creation never replaces
+an existing watch; updates preserve notes, decisions, report history, and pause state except when
+extending an expired watch's expiry. Pause/resume also requires confirmation. The first run of a new
+watch is due immediately. The chat prompt tells the agent to inspect and reuse existing coverage,
+and propose a watch with a suitable cadence and expiry when a turn ends while external work it
+started (a remote soak, backfill, or deploy) is still running. It names the covering watch in its
+final reply. Work that finished within the turn or that a background job tracks gets no watch.
+`docs/design/watches.md` records the rationale.
 
 ## 10. Work orchestration
 

@@ -46,7 +46,7 @@ model call.
 
 ### Run context and report
 
-A run session (origin `watch`, unattended) starts with:
+A run session (origin `watch`, attended so questions can park) starts with:
 
 - the brief and the watch's notes;
 - the previous report's status and summary;
@@ -60,8 +60,11 @@ baselines, open threads, and the user's standing decisions. When the user answer
 question, the daemon appends the question and answer to the notes itself, so a decision such
 as "1–2 minute lag spikes are acceptable" carries forward even if the model omits it.
 
-Notification: `ok` is silent; `warn` updates the watch's status badge without a push; `alert`
-pushes. A run that ends without calling `report` records a failed run, which counts as `warn`.
+Ordinary `ok` reports are silent; `warn` updates the status badge without a push; `alert` pushes.
+Completion is separate from health: `watch_report(completed=true)` pauses further checks and
+notifies by default, even when the result is healthy. `notify=false` makes completion silent.
+The lifecycle and notification rules are in spec §9.2. A run that ends without calling
+`watch_report` records a failed run, which counts as `warn`.
 
 ### Questions
 
@@ -90,8 +93,11 @@ rule it would still have been a question, as it was.
 Watches are created through RPC and through a `schedule_watch` tool, so a chat request like
 "check every three hours and ask me if something is wrong" becomes a watch rather than a sleep
 loop. Because a watch can act unattended, creation shows the definition and requires the
-user's confirmation. Clients list each project's watches with latest status and next due time,
-show the report timeline, and keep watch run sessions out of the main recent-session list.
+user's confirmation. Chat also exposes inspection, confirmed full-definition editing, and
+pause/resume controls. Proposals are checked before confirmation: asking to correct an existing
+watch does not require a second watch or an approval for an operation that cannot succeed.
+Clients list each project's watches with latest status and next due time, show the report timeline,
+and keep watch run sessions out of the main recent-session list.
 
 Chat agents also propose a watch unprompted when a turn ends while external work they started
 keeps running. In the 2026-11-09 usage analysis, 24 owner messages were pure check-ins ("how's it

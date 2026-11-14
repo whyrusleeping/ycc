@@ -136,11 +136,21 @@ type Deps struct {
 	// ScheduleWatch creates a watch from a user-confirmed chat request. Only
 	// chat offers schedule_watch, and nil hides it there.
 	ScheduleWatch func(context.Context, WatchSpec) (string, error)
-	Implementer   AgentSpec
-	Reviewers     []AgentSpec
-	Asker         Asker
-	MaxTok        int
-	MaxTurns      int // per-Run tool-call turn cap; 0 => engine default backstop
+	// ValidateWatch preflights a definition before confirmation (true for create,
+	// false for full replacement). Mutation callbacks must still check atomically.
+	// Production wires this; nil supports older ScheduleWatch test stand-ins.
+	ValidateWatch func(WatchSpec, bool) error
+	// Chat watch inspection and confirmed mutation hooks. Nil hides each tool.
+	ListWatches func() (string, error)
+	GetWatch    func(string) (string, error)
+	UpdateWatch func(context.Context, WatchSpec) (string, error)
+	// SetWatchPaused also requires GetWatch for pre-confirmation target checks.
+	SetWatchPaused func(string, bool) (string, error)
+	Implementer    AgentSpec
+	Reviewers      []AgentSpec
+	Asker          Asker
+	MaxTok         int
+	MaxTurns       int // per-Run tool-call turn cap; 0 => engine default backstop
 	// Retry is the subagent retry policy; zero uses the engine default.
 	Retry engine.RetryPolicy
 	// PromptCacheScope prefixes each subagent loop's prompt-cache routing key

@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 )
 
@@ -340,6 +342,65 @@ func TestWatchRestartReconcileUsesPersistedLogAndHistory(t *testing.T) {
 		if r.Kind == WatchReportFailed {
 			t.Fatalf("a reported run was also recorded as failed: %+v", r)
 		}
+	}
+}
+
+func TestWatchCompletionPausesScheduleAndNotifiesOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   string
+		notify   bool
+		asked    bool
+		wantKind string
+	}{
+		{name: "completion", status: "ok", notify: true, wantKind: notify.KindIdle},
+		{name: "silent completion", status: "ok"},
+		{name: "completion after question", status: "ok", notify: true, asked: true, wantKind: notify.KindIdle},
+		{name: "alert completion", status: "alert", notify: true, wantKind: notify.KindAttention},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newWatchHarness(t)
+			sink := newNotifySink(t)
+			n := notify.New(config.Notify{URL: sink.URL})
+			h.m.SetNotifier(n)
+			h.create(WatchDefinition{})
+			h.m.tickWatches()
+			waitFor(t, func() bool { return h.runs() == 1 })
+			s, _ := h.run(0)
+			if tc.asked {
+				s.emitter.Emit(event.QuestionAsked, map[string]any{"question": "Proceed?"})
+				s.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": "Yes"})
+			}
+			r := orchestrator.WatchReport{Status: tc.status, Summary: "results ready", Notes: "final baseline", Completed: true, Notify: tc.notify}
+			h.report(0, r)
+			// Retrying a completed tool call must not append or push twice.
+			if _, err := h.m.recordWatchReport(h.ws, s.ID, r); err != nil {
+				t.Fatal(err)
+			}
+			n.Flush()
+			rec := h.record()
+			if !rec.Paused || rec.PausedReason != "completed" || rec.Last == nil || !rec.Last.Completed || rec.Notes != "final baseline" {
+				t.Fatalf("completion state = %+v", rec)
+			}
+			if rs := h.reports(); len(rs) != 1 || !rs[0].Completed {
+				t.Fatalf("completion history = %+v", rs)
+			}
+			got := sink.all()
+			if tc.wantKind == "" {
+				if len(got) != 0 {
+					t.Fatalf("silent completion pushed %+v", got)
+				}
+			} else if len(got) != 1 || got[0].tags != tc.wantKind || !strings.Contains(got[0].body, "results ready") {
+				t.Fatalf("completion notification = %+v, want one %s", got, tc.wantKind)
+			}
+			// Reloaded persisted state keeps future scheduled runs paused.
+			h.setNow(h.now.Add(3 * time.Hour))
+			h.m.tickWatches()
+			h.waitIdle()
+			if h.runs() != 1 {
+				t.Fatal("completed watch started another scheduled run")
+			}
+		})
 	}
 }
 

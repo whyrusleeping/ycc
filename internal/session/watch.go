@@ -112,6 +112,7 @@ type WatchReportRecord struct {
 	Summary      string                     `json:"summary"`
 	Actions      []orchestrator.WatchAction `json:"actions,omitempty"`
 	ScheduledFor time.Time                  `json:"scheduled_for,omitzero"`
+	Completed    bool                       `json:"completed,omitempty"`
 }
 
 type watchRun struct {
@@ -130,7 +131,7 @@ type watchRecord struct {
 	Definition   WatchDefinition    `json:"definition"`
 	Created      time.Time          `json:"created"`
 	Paused       bool               `json:"paused,omitempty"`
-	PausedReason string             `json:"paused_reason,omitempty"` // user | expired
+	PausedReason string             `json:"paused_reason,omitempty"` // user | expired | completed
 	NextDue      time.Time          `json:"next_due"`
 	Notes        string             `json:"notes,omitempty"`
 	Decisions    []WatchDecision    `json:"decisions,omitempty"`
@@ -315,7 +316,9 @@ func (m *Manager) createWatchAt(primary, label string, def WatchDefinition) (Wat
 	m.watchMu.Lock()
 	defer m.watchMu.Unlock()
 	if _, err := loadWatch(primary, def.Name); err == nil {
-		return WatchInfo{}, fmt.Errorf("%w %q", ErrWatchExists, def.Name)
+		return WatchInfo{}, fmt.Errorf("%w %q; use get_watch and update_watch to inspect or correct it", ErrWatchExists, def.Name)
+	} else if !errors.Is(err, ErrUnknownWatch) {
+		return WatchInfo{}, err
 	}
 	now := m.watchClock()
 	rec := watchRecord{Definition: def, Created: now, NextDue: now}
@@ -1108,20 +1111,32 @@ func (m *Manager) recordWatchReport(absWS, sessionID string, r orchestrator.Watc
 		m.watchMu.Unlock()
 		return "", errors.New("no watch owns this run (it may have been deleted)")
 	}
+	run := &rec.Runs[idx]
+	if run.Reported {
+		if flushWatchPending(primary, name, &rec) {
+			_ = saveWatch(primary, rec)
+		}
+		m.watchMu.Unlock()
+		return "Report already recorded. This run ends now.", nil
+	}
 	status := r.Status
 	if len(r.Actions) > 0 && status == orchestrator.WatchOK {
 		status = orchestrator.WatchWarn
 	}
-	run := &rec.Runs[idx]
 	report := WatchReportRecord{
 		At: m.watchClock(), Kind: WatchReportRun, SessionID: sessionID, Status: status,
 		Summary: strings.TrimSpace(r.Summary), Actions: r.Actions, ScheduledFor: run.ScheduledFor,
+		Completed: r.Completed,
 	}
 	flushWatchPending(primary, name, &rec)
 	run.Reported = true
 	run.Pending = &report
 	rec.Last = &report
 	rec.Notes = strings.TrimSpace(r.Notes)
+	completed := r.Completed && rec.PausedReason != "completed"
+	if r.Completed {
+		rec.Paused, rec.PausedReason = true, "completed"
+	}
 	rec.harvestDecisions(sessionID, evs)
 	// The report is durable once state is saved; a failed save records nothing,
 	// so a retried watch_report cannot duplicate history. The history append
@@ -1136,6 +1151,11 @@ func (m *Manager) recordWatchReport(absWS, sessionID string, r orchestrator.Watc
 	m.watchMu.Unlock()
 	if status == orchestrator.WatchAlert && !askedHumanQuestion(evs) {
 		m.Notify(notify.KindAttention, m.projectLabel(primary), sessionID, "watch "+name+": "+firstLine(report.Summary))
+	} else if completed && r.Notify {
+		m.Notify(notify.KindIdle, m.projectLabel(primary), sessionID, "watch "+name+" completed: "+firstLine(report.Summary))
+	}
+	if r.Completed {
+		return fmt.Sprintf("Report recorded (status %s). Watch %q paused: completed. This run ends now.", status, name), nil
 	}
 	return fmt.Sprintf("Report recorded (status %s). This run ends now.", status), nil
 }
@@ -1371,10 +1391,7 @@ func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string
 func (m *Manager) scheduleWatchFromChat(absWS string, spec orchestrator.WatchSpec) (string, error) {
 	primary := m.primaryTreeFor(filepath.Clean(absWS))
 	label := m.projectLabel(primary)
-	info, err := m.createWatchAt(primary, label, WatchDefinition{
-		Name: spec.Name, Brief: spec.Brief, Interval: Duration(spec.Interval), Model: spec.Model,
-		Probe: spec.Probe, ProbeAlways: spec.ProbeAlways, Expires: spec.Expires, AllowedActions: spec.AllowedActions,
-	})
+	info, err := m.createWatchAt(primary, label, watchDefinitionFromSpec(spec))
 	if err != nil {
 		return "", err
 	}

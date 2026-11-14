@@ -2968,9 +2968,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	if mode == watchMode {
 		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
 	} else if !unattended && m.watchSchedulerRunning() {
-		deps.ScheduleWatch = func(_ context.Context, spec orchestrator.WatchSpec) (string, error) {
-			return m.scheduleWatchFromChat(absWS, spec)
-		}
+		m.configureChatWatches(absWS, deps)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
