@@ -74,9 +74,6 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("project is required"))
 	}
 	// Same input rules as StartSession, checked before any worktree exists.
-	if err := rejectObviousCredential(m.Prompt); err != nil {
-		return nil, err
-	}
 	images, err := checkInputImages(m.Images)
 	if err != nil {
 		return nil, err

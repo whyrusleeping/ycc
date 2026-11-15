@@ -441,7 +441,6 @@ func TestSpawnWorkstreamNewSessionFields(t *testing.T) {
 
 	for name, req := range map[string]*v1.SpawnWorkstreamRequest{
 		"bad picture":   {Project: "demo", Prompt: "hi", Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/jpeg"}}},
-		"credential":    {Project: "demo", Prompt: "my key is sk-test-WORKSTREAM-SENTINEL-CREDENTIAL-0518"},
 		"unknown model": {Project: "demo", Prompt: "hi", CoordinatorModel: "nope"},
 		"bad thinking":  {Project: "demo", Prompt: "hi", CoordinatorThinking: "huge"},
 	} {

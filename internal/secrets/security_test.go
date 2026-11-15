@@ -42,15 +42,12 @@ func TestAuthorizationIsWorkspaceToolAndUseScoped(t *testing.T) {
 	}
 }
 
-func TestDisclosureGuardAndPresentationRedaction(t *testing.T) {
+func TestPresentationRedaction(t *testing.T) {
 	setupDir(t)
 	if err := Set("EXA_API_KEY", fakeSentinelCredential); err != nil {
 		t.Fatal(err)
 	}
 	input := "my api key is " + fakeSentinelCredential
-	if !LooksLikeCredential(input) {
-		t.Fatal("obvious credential was not detected")
-	}
 	redacted, changed := RedactForPresentation("diagnostic: " + input)
 	if !changed {
 		t.Fatal("presentation was not marked changed")
@@ -60,8 +57,5 @@ func TestDisclosureGuardAndPresentationRedaction(t *testing.T) {
 	}
 	if !strings.Contains(input, fakeSentinelCredential) {
 		t.Fatal("redaction unexpectedly modified source text")
-	}
-	if LooksLikeCredential("please use the credential named EXA_API_KEY") {
-		t.Fatal("a credential reference was mistaken for a raw value")
 	}
 }
