@@ -12,6 +12,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +67,9 @@ type Model struct {
 	Thinking        string `toml:"thinking"`         // "adaptive" | "off" | ""
 	Effort          string `toml:"effort"`           // "low" | "medium" | "high" | "xhigh" | "max"
 	ThinkingDisplay string `toml:"thinking_display"` // "summarized" | "omitted"
+	// ThinkingLevels overrides the single-knob levels offered for this model
+	// (see SupportedThinkingLevels). Empty uses the backend's default list.
+	ThinkingLevels []string `toml:"thinking_levels,omitempty"`
 
 	// ContextWindow is the model's input context capacity, independently of the
 	// per-turn output cap. Zero uses a built-in value when the model is known.
@@ -186,7 +190,19 @@ func (m Model) Validate(name string) error {
 	if err := m.validateContext(name); err != nil {
 		return err
 	}
+	if err := m.validateThinkingLevels(name); err != nil {
+		return err
+	}
 	return m.validateAuth(name)
+}
+
+func (m Model) validateThinkingLevels(name string) error {
+	for _, level := range m.ThinkingLevels {
+		if !validThinkingLevel(level) {
+			return fmt.Errorf("model %q: unknown thinking level %q in thinking_levels", name, level)
+		}
+	}
+	return nil
 }
 
 func (m Model) validateContext(name string) error {
@@ -329,14 +345,98 @@ const (
 	RoleReviewers   = "reviewers"
 )
 
+// ThinkingLevelScale is the single-knob reasoning scale, lowest first.
+var ThinkingLevelScale = []string{"off", "low", "medium", "high", "xhigh", "max"}
+
 // validThinkingLevel reports whether s is an allowed single-knob thinking level.
 func validThinkingLevel(s string) bool {
-	switch s {
-	case "off", "low", "medium", "high", "xhigh", "max":
-		return true
-	default:
-		return false
+	return thinkingLevelIndex(s) >= 0
+}
+
+func thinkingLevelIndex(s string) int {
+	for i, level := range ThinkingLevelScale {
+		if level == s {
+			return i
+		}
 	}
+	return -1
+}
+
+// backendThinkingLevels lists the levels a backend applies as distinct
+// settings. OpenAI-style backends omit "off" (it omits reasoning_effort, so the
+// model uses its own default effort) and "max" (clamped to xhigh by the
+// transport); generic OpenAI-compatible servers get the standard
+// low/medium/high set. Ollama only switches thinking on or off.
+func backendThinkingLevels(m Model) []string {
+	switch m.Backend {
+	case "openai":
+		return []string{"low", "medium", "high", "xhigh"}
+	case "openai-compatible", "glm":
+		return []string{"low", "medium", "high"}
+	case "ollama":
+		return []string{"off", "high"}
+	default:
+		return append([]string(nil), ThinkingLevelScale...)
+	}
+}
+
+// SupportedThinkingLevels returns the levels offered for this model in scale
+// order: the thinking_levels override when set, otherwise the backend default.
+func (m Model) SupportedThinkingLevels() []string {
+	if len(m.ThinkingLevels) == 0 {
+		return backendThinkingLevels(m)
+	}
+	var out []string
+	for _, level := range ThinkingLevelScale {
+		if slices.Contains(m.ThinkingLevels, level) {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
+// ClampThinkingLevel maps level onto supported. A supported level is kept.
+// "off" becomes the lowest supported level. Any other level becomes the nearest
+// supported level other than "off" (ties toward the higher level), or "off"
+// when that is the only choice. An empty supported list keeps level.
+func ClampThinkingLevel(supported []string, level string) string {
+	if len(supported) == 0 || slices.Contains(supported, level) {
+		return level
+	}
+	want := thinkingLevelIndex(level)
+	if want < 0 {
+		return level
+	}
+	if level == "off" {
+		best := ""
+		for _, s := range supported {
+			if i := thinkingLevelIndex(s); i >= 0 && (best == "" || i < thinkingLevelIndex(best)) {
+				best = s
+			}
+		}
+		if best == "" {
+			return level
+		}
+		return best
+	}
+	best, bestDist := "", 0
+	for _, s := range supported {
+		i := thinkingLevelIndex(s)
+		if i <= 0 {
+			continue
+		}
+		dist := i - want
+		if dist < 0 {
+			dist = -dist
+		}
+		if best == "" || dist < bestDist || (dist == bestDist && i > thinkingLevelIndex(best)) {
+			best, bestDist = s, dist
+		}
+	}
+	if best == "" {
+		return supported[0]
+	}
+	return best
 }
 
 // isSelfReviewStrategy reports whether a review tier's strategy means the
@@ -935,6 +1035,9 @@ func (c *Config) validate() error {
 		if err := m.validateContext(name); err != nil {
 			return err
 		}
+		if err := m.validateThinkingLevels(name); err != nil {
+			return err
+		}
 	}
 	// Validate only the explicitly configured review tiers; the built-ins are
 	// always valid. An unknown strategy, an agents-tier referencing an unknown
@@ -1411,8 +1514,8 @@ func (r *Registry) ReviewTiers() []ReviewTierInfo {
 }
 
 // SetModelThinking sets and persists the single-knob reasoning level for the
-// logical model named name. "off" disables reasoning; an
-// effort level enables adaptive thinking at that effort. ThinkingDisplay is
+// logical model named name, clamped to the model's supported levels. "off"
+// disables reasoning; an effort level enables adaptive thinking at that effort. ThinkingDisplay is
 // deliberately preserved. On a persist failure the model record is reverted.
 func (r *Registry) SetModelThinking(name, level string) error {
 	if !validThinkingLevel(level) {
@@ -1424,6 +1527,7 @@ func (r *Registry) SetModelThinking(name, level string) error {
 	if !ok {
 		return fmt.Errorf("unknown model %q", name)
 	}
+	level = ClampThinkingLevel(m.SupportedThinkingLevels(), level)
 	prev := m
 	if level == "off" {
 		m.Thinking = "off"
@@ -1456,18 +1560,36 @@ func (r *Registry) ModelThinkingLevel(name string) string {
 	return th.Effort
 }
 
+// ThinkingLevelsFor returns the supported thinking levels of a logical model.
+// Unknown names get the full scale.
+func (r *Registry) ThinkingLevelsFor(name string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.cfg.Models[name]
+	if !ok {
+		return append([]string(nil), ThinkingLevelScale...)
+	}
+	return m.SupportedThinkingLevels()
+}
+
+// ClampThinkingLevelFor clamps level to the supported levels of a logical model.
+func (r *Registry) ClampThinkingLevelFor(name, level string) string {
+	return ClampThinkingLevel(r.ThinkingLevelsFor(name), level)
+}
+
 type ModelInfo struct {
-	Name          string
-	Backend       string
-	Model         string
-	Auth          string
-	Disabled      bool
-	Notes         string
-	Modalities    []string
-	ContextWindow int
-	Thinking      string
-	Effort        string
-	Pricing       Pricing // resolved per-model pricing; Configured=false ⇒ unpriced
+	Name           string
+	Backend        string
+	Model          string
+	Auth           string
+	Disabled       bool
+	Notes          string
+	Modalities     []string
+	ContextWindow  int
+	Thinking       string
+	Effort         string
+	ThinkingLevels []string // supported levels (SupportedThinkingLevels)
+	Pricing        Pricing  // resolved per-model pricing; Configured=false ⇒ unpriced
 	// Partial explicit pricing leaves unset classes unknown (not free).
 	PriceInputKnown, PriceOutputKnown bool
 }
@@ -1806,7 +1928,7 @@ func (r *Registry) Models() []ModelInfo {
 		out = append(out, ModelInfo{
 			Name: name, Backend: m.Backend, Model: m.Model, Auth: m.Auth, Disabled: m.Disabled,
 			Notes: m.Notes, Modalities: append([]string(nil), m.Modalities...), ContextWindow: window,
-			Thinking: th.Thinking, Effort: th.Effort, Pricing: p,
+			Thinking: th.Thinking, Effort: th.Effort, ThinkingLevels: m.SupportedThinkingLevels(), Pricing: p,
 			PriceInputKnown: inputKnown, PriceOutputKnown: outputKnown,
 		})
 	}

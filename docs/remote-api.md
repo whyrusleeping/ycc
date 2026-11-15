@@ -840,6 +840,13 @@ curl -sS -H "$AUTH" -H "$JSON" \
   $B/ycc.v1.SessionService/StartSession
 ```
 
+`coordinatorThinking` optionally sets the coordinator model's thinking level
+(`off|low|medium|high|xhigh|max`) for this session only; `ycc.toml` is unchanged.
+A level the model does not list in [`ListModels`](#listmodels) `thinkingLevels` is
+clamped to the nearest supported one (spec §7.4), an unknown level is
+`invalid_argument`, and the choice survives `ResumeSession`. `SpawnWorkstream`
+accepts the same `coordinatorModel` and `coordinatorThinking` fields.
+
 `planOnly: true` starts a `chat` session with its plan-only guardrail on (see
 [`SetPlanOnly`](#setplanonly)); any other mode is `invalid_argument`.
 

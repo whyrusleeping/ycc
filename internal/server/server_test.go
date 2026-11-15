@@ -54,8 +54,8 @@ func TestSetThinkingNoSessionPersists(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 	if err := config.Save(path, &config.Config{
 		Models: map[string]config.Model{
-			"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"},
-			"b": {Backend: "ollama", BaseURL: "http://localhost:2", Model: "model-b"},
+			"a": {Backend: "anthropic", BaseURL: "http://localhost:1", Model: "model-a"},
+			"b": {Backend: "anthropic", BaseURL: "http://localhost:2", Model: "model-b"},
 		},
 		Roles: config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a", "b"}},
 	}); err != nil {
@@ -123,6 +123,15 @@ func TestSetThinkingNoSessionPersists(t *testing.T) {
 		Role: "coordinator", Level: "bogus",
 	})); err == nil {
 		t.Fatal("expected error for invalid thinking level")
+	}
+	// A session id that names no live session never falls back to saving defaults.
+	if _, err := srv.SetThinking(ctx, connect.NewRequest(&v1.SetThinkingRequest{
+		SessionId: "s_missing", Role: "coordinator", Level: "low",
+	})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("SetThinking(unknown session) err = %v, want NotFound", err)
+	}
+	if reloaded, err := config.Load(path); err != nil || reloaded.Models["a"].Effort != "max" {
+		t.Fatalf("unknown-session SetThinking changed saved level: %+v (err %v)", reloaded.Models["a"], err)
 	}
 }
 
@@ -803,7 +812,7 @@ func TestModelBackendRPCs(t *testing.T) {
 		t.Fatalf("UpsertModel: %v", err)
 	}
 
-	// It now appears in ListModels.
+	// It now appears in ListModels, with its backend's thinking levels.
 	list, err := srv.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
@@ -814,6 +823,9 @@ func TestModelBackendRPCs(t *testing.T) {
 			found = true
 			if !m.Disabled {
 				t.Fatal("disabled model was listed as enabled")
+			}
+			if want := []string{"low", "medium", "high", "xhigh"}; !reflect.DeepEqual(m.ThinkingLevels, want) {
+				t.Fatalf("gpt thinking levels = %v, want %v", m.ThinkingLevels, want)
 			}
 		}
 	}
@@ -868,6 +880,44 @@ func TestModelBackendRPCs(t *testing.T) {
 		if err != nil || got.Msg.Model.Notes == nil || got.Msg.Model.GetNotes() != tc.want {
 			t.Fatalf("notes after upsert %q = %v (err %v), want %q", tc.send, got.Msg.GetModel().Notes, err, tc.want)
 		}
+	}
+
+	// The thinking_levels override round-trips; omission preserves it, an empty
+	// list clears it back to the backend default, and unknown levels are rejected.
+	upsertLevels := func(levels *v1.ThinkingLevelList) error {
+		_, err := srv.UpsertModel(ctx, connect.NewRequest(&v1.UpsertModelRequest{Model: &v1.ModelConfig{
+			Name: "gpt", Backend: "openai", BaseUrl: "https://oai", Model: "gpt-4.1", KeyEnv: "OPENAI_API_KEY", ThinkingLevels: levels,
+		}}))
+		return err
+	}
+	storedLevels := func() []string {
+		t.Helper()
+		got, err := srv.GetModelConfig(ctx, connect.NewRequest(&v1.GetModelConfigRequest{Name: "gpt"}))
+		if err != nil {
+			t.Fatalf("GetModelConfig: %v", err)
+		}
+		return got.Msg.Model.GetThinkingLevels().GetLevels()
+	}
+	if err := upsertLevels(&v1.ThinkingLevelList{Levels: []string{"medium", "high"}}); err != nil {
+		t.Fatalf("UpsertModel(levels): %v", err)
+	}
+	if got := storedLevels(); !reflect.DeepEqual(got, []string{"medium", "high"}) {
+		t.Fatalf("stored levels = %v", got)
+	}
+	if err := upsertLevels(nil); err != nil {
+		t.Fatalf("UpsertModel(no levels): %v", err)
+	}
+	if got := storedLevels(); !reflect.DeepEqual(got, []string{"medium", "high"}) {
+		t.Fatalf("levels after omitted override = %v, want preserved", got)
+	}
+	if err := upsertLevels(&v1.ThinkingLevelList{}); err != nil {
+		t.Fatalf("UpsertModel(clear levels): %v", err)
+	}
+	if got := storedLevels(); got != nil {
+		t.Fatalf("levels after clearing = %v, want none", got)
+	}
+	if err := upsertLevels(&v1.ThinkingLevelList{Levels: []string{"turbo"}}); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("UpsertModel(unknown level) err = %v, want InvalidArgument", err)
 	}
 
 	// Removing a role-referenced model is rejected.

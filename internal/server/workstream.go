@@ -44,7 +44,7 @@ func workstreamError(err error) *connect.Error {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	case errors.Is(err, session.ErrUnknownProject):
 		return connect.NewError(connect.CodeNotFound, err)
-	case errors.Is(err, session.ErrUnknownModel):
+	case errors.Is(err, session.ErrUnknownModel), errors.Is(err, session.ErrUnknownThinkingLevel):
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, session.ErrDisabledModel):
 		return connect.NewError(connect.CodeFailedPrecondition, err)
@@ -82,14 +82,15 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 		return nil, err
 	}
 	ws, _, err := s.mgr.SpawnWorkstream(session.SpawnWorkstreamConfig{
-		Project:          m.Project,
-		BaseRef:          m.BaseRef,
-		TaskID:           m.TaskId,
-		Prompt:           m.Prompt,
-		Mode:             m.Mode,
-		CoordinatorModel: m.CoordinatorModel,
-		Preset:           m.Preset,
-		Images:           images,
+		Project:             m.Project,
+		BaseRef:             m.BaseRef,
+		TaskID:              m.TaskId,
+		Prompt:              m.Prompt,
+		Mode:                m.Mode,
+		CoordinatorModel:    m.CoordinatorModel,
+		CoordinatorThinking: m.CoordinatorThinking,
+		Preset:              m.Preset,
+		Images:              images,
 	})
 	if err != nil {
 		return nil, workstreamError(err)

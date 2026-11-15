@@ -603,14 +603,34 @@ rationale.
 
 ### 7.4 Reasoning settings
 
-Thinking and effort resolve per logical model, with a live per-model override taking precedence
-over persisted model config and then defaults. Roles that share a model share its default depth;
-a reviewer slot may override depth for that review only. Unsupported settings degrade without
-failing the turn and produce at most one visible warning per session/role.
+Thinking and effort resolve per logical model, with a session-only per-model override taking
+precedence over persisted model config and then defaults. Roles that share a model share its
+default depth; a reviewer slot may override depth for that review only. Unsupported settings
+degrade without failing the turn and produce at most one visible warning per session/role.
 
-Provider mappings preserve a common user contract: Anthropic supports adaptive thinking and the
-full effort range; OpenAI-compatible backends map supported reasoning-effort levels; Ollama
-supports only on/off; other backends may ignore the setting. Reported reasoning tokens are a
+Clients choose one level from `off|low|medium|high|xhigh|max`. Each model reports the levels it
+supports: its `thinking_levels` override (§13) or its backend's default list. The defaults omit
+levels a provider ignores or rewrites:
+
+| Backend | Levels | Mapping |
+|---|---|---|
+| `anthropic` | all six | `off` disables thinking; other levels set adaptive thinking at that effort |
+| `openai` (API key or Codex subscription) | `low medium high xhigh` | `reasoning_effort` / `reasoning.effort`; `off` would omit the effort (model default) and `max` would be sent as `xhigh` |
+| `openai-compatible`, `glm` | `low medium high` | `reasoning_effort`; how the server applies it is server-specific |
+| `ollama` | `off high` | thinking on/off only; the effort is not sent |
+
+A newly chosen level that a model does not support is clamped rather than rejected: a supported
+level is kept, `off` becomes the model's lowest level, and any other level becomes the nearest
+supported level above `off` (ties go to the higher level). Clients apply the same rule when a model
+change leaves the selected level unsupported. A watch's level is clamped for each run. Saved model
+config is neither revalidated nor clamped, so an older unsupported value keeps working as before.
+
+A level picked when starting a session or workstream (`coordinator_thinking`, beside
+`coordinator_model`) and `SetThinking` on a live session apply to that session only: `ycc.toml`
+is unchanged. The start-time level is recorded in `session_started`; each live change records
+`thinking_level_changed` with the clamped level per model, and reopen rebuilds the overrides from
+those events. `SetThinking` without a session id saves the clamped level in each targeted model's
+config. A watch's optional `thinking` applies to its runs (§9.2). Reported reasoning tokens are a
 subset of output tokens, not a separate billable class.
 
 ## 8. Tools and access policy
@@ -813,7 +833,7 @@ is retained as bounded continuation evidence. These records survive daemon resta
 ### 9.2 Watches
 
 A watch is a daemon-owned recurring check for one project: name, brief, interval (at least five
-minutes), optional model, optional probe command, optional expiry, and optional pre-authorized
+minutes), optional model and thinking level, optional probe command, optional expiry, and optional pre-authorized
 actions. Definitions, notes, standing decisions, and run state persist in
 `.ycc/watches/<name>/watch.json` with an append-only `reports.jsonl`; only a persistent daemon
 schedules them. Due times advance on the schedule's own grid, so cadence does not drift with run
@@ -924,7 +944,8 @@ opening attachments are rejected before the session/log is created.
 
 ## 13. Models, credentials, and review tiers
 
-A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, optional
+A TOML config maps logical model names to backend, endpoint, model id, auth, reasoning, an
+optional `thinking_levels` list overriding the backend's offered levels (§7.4), optional
 pricing, optional `context_window` and `context_safe_fraction`, and an enabled/disabled availability
 flag. Optional `notes` provide operator suitability advice, editable from the model editors (an
 omitted value preserves stored notes), and `modalities` list operator-supplied
@@ -990,8 +1011,9 @@ assigned key derives a random one once. The key is recorded on `model_turn` and 
 other backends (strict openai-compatible servers reject unknown fields). Subscription models are
 unpriced unless the user supplies rates.
 
-Runtime settings changes persist to the active `ycc.toml` and affect the next model construction;
-role and thinking changes may also update a live session's next turn. A model may be temporarily
+Runtime settings changes persist to the active `ycc.toml` and affect the next model construction.
+Role and thinking changes scoped to a live session update only that session's next turn and do not
+persist. A model may be temporarily
 disabled without deleting its connection, credential reference, pricing, reasoning, or role/tier
 references. Disabled models remain visible in backend settings but are omitted from new model and
 role choices, and explicit attempts to construct or select one for new inference fail clearly;
@@ -1120,6 +1142,9 @@ reinject the pixels.
 
 Settings expose logical models, role assignment, reasoning, work implementation, review tiers,
 and client-local presentation preferences. Daemon settings persist; local preferences do not.
+Saved thinking defaults change only through Settings; a thinking level chosen beside a model
+picker for a new or live session applies to that session (§7.4). Thinking pickers offer only the
+model's reported levels.
 The web Settings page is ordered for someone setting ycc up: models (subscription logins and the
 model list with each model's health), which model does each job (roles, reasoning, and work
 implementation together), code review tiers, notifications, spending limits, and daemon status.

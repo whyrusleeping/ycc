@@ -74,6 +74,9 @@ type WatchDefinition struct {
 	ProbeAlways    bool      `json:"probe_always,omitempty"`
 	Expires        time.Time `json:"expires,omitzero"`
 	AllowedActions []string  `json:"allowed_actions,omitempty"`
+	// Thinking is the runs' thinking level, clamped to the run model's supported
+	// levels; empty uses the model's saved level.
+	Thinking string `json:"thinking,omitempty"`
 }
 
 // Duration is a time.Duration persisted as a Go duration string.
@@ -258,6 +261,7 @@ func (m *Manager) validateWatchDefinition(def *WatchDefinition, creating bool) e
 	def.Brief = strings.TrimSpace(def.Brief)
 	def.Model = strings.TrimSpace(def.Model)
 	def.Probe = strings.TrimSpace(def.Probe)
+	def.Thinking = strings.TrimSpace(def.Thinking)
 	if !watchNameRE.MatchString(def.Name) {
 		return fmt.Errorf("%w: name must be 1-64 lowercase letters, digits, '-' or '_', starting with a letter or digit", ErrInvalidWatch)
 	}
@@ -276,6 +280,11 @@ func (m *Manager) validateWatchDefinition(def *WatchDefinition, creating bool) e
 		}
 		if !m.reg.Enabled(def.Model) {
 			return fmt.Errorf("%w %q", ErrDisabledModel, def.Model)
+		}
+	}
+	if def.Thinking != "" {
+		if _, ok := thinkingForLevel(def.Thinking); !ok {
+			return fmt.Errorf("%w: unknown thinking level %q", ErrInvalidWatch, def.Thinking)
 		}
 	}
 	if creating && !def.Expires.IsZero() && !def.Expires.After(m.watchClock()) {
@@ -332,6 +341,12 @@ func (m *Manager) createWatchAt(primary, label string, def WatchDefinition) (Wat
 // UpdateWatch replaces a watch's definition, keeping its notes, decisions, and
 // history. A shorter interval brings the next run forward.
 func (m *Manager) UpdateWatch(project string, def WatchDefinition) (WatchInfo, error) {
+	return m.updateWatch(project, def, false)
+}
+
+// updateWatch implements UpdateWatch. keepThinking retains the stored thinking
+// level for callers that cannot set it (the chat update_watch tool).
+func (m *Manager) updateWatch(project string, def WatchDefinition, keepThinking bool) (WatchInfo, error) {
 	primary, label, err := m.watchPrimary(project)
 	if err != nil {
 		return WatchInfo{}, err
@@ -347,6 +362,9 @@ func (m *Manager) UpdateWatch(project string, def WatchDefinition) (WatchInfo, e
 	}
 	if next := m.watchClock().Add(time.Duration(def.Interval)); next.Before(rec.NextDue) {
 		rec.NextDue = next
+	}
+	if keepThinking {
+		def.Thinking = rec.Definition.Thinking
 	}
 	rec.Definition = def
 	if rec.Paused && rec.PausedReason == "expired" && (def.Expires.IsZero() || def.Expires.After(m.watchClock())) {
@@ -891,12 +909,13 @@ func lastLine(s string) string {
 
 func (m *Manager) startWatchRunSession(primary string, def WatchDefinition, runCtx string) (*Session, error) {
 	return m.start(Config{
-		Workspace:        primary,
-		Mode:             watchMode,
-		Origin:           OriginWatch,
-		Prompt:           def.Brief,
-		CoordinatorModel: def.Model,
-		loopContinuation: runCtx,
+		Workspace:           primary,
+		Mode:                watchMode,
+		Origin:              OriginWatch,
+		Prompt:              def.Brief,
+		CoordinatorModel:    def.Model,
+		CoordinatorThinking: def.Thinking,
+		loopContinuation:    runCtx,
 	}, false)
 }
 

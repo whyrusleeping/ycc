@@ -91,6 +91,13 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// SetPlanOnly). Any other mode => InvalidArgument.
   public var planOnly: Bool = false
 
+  /// coordinator_thinking optionally sets the coordinator model's thinking level
+  /// FOR THIS SESSION ONLY (off | low | medium | high | xhigh | max); the model's
+  /// saved level in ycc.toml is untouched. A level the model does not support
+  /// (ModelInfo.thinking_levels) is clamped to the nearest supported one. Empty
+  /// means the model's saved level. An unknown level => InvalidArgument.
+  public var coordinatorThinking: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2056,6 +2063,10 @@ public nonisolated struct Ycc_V1_ModelInfo: Sendable {
   /// inference or role/model selection until re-enabled.
   public var disabled: Bool = false
 
+  /// Thinking levels this model supports, lowest first: the [models.X]
+  /// thinking_levels override when set, otherwise the backend default.
+  public var thinkingLevels: [String] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2083,6 +2094,7 @@ public nonisolated struct Ycc_V1_ListModelsResponse: Sendable {
 
   /// Resolved thinking level of each role's currently assigned model (reviewers
   /// use the first model), so the overlay seeds its role-row controls accurately.
+  /// With a session_id these include that session's thinking overrides.
   public var coordinatorThinking: String = String()
 
   public var implementerThinking: String = String()
@@ -2191,6 +2203,18 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   /// Clears the value of `notes`. Subsequent reads from it will return its default value.
   public mutating func clearNotes() {self._notes = nil}
 
+  /// The [models.X] thinking_levels override. Omission preserves the stored
+  /// override; a present message with no levels clears it (the backend default
+  /// applies). GetModelConfig sets it only when an override is stored.
+  public var thinkingLevels: Ycc_V1_ThinkingLevelList {
+    get {_thinkingLevels ?? Ycc_V1_ThinkingLevelList()}
+    set {_thinkingLevels = newValue}
+  }
+  /// Returns true if `thinkingLevels` has been explicitly set.
+  public var hasThinkingLevels: Bool {self._thinkingLevels != nil}
+  /// Clears the value of `thinkingLevels`. Subsequent reads from it will return its default value.
+  public mutating func clearThinkingLevels() {self._thinkingLevels = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2201,31 +2225,48 @@ public nonisolated struct Ycc_V1_ModelConfig: Sendable {
   fileprivate var _priceCacheWrite: Double? = nil
   fileprivate var _disabled: Bool? = nil
   fileprivate var _notes: String? = nil
+  fileprivate var _thinkingLevels: Ycc_V1_ThinkingLevelList? = nil
+}
+
+public nonisolated struct Ycc_V1_ThinkingLevelList: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// off | low | medium | high | xhigh | max
+  public var levels: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// UpsertModel adds or replaces a logical model backend. The change
 /// takes effect on the next turn/spawn; persist=true also writes ycc.toml.
-public nonisolated struct Ycc_V1_UpsertModelRequest: Sendable {
+public nonisolated struct Ycc_V1_UpsertModelRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var model: Ycc_V1_ModelConfig {
-    get {_model ?? Ycc_V1_ModelConfig()}
-    set {_model = newValue}
+    get {_storage._model ?? Ycc_V1_ModelConfig()}
+    set {_uniqueStorage()._model = newValue}
   }
   /// Returns true if `model` has been explicitly set.
-  public var hasModel: Bool {self._model != nil}
+  public var hasModel: Bool {_storage._model != nil}
   /// Clears the value of `model`. Subsequent reads from it will return its default value.
-  public mutating func clearModel() {self._model = nil}
+  public mutating func clearModel() {_uniqueStorage()._model = nil}
 
-  public var persist: Bool = false
+  public var persist: Bool {
+    get {_storage._persist}
+    set {_uniqueStorage()._persist = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _model: Ycc_V1_ModelConfig? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct Ycc_V1_UpsertModelResponse: Sendable {
@@ -2372,11 +2413,14 @@ public nonisolated struct Ycc_V1_SetRoleConfigResponse: Sendable {
   public init() {}
 }
 
-/// SetThinking maps role to its currently assigned model(s) and stores the level
-/// in each model's [models.X] config (empty role = all assigned models, deduped;
-/// reviewers = every reviewer model). When session_id names a live session the
-/// change also applies immediately; an empty/unknown session_id resolves the
-/// default role assignments. Levels: off | low | medium | high | xhigh | max.
+/// SetThinking maps role to its currently assigned model(s) (empty role = all
+/// assigned models, deduped; reviewers = every reviewer model) and sets their
+/// thinking level. A non-empty session_id must name a live session
+/// (else NotFound): the level applies to that session only, from its next turn,
+/// and survives reopen; ycc.toml is unchanged. An empty session_id resolves the
+/// default role assignments and saves the level in each model's [models.X]
+/// config. Each model gets the level clamped to its supported levels
+/// (ModelInfo.thinking_levels). Levels: off | low | medium | high | xhigh | max.
 public nonisolated struct Ycc_V1_SetThinkingRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -4337,6 +4381,9 @@ public nonisolated struct Ycc_V1_SpawnWorkstreamRequest: Sendable {
 
   public var images: [Ycc_V1_ImageAttachment] = []
 
+  /// Session-only coordinator thinking level, as StartSessionRequest.coordinator_thinking.
+  public var coordinatorThinking: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4782,6 +4829,10 @@ public nonisolated struct Ycc_V1_WatchDefinition: Sendable {
 
   /// pre-authorized actions beyond the low-risk default
   public var allowedActions: [String] = []
+
+  /// Thinking level for runs (off | low | medium | high | xhigh | max), clamped to
+  /// the run model's supported levels; empty = the model's saved level.
+  public var thinking: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5241,7 +5292,7 @@ nonisolated extension Ycc_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._Messag
 
 nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartSessionRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{1}preset\0\u{3}plan_only\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{1}preset\0\u{3}plan_only\0\u{3}coordinator_thinking\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5257,6 +5308,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
       case 7: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.preset) }()
       case 9: try { try decoder.decodeSingularBoolField(value: &self.planOnly) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.coordinatorThinking) }()
       default: break
       }
     }
@@ -5287,6 +5339,9 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if self.planOnly != false {
       try visitor.visitSingularBoolField(value: self.planOnly, fieldNumber: 9)
     }
+    if !self.coordinatorThinking.isEmpty {
+      try visitor.visitSingularStringField(value: self.coordinatorThinking, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5299,6 +5354,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if lhs.images != rhs.images {return false}
     if lhs.preset != rhs.preset {return false}
     if lhs.planOnly != rhs.planOnly {return false}
+    if lhs.coordinatorThinking != rhs.coordinatorThinking {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8993,7 +9049,7 @@ nonisolated extension Ycc_V1_ListModelsRequest: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{1}model\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}priced\0\u{1}disabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{1}model\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}priced\0\u{1}disabled\0\u{3}thinking_levels\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -9010,6 +9066,7 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
       case 7: try { try decoder.decodeSingularDoubleField(value: &self._priceCacheWrite) }()
       case 8: try { try decoder.decodeSingularBoolField(value: &self.priced) }()
       case 9: try { try decoder.decodeSingularBoolField(value: &self.disabled) }()
+      case 10: try { try decoder.decodeRepeatedStringField(value: &self.thinkingLevels) }()
       default: break
       }
     }
@@ -9047,6 +9104,9 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
     if self.disabled != false {
       try visitor.visitSingularBoolField(value: self.disabled, fieldNumber: 9)
     }
+    if !self.thinkingLevels.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.thinkingLevels, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -9060,6 +9120,7 @@ nonisolated extension Ycc_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._Me
     if lhs._priceCacheWrite != rhs._priceCacheWrite {return false}
     if lhs.priced != rhs.priced {return false}
     if lhs.disabled != rhs.disabled {return false}
+    if lhs.thinkingLevels != rhs.thinkingLevels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -9132,7 +9193,7 @@ nonisolated extension Ycc_V1_ListModelsResponse: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0\u{1}disabled\0\u{1}notes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}backend\0\u{3}base_url\0\u{1}model\0\u{3}key_env\0\u{1}thinking\0\u{1}effort\0\u{3}thinking_display\0\u{3}price_input\0\u{3}price_output\0\u{3}price_cache_read\0\u{3}price_cache_write\0\u{1}auth\0\u{1}disabled\0\u{1}notes\0\u{3}thinking_levels\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -9155,6 +9216,7 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
       case 13: try { try decoder.decodeSingularStringField(value: &self.auth) }()
       case 14: try { try decoder.decodeSingularBoolField(value: &self._disabled) }()
       case 15: try { try decoder.decodeSingularStringField(value: &self._notes) }()
+      case 16: try { try decoder.decodeSingularMessageField(value: &self._thinkingLevels) }()
       default: break
       }
     }
@@ -9210,6 +9272,9 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     try { if let v = self._notes {
       try visitor.visitSingularStringField(value: v, fieldNumber: 15)
     } }()
+    try { if let v = self._thinkingLevels {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -9229,6 +9294,37 @@ nonisolated extension Ycc_V1_ModelConfig: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.auth != rhs.auth {return false}
     if lhs._disabled != rhs._disabled {return false}
     if lhs._notes != rhs._notes {return false}
+    if lhs._thinkingLevels != rhs._thinkingLevels {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ThinkingLevelList: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ThinkingLevelList"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}levels\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.levels) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.levels.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.levels, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ThinkingLevelList, rhs: Ycc_V1_ThinkingLevelList) -> Bool {
+    if lhs.levels != rhs.levels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -9238,36 +9334,74 @@ nonisolated extension Ycc_V1_UpsertModelRequest: SwiftProtobuf.Message, SwiftPro
   public static let protoMessageName: String = _protobuf_package + ".UpsertModelRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}persist\0")
 
+  fileprivate class _StorageClass {
+    var _model: Ycc_V1_ModelConfig? = nil
+    var _persist: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _model = source._model
+      _persist = source._persist
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
+
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._model) }()
-      case 2: try { try decoder.decodeSingularBoolField(value: &self.persist) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._model) }()
+        case 2: try { try decoder.decodeSingularBoolField(value: &_storage._persist) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._model {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if self.persist != false {
-      try visitor.visitSingularBoolField(value: self.persist, fieldNumber: 2)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._model {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if _storage._persist != false {
+        try visitor.visitSingularBoolField(value: _storage._persist, fieldNumber: 2)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_UpsertModelRequest, rhs: Ycc_V1_UpsertModelRequest) -> Bool {
-    if lhs._model != rhs._model {return false}
-    if lhs.persist != rhs.persist {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._model != rhs_storage._model {return false}
+        if _storage._persist != rhs_storage._persist {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -13165,7 +13299,7 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpawnWorkstreamRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{2}\u{2}mode\0\u{3}coordinator_model\0\u{1}preset\0\u{1}images\0\u{c}\u{5}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{2}\u{2}mode\0\u{3}coordinator_model\0\u{1}preset\0\u{1}images\0\u{3}coordinator_thinking\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -13181,6 +13315,7 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
       case 7: try { try decoder.decodeSingularStringField(value: &self.coordinatorModel) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.preset) }()
       case 9: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.coordinatorThinking) }()
       default: break
       }
     }
@@ -13211,6 +13346,9 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if !self.images.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.images, fieldNumber: 9)
     }
+    if !self.coordinatorThinking.isEmpty {
+      try visitor.visitSingularStringField(value: self.coordinatorThinking, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -13223,6 +13361,7 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if lhs.coordinatorModel != rhs.coordinatorModel {return false}
     if lhs.preset != rhs.preset {return false}
     if lhs.images != rhs.images {return false}
+    if lhs.coordinatorThinking != rhs.coordinatorThinking {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -14066,7 +14205,7 @@ nonisolated extension Ycc_V1_GetActivityStepsResponse: SwiftProtobuf.Message, Sw
 
 nonisolated extension Ycc_V1_WatchDefinition: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WatchDefinition"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}brief\0\u{3}interval_secs\0\u{1}model\0\u{1}probe\0\u{3}probe_always\0\u{1}expires\0\u{3}allowed_actions\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}brief\0\u{3}interval_secs\0\u{1}model\0\u{1}probe\0\u{3}probe_always\0\u{1}expires\0\u{3}allowed_actions\0\u{1}thinking\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -14082,6 +14221,7 @@ nonisolated extension Ycc_V1_WatchDefinition: SwiftProtobuf.Message, SwiftProtob
       case 6: try { try decoder.decodeSingularBoolField(value: &self.probeAlways) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.expires) }()
       case 8: try { try decoder.decodeRepeatedStringField(value: &self.allowedActions) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.thinking) }()
       default: break
       }
     }
@@ -14112,6 +14252,9 @@ nonisolated extension Ycc_V1_WatchDefinition: SwiftProtobuf.Message, SwiftProtob
     if !self.allowedActions.isEmpty {
       try visitor.visitRepeatedStringField(value: self.allowedActions, fieldNumber: 8)
     }
+    if !self.thinking.isEmpty {
+      try visitor.visitSingularStringField(value: self.thinking, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -14124,6 +14267,7 @@ nonisolated extension Ycc_V1_WatchDefinition: SwiftProtobuf.Message, SwiftProtob
     if lhs.probeAlways != rhs.probeAlways {return false}
     if lhs.expires != rhs.expires {return false}
     if lhs.allowedActions != rhs.allowedActions {return false}
+    if lhs.thinking != rhs.thinking {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

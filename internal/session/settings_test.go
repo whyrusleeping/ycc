@@ -63,6 +63,22 @@ func newTestSession(t *testing.T) (*Session, *bytes.Buffer) {
 	return s, &buf
 }
 
+// offerAllThinkingLevels overrides the test models' (Ollama on/off) levels with
+// the full scale so tests can exercise distinct effort levels.
+func offerAllThinkingLevels(t *testing.T, reg *config.Registry, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		m, ok := reg.GetModel(name)
+		if !ok {
+			t.Fatalf("model %q missing", name)
+		}
+		m.ThinkingLevels = config.ThinkingLevelScale
+		if err := reg.UpsertModel(name, m, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func logHas(buf *bytes.Buffer, typ string) bool {
 	return strings.Contains(buf.String(), typ)
 }
@@ -202,6 +218,7 @@ func TestThinkingForLevel(t *testing.T) {
 // a log event. The override also wins over per-model config in thinkingFor.
 func TestSetThinkingUpdatesLoopAndSpecs(t *testing.T) {
 	s, buf := newTestSession(t)
+	offerAllThinkingLevels(t, s.reg, "a")
 
 	if err := s.SetThinking("", "low"); err != nil {
 		t.Fatal(err)
@@ -251,6 +268,7 @@ func TestThinkingPerModelResolutionAndRoleSwap(t *testing.T) {
 	s, _ := newTestSession(t)
 	recorder := &captureRecorder{}
 	s.emitter = event.NewEmitter(recorder, "coordinator")
+	offerAllThinkingLevels(t, s.reg, "a", "b")
 	if err := s.reg.SetModelThinking("b", "low"); err != nil {
 		t.Fatalf("seed b thinking: %v", err)
 	}

@@ -41,6 +41,12 @@ message StartSessionRequest {
   // plan_only starts a chat session with its plan-only guardrail on (see
   // SetPlanOnly). Any other mode => InvalidArgument.
   bool plan_only = 9;
+  // coordinator_thinking optionally sets the coordinator model's thinking level
+  // FOR THIS SESSION ONLY (off | low | medium | high | xhigh | max); the model's
+  // saved level in ycc.toml is untouched. A level the model does not support
+  // (ModelInfo.thinking_levels) is clamped to the nearest supported one. Empty
+  // means the model's saved level. An unknown level => InvalidArgument.
+  string coordinator_thinking = 10;
 }
 message StartSessionResponse { string session_id = 1; }
 
@@ -697,6 +703,9 @@ message ModelInfo {
   // A disabled model remains configured and editable but is unavailable for new
   // inference or role/model selection until re-enabled.
   bool disabled = 9;
+  // Thinking levels this model supports, lowest first: the [models.X]
+  // thinking_levels override when set, otherwise the backend default.
+  repeated string thinking_levels = 10;
 }
 message ListModelsResponse {
   repeated ModelInfo models = 1;
@@ -707,6 +716,7 @@ message ListModelsResponse {
   repeated string reviewers = 4;
   // Resolved thinking level of each role's currently assigned model (reviewers
   // use the first model), so the overlay seeds its role-row controls accurately.
+  // With a session_id these include that session's thinking overrides.
   string coordinator_thinking = 5;
   string implementer_thinking = 6;
   string reviewers_thinking = 7;
@@ -738,6 +748,13 @@ message ModelConfig {
   // (spawn_agent's model catalog). Omission preserves the stored notes; an
   // explicit empty string clears them.
   optional string notes = 15;
+  // The [models.X] thinking_levels override. Omission preserves the stored
+  // override; a present message with no levels clears it (the backend default
+  // applies). GetModelConfig sets it only when an override is stored.
+  ThinkingLevelList thinking_levels = 16;
+}
+message ThinkingLevelList {
+  repeated string levels = 1; // off | low | medium | high | xhigh | max
 }
 
 // UpsertModel adds or replaces a logical model backend. The change
@@ -789,11 +806,14 @@ message SetRoleConfigRequest {
 }
 message SetRoleConfigResponse {}
 
-// SetThinking maps role to its currently assigned model(s) and stores the level
-// in each model's [models.X] config (empty role = all assigned models, deduped;
-// reviewers = every reviewer model). When session_id names a live session the
-// change also applies immediately; an empty/unknown session_id resolves the
-// default role assignments. Levels: off | low | medium | high | xhigh | max.
+// SetThinking maps role to its currently assigned model(s) (empty role = all
+// assigned models, deduped; reviewers = every reviewer model) and sets their
+// thinking level. A non-empty session_id must name a live session
+// (else NotFound): the level applies to that session only, from its next turn,
+// and survives reopen; ycc.toml is unchanged. An empty session_id resolves the
+// default role assignments and saves the level in each model's [models.X]
+// config. Each model gets the level clamped to its supported levels
+// (ModelInfo.thinking_levels). Levels: off | low | medium | high | xhigh | max.
 message SetThinkingRequest {
   string session_id = 1;
   string level = 2; // off | low | medium | high | xhigh | max
@@ -1391,6 +1411,8 @@ message SpawnWorkstreamRequest {
   string coordinator_model = 7;
   string preset = 8;
   repeated ImageAttachment images = 9;
+  // Session-only coordinator thinking level, as StartSessionRequest.coordinator_thinking.
+  string coordinator_thinking = 10;
 }
 message SpawnWorkstreamResponse { WorkstreamInfo workstream = 1; }
 
@@ -1529,6 +1551,9 @@ message WatchDefinition {
   bool probe_always = 6;    // start the model run even when the probe passes
   string expires = 7;       // the watch pauses at this time; empty = never
   repeated string allowed_actions = 8; // pre-authorized actions beyond the low-risk default
+  // Thinking level for runs (off | low | medium | high | xhigh | max), clamped to
+  // the run model's supported levels; empty = the model's saved level.
+  string thinking = 9;
 }
 // One action a run took, with how to undo it.
 message WatchAction {

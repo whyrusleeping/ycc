@@ -160,6 +160,7 @@ func watchDefinitionFromProto(d *v1.WatchDefinition) (session.WatchDefinition, e
 		Probe:          d.Probe,
 		ProbeAlways:    d.ProbeAlways,
 		AllowedActions: d.AllowedActions,
+		Thinking:       d.Thinking,
 	}
 	if e := strings.TrimSpace(d.Expires); e != "" {
 		t, err := time.Parse(time.RFC3339, e)
@@ -181,6 +182,7 @@ func watchDefinitionToProto(d session.WatchDefinition) *v1.WatchDefinition {
 		ProbeAlways:    d.ProbeAlways,
 		Expires:        rfc3339(d.Expires),
 		AllowedActions: d.AllowedActions,
+		Thinking:       d.Thinking,
 	}
 }
 

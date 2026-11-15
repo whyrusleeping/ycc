@@ -65,6 +65,10 @@ type Config struct {
 	// THIS SESSION ONLY: the persisted per-role defaults are
 	// untouched and implementer/reviewers keep them. An unknown name is an error.
 	CoordinatorModel string
+	// CoordinatorThinking, when set, is a session-only thinking level for the
+	// coordinator's model, clamped to that model's supported levels. The saved
+	// model config is untouched. An unknown level is ErrUnknownThinkingLevel.
+	CoordinatorThinking string
 	// Preset identifies the client-side opening-prompt preset. A configured
 	// roles.presets binding selects this session's initial coordinator without
 	// changing the persisted role defaults. An unbound preset behaves normally.
@@ -99,7 +103,8 @@ type Session struct {
 	reg                 *config.Registry
 	prompt              string
 	preset              string
-	coordinatorExplicit bool // StartSession coordinator_model won over any preset binding
+	coordinatorExplicit bool   // StartSession coordinator_model won over any preset binding
+	coordinatorThinking string // start-time session-only coordinator level, recorded in session_started
 	// startupNotices are emitted as visible, non-fatal events after the session
 	// lifecycle marker (a stale preset binding falling back safely, untracked
 	// files too large to snapshot).
@@ -163,7 +168,7 @@ type Session struct {
 	// thinkLevels holds per-model reasoning overrides, keyed
 	// by logical model name. An empty/missing entry means "use the model config";
 	// any of off/low/medium/high/xhigh/max forces that level for the model until
-	// changed.
+	// changed. Overrides are session-only and rebuilt from the log on reopen.
 	thinkLevels map[string]string
 	// Spend guard, guarded by s.mu. budgetWarned is set
 	// once the session crosses ~80% of a configured cap (so the warning fires at
@@ -1201,8 +1206,9 @@ func (s *Session) SetRoleConfig(coordinator, implementer string, reviewers []str
 }
 
 // RoleConfigSnapshot returns one synchronized view of this session's live role
-// assignments and the model-owned thinking level resolved for each role. The
-// first reviewer model represents the reviewer row, matching global settings.
+// assignments and the thinking level resolved for each role's model (the session
+// override, else the saved model level). The first reviewer model represents the
+// reviewer row, matching global settings.
 func (s *Session) RoleConfigSnapshot() (coordinator, implementer string, reviewers []string, coordinatorThinking, implementerThinking, reviewersThinking string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1213,10 +1219,13 @@ func (s *Session) RoleConfigSnapshot() (coordinator, implementer string, reviewe
 	if len(reviewers) > 0 {
 		reviewer = reviewers[0]
 	}
-	return coordinator, implementer, reviewers,
-		s.reg.ModelThinkingLevel(coordinator),
-		s.reg.ModelThinkingLevel(implementer),
-		s.reg.ModelThinkingLevel(reviewer)
+	level := func(name string) string {
+		if l := s.thinkLevels[name]; l != "" {
+			return l
+		}
+		return s.reg.ModelThinkingLevel(name)
+	}
+	return coordinator, implementer, reviewers, level(coordinator), level(implementer), level(reviewer)
 }
 
 // ReferencesModel reports whether the session's current (possibly mid-session
@@ -1237,11 +1246,13 @@ func (s *Session) ReferencesModel(name string) bool {
 	return false
 }
 
-// SetThinking applies a reasoning level to the model(s) assigned to role. An
-// empty role targets all assigned models; reviewers targets the
+// SetThinking applies a session-only reasoning level to the model(s) assigned to
+// role. An empty role targets all assigned models; reviewers targets the
 // whole reviewer fan-out. Models are deduplicated, so shared role assignments
-// receive one override and one persisted update. Every role backed by a targeted
-// model is refreshed for its next turn/spawn.
+// receive one override. Each model gets the level clamped to its supported
+// levels. Every role backed by a targeted model is refreshed for its next
+// turn/spawn. The saved model config is untouched; reopen replays the
+// thinking_level_changed event.
 func (s *Session) SetThinking(role, level string) error {
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
@@ -1280,6 +1291,10 @@ func (s *Session) SetThinking(role, level string) error {
 		models = append(models, name)
 	}
 	sort.Strings(models)
+	perModel := make(map[string]string, len(models))
+	for _, name := range models {
+		perModel[name] = s.reg.ClampThinkingLevelFor(name, level)
+	}
 	fromModel := coord // empty/all preserves the old coordinator-based "from" value
 	if role != "" && len(byRole[role]) > 0 {
 		fromModel = byRole[role][0]
@@ -1300,7 +1315,7 @@ func (s *Session) SetThinking(role, level string) error {
 	}
 	from := s.thinkLevels[fromModel]
 	for _, name := range models {
-		s.thinkLevels[name] = level
+		s.thinkLevels[name] = perModel[name]
 	}
 	s.mu.Unlock()
 	if from == "" && fromModel != "" {
@@ -1335,20 +1350,79 @@ func (s *Session) SetThinking(role, level string) error {
 	if emittedRole == "" {
 		emittedRole = "all"
 	}
+	// "to" is the requested level; "levels" holds each model's clamped level.
 	s.emitter.Emit(event.ThinkingLevelChanged, map[string]any{
-		"role": emittedRole, "models": models, "from": from, "to": level,
+		"role": emittedRole, "models": models, "from": from, "to": level, "levels": perModel,
 	})
 	if err := s.logFailure(); err != nil {
 		return fmt.Errorf("session event log failed: %w", err)
 	}
-	// Persist only after the live mutation is replayable. Each target model keeps
-	// its level when role assignments later change.
-	for _, name := range models {
-		if err := s.reg.SetModelThinking(name, level); err != nil {
-			return fmt.Errorf("persist thinking level for model %q: %w", name, err)
+	return nil
+}
+
+// replayThinkLevels rebuilds a session's thinking overrides from its log: the
+// start-time coordinator level, then each thinking_level_changed in order.
+func replayThinkLevels(events []event.Event) map[string]string {
+	levels := map[string]string{}
+	set := func(name, level string) {
+		if _, ok := thinkingForLevel(level); ok && name != "" {
+			levels[name] = level
 		}
 	}
-	return nil
+	for _, ev := range events {
+		switch ev.Type {
+		case event.SessionStarted:
+			coord, _ := ev.Data["coordinator"].(string)
+			level, _ := ev.Data["coordinator_thinking"].(string)
+			set(coord, level)
+		case event.ThinkingLevelChanged:
+			to, _ := ev.Data["to"].(string)
+			for _, name := range strList(ev.Data["models"]) {
+				level := to
+				switch perModel := ev.Data["levels"].(type) {
+				case map[string]string:
+					if l := perModel[name]; l != "" {
+						level = l
+					}
+				case map[string]any:
+					if l, _ := perModel[name].(string); l != "" {
+						level = l
+					}
+				}
+				set(name, level)
+			}
+		}
+	}
+	return levels
+}
+
+// seedThinkLevels installs thinking overrides before the session runs and
+// applies them to the startup implementer and reviewer specs.
+func (s *Session) seedThinkLevels(levels map[string]string) {
+	if len(levels) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.thinkLevels == nil {
+		s.thinkLevels = map[string]string{}
+	}
+	for name, level := range levels {
+		s.thinkLevels[name] = level
+	}
+	s.mu.Unlock()
+	apply := func(spec orchestrator.AgentSpec) orchestrator.AgentSpec {
+		if _, ok := levels[spec.Name]; ok {
+			th := s.thinkingFor(spec.Name)
+			spec.Thinking, spec.Effort, spec.ThinkingDisplay = th.Thinking, th.Effort, th.ThinkingDisplay
+		}
+		return spec
+	}
+	s.deps.SetImplementer(apply(s.deps.Implementer))
+	reviewers := make([]orchestrator.AgentSpec, len(s.deps.Reviewers))
+	for i, spec := range s.deps.Reviewers {
+		reviewers[i] = apply(spec)
+	}
+	s.deps.SetReviewers(reviewers)
 }
 
 // thinkingForLevel maps a session thinking level to engine.Thinking. "off"
@@ -1602,7 +1676,7 @@ func (s *Session) run() {
 		s.mu.Lock()
 		coord := s.coordinator
 		s.mu.Unlock()
-		s.emitter.Emit(event.SessionStarted, map[string]any{
+		started := map[string]any{
 			"workspace":            s.Workspace,
 			"mode":                 s.Mode,
 			"origin":               s.origin,
@@ -1613,7 +1687,11 @@ func (s *Session) run() {
 			// the model it was started with, including a per-session override
 			// picked at StartSession.
 			"coordinator": coord,
-		})
+		}
+		if s.coordinatorThinking != "" {
+			started["coordinator_thinking"] = s.coordinatorThinking
+		}
+		s.emitter.Emit(event.SessionStarted, started)
 		s.planMu.Lock()
 		if s.planOnly {
 			s.emitter.EmitAs("user", event.PlanOnlyChanged, map[string]any{"plan_only": true})
@@ -2444,6 +2522,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	if err != nil {
 		return nil, err
 	}
+	if err := validStartThinking(cfg.CoordinatorThinking); err != nil {
+		return nil, err
+	}
 
 	id, err := newID()
 	if err != nil {
@@ -2471,6 +2552,10 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.participation.knownOrigin = knownSessionOrigin(s.origin)
 	s.preset = cfg.Preset
 	s.coordinatorExplicit = cfg.CoordinatorModel != ""
+	if cfg.CoordinatorThinking != "" {
+		s.coordinatorThinking = m.reg.ClampThinkingLevelFor(s.coordinator, cfg.CoordinatorThinking)
+		s.seedThinkLevels(map[string]string{s.coordinator: s.coordinatorThinking})
+	}
 	if startupNotice != "" {
 		s.startupNotices = append([]string{startupNotice}, s.startupNotices...)
 	}
@@ -2535,11 +2620,12 @@ type SpawnWorkstreamConfig struct {
 	Prompt string
 	// Mode is the session mode; empty means "work".
 	Mode string
-	// CoordinatorModel, Preset, and Images apply to the workstream's session
-	// exactly as the same Config fields do for StartSession.
-	CoordinatorModel string
-	Preset           string
-	Images           []engine.Image
+	// CoordinatorModel, CoordinatorThinking, Preset, and Images apply to the
+	// workstream's session exactly as the same Config fields do for StartSession.
+	CoordinatorModel    string
+	CoordinatorThinking string
+	Preset              string
+	Images              []engine.Image
 }
 
 // SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
@@ -2562,6 +2648,9 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	}
 	// Reject a bad model choice before any git work; start resolves it again.
 	if _, _, err := m.initialCoordinator(cfg.Preset, cfg.CoordinatorModel); err != nil {
+		return workstream.Workstream{}, nil, err
+	}
+	if err := validStartThinking(cfg.CoordinatorThinking); err != nil {
 		return workstream.Workstream{}, nil, err
 	}
 	mode := cfg.Mode
@@ -2690,12 +2779,13 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 	}
 
 	s, err := m.start(Config{
-		Workspace:        dir,
-		Mode:             mode,
-		Prompt:           cfg.Prompt,
-		CoordinatorModel: cfg.CoordinatorModel,
-		Preset:           cfg.Preset,
-		Images:           cfg.Images,
+		Workspace:           dir,
+		Mode:                mode,
+		Prompt:              cfg.Prompt,
+		CoordinatorModel:    cfg.CoordinatorModel,
+		CoordinatorThinking: cfg.CoordinatorThinking,
+		Preset:              cfg.Preset,
+		Images:              cfg.Images,
 	}, false)
 	if err != nil {
 		cleanup()
@@ -3244,6 +3334,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		s.startupNotices = append([]string{startupNotice}, s.startupNotices...)
 	}
 	s.deps.Jobs = engine.RestoreJobs(events)
+	s.seedThinkLevels(replayThinkLevels(events))
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
 		log.Close()
@@ -3757,7 +3848,7 @@ func (m *Manager) SetRoles(coordinator, implementer string, reviewers []string) 
 }
 
 // SetThinking resolves role to its currently assigned model(s) and persists the
-// level in each model's config. An empty role targets all
+// level, clamped to each model's supported levels, in each model's config. An empty role targets all
 // assigned models; shared assignments are deduplicated. Used when there is no
 // live session to update.
 func (m *Manager) SetThinking(role, level string) error {
@@ -3942,6 +4033,21 @@ var ErrUnknownSession = errors.New("unknown session")
 // (e.g. a per-session coordinator override at StartSession), so RPC handlers can
 // map it to an invalid-argument code.
 var ErrUnknownModel = errors.New("unknown model")
+
+// ErrUnknownThinkingLevel indicates a requested thinking level is not one of
+// off|low|medium|high|xhigh|max.
+var ErrUnknownThinkingLevel = errors.New("unknown thinking level")
+
+// validStartThinking checks an optional start-time thinking level.
+func validStartThinking(level string) error {
+	if level == "" {
+		return nil
+	}
+	if _, ok := thinkingForLevel(level); !ok {
+		return fmt.Errorf("%w %q", ErrUnknownThinkingLevel, level)
+	}
+	return nil
+}
 
 // ErrDisabledModel indicates a configured logical model was explicitly selected
 // for new work while temporarily disabled.

@@ -374,6 +374,106 @@ func TestSavePrivateModesAndRepairsExistingFile(t *testing.T) {
 	}
 }
 
+// Each model reports its backend's levels unless thinking_levels overrides
+// them; the override round-trips through ycc.toml and is validated.
+func TestModelThinkingLevelsDefaultsAndOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ycc.toml")
+	orig := &Config{
+		Models: map[string]Model{
+			"claude": {Backend: "anthropic", Model: "m"},
+			"gpt":    {Backend: "openai", Model: "m"},
+			"compat": {Backend: "openai-compatible", BaseURL: "http://localhost:1", Model: "m"},
+			"local":  {Backend: "ollama", BaseURL: "http://localhost:1", Model: "m"},
+			"custom": {Backend: "openai", Model: "m", ThinkingLevels: []string{"high", "low"}},
+		},
+		Roles: Roles{Coordinator: "claude", Implementer: "claude", Reviewers: []string{"claude"}},
+	}
+	if err := Save(path, orig); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := loaded.Models["custom"].ThinkingLevels; !reflect.DeepEqual(got, []string{"high", "low"}) {
+		t.Fatalf("override after round-trip = %v", got)
+	}
+	want := map[string][]string{
+		"claude": {"off", "low", "medium", "high", "xhigh", "max"},
+		"gpt":    {"low", "medium", "high", "xhigh"},
+		"compat": {"low", "medium", "high"},
+		"local":  {"off", "high"},
+		"custom": {"low", "high"},
+	}
+	for _, info := range NewRegistry(loaded).Models() {
+		if !reflect.DeepEqual(info.ThinkingLevels, want[info.Name]) {
+			t.Errorf("%s levels = %v, want %v", info.Name, info.ThinkingLevels, want[info.Name])
+		}
+	}
+
+	bad := Model{Backend: "openai", Model: "m", ThinkingLevels: []string{"turbo"}}
+	if err := NewRegistry(loaded).UpsertModel("bad", bad, false); err == nil {
+		t.Fatal("UpsertModel accepted an unknown thinking level")
+	}
+	badFile := filepath.Join(t.TempDir(), "ycc.toml")
+	if err := os.WriteFile(badFile, []byte(`[models.bad]
+backend = "openai"
+model = "m"
+thinking_levels = ["turbo"]
+
+[roles]
+coordinator = "bad"
+implementer = "bad"
+reviewers = ["bad"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(badFile); err == nil {
+		t.Fatal("Load accepted an unknown thinking level")
+	}
+}
+
+func TestClampThinkingLevel(t *testing.T) {
+	openai := []string{"low", "medium", "high", "xhigh"}
+	compat := []string{"low", "medium", "high"}
+	ollama := []string{"off", "high"}
+	for _, tc := range []struct {
+		supported []string
+		level     string
+		want      string
+	}{
+		{openai, "off", "low"},
+		{openai, "max", "xhigh"},
+		{openai, "medium", "medium"},
+		{compat, "xhigh", "high"},
+		{ollama, "low", "high"},
+		{ollama, "max", "high"},
+		{ollama, "off", "off"},
+		{[]string{"off"}, "high", "off"},
+		{[]string{"low", "high"}, "medium", "high"},
+		{nil, "max", "max"},
+	} {
+		if got := ClampThinkingLevel(tc.supported, tc.level); got != tc.want {
+			t.Errorf("ClampThinkingLevel(%v, %q) = %q, want %q", tc.supported, tc.level, got, tc.want)
+		}
+	}
+}
+
+// Persisting a default stores the model's clamped level.
+func TestSetModelThinkingClampsToSupportedLevels(t *testing.T) {
+	reg := NewRegistry(&Config{
+		Models: map[string]Model{"local": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "m"}},
+		Roles:  Roles{Coordinator: "local", Implementer: "local", Reviewers: []string{"local"}},
+	})
+	reg.SetPath(filepath.Join(t.TempDir(), "ycc.toml"))
+	if err := reg.SetModelThinking("local", "low"); err != nil {
+		t.Fatalf("SetModelThinking: %v", err)
+	}
+	if got := reg.ModelThinkingLevel("local"); got != "high" {
+		t.Fatalf("saved level = %q, want high", got)
+	}
+}
+
 func TestSetModelThinkingPersistsAndResolves(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ycc.toml")
 	orig := &Config{

@@ -105,7 +105,7 @@ func (m *Manager) configureChatWatches(absWS string, deps *orchestrator.Deps) {
 		return string(data), err
 	}
 	deps.UpdateWatch = func(_ context.Context, spec orchestrator.WatchSpec) (string, error) {
-		info, err := m.UpdateWatch(m.projectLabel(primary), watchDefinitionFromSpec(spec))
+		info, err := m.updateWatch(m.projectLabel(primary), watchDefinitionFromSpec(spec), true)
 		if err != nil {
 			return "", err
 		}

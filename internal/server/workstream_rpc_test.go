@@ -408,7 +408,7 @@ func TestSpawnWorkstreamNewSessionFields(t *testing.T) {
 	}
 
 	resp, err := client.SpawnWorkstream(ctx, connect.NewRequest(&v1.SpawnWorkstreamRequest{
-		Project: "demo", Prompt: "what is this?", Mode: "chat", CoordinatorModel: "a",
+		Project: "demo", Prompt: "what is this?", Mode: "chat", CoordinatorModel: "a", CoordinatorThinking: "off",
 		Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/png", Filename: "shot.png"}},
 	}))
 	if err != nil {
@@ -429,11 +429,21 @@ func TestSpawnWorkstreamNewSessionFields(t *testing.T) {
 	if row == nil || row.GetWorkstreamId() != ws.GetId() || row.GetMode() != "chat" {
 		t.Fatalf("history row = %+v, want the chat session of %s", row, ws.GetId())
 	}
+	// The coordinator thinking level applies to this session only.
+	scoped, err := client.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{SessionId: ws.GetSessionId()}))
+	if err != nil || scoped.Msg.GetCoordinatorThinking() != "off" {
+		t.Fatalf("session coordinator thinking = %q (err %v), want off", scoped.Msg.GetCoordinatorThinking(), err)
+	}
+	defaults, err := client.ListModels(ctx, connect.NewRequest(&v1.ListModelsRequest{}))
+	if err != nil || defaults.Msg.GetCoordinatorThinking() != "high" {
+		t.Fatalf("default coordinator thinking = %q (err %v), want unchanged high", defaults.Msg.GetCoordinatorThinking(), err)
+	}
 
 	for name, req := range map[string]*v1.SpawnWorkstreamRequest{
 		"bad picture":   {Project: "demo", Prompt: "hi", Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/jpeg"}}},
 		"credential":    {Project: "demo", Prompt: "my key is sk-test-WORKSTREAM-SENTINEL-CREDENTIAL-0518"},
 		"unknown model": {Project: "demo", Prompt: "hi", CoordinatorModel: "nope"},
+		"bad thinking":  {Project: "demo", Prompt: "hi", CoordinatorThinking: "huge"},
 	} {
 		if _, err := client.SpawnWorkstream(ctx, connect.NewRequest(req)); connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("%s: err = %v, want InvalidArgument", name, err)

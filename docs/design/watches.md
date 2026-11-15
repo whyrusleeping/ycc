@@ -28,7 +28,8 @@ session; continuity comes from a bounded notes record passed from one run to the
 ### Definition
 
 A watch has a name, project, brief (what to check and what counts as wrong), interval,
-model (default: the configured coordinator), optional probe command, optional expiry, and an
+model (default: the configured coordinator), optional thinking level for runs (default: the
+model's saved level; clamped to the model's supported levels), optional probe command, optional expiry, and an
 optional list of pre-authorized actions. Definitions and run state persist under the project's
 `.ycc/watches/` and survive daemon restart; only a persistent daemon schedules runs. Watches can be paused, resumed, run now, edited
 and deleted.

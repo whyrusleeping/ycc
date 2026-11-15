@@ -106,18 +106,19 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 		return nil, err
 	}
 	sess, err := s.mgr.Start(session.Config{
-		Workspace:        m.Workspace,
-		Origin:           session.OriginUser,
-		Mode:             m.Mode,
-		Prompt:           m.Prompt,
-		Project:          m.Project,
-		CoordinatorModel: m.CoordinatorModel,
-		Preset:           m.Preset,
-		Images:           images,
-		PlanOnly:         m.PlanOnly,
+		Workspace:           m.Workspace,
+		Origin:              session.OriginUser,
+		Mode:                m.Mode,
+		Prompt:              m.Prompt,
+		Project:             m.Project,
+		CoordinatorModel:    m.CoordinatorModel,
+		CoordinatorThinking: m.CoordinatorThinking,
+		Preset:              m.Preset,
+		Images:              images,
+		PlanOnly:            m.PlanOnly,
 	})
 	if err != nil {
-		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) || errors.Is(err, session.ErrPlanOnlyMode) {
+		if errors.Is(err, session.ErrUnknownProject) || errors.Is(err, session.ErrUnknownModel) || errors.Is(err, session.ErrPlanOnlyMode) || errors.Is(err, session.ErrUnknownThinkingLevel) {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 		if errors.Is(err, session.ErrDisabledModel) {
@@ -1093,7 +1094,7 @@ func (s *Server) AnswerQuestions(_ context.Context, req *connect.Request[v1.Answ
 func (s *Server) ListModels(_ context.Context, req *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {
 	var models []*v1.ModelInfo
 	for _, m := range s.mgr.Models() {
-		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured, Disabled: m.Disabled}
+		mi := &v1.ModelInfo{Name: m.Name, Backend: m.Backend, Model: m.Model, Priced: m.Pricing.Configured, Disabled: m.Disabled, ThinkingLevels: m.ThinkingLevels}
 		// Only attach the optional price_* fields when pricing is configured so an
 		// unset rate stays nil on the wire: the TUI must never invent a
 		// cost for an unpriced model.
@@ -1138,6 +1139,7 @@ func modelConfigToConfig(mc *v1.ModelConfig) config.Model {
 		Thinking:        mc.Thinking,
 		Effort:          mc.Effort,
 		ThinkingDisplay: mc.ThinkingDisplay,
+		ThinkingLevels:  mc.GetThinkingLevels().GetLevels(),
 		PriceInput:      mc.PriceInput,
 		PriceOutput:     mc.PriceOutput,
 		PriceCacheRead:  mc.PriceCacheRead,
@@ -1148,6 +1150,10 @@ func modelConfigToConfig(mc *v1.ModelConfig) config.Model {
 // configToModelConfig translates a config.Model (under logical name) into a
 // proto ModelConfig for editing in the settings overlay.
 func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
+	var levels *v1.ThinkingLevelList
+	if len(m.ThinkingLevels) > 0 {
+		levels = &v1.ThinkingLevelList{Levels: append([]string(nil), m.ThinkingLevels...)}
+	}
 	return &v1.ModelConfig{
 		Name:            name,
 		Backend:         m.Backend,
@@ -1160,6 +1166,7 @@ func configToModelConfig(name string, m config.Model) *v1.ModelConfig {
 		Thinking:        m.Thinking,
 		Effort:          m.Effort,
 		ThinkingDisplay: m.ThinkingDisplay,
+		ThinkingLevels:  levels,
 		PriceInput:      m.PriceInput,
 		PriceOutput:     m.PriceOutput,
 		PriceCacheRead:  m.PriceCacheRead,
@@ -1190,6 +1197,10 @@ func (s *Server) UpsertModel(_ context.Context, req *connect.Request[v1.UpsertMo
 		if mc.Notes == nil {
 			// Older clients do not send notes; keep the stored advice.
 			model.Notes = current.Notes
+		}
+		if mc.ThinkingLevels == nil {
+			// Older clients do not send the override; keep the stored one.
+			model.ThinkingLevels = current.ThinkingLevels
 		}
 		if mc.Disabled == nil {
 			// Older clients do not know the availability field. Preserve an existing
@@ -1450,11 +1461,15 @@ func (s *Server) SetRoleConfig(_ context.Context, req *connect.Request[v1.SetRol
 }
 
 // SetThinking maps a role (empty = all roles) to its currently assigned model(s)
-// and stores the requested thinking/effort level on those models. A live session
-// is updated immediately; without one, the current default
-// role assignments are resolved and their model entries are persisted.
+// and sets their thinking level. With a session id the level applies to that
+// live session only; without one, the current default role assignments are
+// resolved and the level is saved in their model entries.
 func (s *Server) SetThinking(_ context.Context, req *connect.Request[v1.SetThinkingRequest]) (*connect.Response[v1.SetThinkingResponse], error) {
-	if sess, ok := s.mgr.Get(req.Msg.SessionId); ok {
+	if req.Msg.SessionId != "" {
+		sess, ok := s.mgr.Get(req.Msg.SessionId)
+		if !ok {
+			return nil, connect.NewError(connect.CodeNotFound, errNoSession)
+		}
 		if err := sess.SetThinking(req.Msg.Role, req.Msg.Level); err != nil {
 			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
