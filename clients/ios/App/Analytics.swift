@@ -79,7 +79,7 @@ enum Analytics {
         "workstreams.mergeAll", "workstreams.open_session",
         "watches.pause", "watches.resume", "watches.run_now", "watches.delete",
         "watches.create", "watches.edit",
-        "watches.parked", "watches.run_session", "watches.decision_session", "watches.older",
+        "watches.parked", "watches.active_run", "watches.run_session", "watches.decision_session", "watches.older",
         "refresh", "health.check_now",
     ] + [
         "new_session", "quick_capture", "add_project", "task_edit", "start_work",

@@ -193,12 +193,25 @@ function StatusBadge({ report }: { report: WatchReport | undefined }) {
   return <span className={`ws-badge tone-${BADGE_TONE[reportTone(report)]}`}>{reportLabel(report)}</span>;
 }
 
-function ScheduleBadge({ watch }: { watch: Watch }) {
+/** The schedule state; while a run is active it links to that run's session. */
+function ScheduleBadge({ project, watch }: { project: string; watch: Watch }) {
   const s = scheduleState(watch);
-  return (
-    <span className={`ws-badge tone-${s.running ? "live" : "done"}`} title={watch.nextDue && !watch.paused ? new Date(watch.nextDue).toLocaleString() : undefined}>
+  const content = (
+    <>
       {s.running && <span className="spinner" aria-hidden="true" />}
       {s.label}
+    </>
+  );
+  if (watch.activeSessionId) {
+    return (
+      <Link to={paths.session(project, watch.activeSessionId)} className="ws-badge tone-live" data-track="watches.active_run" title="Open the running session">
+        {content}
+      </Link>
+    );
+  }
+  return (
+    <span className={`ws-badge tone-${s.running ? "live" : "done"}`} title={watch.nextDue && !watch.paused ? new Date(watch.nextDue).toLocaleString() : undefined}>
+      {content}
     </span>
   );
 }
@@ -291,7 +304,7 @@ function WatchRow({
           {nameOf(w)}
         </Link>
         <StatusBadge report={w.last} />
-        <ScheduleBadge watch={w} />
+        <ScheduleBadge project={project} watch={w} />
         <ParkedLink project={project} watch={w} />
       </div>
       <div className="ws-meta muted small">
@@ -361,7 +374,7 @@ function WatchDetail({ project, name }: { project: string; name: string }) {
           {q.isError && <p className="warn small">Couldn’t refresh: {errorMessage(q.error)}</p>}
           <div className="ws-row-head watch-status">
             <StatusBadge report={w.last} />
-            <ScheduleBadge watch={w} />
+            <ScheduleBadge project={project} watch={w} />
             {w.paused && <span className="muted small">{w.pausedReason === "expired" ? "Its expiry passed." : "Paused by you."}</span>}
           </div>
           {w.parkedSessionIds.length > 0 && (

@@ -4982,6 +4982,13 @@ public nonisolated struct Ycc_V1_Watch: @unchecked Sendable {
     set {_uniqueStorage()._parkedSessionIds = newValue}
   }
 
+  /// The run session in its first pass; empty during a probe and once the run
+  /// parks on a question or ends.
+  public var activeSessionID: String {
+    get {_storage._activeSessionID}
+    set {_uniqueStorage()._activeSessionID = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -14429,7 +14436,7 @@ nonisolated extension Ycc_V1_WatchDecision: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Watch"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}definition\0\u{3}created_at\0\u{1}paused\0\u{3}paused_reason\0\u{3}next_due\0\u{1}notes\0\u{1}decisions\0\u{1}last\0\u{1}running\0\u{3}parked_session_ids\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}definition\0\u{3}created_at\0\u{1}paused\0\u{3}paused_reason\0\u{3}next_due\0\u{1}notes\0\u{1}decisions\0\u{1}last\0\u{1}running\0\u{3}parked_session_ids\0\u{3}active_session_id\0")
 
   fileprivate class _StorageClass {
     var _project: String = String()
@@ -14443,6 +14450,7 @@ nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._Messag
     var _last: Ycc_V1_WatchReport? = nil
     var _running: Bool = false
     var _parkedSessionIds: [String] = []
+    var _activeSessionID: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -14464,6 +14472,7 @@ nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._Messag
       _last = source._last
       _running = source._running
       _parkedSessionIds = source._parkedSessionIds
+      _activeSessionID = source._activeSessionID
     }
   }
 
@@ -14493,6 +14502,7 @@ nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._Messag
         case 9: try { try decoder.decodeSingularMessageField(value: &_storage._last) }()
         case 10: try { try decoder.decodeSingularBoolField(value: &_storage._running) }()
         case 11: try { try decoder.decodeRepeatedStringField(value: &_storage._parkedSessionIds) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._activeSessionID) }()
         default: break
         }
       }
@@ -14538,6 +14548,9 @@ nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._Messag
       if !_storage._parkedSessionIds.isEmpty {
         try visitor.visitRepeatedStringField(value: _storage._parkedSessionIds, fieldNumber: 11)
       }
+      if !_storage._activeSessionID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._activeSessionID, fieldNumber: 12)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -14558,6 +14571,7 @@ nonisolated extension Ycc_V1_Watch: SwiftProtobuf.Message, SwiftProtobuf._Messag
         if _storage._last != rhs_storage._last {return false}
         if _storage._running != rhs_storage._running {return false}
         if _storage._parkedSessionIds != rhs_storage._parkedSessionIds {return false}
+        if _storage._activeSessionID != rhs_storage._activeSessionID {return false}
         return true
       }
       if !storagesAreEqual {return false}

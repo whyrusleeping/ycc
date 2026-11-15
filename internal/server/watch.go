@@ -197,6 +197,7 @@ func watchToProto(info session.WatchInfo) *v1.Watch {
 		Notes:            info.Notes,
 		Running:          info.Running,
 		ParkedSessionIds: info.ParkedSessions,
+		ActiveSessionId:  info.ActiveSession,
 	}
 	for _, d := range info.Decisions {
 		w.Decisions = append(w.Decisions, &v1.WatchDecision{

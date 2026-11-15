@@ -1594,6 +1594,9 @@ message Watch {
   WatchReport last = 9;     // unset before the first report
   bool running = 10;        // a probe or run is active
   repeated string parked_session_ids = 11; // runs waiting on a user answer
+  // The run session in its first pass; empty during a probe and once the run
+  // parks on a question or ends.
+  string active_session_id = 12;
 }
 
 // Project-scoped requests resolve an empty project to the only registered one.

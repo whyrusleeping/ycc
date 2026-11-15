@@ -2165,8 +2165,9 @@ type Manager struct {
 	// Watches (watch.go). watchMu serializes all watch file I/O and guards the
 	// in-memory run state; it may be held while a run session starts.
 	watchMu       sync.Mutex
-	watchBusy     map[string]bool // watch key → probe or first pass active
-	watchFollowed map[string]bool // run session id → follower attached
+	watchBusy     map[string]bool   // watch key → probe or first pass active
+	watchActive   map[string]string // watch key → session id of the run in its first pass
+	watchFollowed map[string]bool   // run session id → follower attached
 	watchWG       sync.WaitGroup
 	watchCtx      context.Context
 	watchCancel   context.CancelFunc
@@ -2198,6 +2199,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	watchCtx, watchCancel := context.WithCancel(context.Background())
 	m := &Manager{
 		watchBusy:         map[string]bool{},
+		watchActive:       map[string]string{},
 		watchFollowed:     map[string]bool{},
 		watchCtx:          watchCtx,
 		watchCancel:       watchCancel,

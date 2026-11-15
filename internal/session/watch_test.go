@@ -171,6 +171,9 @@ func TestWatchQuestionParksRunWithoutBlockingSchedule(t *testing.T) {
 	h.create(WatchDefinition{})
 	h.m.tickWatches()
 	waitFor(t, func() bool { return h.runs() == 1 })
+	if info, _ := h.m.GetWatch("", "live"); !info.Running || info.ActiveSession != "s_run1" {
+		t.Fatalf("running watch: Running=%v ActiveSession=%q, want the first run", info.Running, info.ActiveSession)
+	}
 
 	h.setNow(t0.Add(time.Hour))
 	h.m.tickWatches()
@@ -194,6 +197,9 @@ func TestWatchQuestionParksRunWithoutBlockingSchedule(t *testing.T) {
 		defer h.m.watchMu.Unlock()
 		return len(h.m.watchBusy) == 0
 	})
+	if info, _ := h.m.GetWatch("", "live"); info.ActiveSession != "" || len(info.ParkedSessions) != 1 {
+		t.Fatalf("parked watch: ActiveSession=%q ParkedSessions=%v, want only the parked run", info.ActiveSession, info.ParkedSessions)
+	}
 
 	h.setNow(t0.Add(2 * time.Hour))
 	h.m.tickWatches()

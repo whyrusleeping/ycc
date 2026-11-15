@@ -13866,8 +13866,11 @@ type Watch struct {
 	Last             *WatchReport           `protobuf:"bytes,9,opt,name=last,proto3" json:"last,omitempty"`                                                    // unset before the first report
 	Running          bool                   `protobuf:"varint,10,opt,name=running,proto3" json:"running,omitempty"`                                            // a probe or run is active
 	ParkedSessionIds []string               `protobuf:"bytes,11,rep,name=parked_session_ids,json=parkedSessionIds,proto3" json:"parked_session_ids,omitempty"` // runs waiting on a user answer
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The run session in its first pass; empty during a probe and once the run
+	// parks on a question or ends.
+	ActiveSessionId string `protobuf:"bytes,12,opt,name=active_session_id,json=activeSessionId,proto3" json:"active_session_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Watch) Reset() {
@@ -13975,6 +13978,13 @@ func (x *Watch) GetParkedSessionIds() []string {
 		return x.ParkedSessionIds
 	}
 	return nil
+}
+
+func (x *Watch) GetActiveSessionId() string {
+	if x != nil {
+		return x.ActiveSessionId
+	}
+	return ""
 }
 
 // Project-scoped requests resolve an empty project to the only registered one.
@@ -15771,7 +15781,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x10\n" +
 	"\x03seq\x18\x03 \x01(\x03R\x03seq\x12\x1a\n" +
 	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\x16\n" +
-	"\x06answer\x18\x05 \x01(\tR\x06answer\"\x8d\x03\n" +
+	"\x06answer\x18\x05 \x01(\tR\x06answer\"\xb9\x03\n" +
 	"\x05Watch\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x127\n" +
 	"\n" +
@@ -15787,7 +15797,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x04last\x18\t \x01(\v2\x13.ycc.v1.WatchReportR\x04last\x12\x18\n" +
 	"\arunning\x18\n" +
 	" \x01(\bR\arunning\x12,\n" +
-	"\x12parked_session_ids\x18\v \x03(\tR\x10parkedSessionIds\".\n" +
+	"\x12parked_session_ids\x18\v \x03(\tR\x10parkedSessionIds\x12*\n" +
+	"\x11active_session_id\x18\f \x01(\tR\x0factiveSessionId\".\n" +
 	"\x12ListWatchesRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\">\n" +
 	"\x13ListWatchesResponse\x12'\n" +

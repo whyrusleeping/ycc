@@ -405,13 +405,20 @@ struct WatchDetailView: View {
                     .font(.footnote)
                     .foregroundStyle(Theme.attention)
             }
-            Button {
-                Analytics.action("watches.run_now")
-                Task { await model.runNow() }
-            } label: {
-                Label(watch.running ? "Running…" : "Run now", systemImage: "play")
+            if !watch.activeSessionID.isEmpty {
+                linkedRow(watch.activeSessionID, live: true, track: "watches.active_run") {
+                    Label("Open the running session", systemImage: "play.circle.fill")
+                        .foregroundStyle(Theme.live)
+                }
+            } else {
+                Button {
+                    Analytics.action("watches.run_now")
+                    Task { await model.runNow() }
+                } label: {
+                    Label(watch.running ? "Running…" : "Run now", systemImage: "play")
+                }
+                .disabled(watch.running || model.isBusy)
             }
-            .disabled(watch.running || model.isBusy)
             if !expired {
                 Button {
                     Analytics.action(watch.paused ? "watches.resume" : "watches.pause")

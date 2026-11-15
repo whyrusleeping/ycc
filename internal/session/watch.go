@@ -155,6 +155,9 @@ type WatchInfo struct {
 	Last         *WatchReportRecord
 	// Running is true while a probe or a run's first pass is active.
 	Running bool
+	// ActiveSession is the run session in its first pass; empty during a
+	// probe, before a run starts, and once it parks or ends.
+	ActiveSession string
 	// ParkedSessions are runs waiting on a user answer.
 	ParkedSessions []string
 }
@@ -508,10 +511,11 @@ func (m *Manager) WatchReports(project, name string, limit int) ([]WatchReportRe
 }
 
 func (m *Manager) watchInfoLocked(primary, label string, rec watchRecord) WatchInfo {
+	key := watchKey(primary, rec.Definition.Name)
 	info := WatchInfo{
 		Project: label, Definition: rec.Definition, Created: rec.Created, Paused: rec.Paused,
 		PausedReason: rec.PausedReason, NextDue: rec.NextDue, Notes: rec.Notes,
-		Decisions: rec.Decisions, Last: rec.Last, Running: m.watchBusy[watchKey(primary, rec.Definition.Name)],
+		Decisions: rec.Decisions, Last: rec.Last, Running: m.watchBusy[key], ActiveSession: m.watchActive[key],
 	}
 	for _, p := range m.pendingWatchQuestions(primary, rec) {
 		info.ParkedSessions = append(info.ParkedSessions, p.sessionID)
@@ -811,6 +815,7 @@ func (m *Manager) executeWatch(primary, name string, scheduled time.Time, late t
 		once.Do(func() {
 			m.watchMu.Lock()
 			delete(m.watchBusy, key)
+			delete(m.watchActive, key)
 			m.watchMu.Unlock()
 		})
 	}
@@ -878,6 +883,7 @@ func (m *Manager) executeWatch(primary, name string, scheduled time.Time, late t
 		_ = saveWatch(primary, rec)
 	}
 	m.watchFollowed[s.ID] = true
+	m.watchActive[key] = s.ID
 	m.watchMu.Unlock()
 	m.followWatchRun(primary, name, s, release)
 }
