@@ -4845,13 +4845,16 @@ func (x *SessionViewUpdate) GetIndexRebuilt() bool {
 // (with one span per spawn→finish round), and one node per background
 // non-agent job under the actor that started it. Timestamps are RFC 3339.
 type ActivitySpan struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"` // empty for foreground rounds
-	Round         int32                  `protobuf:"varint,2,opt,name=round,proto3" json:"round,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | done | failed | blocked | killed | lost
-	ContextMode   string                 `protobuf:"bytes,4,opt,name=context_mode,json=contextMode,proto3" json:"context_mode,omitempty"`
-	StartedAt     string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	FinishedAt    string                 `protobuf:"bytes,6,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"` // empty while running
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	JobId       string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"` // empty for foreground rounds
+	Round       int32                  `protobuf:"varint,2,opt,name=round,proto3" json:"round,omitempty"`
+	Status      string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // running | done | failed | blocked | killed | lost
+	ContextMode string                 `protobuf:"bytes,4,opt,name=context_mode,json=contextMode,proto3" json:"context_mode,omitempty"`
+	StartedAt   string                 `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt  string                 `protobuf:"bytes,6,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"` // empty while running
+	// The caller's prompt for this round (spawn_agent / send_to_agent), bounded
+	// and head-kept; empty for other roles and older sessions.
+	Prompt        string `protobuf:"bytes,7,opt,name=prompt,proto3" json:"prompt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4924,6 +4927,13 @@ func (x *ActivitySpan) GetStartedAt() string {
 func (x *ActivitySpan) GetFinishedAt() string {
 	if x != nil {
 		return x.FinishedAt
+	}
+	return ""
+}
+
+func (x *ActivitySpan) GetPrompt() string {
+	if x != nil {
+		return x.Prompt
 	}
 	return ""
 }
@@ -15003,7 +15013,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\rupserted_rows\x18\x03 \x03(\v2\x1e.ycc.v1.SessionPresentationRowR\fupsertedRows\x12&\n" +
 	"\x0fdeleted_row_ids\x18\x04 \x03(\tR\rdeletedRowIds\x126\n" +
 	"\x0ftransient_event\x18\x05 \x01(\v2\r.ycc.v1.EventR\x0etransientEvent\x12#\n" +
-	"\rindex_rebuilt\x18\x06 \x01(\bR\findexRebuilt\"\xb6\x01\n" +
+	"\rindex_rebuilt\x18\x06 \x01(\bR\findexRebuilt\"\xce\x01\n" +
 	"\fActivitySpan\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x14\n" +
 	"\x05round\x18\x02 \x01(\x05R\x05round\x12\x16\n" +
@@ -15012,7 +15022,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x05 \x01(\tR\tstartedAt\x12\x1f\n" +
 	"\vfinished_at\x18\x06 \x01(\tR\n" +
-	"finishedAt\"\x8f\x04\n" +
+	"finishedAt\x12\x16\n" +
+	"\x06prompt\x18\a \x01(\tR\x06prompt\"\x8f\x04\n" +
 	"\fActivityNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tparent_id\x18\x02 \x01(\tR\bparentId\x12\x12\n" +

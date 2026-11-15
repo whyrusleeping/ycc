@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +22,8 @@ func TestBuildActivityTree(t *testing.T) {
 	events := []event.Event{
 		ev("coordinator", event.SessionStarted, nil),
 		ev("coordinator", event.JobStarted, map[string]any{"id": "job_1", "kind": "agent", "label": "agent_1 turn 1 (opus)"}),
-		ev("coordinator", event.SubagentSpawned, map[string]any{"role": "generic", "agent_id": "agent_1", "job_id": "job_1", "model": "m", "logical_model": "opus", "round": 1}),
+		ev("coordinator", event.SubagentSpawned, map[string]any{"role": "generic", "agent_id": "agent_1", "job_id": "job_1", "model": "m", "logical_model": "opus", "round": 1,
+			"prompt": "Find the flaky test. " + strings.Repeat("x", maxActivityString)}),
 		ev("agent:agent_1", event.ModelTurn, map[string]any{"usage": map[string]any{"total": 100.0}}),
 		ev("agent:agent_1", event.ToolCall, map[string]any{"name": "Bash"}),
 		ev("coordinator", event.JobFinished, map[string]any{"id": "job_1", "kind": "agent", "status": "killed", "tail": "killed"}),
@@ -85,6 +87,10 @@ func TestBuildActivityTree(t *testing.T) {
 	if agent.ParentID != "coordinator" || agent.Model != "opus" || agent.Status != "killed" || agent.Result != "killed" ||
 		agent.Turns != 1 || agent.TotalTokens != 100 || agent.CurrentTool != "" || len(agent.Spans) != 1 {
 		t.Fatalf("agent = %+v", agent)
+	}
+	// An oversized prompt keeps its opening, which says what the agent is for.
+	if p := agent.Spans[0].Prompt; !strings.HasPrefix(p, "Find the flaky test. ") || len(p) > maxActivityString+len("…") {
+		t.Fatalf("agent prompt = %.40q… (%d bytes)", p, len(p))
 	}
 	impl := byID["implementer"]
 	if len(impl.Spans) != 2 || impl.Spans[0].Status != "failed" || impl.Status != "lost" || impl.JobID != "" {

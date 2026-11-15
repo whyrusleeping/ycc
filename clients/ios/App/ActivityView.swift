@@ -232,6 +232,11 @@ private struct ActivityTreeRowView: View {
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
+                        if node.kind != "bash", !promptExcerpt.isEmpty {
+                            Text(promptExcerpt)
+                                .font(.footnote)
+                                .lineLimit(2)
+                        }
                         Text(subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -246,6 +251,8 @@ private struct ActivityTreeRowView: View {
         .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
         .animation(.easeInOut(duration: 0.15), value: isCollapsed)
     }
+
+    private var promptExcerpt: String { ActivityGraph.spawnPromptExcerpt(node) }
 
     private var subtitle: String {
         var parts = [ActivityStyle.kindLabel(node)]
@@ -490,6 +497,22 @@ private struct AgentDetailView: View {
                     }
                 } header: {
                     Text(ActivityStyle.kindLabel(node))
+                }
+                let prompted = node.spans.filter { !$0.prompt.isEmpty }
+                if !prompted.isEmpty {
+                    Section(prompted.count == 1 ? "Prompt" : "Prompts") {
+                        ForEach(prompted, id: \.round) { span in
+                            VStack(alignment: .leading, spacing: 4) {
+                                if prompted.count > 1 {
+                                    Text(span.contextMode.isEmpty ? "Round \(span.round)" : "Round \(span.round) · \(span.contextMode)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                MarkdownText(text: span.prompt)
+                                    .font(.callout)
+                            }
+                        }
+                    }
                 }
                 if !node.spans.isEmpty {
                     Section {

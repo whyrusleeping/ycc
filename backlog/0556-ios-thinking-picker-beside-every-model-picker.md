@@ -1,7 +1,7 @@
 ---
 id: "0556"
 title: 'iOS: thinking picker beside every model picker'
-status: todo
+status: in_progress
 priority: 2
 created: "2026-11-15"
 updated: "2026-11-15"

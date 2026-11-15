@@ -249,6 +249,16 @@ export function badgeText(node: ActivityNode): string {
   return node.model ? `${node.kind} · ${node.model}` : node.kind;
 }
 
+/** What an agent was spawned to do: its first prompted round (later ones are follow-ups). */
+export function spawnPrompt(node: ActivityNode): string {
+  return node.spans.find((s) => s.prompt)?.prompt ?? "";
+}
+
+/** A prompt's opening as one line, for a tree row that clips it. */
+export function promptExcerpt(prompt: string, max = 300): string {
+  return prompt.slice(0, max * 2).replace(/\s+/g, " ").trim().slice(0, max);
+}
+
 /** Bytes kept in the job-output viewer (older text is trimmed client-side). */
 export const OUTPUT_VIEW_CHARS = 512 * 1024;
 

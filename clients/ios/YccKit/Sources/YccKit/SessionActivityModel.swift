@@ -188,6 +188,14 @@ public enum ActivityGraph {
         return node.id
     }
 
+    /// What an agent was spawned to do: its first prompted round's prompt
+    /// (later rounds are follow-ups), whitespace collapsed to one line.
+    public static func spawnPromptExcerpt(_ node: Ycc_V1_ActivityNode, maxLength: Int = 300) -> String {
+        guard let prompt = node.spans.first(where: { !$0.prompt.isEmpty })?.prompt else { return "" }
+        let line = prompt.prefix(maxLength * 2).split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return String(line.prefix(maxLength))
+    }
+
     /// `started_at` → `finished_at` (or `now` while running) as "12s",
     /// "3m 04s" or "1h 02m"; empty when the node never started.
     public static func elapsed(start: String, end: String, status: ActivityStatus, now: Date) -> String {

@@ -202,7 +202,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 			d.genericAgent[agentID] = h
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job, "fresh", 1, 0, contextTokens, "")
+			startGenericAgentJob(d, h, job, prompt, "fresh", 1, 0, contextTokens, "")
 			kind := "read-only"
 			if requestedMutating {
 				kind = "mutating"
@@ -296,7 +296,7 @@ func sendToAgent(d *Deps) *gollama.Tool {
 			h.running = true
 			d.mu.Unlock()
 
-			startGenericAgentJob(d, h, job, mode, round, priorTokens, contextTokens, rolloverReason)
+			startGenericAgentJob(d, h, job, prompt, mode, round, priorTokens, contextTokens, rolloverReason)
 			return tools.OkResult(fmt.Sprintf("started follow-up turn %d for subagent %s as background job %s with context_mode=%s. "+
 				"The stable handle keeps logical model %s and its original access/tools. Do not poll it; its report arrives automatically, "+
 				"or call wait([%q]) when needed.%s", round, agentID, job.ID(), mode, h.spec.Name, job.ID(),
@@ -332,11 +332,16 @@ Caller handoff:
 ` + strings.TrimSpace(prompt))
 }
 
-func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, mode string, round, priorTokens, newTokens int, rolloverReason string) {
+// maxSpawnPrompt bounds the caller's prompt copied into subagent_spawned so
+// clients can show what each round was asked; the tool call keeps the full text.
+const maxSpawnPrompt = 6 << 10
+
+func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, prompt, mode string, round, priorTokens, newTokens int, rolloverReason string) {
 	loop := h.loop
 	d.Emitter.Emit(event.JobStarted, map[string]any{"id": job.ID(), "kind": job.Kind(), "label": job.Label(), "mutates": job.Mutates()})
 	spawn := subagentSpawnData("generic", h.spec, mode, round, priorTokens, newTokens, rolloverReason)
 	spawn["agent_id"], spawn["job_id"], spawn["mutating"] = h.id, job.ID(), h.mutates
+	spawn["prompt"] = truncate(prompt, maxSpawnPrompt)
 	d.Emitter.Emit(event.SubagentSpawned, spawn)
 	go func() {
 		defer job.ExecutionComplete()

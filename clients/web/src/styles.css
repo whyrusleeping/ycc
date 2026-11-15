@@ -7713,6 +7713,19 @@ button.unread-dot:focus-visible {
   color: var(--fg-subtle);
 }
 
+/* What the agent was spawned to do, clipped to two lines. */
+.act-prompt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: 17px;
+  color: var(--fg);
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
 .act-status {
   color: var(--st, var(--fg-muted));
   font-weight: 550;
@@ -8069,6 +8082,15 @@ button.unread-dot:focus-visible {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.activity-prompt + .activity-prompt {
+  margin-top: 8px;
+}
+
+.activity-prompt-round {
+  margin-bottom: 4px;
+  font-size: var(--fs-2xs);
 }
 
 .activity-transcript {

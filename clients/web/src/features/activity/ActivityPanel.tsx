@@ -26,7 +26,9 @@ import {
   formatDuration,
   isJob,
   ms,
+  promptExcerpt,
   shouldPoll,
+  spawnPrompt,
   statusOf,
   timeRange,
   ROOT_ID,
@@ -153,6 +155,7 @@ const ActivityTree = memo(function ActivityTree({
       {rows.map(({ node, depth }) => {
         const sel = node.id === selected;
         const elapsed = elapsedMs(node, range, now);
+        const prompt = isJob(node) ? "" : promptExcerpt(spawnPrompt(node));
         return (
           <li key={node.id} role="treeitem" aria-level={depth + 1} aria-selected={sel}>
             <button
@@ -175,6 +178,11 @@ const ActivityTree = memo(function ActivityTree({
                     <span className={`act-status st-${statusOf(node.status)}`}>{node.status}</span>
                   )}
                 </span>
+                {prompt && (
+                  <span className="act-prompt" title={prompt}>
+                    {prompt}
+                  </span>
+                )}
                 {!isJob(node) && node.id !== ROOT_ID && <AgentProgress node={node} />}
               </span>
               {elapsed !== null && <span className="act-elapsed">{formatDuration(elapsed)}</span>}
@@ -263,8 +271,27 @@ function NodeDetail({
 }
 
 function AgentDetail({ node, now, controller }: { node: ActivityNode; now: number; controller: SessionController }) {
+  const prompts = node.spans.filter((s) => s.prompt);
   return (
     <>
+      {prompts.length > 0 && (
+        <section className="activity-section">
+          <div className="label">{prompts.length === 1 ? "Prompt" : "Prompts"}</div>
+          {prompts.map((s, i) => (
+            <div key={i} className="activity-prompt">
+              {prompts.length > 1 && (
+                <div className="activity-prompt-round muted">
+                  Round {s.round || i + 1}
+                  {s.contextMode ? ` · ${s.contextMode}` : ""}
+                </div>
+              )}
+              <div className="activity-report">
+                <Markdown text={s.prompt} />
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
       {node.spans.length > 0 && (
         <section className="activity-section">
           <div className="label">Rounds</div>

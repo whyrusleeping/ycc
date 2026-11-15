@@ -29,6 +29,7 @@ type ActivitySpan struct {
 	Round             int
 	Status            string // running | done | failed | blocked | killed | lost
 	ContextMode       string
+	Prompt            string // the caller's prompt for this round (generic agents)
 	Started, Finished time.Time
 }
 
@@ -64,7 +65,7 @@ func isActivityLifecycle(t event.Type) bool {
 }
 
 var activityKeys = []string{"id", "kind", "label", "mutates", "status", "role", "agent_id", "model",
-	"logical_model", "job_id", "round", "context_mode", "error", "blocked", "mutating", "owner", "tail", "result"}
+	"logical_model", "job_id", "round", "context_mode", "error", "blocked", "mutating", "owner", "tail", "result", "prompt"}
 
 func compactActivityEvent(ev event.Event) event.Event {
 	data := make(map[string]any)
@@ -74,7 +75,11 @@ func compactActivityEvent(ev event.Event) event.Event {
 			continue
 		}
 		if s, isStr := v.(string); isStr && len(s) > maxActivityString {
-			v = "…" + tailUTF8(s, maxActivityString)
+			if k == "prompt" {
+				v = truncateUTF8(s, maxActivityString) + "…" // a prompt's opening says what it is for
+			} else {
+				v = "…" + tailUTF8(s, maxActivityString)
+			}
 		}
 		data[k] = v
 	}
@@ -317,12 +322,15 @@ func BuildActivity(events []event.Event, progress map[string]ActorProgress) []Ac
 				n.Mutates = true
 			}
 			round, _ := number(ev.Data["round"])
+			span := ActivitySpan{JobID: str(ev, "job_id"), Round: int(round), Status: "running",
+				ContextMode: str(ev, "context_mode"), Prompt: str(ev, "prompt"), Started: ev.TS}
 			// A context-recovery respawn replaces the open round rather than adding one.
 			if k := len(n.Spans); k > 0 && n.Spans[k-1].Status == "running" {
+				if span.Prompt == "" {
+					span.Prompt = n.Spans[k-1].Prompt
+				}
 				n.Spans = n.Spans[:k-1]
 			}
-			span := ActivitySpan{JobID: str(ev, "job_id"), Round: int(round), Status: "running",
-				ContextMode: str(ev, "context_mode"), Started: ev.TS}
 			if span.JobID != "" && !slices.Contains(jobOwners[span.JobID], n) {
 				jobOwners[span.JobID] = append(jobOwners[span.JobID], n)
 			}

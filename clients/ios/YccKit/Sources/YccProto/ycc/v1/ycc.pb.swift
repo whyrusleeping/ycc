@@ -1714,6 +1714,10 @@ public nonisolated struct Ycc_V1_ActivitySpan: Sendable {
   /// empty while running
   public var finishedAt: String = String()
 
+  /// The caller's prompt for this round (spawn_agent / send_to_agent), bounded
+  /// and head-kept; empty for other roles and older sessions.
+  public var prompt: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -8439,7 +8443,7 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Ycc_V1_ActivitySpan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ActivitySpan"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{1}round\0\u{1}status\0\u{3}context_mode\0\u{3}started_at\0\u{3}finished_at\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{1}round\0\u{1}status\0\u{3}context_mode\0\u{3}started_at\0\u{3}finished_at\0\u{1}prompt\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -8453,6 +8457,7 @@ nonisolated extension Ycc_V1_ActivitySpan: SwiftProtobuf.Message, SwiftProtobuf.
       case 4: try { try decoder.decodeSingularStringField(value: &self.contextMode) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.startedAt) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.finishedAt) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.prompt) }()
       default: break
       }
     }
@@ -8477,6 +8482,9 @@ nonisolated extension Ycc_V1_ActivitySpan: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.finishedAt.isEmpty {
       try visitor.visitSingularStringField(value: self.finishedAt, fieldNumber: 6)
     }
+    if !self.prompt.isEmpty {
+      try visitor.visitSingularStringField(value: self.prompt, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -8487,6 +8495,7 @@ nonisolated extension Ycc_V1_ActivitySpan: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.contextMode != rhs.contextMode {return false}
     if lhs.startedAt != rhs.startedAt {return false}
     if lhs.finishedAt != rhs.finishedAt {return false}
+    if lhs.prompt != rhs.prompt {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

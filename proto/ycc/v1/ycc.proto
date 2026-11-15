@@ -598,6 +598,9 @@ message ActivitySpan {
   string context_mode = 4;
   string started_at = 5;
   string finished_at = 6; // empty while running
+  // The caller's prompt for this round (spawn_agent / send_to_agent), bounded
+  // and head-kept; empty for other roles and older sessions.
+  string prompt = 7;
 }
 message ActivityNode {
   string id = 1;        // "coordinator", the subagent actor, or the job id
