@@ -108,7 +108,14 @@ struct WatchEditorView: View {
                         Text(info.disabled ? "\(info.name) (disabled)" : info.name).tag(info.name)
                     }
                 }
+                ThinkingPicker(
+                    selection: $model.draft.thinking,
+                    levels: model.thinkingLevels,
+                    defaultTitle: ThinkingPicker.defaultTitle(model.modelDefaultThinking))
+            } footer: {
+                Text("Thinking applies to this watch’s runs only.")
             }
+            .onChange(of: model.draft.model) { model.modelChanged() }
 
             Section {
                 TextField("Probe", text: $model.draft.probe,

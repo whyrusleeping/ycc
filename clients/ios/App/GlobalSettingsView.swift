@@ -184,25 +184,28 @@ struct GlobalSettingsView: View {
         Section {
             // Optimistic: the picker shows the new level at once; only the
             // control whose change is in flight is disabled.
-            ThinkingLevelRow(
+            ThinkingLevelPicker(
                 title: "Coordinator",
                 selection: model.coordinatorThinking,
+                levels: model.thinkingLevels(for: .coordinator),
                 onSelect: { level in Task { await model.setThinking(level, for: .coordinator) } })
                 .disabled(model.isApplyingThinking(.coordinator))
-            ThinkingLevelRow(
+            ThinkingLevelPicker(
                 title: "Implementer",
                 selection: model.implementerThinking,
+                levels: model.thinkingLevels(for: .implementer),
                 onSelect: { level in Task { await model.setThinking(level, for: .implementer) } })
                 .disabled(model.isApplyingThinking(.implementer))
-            ThinkingLevelRow(
+            ThinkingLevelPicker(
                 title: "Reviewers",
                 selection: model.reviewersThinking,
+                levels: model.thinkingLevels(for: .reviewers),
                 onSelect: { level in Task { await model.setThinking(level, for: .reviewers) } })
                 .disabled(model.isApplyingThinking(.reviewers))
         } header: {
             Text("Default thinking")
         } footer: {
-            Text("Levels attach to each role's current model — changing a role updates that model's config, and roles sharing a model share its level. Per-reviewer overrides live in review tiers below.")
+            Text("Levels attach to each role's current model — changing a role updates that model's config, and roles sharing a model share its level. Each picker offers the levels its model supports. Per-reviewer overrides live in review tiers below.")
         }
     }
 
@@ -289,18 +292,6 @@ struct GlobalSettingsView: View {
     }
 }
 
-private struct ThinkingLevelRow: View {
-    let title: String
-    let selection: ThinkingLevel
-    let onSelect: (ThinkingLevel) -> Void
-
-    var body: some View {
-        Picker(title, selection: Binding(get: { selection }, set: onSelect)) {
-            ForEach(ThinkingLevel.allCases) { Text($0.title).tag($0) }
-        }
-    }
-}
-
 private struct ModelEditorTarget: Identifiable {
     let sourceName: String?
     let duplicate: Bool
@@ -326,6 +317,10 @@ private struct ModelEditorView: View {
     @State private var thinking = ""
     @State private var effort = ""
     @State private var thinkingDisplay = ""
+    /// The `thinking_levels` override; nil = the backend's default levels.
+    @State private var thinkingLevels: [ThinkingLevel]?
+    /// Whether the loaded model had a `thinking_levels` override.
+    @State private var loadedOverride = false
     @State private var notes = ""
     @State private var priceInput = ""
     @State private var priceOutput = ""
@@ -436,6 +431,8 @@ private struct ModelEditorView: View {
                 }
             }
 
+            thinkingLevelsSection
+
             Section {
                 Button {
                     modelTestTask = Task { await settings.testModel(draftConfig()) }
@@ -510,11 +507,61 @@ private struct ModelEditorView: View {
         }
     }
 
+    /// The `thinking_levels` override: which levels thinking pickers offer
+    /// for this model. Off keeps the backend's default list.
+    private var thinkingLevelsSection: some View {
+        Section {
+            Toggle("Custom levels", isOn: Binding(
+                get: { thinkingLevels != nil },
+                set: { custom in thinkingLevels = custom ? currentLevels : nil }))
+            if let levels = thinkingLevels {
+                ForEach(ThinkingLevel.allCases) { level in
+                    Toggle(level.title, isOn: Binding(
+                        get: { levels.contains(level) },
+                        set: { on in
+                            // Keep at least one: an empty override means "backend default".
+                            if on {
+                                thinkingLevels = ThinkingLevel.allCases.filter { $0 == level || levels.contains($0) }
+                            } else if levels.count > 1 {
+                                thinkingLevels = levels.filter { $0 != level }
+                            }
+                        }))
+                    .disabled(levels == [level])
+                }
+            }
+        } header: {
+            Text("Thinking levels")
+        } footer: {
+            Text(thinkingLevels == nil
+                ? "Thinking pickers offer this backend’s default levels\(currentLevelsNote)."
+                : "Thinking pickers offer only these levels; another level picked for this model moves to the nearest one.")
+        }
+    }
+
+    /// The levels the daemon reports for the saved model (its override or the
+    /// backend default), or every level for a new model.
+    private var currentLevels: [ThinkingLevel] {
+        guard let sourceName, let info = settings.models.first(where: { $0.name == sourceName }) else {
+            return ThinkingLevel.allCases
+        }
+        return ThinkingLevel.supported(by: info)
+    }
+
+    /// The backend default list, when known: the saved model's reported
+    /// levels while it had no override and its backend is unchanged.
+    private var currentLevelsNote: String {
+        guard let sourceName, !loadedOverride,
+              let info = settings.models.first(where: { $0.name == sourceName }),
+              !info.thinkingLevels.isEmpty, info.backend == backend else { return "" }
+        return ": " + ThinkingLevel.supported(by: info).map(\.title).joined(separator: ", ")
+    }
+
     private var draft: ModelEditorDraft {
         ModelEditorDraft(
             name: name, isEnabled: isEnabled, backend: backend, auth: auth,
             baseURL: baseURL, modelID: modelID, keyEnv: keyEnv,
-            thinking: thinking, effort: effort, thinkingDisplay: thinkingDisplay, notes: notes,
+            thinking: thinking, effort: effort, thinkingDisplay: thinkingDisplay,
+            thinkingLevels: thinkingLevels, notes: notes,
             priceInput: priceInput, priceOutput: priceOutput,
             priceCacheRead: priceCacheRead, priceCacheWrite: priceCacheWrite)
     }
@@ -548,6 +595,11 @@ private struct ModelEditorView: View {
         thinking = config.thinking
         effort = config.effort
         thinkingDisplay = config.thinkingDisplay
+        thinkingLevels = config.hasThinkingLevels
+            ? ThinkingLevel.allCases.filter { config.thinkingLevels.levels.contains($0.wireValue) }
+            : nil
+        if thinkingLevels?.isEmpty == true { thinkingLevels = nil }
+        loadedOverride = thinkingLevels != nil
         notes = config.notes
         if config.hasPriceInput { priceInput = String(config.priceInput) }
         if config.hasPriceOutput { priceOutput = String(config.priceOutput) }

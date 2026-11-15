@@ -137,58 +137,87 @@ final class SessionSettingsModelTests: XCTestCase {
 
     // MARK: - Thinking
 
-    func testApplyThinkingSendsScopeAndLevel() async {
+    func testChooseThinkingAppliesToTheRoleInThisSession() async {
         let source = MockSettingsSource()
         source.response = listModelsResponse()
         let model = SessionSettingsModel(source: source, sessionId: "s1")
         await model.load()
+        // The daemon reports the role's level after the change.
+        source.response.implementerThinking = "max"
 
-        model.selectThinkingRole(.implementer)
-        // Picker seeds from the implementer's known level.
-        XCTAssertEqual(model.thinkingLevel, .medium)
-        model.thinkingLevel = .max
-        await model.applyThinking()
+        await model.chooseThinking(.max, for: .implementer)?.value
 
         XCTAssertEqual(source.thinkingArgs?.sessionId, "s1")
         XCTAssertEqual(source.thinkingArgs?.level, "max")
         XCTAssertEqual(source.thinkingArgs?.role, "implementer")
         XCTAssertEqual(model.implementerThinking, .max)
+        XCTAssertEqual(model.coordinatorThinking, .high)
     }
 
-    func testApplyThinkingAllRolesSendsEmptyRoleAndUpdatesAll() async {
+    func testChooseThinkingRefreshesRolesSharingTheModel() async {
+        let source = MockSettingsSource()
+        source.response = listModelsResponse(implementer: "claude", implementerThinking: "high")
+        let model = SessionSettingsModel(source: source, sessionId: "s1")
+        await model.load()
+        // Coordinator and implementer share "claude": the level reaches both.
+        source.response.coordinatorThinking = "low"
+        source.response.implementerThinking = "low"
+
+        await model.chooseThinking(.low, for: .coordinator)?.value
+
+        XCTAssertEqual(model.coordinatorThinking, .low)
+        XCTAssertEqual(model.implementerThinking, .low)
+    }
+
+    func testChooseSameThinkingIsANoOp() async {
         let source = MockSettingsSource()
         source.response = listModelsResponse()
         let model = SessionSettingsModel(source: source, sessionId: "s1")
         await model.load()
 
-        model.selectThinkingRole(.all)
-        model.thinkingLevel = .off
-        await model.applyThinking()
-
-        XCTAssertEqual(source.thinkingArgs?.role, "") // empty = all roles
-        XCTAssertEqual(source.thinkingArgs?.level, "off")
-        XCTAssertEqual(model.coordinatorThinking, .off)
-        XCTAssertEqual(model.implementerThinking, .off)
-        XCTAssertEqual(model.reviewersThinking, .off)
+        XCTAssertNil(model.chooseThinking(.high, for: .coordinator))
+        XCTAssertNil(source.thinkingArgs)
     }
 
-    func testApplyThinkingAllRolesNotSuppressedWhenRolesDiverge() async {
-        // Roles diverge (coordinator high, implementer medium); applying the
-        // coordinator's own level at `all` scope must still fire so the roles
-        // unify rather than being suppressed by the no-op guard.
+    func testChooseThinkingRevertsOnFailure() async {
         let source = MockSettingsSource()
         source.response = listModelsResponse()
         let model = SessionSettingsModel(source: source, sessionId: "s1")
         await model.load()
+        source.setError = YccError.rpc(message: "no")
 
-        model.selectThinkingRole(.all)
-        XCTAssertEqual(model.thinkingLevel, .high) // seeded from coordinator
-        await model.applyThinking()
+        let task = model.chooseThinking(.off, for: .reviewers)
+        XCTAssertEqual(model.reviewersThinking, .off, "the picker shows the pick at once")
+        await task?.value
 
-        XCTAssertEqual(source.thinkingArgs?.role, "")
-        XCTAssertEqual(source.thinkingArgs?.level, "high")
-        XCTAssertEqual(model.implementerThinking, .high)
-        XCTAssertEqual(model.reviewersThinking, .high)
+        XCTAssertEqual(model.reviewersThinking, .low)
+        XCTAssertEqual(model.errorMessage, "no")
+    }
+
+    func testThinkingLevelsFollowEachRolesModel() async {
+        let source = MockSettingsSource()
+        var response = listModelsResponse(reviewers: ["gpt", "glm"])
+        response.models[1].thinkingLevels = ["low", "medium", "high", "xhigh"]
+        response.models[2].thinkingLevels = ["low", "medium", "high"]
+        source.response = response
+        let model = SessionSettingsModel(source: source, sessionId: "s1")
+        await model.load()
+
+        XCTAssertEqual(model.thinkingLevels(for: .coordinator), ThinkingLevel.allCases)
+        XCTAssertEqual(model.thinkingLevels(for: .implementer), [.low, .medium, .high, .xhigh])
+        XCTAssertEqual(model.thinkingLevels(for: .reviewers), [.low, .medium, .high, .xhigh])
+    }
+
+    func testRoleChangeRefreshesThinking() async {
+        let source = MockSettingsSource()
+        source.response = listModelsResponse()
+        let model = SessionSettingsModel(source: source, sessionId: "s1")
+        await model.load()
+        source.response.coordinatorThinking = "medium" // gpt's level
+
+        await model.chooseCoordinator("gpt")?.value
+
+        XCTAssertEqual(model.coordinatorThinking, .medium)
     }
 
     // MARK: - Error / unauthorized surfacing
@@ -208,8 +237,7 @@ final class SessionSettingsModelTests: XCTestCase {
         source.setError = YccError.unauthorized
         let model = SessionSettingsModel(source: source, sessionId: "s1")
 
-        model.thinkingLevel = .high
-        await model.applyThinking()
+        await model.applyThinking(.high, for: .coordinator)
 
         XCTAssertTrue(model.unauthorized)
     }

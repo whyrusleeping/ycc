@@ -29,6 +29,8 @@ public struct WatchDraft: Equatable, Sendable {
     public var unit: Unit = .minutes
     /// A logical model; empty for the coordinator default.
     public var model = ""
+    /// The thinking level for runs; nil for the model's saved level.
+    public var thinking: ThinkingLevel?
     public var probe = ""
     public var probeAlways = false
     /// When the watch pauses itself; nil for never.
@@ -45,6 +47,7 @@ public struct WatchDraft: Equatable, Sendable {
         brief = definition.brief
         (every, unit) = Self.split(definition.intervalSecs)
         model = definition.model
+        thinking = definition.thinking.isEmpty ? nil : ThinkingLevel.parse(definition.thinking)
         probe = definition.probe
         probeAlways = definition.probeAlways
         expires = WatchFormat.date(definition.expires)
@@ -97,6 +100,7 @@ public struct WatchDraft: Equatable, Sendable {
         definition.brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
         definition.intervalSecs = intervalSecs
         definition.model = model
+        definition.thinking = thinking?.wireValue ?? ""
         definition.probe = Self.plainPunctuation(probe.trimmingCharacters(in: .whitespacesAndNewlines))
         definition.probeAlways = !definition.probe.isEmpty && probeAlways
         if let expires {
@@ -138,6 +142,8 @@ public final class WatchEditorModel {
     public private(set) var models: [Ycc_V1_ModelInfo] = []
     /// The coordinator default a blank model resolves to.
     public private(set) var defaultModel = ""
+    /// The coordinator default's thinking level, when known.
+    private var defaultModelThinking: ThinkingLevel?
     public private(set) var isSaving = false
     /// Why the latest save failed; the draft is kept.
     public var errorMessage: String?
@@ -175,12 +181,31 @@ public final class WatchEditorModel {
         return choices
     }
 
+    /// The levels the run model supports, for the thinking picker.
+    public var thinkingLevels: [ThinkingLevel] {
+        ThinkingLevel.supported(named: draft.model.isEmpty ? defaultModel : draft.model, in: models)
+    }
+
+    /// The saved level a blank thinking choice runs at, when known (the
+    /// coordinator default's level while the watch uses that model).
+    public var modelDefaultThinking: ThinkingLevel? {
+        draft.model.isEmpty || draft.model == defaultModel ? defaultModelThinking : nil
+    }
+
+    /// Moves a picked thinking level to one the newly chosen model supports.
+    public func modelChanged() {
+        let clamped = draft.thinking.clamped(to: thinkingLevels)
+        if clamped != draft.thinking { draft.thinking = clamped }
+    }
+
     /// Loads the model picker. A failure leaves only the coordinator default.
     public func loadModels() async {
         do {
             let response = try await source.listModels()
             models = response.models
             defaultModel = response.coordinator
+            defaultModelThinking = response.coordinatorThinking.isEmpty
+                ? nil : ThinkingLevel.parse(response.coordinatorThinking)
         } catch YccError.unauthorized {
             unauthorized = true
         } catch {}

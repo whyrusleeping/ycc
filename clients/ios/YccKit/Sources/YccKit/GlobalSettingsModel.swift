@@ -33,6 +33,8 @@ public struct ModelEditorDraft: Equatable, Sendable {
     public var thinking: String
     public var effort: String
     public var thinkingDisplay: String
+    /// The `thinking_levels` override; nil uses the backend's default levels.
+    public var thinkingLevels: [ThinkingLevel]?
     public var notes: String
     public var priceInput: String
     public var priceOutput: String
@@ -43,7 +45,8 @@ public struct ModelEditorDraft: Equatable, Sendable {
         name: String = "", isEnabled: Bool = true, backend: String = "anthropic",
         auth: String = "api-key", baseURL: String = "", modelID: String = "",
         keyEnv: String = "", thinking: String = "", effort: String = "",
-        thinkingDisplay: String = "", notes: String = "", priceInput: String = "", priceOutput: String = "",
+        thinkingDisplay: String = "", thinkingLevels: [ThinkingLevel]? = nil,
+        notes: String = "", priceInput: String = "", priceOutput: String = "",
         priceCacheRead: String = "", priceCacheWrite: String = ""
     ) {
         self.name = name
@@ -56,6 +59,7 @@ public struct ModelEditorDraft: Equatable, Sendable {
         self.thinking = thinking
         self.effort = effort
         self.thinkingDisplay = thinkingDisplay
+        self.thinkingLevels = thinkingLevels
         self.notes = notes
         self.priceInput = priceInput
         self.priceOutput = priceOutput
@@ -88,6 +92,11 @@ public struct ModelEditorDraft: Equatable, Sendable {
         config.thinking = thinking
         config.effort = effort
         config.thinkingDisplay = thinkingDisplay
+        // Always sent: the editor shows the whole override, and an empty list
+        // clears it (the backend default applies).
+        var levels = Ycc_V1_ThinkingLevelList()
+        levels.levels = ThinkingLevel.allCases.filter { thinkingLevels?.contains($0) ?? false }.map(\.wireValue)
+        config.thinkingLevels = levels
         config.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         if let value = Double(priceInput) { config.priceInput = value }
         if let value = Double(priceOutput) { config.priceOutput = value }
@@ -206,6 +215,8 @@ public final class GlobalSettingsModel {
             committedImplementer = implementer
             committedReviewers = reviewers
             errorMessage = nil
+            // A new role model brings its own thinking level.
+            scheduleReload()
         } catch {
             coordinator = committedCoordinator
             implementer = committedImplementer
@@ -249,6 +260,17 @@ public final class GlobalSettingsModel {
             reviewers.append(name)
         }
         return true
+    }
+
+    /// The levels a role's assigned model(s) support (the reviewers: any
+    /// reviewer model's; the daemon clamps per model).
+    public func thinkingLevels(for role: ThinkingRole) -> [ThinkingLevel] {
+        switch role {
+        case .all: return ThinkingLevel.supported(anyOf: [coordinator, implementer] + reviewers, in: models)
+        case .coordinator: return ThinkingLevel.supported(named: coordinator, in: models)
+        case .implementer: return ThinkingLevel.supported(named: implementer, in: models)
+        case .reviewers: return ThinkingLevel.supported(anyOf: reviewers, in: models)
+        }
     }
 
     public func thinking(for role: ThinkingRole) -> ThinkingLevel {

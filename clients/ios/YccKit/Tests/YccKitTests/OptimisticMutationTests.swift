@@ -1427,15 +1427,15 @@ final class SettingsOptimisticTests: XCTestCase {
         let model = SessionSettingsModel(source: source, sessionId: "s1")
 
         await model.load()
-        XCTAssertEqual(model.thinkingLevel, .high, "seeded from the coordinator")
-        model.selectThinkingRole(.implementer)
-        model.selectThinkingRole(.all)
-        XCTAssertTrue(source.thinkingCalls.isEmpty, "seeding and scope changes never apply")
+        XCTAssertEqual(model.coordinatorThinking, .high)
+        XCTAssertEqual(model.implementerThinking, .low)
+        XCTAssertTrue(source.thinkingCalls.isEmpty, "seeding never applies")
 
-        XCTAssertNil(model.chooseThinkingLevel(.high), "picking the shown level is a no-op")
-        await model.chooseThinkingLevel(.max)?.value
+        XCTAssertNil(model.chooseThinking(.high, for: .coordinator), "picking the shown level is a no-op")
+        source.response.implementerThinking = "max"
+        await model.chooseThinking(.max, for: .implementer)?.value
         XCTAssertEqual(source.thinkingCalls.map(\.level), ["max"])
-        XCTAssertEqual(source.thinkingCalls.map(\.role), [""])
+        XCTAssertEqual(source.thinkingCalls.map(\.role), ["implementer"])
         XCTAssertEqual(model.implementerThinking, .max)
 
         await model.chooseImplementer("alpha")?.value
@@ -1493,13 +1493,14 @@ private final class CatalogSource: NewSessionSource, @unchecked Sendable {
     }
     func listModels() async throws -> Ycc_V1_ListModelsResponse { settingsResponse() }
     func startSession(
-        project: String, mode: String, prompt: String, coordinatorModel: String, images: [MessageImage]
+        project: String, mode: String, prompt: String, coordinatorModel: String,
+        coordinatorThinking: String, images: [MessageImage]
     ) async throws -> String { "s_new" }
     func resumeSession(project: String, sessionId: String) async throws -> String { sessionId }
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] { [] }
     func spawnWorkstream(
         project: String, mode: String, prompt: String, coordinatorModel: String,
-        preset: String, taskID: String, images: [MessageImage]
+        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
     ) async throws -> Ycc_V1_WorkstreamInfo { Ycc_V1_WorkstreamInfo() }
 }
 

@@ -20,6 +20,7 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     private(set) var startArgs: (
         project: String, mode: String, prompt: String, coordinatorModel: String,
         images: [MessageImage])?
+    private(set) var startThinking: String?
     private(set) var resumeArgs: (project: String, sessionId: String)?
 
     func listModes() async throws -> Ycc_V1_ListModesResponse {
@@ -42,9 +43,10 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
 
     func startSession(
         project: String, mode: String, prompt: String, coordinatorModel: String,
-        images: [MessageImage]
+        coordinatorThinking: String, images: [MessageImage]
     ) async throws -> String {
         startArgs = (project, mode, prompt, coordinatorModel, images)
+        startThinking = coordinatorThinking
         if let startError { throw startError }
         return startedSessionId
     }
@@ -62,6 +64,7 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     private(set) var spawnArgs: (
         project: String, mode: String, prompt: String, coordinatorModel: String,
         preset: String, taskID: String, images: [MessageImage])?
+    private(set) var spawnThinking: String?
 
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
         backlogCalls.append(project)
@@ -71,9 +74,10 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
 
     func spawnWorkstream(
         project: String, mode: String, prompt: String, coordinatorModel: String,
-        preset: String, taskID: String, images: [MessageImage]
+        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
     ) async throws -> Ycc_V1_WorkstreamInfo {
         spawnArgs = (project, mode, prompt, coordinatorModel, preset, taskID, images)
+        spawnThinking = coordinatorThinking
         if let spawnError { throw spawnError }
         var info = Ycc_V1_WorkstreamInfo()
         info.id = "ws_1"
@@ -149,6 +153,50 @@ final class NewSessionModelTests: XCTestCase {
         model.prompt = "go"
         _ = await model.start()
         XCTAssertEqual(source.startArgs?.coordinatorModel, "")
+        XCTAssertEqual(source.startThinking, "")
+    }
+
+    // MARK: - Thinking picker
+
+    func testThinkingChoicesFollowTheCoordinatorModel() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        var listed = modelList(["claude", "gpt", "local"], coordinator: "claude")
+        listed.models[1].thinkingLevels = ["low", "medium", "high", "xhigh"]
+        listed.models[2].thinkingLevels = ["off", "high"]
+        listed.coordinatorThinking = "high"
+        source.models = listed
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+
+        XCTAssertTrue(model.showsThinkingPicker)
+        XCTAssertEqual(model.thinkingChoices, ThinkingLevel.allCases)
+        XCTAssertEqual(model.modelDefaultThinking, .high)
+        XCTAssertEqual(model.selectedThinkingTitle, "High (default)")
+
+        model.selectedThinking = .off
+        model.selectedModel = "gpt"
+        XCTAssertEqual(model.thinkingChoices, [.low, .medium, .high, .xhigh])
+        XCTAssertEqual(model.selectedThinking, .low, "off becomes the lowest supported level")
+        XCTAssertNil(model.modelDefaultThinking, "another model's saved level is unknown")
+
+        model.selectedThinking = .max
+        model.selectedModel = "local"
+        XCTAssertEqual(model.selectedThinking, .high)
+
+        model.prompt = "go"
+        _ = await model.start()
+        XCTAssertEqual(source.startArgs?.coordinatorModel, "local")
+        XCTAssertEqual(source.startThinking, "high")
+    }
+
+    func testThinkingPickerHiddenWithoutModels() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.modelsError = YccError.rpc(message: "boom")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        XCTAssertFalse(model.showsThinkingPicker)
     }
 
     func testDisabledDefaultRequiresEnabledOverride() async {
@@ -550,6 +598,7 @@ final class NewSessionModelTests: XCTestCase {
         model.selectedProject = "two"
         model.apply(preset: plan)
         model.selectedModel = "smart"
+        model.selectedThinking = .xhigh
         model.images = [MessageImage(data: Data([0xFF]), mediaType: "image/jpeg")]
         model.separateWorkstream = true
 
@@ -561,6 +610,7 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(source.spawnArgs?.mode, "pm")
         XCTAssertEqual(source.spawnArgs?.prompt, "Plan the next step")
         XCTAssertEqual(source.spawnArgs?.coordinatorModel, "smart")
+        XCTAssertEqual(source.spawnThinking, "xhigh")
         XCTAssertEqual(source.spawnArgs?.preset, "plan")
         XCTAssertEqual(source.spawnArgs?.taskID, "")
         XCTAssertEqual(source.spawnArgs?.images.count, 1)

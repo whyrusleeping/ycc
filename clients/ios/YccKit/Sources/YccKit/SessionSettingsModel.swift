@@ -85,8 +85,9 @@ public enum ThinkingRole: String, CaseIterable, Sendable, Identifiable {
 /// overlay. Seeds its pickers from ``ListModels`` (role model assignments + each
 /// assigned model's thinking), then applies each change against the live session via
 /// the injected ``SessionSettingsSource`` — surfacing the daemon's error verbatim
-/// on an invalid combination. `@MainActor` because it publishes observable UI
-/// state; the source is injected so the logic is testable headlessly.
+/// on an invalid combination. Every change applies to this session only.
+/// `@MainActor` because it publishes observable UI state; the source is
+/// injected so the logic is testable headlessly.
 @MainActor
 @Observable
 public final class SessionSettingsModel {
@@ -99,13 +100,9 @@ public final class SessionSettingsModel {
     public var implementer: String = ""
     /// The selected reviewer models (multi-select).
     public var reviewers: [String] = []
-    /// The scope a thinking change targets (all/coordinator/implementer/reviewers).
-    public var thinkingRole: ThinkingRole = .all
-    /// The selected thinking level for ``thinkingRole``.
-    public var thinkingLevel: ThinkingLevel = .medium
 
-    /// Role-row views of model thinking last known from the daemon, so switching
-    /// scope reflects the currently assigned model's level.
+    /// Each role's thinking level in this session, as last known from the
+    /// daemon (or just picked). Roles sharing a model share its level.
     public private(set) var coordinatorThinking: ThinkingLevel = .medium
     public private(set) var implementerThinking: ThinkingLevel = .medium
     public private(set) var reviewersThinking: ThinkingLevel = .medium
@@ -151,21 +148,29 @@ public final class SessionSettingsModel {
             committedCoordinator = response.coordinator
             committedImplementer = response.implementer
             committedReviewers = response.reviewers
-            coordinatorThinking = ThinkingLevel.parse(response.coordinatorThinking)
-            implementerThinking = ThinkingLevel.parse(response.implementerThinking)
-            reviewersThinking = ThinkingLevel.parse(response.reviewersThinking)
-            // Seed the thinking picker for the current scope (default: all →
-            // coordinator's level as a representative starting point).
-            thinkingLevel = thinkingLevelFor(thinkingRole)
+            applyThinking(from: response)
             errorMessage = nil
         } catch {
             handle(error)
         }
     }
 
-    /// The known thinking level for a role scope (`all` → coordinator's, as a
-    /// representative). Drives the picker when the scope changes.
-    public func thinkingLevelFor(_ role: ThinkingRole) -> ThinkingLevel {
+    private func applyThinking(from response: Ycc_V1_ListModelsResponse) {
+        coordinatorThinking = ThinkingLevel.parse(response.coordinatorThinking)
+        implementerThinking = ThinkingLevel.parse(response.implementerThinking)
+        reviewersThinking = ThinkingLevel.parse(response.reviewersThinking)
+    }
+
+    /// Re-read the resolved levels after a change: a new model brings its own
+    /// level, and a level change reaches every role sharing the model. A
+    /// failure keeps the current values (the change itself succeeded).
+    private func refreshThinking() async {
+        guard let response = try? await source.listModels(sessionId: sessionId) else { return }
+        applyThinking(from: response)
+    }
+
+    /// A role's known thinking level (`all` → the coordinator's).
+    public func thinking(for role: ThinkingRole) -> ThinkingLevel {
         switch role {
         case .all, .coordinator: return coordinatorThinking
         case .implementer: return implementerThinking
@@ -173,23 +178,26 @@ public final class SessionSettingsModel {
         }
     }
 
-    /// Reflect the assigned model's thinking level when the scope picker changes.
-    public func selectThinkingRole(_ role: ThinkingRole) {
-        thinkingRole = role
-        thinkingLevel = thinkingLevelFor(role)
+    /// The levels a role's selected model(s) support (the reviewers: any
+    /// reviewer model's; the daemon clamps per model).
+    public func thinkingLevels(for role: ThinkingRole) -> [ThinkingLevel] {
+        switch role {
+        case .all: return ThinkingLevel.supported(anyOf: [coordinator, implementer] + reviewers, in: models)
+        case .coordinator: return ThinkingLevel.supported(named: coordinator, in: models)
+        case .implementer: return ThinkingLevel.supported(named: implementer, in: models)
+        case .reviewers: return ThinkingLevel.supported(anyOf: reviewers, in: models)
+        }
     }
 
-    /// Whether applying `level` at `role` scope would change anything. For the
-    /// `all` scope every role row is checked, so unifying divergent model levels
-    /// is never suppressed.
-    private func needsThinkingApply(role: ThinkingRole, level: ThinkingLevel) -> Bool {
+    private func setLocalThinking(_ level: ThinkingLevel, for role: ThinkingRole) {
         switch role {
         case .all:
-            return level != coordinatorThinking
-                || level != implementerThinking
-                || level != reviewersThinking
-        default:
-            return level != thinkingLevelFor(role)
+            coordinatorThinking = level
+            implementerThinking = level
+            reviewersThinking = level
+        case .coordinator: coordinatorThinking = level
+        case .implementer: implementerThinking = level
+        case .reviewers: reviewersThinking = level
         }
     }
 
@@ -203,6 +211,7 @@ public final class SessionSettingsModel {
                 coordinator: self.coordinator,
                 implementer: self.implementer,
                 reviewers: self.reviewers)
+            await self.refreshThinking()
         } onSuccess: {
             self.committedCoordinator = self.coordinator
             self.committedImplementer = self.implementer
@@ -214,52 +223,46 @@ public final class SessionSettingsModel {
         }
     }
 
-    /// Apply the selected thinking level to the selected scope's model(s)
-    /// (`SetThinking`). On success updates the cached role-row level(s).
-    public func applyThinking() async {
-        let role = thinkingRole
-        let level = thinkingLevel
-        // No-op when the level already matches the scope's known level — this also
-        // suppresses the redundant apply that a scope-picker change would trigger
-        // (selecting a scope seeds the level picker from that role's level). For
-        // the `all` scope, any divergent role counts as a change so unifying the
-        // roles at the coordinator's current level is not suppressed.
-        guard needsThinkingApply(role: role, level: level) else { return }
+    /// Apply `level` to `role`'s model(s) in this session (`SetThinking` with
+    /// the session id; `ycc.toml` is unchanged). The picker shows the level at
+    /// once and reverts on failure.
+    public func applyThinking(_ level: ThinkingLevel, for role: ThinkingRole) async {
+        await applyThinking(level, for: role, previous: (coordinatorThinking, implementerThinking, reviewersThinking))
+    }
+
+    private func applyThinking(
+        _ level: ThinkingLevel, for role: ThinkingRole,
+        previous: (ThinkingLevel, ThinkingLevel, ThinkingLevel)
+    ) async {
         await apply {
+            self.setLocalThinking(level, for: role)
             try await self.source.setThinking(
                 sessionId: self.sessionId, level: level.wireValue, role: role.wireValue)
+            await self.refreshThinking()
         } onSuccess: {
-            switch role {
-            case .all:
-                self.coordinatorThinking = level
-                self.implementerThinking = level
-                self.reviewersThinking = level
-            case .coordinator: self.coordinatorThinking = level
-            case .implementer: self.implementerThinking = level
-            case .reviewers: self.reviewersThinking = level
-            }
         } onFailure: {
-            self.thinkingLevel = self.thinkingLevelFor(role)
+            (self.coordinatorThinking, self.implementerThinking, self.reviewersThinking) = previous
         }
     }
 
     // MARK: - User picks
     //
     // The view binds its pickers through these instead of observing value
-    // changes: ``load()`` and ``selectThinkingRole(_:)`` seed the same
-    // properties programmatically, and an `onChange` observer cannot tell a
-    // seed from a user pick — it used to fire a spurious `SetThinking` (the
-    // `all` scope then unified divergent role levels) and a redundant
-    // `SetRoleConfig` every time the sheet opened. Each method updates the
-    // picker synchronously and returns the apply task (nil when nothing
-    // changed).
+    // changes: ``load()`` seeds the same properties programmatically, and an
+    // `onChange` observer cannot tell a seed from a user pick — it used to
+    // fire a spurious `SetThinking` and a redundant `SetRoleConfig` every time
+    // the sheet opened. Each method updates the picker synchronously and
+    // returns the apply task (nil when nothing changed).
 
-    /// The user picked a thinking level for the current scope.
+    /// The user picked a thinking level for a role.
     @discardableResult
-    public func chooseThinkingLevel(_ level: ThinkingLevel) -> Task<Void, Never>? {
-        guard level != thinkingLevel else { return nil }
-        thinkingLevel = level
-        return Task { @MainActor [weak self] in await self?.applyThinking() }
+    public func chooseThinking(_ level: ThinkingLevel, for role: ThinkingRole) -> Task<Void, Never>? {
+        guard level != thinking(for: role), !isApplying else { return nil }
+        let previous = (coordinatorThinking, implementerThinking, reviewersThinking)
+        setLocalThinking(level, for: role)
+        return Task { @MainActor [weak self] in
+            await self?.applyThinking(level, for: role, previous: previous)
+        }
     }
 
     /// The user picked a coordinator model.

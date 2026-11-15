@@ -175,6 +175,13 @@ public final class ReviewTiersModel {
     public private(set) var defaultTier = ""
     /// Configured logical model names (for the per-slot model pickers).
     public private(set) var modelNames: [String] = []
+    /// Every listed model (disabled included), for each slot's thinking levels.
+    private var models: [Ycc_V1_ModelInfo] = []
+
+    /// The thinking levels a slot's model supports.
+    public func thinkingLevels(for model: String) -> [ThinkingLevel] {
+        ThinkingLevel.supported(named: model, in: models)
+    }
 
     public private(set) var isLoading = false
     public private(set) var isApplying = false
@@ -205,6 +212,7 @@ public final class ReviewTiersModel {
             guard generation == loadGeneration else { return }
             tiers = response.tiers
             defaultTier = response.defaultTier
+            self.models = models.models
             modelNames = models.models.filter { !$0.disabled }.map(\.name)
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
             errorMessage = nil

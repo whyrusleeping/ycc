@@ -3,8 +3,8 @@ import YccKit
 import YccProto
 
 /// The long-press companion to a task's "Start work" button: pick the role
-/// models (and optionally a separate workstream) for this one work session,
-/// then start it. The defaults come from Settings and are left unchanged.
+/// models and their thinking levels (and optionally a separate workstream) for
+/// this one work session, then start it. The defaults come from Settings and are left unchanged.
 struct StartWorkOptionsView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -29,6 +29,13 @@ struct StartWorkOptionsView: View {
                     Section {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(Theme.danger)
+                            .font(.callout)
+                    }
+                }
+                if let conflict = model.thinkingConflict {
+                    Section {
+                        Label(conflict, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Theme.attention)
                             .font(.callout)
                     }
                 }
@@ -77,20 +84,31 @@ struct StartWorkOptionsView: View {
         }
     }
 
+    @ViewBuilder
     private var rolesSection: some View {
         @Bindable var model = model
-        return Section {
-            Picker("Coordinator", selection: $model.coordinator) {
+        Section("Coordinator") {
+            Picker("Model", selection: $model.coordinator) {
                 modelChoices(assigned: model.coordinator, defaultName: model.defaultCoordinator)
             }
-            Picker("Implementer", selection: $model.implementer) {
+            thinkingPicker(for: .coordinator)
+        }
+        Section("Implementer") {
+            Picker("Model", selection: $model.implementer) {
                 modelChoices(assigned: model.implementer, defaultName: model.defaultImplementer)
             }
-        } header: {
-            Text("Models")
-        } footer: {
-            Text("For this session only. Change the defaults in Settings.")
+            thinkingPicker(for: .implementer)
         }
+    }
+
+    /// Picks go through the model so roles sharing a model stay in step.
+    private func thinkingPicker(for role: ThinkingRole) -> some View {
+        ThinkingPicker(
+            selection: Binding(
+                get: { model.thinking(for: role) },
+                set: { model.chooseThinking($0, for: role) }),
+            levels: model.thinkingLevels(for: role),
+            defaultTitle: ThinkingPicker.defaultTitle(model.defaultThinking(for: role)))
     }
 
     @ViewBuilder
@@ -108,7 +126,7 @@ struct StartWorkOptionsView: View {
     }
 
     private var reviewersSection: some View {
-        Section("Reviewers") {
+        Section {
             ForEach(model.choices(including: model.reviewers), id: \.name) { info in
                 Button {
                     model.toggleReviewer(info.name)
@@ -124,6 +142,11 @@ struct StartWorkOptionsView: View {
                 }
                 .accessibilityAddTraits(model.isReviewerSelected(info.name) ? .isSelected : [])
             }
+            thinkingPicker(for: .reviewers)
+        } header: {
+            Text("Reviewers")
+        } footer: {
+            Text("For this session only; change the defaults in Settings. Roles sharing a model share its thinking level.")
         }
     }
 

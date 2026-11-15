@@ -15,22 +15,23 @@ public protocol NewSessionSource: Sendable {
     /// (`ListModels`); drives the optional model picker.
     func listModels() async throws -> Ycc_V1_ListModelsResponse
     /// Start a new session; returns its id to subscribe from seq 0.
-    /// `coordinatorModel` is empty for "use the configured default"; `images`
+    /// `coordinatorModel` is empty for "use the configured default" and
+    /// `coordinatorThinking` empty for that model's saved level; `images`
     /// attaches pictures to the opening prompt.
     func startSession(
         project: String, mode: String, prompt: String, coordinatorModel: String,
-        images: [MessageImage]
+        coordinatorThinking: String, images: [MessageImage]
     ) async throws -> String
     /// Re-open a persisted session on its existing log; returns its id.
     func resumeSession(project: String, sessionId: String) async throws -> String
     /// A project's backlog (`ListBacklog`); drives the workstream task picker.
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary]
     /// Start the session in a new workstream (`SpawnWorkstream`) with the same
-    /// choices as ``startSession(project:mode:prompt:coordinatorModel:images:)``
+    /// choices as ``startSession(project:mode:prompt:coordinatorModel:coordinatorThinking:images:)``
     /// plus the applied preset and an optional backlog task.
     func spawnWorkstream(
         project: String, mode: String, prompt: String, coordinatorModel: String,
-        preset: String, taskID: String, images: [MessageImage]
+        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
     ) async throws -> Ycc_V1_WorkstreamInfo
 }
 
@@ -89,6 +90,11 @@ public final class NewSessionModel {
     /// True when the daemon's coordinator role still references a temporarily
     /// disabled model, requiring an enabled per-session override.
     public private(set) var defaultModelDisabled = false
+    /// The default coordinator's resolved thinking level (`ListModels`), shown
+    /// on the "Default" thinking choice while that model is selected.
+    public private(set) var defaultThinking: ThinkingLevel?
+    /// Every listed model, including disabled ones, for their thinking levels.
+    private var listedModels: [Ycc_V1_ModelInfo] = []
 
     /// The selected mode name (e.g. `work`/`pm`/`chat`).
     public var selectedMode: String = ""
@@ -97,7 +103,13 @@ public final class NewSessionModel {
     /// The coordinator model override for this session. Empty (the default) means
     /// "use the daemon's configured coordinator" — picking one here affects ONLY
     /// the session being started; the persisted role defaults are untouched.
-    public var selectedModel: String = ""
+    public var selectedModel: String = "" {
+        didSet { clampThinking() }
+    }
+    /// The coordinator thinking level for this session only; `nil` means the
+    /// model's saved level. Moves to the nearest supported level when the model
+    /// changes.
+    public var selectedThinking: ThinkingLevel?
     /// The multiline prompt composer draft.
     public var prompt: String = ""
     /// Pictures attached to the opening prompt (at most
@@ -200,6 +212,38 @@ public final class NewSessionModel {
         return defaultModel.isEmpty ? "Model" : "\(defaultModel) (default)"
     }
 
+    /// The coordinator model the session will start with.
+    private var effectiveModel: String { selectedModel.isEmpty ? defaultModel : selectedModel }
+
+    /// The levels the coordinator model supports, for the thinking chip.
+    public var thinkingChoices: [ThinkingLevel] {
+        ThinkingLevel.choices(
+            ThinkingLevel.supported(named: effectiveModel, in: listedModels),
+            including: selectedThinking)
+    }
+
+    /// The "model default" thinking level when it is known: the default
+    /// coordinator's resolved level, while that model is the one selected.
+    public var modelDefaultThinking: ThinkingLevel? {
+        effectiveModel == defaultModel ? defaultThinking : nil
+    }
+
+    /// The thinking chip is shown once the models are known (a failed
+    /// `ListModels` hides it with the model chip).
+    public var showsThinkingPicker: Bool { !listedModels.isEmpty }
+
+    /// The label for the thinking choice.
+    public var selectedThinkingTitle: String {
+        if let selectedThinking { return selectedThinking.title }
+        return modelDefaultThinking.map { "\($0.title) (default)" } ?? "Thinking"
+    }
+
+    private func clampThinking() {
+        let clamped = selectedThinking.clamped(
+            to: ThinkingLevel.supported(named: effectiveModel, in: listedModels))
+        if clamped != selectedThinking { selectedThinking = clamped }
+    }
+
     /// Whether the prompt may be left empty for the selected mode. Mirrors the
     /// TUI: plain `work` mode starts without a prompt — the agent picks up the
     /// next ready backlog task itself.
@@ -290,17 +334,20 @@ public final class NewSessionModel {
             ? catalog.defaultMode
             : catalog.modes.first?.name ?? ""
         presets = catalog.presets
-        let listedModels = catalog.models?.models ?? []
+        listedModels = catalog.models?.models ?? []
         models = listedModels.filter { !$0.disabled }
         defaultModel = catalog.models?.coordinator ?? ""
         defaultModelDisabled = listedModels.contains {
             $0.name == defaultModel && $0.disabled
         }
+        let thinking = catalog.models?.coordinatorThinking ?? ""
+        defaultThinking = thinking.isEmpty ? nil : ThinkingLevel.parse(thinking)
         // Never keep an override pointing at a model that is no longer
         // configured — fall back to the daemon's default.
         if !selectedModel.isEmpty, !models.contains(where: { $0.name == selectedModel }) {
             selectedModel = ""
         }
+        clampThinking()
         // Keep a valid mode selected: a choice already made (a preset, or an
         // explicit pick) survives a reload; otherwise start in the default.
         if selectedMode.isEmpty || !catalog.modes.contains(where: { $0.name == selectedMode }) {
@@ -408,6 +455,7 @@ public final class NewSessionModel {
                     mode: selectedMode,
                     prompt: workstreamPrompt,
                     coordinatorModel: selectedModel,
+                    coordinatorThinking: selectedThinking?.wireValue ?? "",
                     preset: presetForStart,
                     taskID: task?.id ?? "",
                     images: images
@@ -418,6 +466,7 @@ public final class NewSessionModel {
                     mode: selectedMode,
                     prompt: trimmedPrompt,
                     coordinatorModel: selectedModel,
+                    coordinatorThinking: selectedThinking?.wireValue ?? "",
                     images: images)
             }
             rememberSelections()
@@ -442,7 +491,7 @@ public final class NewSessionModel {
     }
 
     private func rememberSelections() {
-        // The project is a sticky convenience; the mode and model deliberately
+        // The project is a sticky convenience; the mode, model and thinking deliberately
         // are NOT, so the next composer opens back on the daemon's defaults.
         defaults.lastProject = selectedProject
     }

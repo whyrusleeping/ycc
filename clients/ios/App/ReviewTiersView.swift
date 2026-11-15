@@ -237,7 +237,7 @@ struct ReviewTierEditorView: View {
     private var slotsSection: some View {
         Section {
             ForEach($draft.slots) { $slot in
-                ReviewerSlotEditor(slot: $slot, modelNames: model.modelNames)
+                ReviewerSlotEditor(slot: $slot, modelNames: model.modelNames, thinkingLevels: model.thinkingLevels)
             }
             .onDelete { offsets in
                 draft.slots.remove(atOffsets: offsets)
@@ -260,6 +260,8 @@ struct ReviewTierEditorView: View {
 private struct ReviewerSlotEditor: View {
     @Binding var slot: ReviewerSlotDraft
     let modelNames: [String]
+    /// The thinking levels a model supports.
+    let thinkingLevels: @MainActor (String) -> [ThinkingLevel]
 
     var body: some View {
         DisclosureGroup {
@@ -279,12 +281,8 @@ private struct ReviewerSlotEditor: View {
                 .autocorrectionDisabled()
             TextField("Focus prompt (optional)", text: $slot.prompt, axis: .vertical)
                 .lineLimit(1...4)
-            Picker("Thinking", selection: $slot.thinking) {
-                Text("Inherit").tag(ThinkingLevel?.none)
-                ForEach(ThinkingLevel.allCases) { level in
-                    Text(level.title).tag(ThinkingLevel?.some(level))
-                }
-            }
+            ThinkingPicker(
+                selection: $slot.thinking, levels: thinkingLevels(slot.model), defaultTitle: "Inherit")
         } label: {
             HStack {
                 Text(slotTitle)
@@ -296,6 +294,10 @@ private struct ReviewerSlotEditor: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        // A new model keeps an override only at a level it supports.
+        .onChange(of: slot.model) { _, model in
+            slot.thinking = slot.thinking.clamped(to: thinkingLevels(model))
         }
     }
 

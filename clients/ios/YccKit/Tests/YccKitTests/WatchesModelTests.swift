@@ -294,6 +294,7 @@ final class WatchesModelTests: XCTestCase {
         w.definition.brief = "check disk"
         w.definition.intervalSecs = 7_200
         w.definition.model = "claude"
+        w.definition.thinking = "high"
         w.definition.probe = "df -h"
         w.definition.probeAlways = true
         w.definition.expires = "2027-01-02T03:04:05Z"
@@ -302,6 +303,7 @@ final class WatchesModelTests: XCTestCase {
         XCTAssertEqual(draft.every, "2")
         XCTAssertEqual(draft.unit, .hours)
         XCTAssertEqual(draft.allowedActions, "clear tmp\nrotate logs")
+        XCTAssertEqual(draft.thinking, .high)
         XCTAssertEqual(draft.definition, w.definition)
 
         // Odd agent-made intervals round to whole minutes.
@@ -322,6 +324,32 @@ final class WatchesModelTests: XCTestCase {
         // Smart punctuation would break a shell probe.
         edited.probe = "curl \u{2014}fail \u{201C}a b\u{201D} \u{2018}c\u{2019}"
         XCTAssertEqual(edited.definition.probe, "curl --fail \"a b\" 'c'")
+    }
+
+    func testEditorThinkingFollowsTheRunModel() async {
+        let source = MockWatchesSource()
+        var claude = Ycc_V1_ModelInfo()
+        claude.name = "claude"
+        var local = Ycc_V1_ModelInfo()
+        local.name = "local"
+        local.thinkingLevels = ["off", "high"]
+        source.models.models = [claude, local]
+        source.models.coordinator = "claude"
+        source.models.coordinatorThinking = "medium"
+        let editor = WatchEditorModel(project: "p", watch: nil, source: source)
+        await editor.loadModels()
+
+        XCTAssertEqual(editor.thinkingLevels, ThinkingLevel.allCases)
+        XCTAssertEqual(editor.modelDefaultThinking, .medium)
+        editor.draft.thinking = .low
+        editor.draft.model = "local"
+        editor.modelChanged()
+        XCTAssertEqual(editor.thinkingLevels, [.off, .high])
+        XCTAssertNil(editor.modelDefaultThinking)
+        XCTAssertEqual(editor.draft.thinking, .high)
+        XCTAssertEqual(editor.draft.definition.thinking, "high")
+        editor.draft.thinking = nil
+        XCTAssertEqual(editor.draft.definition.thinking, "", "blank = the model's saved level")
     }
 
     func testEditorCreatesAndUpdatesKeepingTheDraftOnFailure() async {

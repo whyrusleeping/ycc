@@ -3,16 +3,14 @@ import YccKit
 import YccProto
 
 /// The per-session settings sheet is the phone analog of the TUI settings
-/// overlay, with two sections:
+/// overlay: one section per role, each with its model and that model's thinking
+/// level beside it (limited to the levels the model supports). The reviewers
+/// section is a multi-select plus one thinking level for every reviewer model.
 ///
-/// - **Thinking** — a role-scope picker (all/coordinator/implementer/reviewers)
-///   plus a level picker driving `SetThinking`.
-/// - **Roles** — coordinator/implementer single pickers plus a reviewers
-///   multi-select (from `ListModels`) with an Apply button driving `SetRoleConfig`.
-///
-/// Each setting applies against the live session; the daemon's error surfaces
-/// verbatim inline. A `.unauthorized` failure routes back to the connect screen
-/// via ``AppModel/handleUnauthorized()``.
+/// Every change applies to this live session only (`SetRoleConfig` /
+/// `SetThinking` with the session id); the daemon's error surfaces verbatim
+/// inline. A `.unauthorized` failure routes back to the connect screen via
+/// ``AppModel/handleUnauthorized()``.
 struct SessionSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -33,7 +31,6 @@ struct SessionSettingsView: View {
                             .font(.callout)
                     }
                 }
-                thinkingSection
                 rolesSection
             }
             .navigationTitle("Session settings")
@@ -58,36 +55,6 @@ struct SessionSettingsView: View {
         }
     }
 
-    // MARK: - Thinking
-
-    private var thinkingSection: some View {
-        Section {
-            Picker("Scope", selection: Binding(
-                get: { model.thinkingRole },
-                set: { model.selectThinkingRole($0) }
-            )) {
-                ForEach(ThinkingRole.allCases) { role in
-                    Text(role.title).tag(role)
-                }
-            }
-            // Bound through the user-pick method, not `onChange`: load() and a
-            // scope change seed this value, and observing it used to send a
-            // spurious SetThinking (unifying divergent role levels).
-            Picker("Level", selection: Binding(
-                get: { model.thinkingLevel },
-                set: { _ = model.chooseThinkingLevel($0) }
-            )) {
-                ForEach(ThinkingLevel.allCases) { level in
-                    Text(level.title).tag(level)
-                }
-            }
-        } header: {
-            Text("Thinking")
-        } footer: {
-            Text("Applies to the next turn / spawn and is saved as the default.")
-        }
-    }
-
     // MARK: - Roles
 
     private func roleModels(including assigned: [String]) -> [Ycc_V1_ModelInfo] {
@@ -103,15 +70,19 @@ struct SessionSettingsView: View {
         }
     }
 
+    @ViewBuilder
     private var rolesSection: some View {
-        Section {
-            if model.models.isEmpty {
+        if model.models.isEmpty {
+            Section {
                 Text(model.isLoading ? "Loading models…" : "No models configured")
                     .foregroundStyle(.secondary)
-            } else {
-                // Same reason: load() seeds these, which used to fire a
-                // redundant SetRoleConfig on every open of this sheet.
-                Picker("Coordinator", selection: Binding(
+            }
+        } else {
+            // Bound through user-pick methods, not `onChange`: load() seeds
+            // these, which used to fire a redundant SetRoleConfig/SetThinking
+            // on every open of this sheet.
+            Section("Coordinator") {
+                Picker("Model", selection: Binding(
                     get: { model.coordinator },
                     set: { _ = model.chooseCoordinator($0) }
                 )) {
@@ -119,7 +90,10 @@ struct SessionSettingsView: View {
                         modelChoice(info).tag(info.name)
                     }
                 }
-                Picker("Implementer", selection: Binding(
+                thinkingPicker(for: .coordinator)
+            }
+            Section("Implementer") {
+                Picker("Model", selection: Binding(
                     get: { model.implementer },
                     set: { _ = model.chooseImplementer($0) }
                 )) {
@@ -127,17 +101,28 @@ struct SessionSettingsView: View {
                         modelChoice(info).tag(info.name)
                     }
                 }
-                reviewersPicker
+                thinkingPicker(for: .implementer)
             }
-        } header: {
-            Text("Roles")
-        } footer: {
-            Text("Model changes take effect on the next turn / spawn for this session.")
+            Section {
+                reviewersPicker
+                thinkingPicker(for: .reviewers)
+            } header: {
+                Text("Reviewers")
+            } footer: {
+                Text("Changes apply to this session only, from its next turn; your defaults in Settings stay unchanged. Roles sharing a model share its thinking level.")
+            }
         }
     }
 
+    private func thinkingPicker(for role: ThinkingRole) -> some View {
+        ThinkingLevelPicker(
+            selection: model.thinking(for: role),
+            levels: model.thinkingLevels(for: role),
+            onSelect: { _ = model.chooseThinking($0, for: role) })
+    }
+
     private var reviewersPicker: some View {
-        DisclosureGroup("Reviewers (\(model.reviewers.count))") {
+        DisclosureGroup("Models (\(model.reviewers.count))") {
             ForEach(roleModels(including: model.reviewers), id: \.name) { info in
                 Button {
                     // An empty reviewer list means “leave unchanged” on the wire,

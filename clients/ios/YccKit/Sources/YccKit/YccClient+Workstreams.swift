@@ -3,18 +3,19 @@ import YccProto
 extension YccClient {
     /// Start a session in a new workstream (`SpawnWorkstream`): its own git
     /// worktree and branch off the project's base. The session takes the same
-    /// choices as `StartSession` (mode, coordinator override, preset, opening
+    /// choices as `StartSession` (mode, coordinator model and thinking, preset, opening
     /// pictures) plus an optional backlog task. The session id to subscribe to
     /// rides in the returned ``Ycc_V1_WorkstreamInfo``.
     public func spawnWorkstream(
         project: String, mode: String, prompt: String, coordinatorModel: String,
-        preset: String, taskID: String, images: [MessageImage]
+        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
     ) async throws -> Ycc_V1_WorkstreamInfo {
         var request = Ycc_V1_SpawnWorkstreamRequest()
         request.project = project
         request.mode = mode
         request.prompt = prompt
         request.coordinatorModel = coordinatorModel
+        request.coordinatorThinking = coordinatorThinking
         request.preset = preset
         request.taskID = taskID
         request.images = images.map { image in

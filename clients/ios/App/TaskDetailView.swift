@@ -94,7 +94,7 @@ struct TaskDetailView: View {
             Text(message)
         }
         .alert(
-            "Couldn’t apply roles",
+            "Couldn’t apply role settings",
             isPresented: Binding(
                 get: { roleWarning != nil },
                 set: { if !$0 { roleWarning = nil } }),
@@ -105,7 +105,7 @@ struct TaskDetailView: View {
                 openStartedSession(started.sessionID)
             }
         } message: { started in
-            Text("The session started with the default implementer and reviewers: \(started.roleError ?? ""). Change them in the session’s settings.")
+            Text("The session started, but not every implementer or reviewer choice was applied: \(started.roleError ?? ""). Change them in the session’s settings.")
         }
         .sheet(isPresented: $showStartOptions, onDismiss: finishStartOptions) {
             if let client = app.client, let task = model.task {

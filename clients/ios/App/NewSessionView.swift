@@ -4,7 +4,7 @@ import YccProto
 
 /// The "new session" composer is styled as a blank chat rather than a settings form: the prompt composer sits
 /// at the bottom with a send arrow (like the live session's input bar), and a row of
-/// compact chips above it tucks away project and options. A new session starts in
+/// compact chips above it tucks away project and options (model and its thinking level included). A new session starts in
 /// the daemon's default mode (chat); the mode choice sits behind a trailing
 /// advanced chip until a non-default mode is selected. The only suggestion card is
 /// project onboarding, for a project that needs it; other presets live where they
@@ -228,6 +228,9 @@ struct NewSessionView: View {
                 if model.showsModelPicker {
                     modelChip
                 }
+                if model.showsThinkingPicker {
+                    thinkingChip
+                }
                 if model.isDefaultMode {
                     advancedModeChip
                 }
@@ -390,6 +393,26 @@ struct NewSessionView: View {
         } label: {
             chipLabel(model.selectedModelTitle, systemImage: "cpu")
         }
+    }
+
+    /// The coordinator's thinking level FOR THIS SESSION ONLY, limited to the
+    /// levels its model supports. "Default" keeps the model's saved level.
+    private var thinkingChip: some View {
+        @Bindable var model = model
+        return Menu {
+            Picker("Thinking", selection: $model.selectedThinking) {
+                Text(ThinkingPicker.defaultTitle(model.modelDefaultThinking))
+                    .tag(ThinkingLevel?.none)
+                ForEach(model.thinkingChoices) { level in
+                    Text(level.title).tag(ThinkingLevel?.some(level))
+                }
+            }
+        } label: {
+            chipLabel(model.selectedThinkingTitle, systemImage: "brain")
+        }
+        .disabled(model.isStarting)
+        .accessibilityLabel("Thinking")
+        .accessibilityValue(model.selectedThinkingTitle)
     }
 
     private func chipLabel(_ title: String, systemImage: String) -> some View {

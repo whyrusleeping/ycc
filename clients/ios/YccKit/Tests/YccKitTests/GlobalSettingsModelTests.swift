@@ -116,6 +116,16 @@ final class GlobalSettingsModelTests: XCTestCase {
         XCTAssertNotEqual(presentationOnlyChange.probeFingerprint, draft.probeFingerprint)
     }
 
+    func testEditorDraftSendsTheThinkingLevelsOverride() {
+        let custom = ModelEditorDraft(thinkingLevels: [.high, .off]).modelConfig()
+        XCTAssertTrue(custom.hasThinkingLevels)
+        XCTAssertEqual(custom.thinkingLevels.levels, ["off", "high"], "scale order")
+        // No override is still sent, empty, so a saved override is cleared.
+        let backendDefault = ModelEditorDraft().modelConfig()
+        XCTAssertTrue(backendDefault.hasThinkingLevels)
+        XCTAssertEqual(backendDefault.thinkingLevels.levels, [])
+    }
+
     func testEditorDraftExplicitlyClearsEmptyNotes() {
         for notes in ["", " \n\t "] {
             let config = ModelEditorDraft(notes: notes).modelConfig()
@@ -176,6 +186,19 @@ final class GlobalSettingsModelTests: XCTestCase {
         XCTAssertEqual(source.thinkingArgs?.1, "max")
         XCTAssertEqual(source.thinkingArgs?.2, "reviewers")
         XCTAssertEqual(model.reviewersThinking, .max)
+    }
+
+    func testThinkingPickersOfferTheRoleModelsLevels() async {
+        let source = MockGlobalSettingsSource()
+        var response = globalResponse()
+        response.models[0].thinkingLevels = ["low", "medium", "high"] // zeta
+        source.response = response
+        let model = GlobalSettingsModel(source: source)
+        await model.load()
+
+        XCTAssertEqual(model.thinkingLevels(for: .coordinator), [.low, .medium, .high])
+        XCTAssertEqual(model.thinkingLevels(for: .implementer), ThinkingLevel.allCases)
+        XCTAssertEqual(model.thinkingLevels(for: .reviewers), [.low, .medium, .high])
     }
 
     func testModelProbeMapsDraftAndSuccessResult() async {

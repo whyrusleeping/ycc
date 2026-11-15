@@ -700,13 +700,14 @@ public final class YccClient: Sendable {
     /// Start a new session (`StartSession`, docs/remote-api.md "StartSession").
     /// `project` names a registered workspace; empty is accepted only when exactly
     /// one project exists. `coordinatorModel` optionally overrides the coordinator's
-    /// logical model for this session only (empty = the configured default).
-    /// `images` attaches up to four pictures to the OPENING prompt, so a session
+    /// logical model for this session only (empty = the configured default), and
+    /// `coordinatorThinking` its thinking level for this session only (empty =
+    /// the model's saved level). `images` attaches up to four pictures to the OPENING prompt, so a session
     /// about a screenshot does not have to burn its first turn.
     /// Returns the new session id to `Subscribe` from seq 0.
     public func startSession(
         project: String = "", mode: String, prompt: String, coordinatorModel: String = "",
-        images: [MessageImage] = []
+        coordinatorThinking: String = "", images: [MessageImage] = []
     ) async throws -> String {
         var request = Ycc_V1_StartSessionRequest()
         request.project = project
@@ -715,6 +716,7 @@ public final class YccClient: Sendable {
         // Empty = use the daemon's configured coordinator; a name overrides it for
         // THIS session only (the persisted role defaults are untouched).
         request.coordinatorModel = coordinatorModel
+        request.coordinatorThinking = coordinatorThinking
         request.images = images.map(Self.attachment)
         let response = await generatedBulk.startSession(request: request)
         switch response.result {

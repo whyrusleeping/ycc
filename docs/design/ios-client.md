@@ -67,6 +67,18 @@ inference request through the daemon using the exact unsaved backend, endpoint, 
 credential reference, and reasoning controls. The key remains daemon-side, the draft is neither
 saved nor installed, and progress plus success/provider failure appear inline in the editor.
 
+Every model picker has a thinking picker beside it, limited to the levels that model supports
+(`ModelInfo.thinking_levels`; a role with several reviewer models offers any of their levels). A
+level already in effect stays listed even when unsupported, since saved values are not rewritten.
+When the model changes, a picked level moves to the nearest supported one by the daemon's clamp
+rule (spec §7.4). Pickers for a new session, a Start work run, a watch, and a review tier slot also
+offer "Default" (the model's saved level, or the reviewers role level for a slot), shown with the
+level when it is known. Session settings shows each role's model with its thinking level and
+applies both to that session only (`SetRoleConfig` and `SetThinking` with the session id); global
+Settings keeps its role and thinking defaults. The model editor edits the `thinking_levels`
+override as a set of levels; turning it off sends an empty list, which restores the backend
+default.
+
 ### Navigation and interaction
 
 One workspace drawer anchors project selection and cross-project recents. Project/session routes
@@ -86,13 +98,14 @@ by name (spec §9): the project overflow menu has onboarding (re-onboard once on
 docs check, the backlog's overflow menu (which also holds the sort order) has backlog grooming and
 re-onboarding, and Memory keeps "Groom now". Starting from a backlog task still opens work mode.
 A tap on a task's start button uses the default roles; a long press opens a sheet that picks this
-session's coordinator, implementer, and reviewers (seeded with the defaults, which stay unchanged)
-and an optional separate workstream. The coordinator rides on `StartSession`/`SpawnWorkstream`;
-changed implementer/reviewers follow at once through session-scoped `SetRoleConfig`, and if that
-fails the user is told the session runs with the default implementer and reviewers.
+session's coordinator, implementer, and reviewers with their thinking levels (seeded with the
+defaults, which stay unchanged) and an optional separate workstream. The coordinator model and
+thinking ride on `StartSession`/`SpawnWorkstream`; changed implementer/reviewers and their picked
+levels follow at once through session-scoped `SetRoleConfig` and `SetThinking`, and if that fails
+the user is told which choices were not applied.
 
 New session's separate-workstream chip (labelled **Workstream**; off for every new composer, like
-the web toggle) sends the same mode, model, applied preset, prompt, and pictures through
+the web toggle) sends the same mode, model, thinking level, applied preset, prompt, and pictures through
 `SpawnWorkstream` instead of `StartSession`, with an optional ready backlog task that stands in for
 an unwritten prompt, then opens the workstream's session. Workstream sessions carry a branch mark in
 the session list, and their context menu opens Workstreams. The home overflow menu reaches
