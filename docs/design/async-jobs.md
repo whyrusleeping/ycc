@@ -57,6 +57,9 @@ that represent an explicit human boundary — pause, stop, refusal, session erro
 reopened session awaiting its first input, and an in-flight rollover — are never resumed this way;
 their reports fall back to checkpoint delivery. Prompt and tool guidance correspondingly tells a
 coordinator with no independent work left to report progress and wait rather than end the turn.
+Because reasoning is never shown, that guidance puts any user-facing message in visible text beside
+the call, and a wait cut short by a user message tells the coordinator to answer first, then either
+wait again or end the turn, since completion still wakes it.
 
 Terminal-state observers use the same eligibility rather than lifecycle status alone. Status and the
 wake decision are recorded together, and a claimed-but-not-yet-running continuation stays visible, so

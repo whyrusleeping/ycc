@@ -182,7 +182,8 @@ func waitTool(ws *Workspace) *gollama.Tool {
 		Description: "Wait for jobs and return repeatable final reports, acknowledging completion so it is not notified " +
 			"again. Specify ids, or omit for this actor's live jobs. Timeout returns completed reports plus running ids, " +
 			"not an error. A killed report may precede actual execution cleanup. When no independent work remains, " +
-			"wait rather than poll or end the turn.",
+			"wait rather than poll or end the turn. Put any message for the user in visible text beside this call; " +
+			"reasoning is not shown.",
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
 			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},
@@ -260,8 +261,9 @@ func waitTool(ws *Workspace) *gollama.Tool {
 					b.WriteString("\n\n")
 				}
 				if interrupted {
-					fmt.Fprintf(&b, "wait returned early because the user sent a message (it follows); still running: %s "+
-						"(their completion is still notified automatically; wait again, check job_output, or kill_job)",
+					fmt.Fprintf(&b, "wait returned early because the user sent a message (it follows); still running: %s. "+
+						"Answer the user in visible text (reasoning is not shown), then wait again or end your turn: "+
+						"their completion is still notified automatically and wakes this session",
 						strings.Join(running, ", "))
 				} else {
 					fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
