@@ -1174,9 +1174,10 @@ A reconnect discards all stale transient presentation before replay.
 
 ### 18.5 Backlog browser
 
-Clients can list, inspect, capture, and update backlog tasks through the daemon. Readiness and
+Clients can list, inspect, capture, update, and delete backlog tasks through the daemon. Readiness and
 status use the same store semantics as coordinator tools. Mutation remains explicit and validated;
-clients do not maintain a second backlog representation.
+clients do not maintain a second backlog representation. Deleting a task removes its file and drops
+its id from the dependencies of tasks that are not done; done tasks keep their recorded history.
 
 ### 18.6 Session history and reopen
 

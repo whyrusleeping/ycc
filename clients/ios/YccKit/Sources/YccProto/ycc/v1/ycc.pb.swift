@@ -2945,6 +2945,37 @@ public nonisolated struct Ycc_V1_CreateTaskResponse: Sendable {
   fileprivate var _task: Ycc_V1_TaskDetail? = nil
 }
 
+/// DeleteTask removes a backlog task file. Tasks that are not done drop the id
+/// from their depends_on so they are not left blocked on a missing task; done
+/// tasks keep their recorded dependencies.
+public nonisolated struct Ycc_V1_DeleteTaskRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  public var id: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_DeleteTaskResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// ids whose depends_on lost the deleted id
+  public var updatedDependents: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Automatic backlog grooming (spec §6.2): the daemon starts an unattended
 /// backlog-groom pm session once enough tasks have changed since the last
 /// finished groom. To groom on demand, start the "backlog-groom" preset.
@@ -10598,6 +10629,71 @@ nonisolated extension Ycc_V1_CreateTaskResponse: SwiftProtobuf.Message, SwiftPro
 
   public static func ==(lhs: Ycc_V1_CreateTaskResponse, rhs: Ycc_V1_CreateTaskResponse) -> Bool {
     if lhs._task != rhs._task {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_DeleteTaskRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteTaskRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_DeleteTaskRequest, rhs: Ycc_V1_DeleteTaskRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.id != rhs.id {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_DeleteTaskResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DeleteTaskResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}updated_dependents\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.updatedDependents) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.updatedDependents.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.updatedDependents, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_DeleteTaskResponse, rhs: Ycc_V1_DeleteTaskResponse) -> Bool {
+    if lhs.updatedDependents != rhs.updatedDependents {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

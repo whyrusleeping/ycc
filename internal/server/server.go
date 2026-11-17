@@ -1690,6 +1690,26 @@ func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTas
 	}}), nil
 }
 
+// DeleteTask removes a backlog task. Like UpdateTask it takes only the docs
+// Store lock, not the worktree execution lease.
+func (s *Server) DeleteTask(_ context.Context, req *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error) {
+	store, err := s.mgr.Backlog(req.Msg.Project)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if strings.TrimSpace(req.Msg.Id) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("id required"))
+	}
+	if _, err := store.Get(req.Msg.Id); err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	edited, err := store.Delete(req.Msg.Id)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.DeleteTaskResponse{UpdatedDependents: edited}), nil
+}
+
 // ListPlans returns the in-repo plan library (plans/*.md) so clients can browse
 // saved runbooks. Read-only.
 func (s *Server) ListPlans(_ context.Context, req *connect.Request[v1.ListPlansRequest]) (*connect.Response[v1.ListPlansResponse], error) {

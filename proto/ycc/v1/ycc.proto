@@ -960,6 +960,17 @@ message CreateTaskRequest {
 }
 message CreateTaskResponse { TaskDetail task = 1; }
 
+// DeleteTask removes a backlog task file. Tasks that are not done drop the id
+// from their depends_on so they are not left blocked on a missing task; done
+// tasks keep their recorded dependencies.
+message DeleteTaskRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+  string id = 2;
+}
+message DeleteTaskResponse {
+  repeated string updated_dependents = 1; // ids whose depends_on lost the deleted id
+}
+
 // Automatic backlog grooming (spec §6.2): the daemon starts an unattended
 // backlog-groom pm session once enough tasks have changed since the last
 // finished groom. To groom on demand, start the "backlog-groom" preset.
@@ -1752,6 +1763,8 @@ service SessionService {
   // task scaffold around a description and assign the next id. Used by
   // `ycc task add` when a daemon is available.
   rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+  // DeleteTask removes a backlog task and its id from open tasks' dependencies.
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
   // GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
   // whether it is on, the live automatic groom, and the latest run.
   rpc GetBacklogGroom(GetBacklogGroomRequest) returns (GetBacklogGroomResponse);

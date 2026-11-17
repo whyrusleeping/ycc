@@ -71,6 +71,36 @@ func TestUpdateStatus(t *testing.T) {
 	}
 }
 
+func TestDeleteDropsOpenDependencies(t *testing.T) {
+	s := NewStore(t.TempDir())
+	gone, _ := s.Create("gone", "", 1, nil, nil)
+	other, _ := s.Create("other", "", 1, nil, nil)
+	open, _ := s.Create("open", "", 1, []string{"1", other.ID}, nil)
+	done, _ := s.Create("done", "", 1, []string{gone.ID}, nil)
+	if _, err := s.Update(done.ID, func(t *Task) { t.Status = StatusDone }); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := s.Delete(gone.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edited) != 1 || edited[0] != open.ID {
+		t.Fatalf("edited = %v, want [%s]", edited, open.ID)
+	}
+	if _, err := s.Get(gone.ID); err == nil {
+		t.Fatal("deleted task still resolves")
+	}
+	if got, _ := s.Get(open.ID); len(got.DependsOn) != 1 || got.DependsOn[0] != other.ID {
+		t.Fatalf("open task depends_on = %v, want [%s]", got.DependsOn, other.ID)
+	}
+	if got, _ := s.Get(done.ID); len(got.DependsOn) != 1 || got.DependsOn[0] != gone.ID {
+		t.Fatalf("done task depends_on = %v, want it kept", got.DependsOn)
+	}
+	if _, err := s.Delete(gone.ID); err == nil {
+		t.Fatal("deleting a missing task succeeded")
+	}
+}
+
 func TestAppendWorkLog(t *testing.T) {
 	s := NewStore(t.TempDir())
 	s.Create("task", "## Description\nx\n\n## Work log\n", 1, nil, nil)

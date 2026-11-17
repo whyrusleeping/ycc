@@ -18,6 +18,8 @@ public protocol TaskDetailSource: Sendable {
         project: String, id: String, title: String, status: String,
         priority: Int, body: String, dependsOn: [String], specRefs: [String]
     ) async throws -> Ycc_V1_TaskDetail
+    /// Delete the task; returns the ids of open tasks that lost the dependency.
+    func deleteTask(project: String, id: String) async throws -> [String]
 }
 
 extension YccClient: TaskDetailSource {}
@@ -387,5 +389,39 @@ public final class TaskDetailModel {
     private func revertStatus(to previous: String?, from attempted: TaskStatus) {
         guard let previous, task?.status == attempted.rawValue else { return }
         task?.status = previous
+    }
+
+    /// Delete the task (`DeleteTask`) and drop it from the cached backlog.
+    /// Returns `true` on success; on failure sets ``errorMessage`` /
+    /// ``unauthorized``.
+    @discardableResult
+    public func delete() async -> Bool {
+        guard !isUpdating else { return false }
+        isUpdating = true
+        defer { isUpdating = false }
+        do {
+            let dependents = try await source.deleteTask(project: project, id: taskID)
+            cache?.removeValue(for: .task(project: project, id: taskID))
+            for id in dependents {
+                cache?.removeValue(for: .task(project: project, id: id))
+            }
+            if var rows = cache?.value(.backlog(project), as: [Ycc_V1_BacklogTaskSummary].self) {
+                rows.removeAll { $0.id == taskID }
+                cache?.store(rows, for: .backlog(project), ifGeneration: cacheGeneration)
+            }
+            errorMessage = nil
+            return true
+        } catch YccError.unauthorized {
+            unauthorized = true
+        } catch let YccError.rpc(message) {
+            errorMessage = message
+        } catch let YccError.notFound(message) {
+            errorMessage = message
+        } catch let YccError.failedPrecondition(message) {
+            errorMessage = message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        return false
     }
 }

@@ -10,9 +10,12 @@ import YccProto
 /// ``StartWorkOptionsView`` to pick that session's role models or a separate
 /// workstream. Done and proposed tasks offer no start;
 /// in-review tasks explain the hand-back and offer "Continue work" instead.
+/// The toolbar's more menu also deletes the task (`DeleteTask`) after a
+/// confirmation, then pops back.
 struct TaskDetailView: View {
     @Environment(AppModel.self) private var app
     @Environment(HomeRouter.self) private var router
+    @Environment(\.dismiss) private var dismiss
 
     @State private var model: TaskDetailModel
     /// A start-work failure message to surface as an alert.
@@ -27,6 +30,7 @@ struct TaskDetailView: View {
     @State private var startedFromOptions: StartedWork?
     /// Work started from the settings sheet whose role choice failed to apply.
     @State private var roleWarning: StartedWork?
+    @State private var confirmDelete = false
 
     private let taskID: String
     private let taskTitle: String
@@ -72,8 +76,20 @@ struct TaskDetailView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button("Edit") { model.beginEditing() }
                     .disabled(!model.canEdit)
-                statusMenu
+                moreMenu
             }
+        }
+        .confirmationDialog(
+            "Delete task \(taskID)?", isPresented: $confirmDelete, titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                Analytics.action("task.delete")
+                Task {
+                    if await model.delete() { dismiss() }
+                }
+            }
+        } message: {
+            Text("“\(model.task?.title ?? taskTitle)” will be removed from the backlog. Open tasks that depend on it drop the dependency.")
         }
         .sheet(isPresented: Binding(
             get: { model.isEditing },
@@ -298,14 +314,17 @@ struct TaskDetailView: View {
         }
     }
 
-    private var statusMenu: some View {
+    private var moreMenu: some View {
         Menu {
-            statusChoices
+            Section("Status") { statusChoices }
+            Button("Delete Task", systemImage: "trash", role: .destructive) {
+                confirmDelete = true
+            }
         } label: {
             if model.isUpdating {
                 ProgressView()
             } else {
-                Label("Status", systemImage: "ellipsis.circle")
+                Label("More", systemImage: "ellipsis.circle")
             }
         }
         .disabled(model.isUpdating || model.task == nil)

@@ -420,6 +420,58 @@ func (s *Store) updateLocked(id string, mut func(*Task)) (*Task, error) {
 	return t, nil
 }
 
+// Delete removes a task file and drops its id from the depends_on of every
+// task that is not done, so no open task stays blocked on a missing
+// prerequisite. Done tasks keep their recorded dependencies. It returns the ids
+// of the tasks it edited. Dependents are rewritten before the file is removed,
+// so a failure leaves the task in place.
+func (s *Store) Delete(id string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id = NormalizeID(id)
+	tasks, err := s.listMetadataLocked()
+	if err != nil {
+		return nil, err
+	}
+	var target *Task
+	var dependents []string
+	for _, t := range tasks {
+		if t.ID == id {
+			target = t
+			continue
+		}
+		if t.Status == StatusDone {
+			continue
+		}
+		for _, dep := range t.DependsOn {
+			if NormalizeID(dep) == id {
+				dependents = append(dependents, t.ID)
+				break
+			}
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("no task with id %q", id)
+	}
+	for _, depID := range dependents {
+		if _, err := s.updateLocked(depID, func(t *Task) {
+			kept := t.DependsOn[:0]
+			for _, dep := range t.DependsOn {
+				if NormalizeID(dep) != id {
+					kept = append(kept, dep)
+				}
+			}
+			t.DependsOn = kept
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.Remove(target.Path); err != nil {
+		return nil, err
+	}
+	return dependents, nil
+}
+
 // AppendWorkLog appends a dated bullet under the task's "## Work log" section.
 func (s *Store) AppendWorkLog(id, line string) (*Task, error) {
 	s.mu.Lock()

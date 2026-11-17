@@ -188,6 +188,9 @@ const (
 	// SessionServiceCreateTaskProcedure is the fully-qualified name of the SessionService's CreateTask
 	// RPC.
 	SessionServiceCreateTaskProcedure = "/ycc.v1.SessionService/CreateTask"
+	// SessionServiceDeleteTaskProcedure is the fully-qualified name of the SessionService's DeleteTask
+	// RPC.
+	SessionServiceDeleteTaskProcedure = "/ycc.v1.SessionService/DeleteTask"
 	// SessionServiceGetBacklogGroomProcedure is the fully-qualified name of the SessionService's
 	// GetBacklogGroom RPC.
 	SessionServiceGetBacklogGroomProcedure = "/ycc.v1.SessionService/GetBacklogGroom"
@@ -388,6 +391,8 @@ type SessionServiceClient interface {
 	// task scaffold around a description and assign the next id. Used by
 	// `ycc task add` when a daemon is available.
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
+	// DeleteTask removes a backlog task and its id from open tasks' dependencies.
+	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
 	// GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
 	// whether it is on, the live automatic groom, and the latest run.
 	GetBacklogGroom(context.Context, *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error)
@@ -791,6 +796,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("CreateTask")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteTask: connect.NewClient[v1.DeleteTaskRequest, v1.DeleteTaskResponse](
+			httpClient,
+			baseURL+SessionServiceDeleteTaskProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("DeleteTask")),
+			connect.WithClientOptions(opts...),
+		),
 		getBacklogGroom: connect.NewClient[v1.GetBacklogGroomRequest, v1.GetBacklogGroomResponse](
 			httpClient,
 			baseURL+SessionServiceGetBacklogGroomProcedure,
@@ -1053,6 +1064,7 @@ type sessionServiceClient struct {
 	getTask                *connect.Client[v1.GetTaskRequest, v1.GetTaskResponse]
 	updateTask             *connect.Client[v1.UpdateTaskRequest, v1.UpdateTaskResponse]
 	createTask             *connect.Client[v1.CreateTaskRequest, v1.CreateTaskResponse]
+	deleteTask             *connect.Client[v1.DeleteTaskRequest, v1.DeleteTaskResponse]
 	getBacklogGroom        *connect.Client[v1.GetBacklogGroomRequest, v1.GetBacklogGroomResponse]
 	listPlans              *connect.Client[v1.ListPlansRequest, v1.ListPlansResponse]
 	getPlan                *connect.Client[v1.GetPlanRequest, v1.GetPlanResponse]
@@ -1354,6 +1366,11 @@ func (c *sessionServiceClient) CreateTask(ctx context.Context, req *connect.Requ
 	return c.createTask.CallUnary(ctx, req)
 }
 
+// DeleteTask calls ycc.v1.SessionService.DeleteTask.
+func (c *sessionServiceClient) DeleteTask(ctx context.Context, req *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error) {
+	return c.deleteTask.CallUnary(ctx, req)
+}
+
 // GetBacklogGroom calls ycc.v1.SessionService.GetBacklogGroom.
 func (c *sessionServiceClient) GetBacklogGroom(ctx context.Context, req *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error) {
 	return c.getBacklogGroom.CallUnary(ctx, req)
@@ -1624,6 +1641,8 @@ type SessionServiceHandler interface {
 	// task scaffold around a description and assign the next id. Used by
 	// `ycc task add` when a daemon is available.
 	CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error)
+	// DeleteTask removes a backlog task and its id from open tasks' dependencies.
+	DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error)
 	// GetBacklogGroom reports a project's daemon-scheduled backlog grooming:
 	// whether it is on, the live automatic groom, and the latest run.
 	GetBacklogGroom(context.Context, *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error)
@@ -2023,6 +2042,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("CreateTask")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceDeleteTaskHandler := connect.NewUnaryHandler(
+		SessionServiceDeleteTaskProcedure,
+		svc.DeleteTask,
+		connect.WithSchema(sessionServiceMethods.ByName("DeleteTask")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceGetBacklogGroomHandler := connect.NewUnaryHandler(
 		SessionServiceGetBacklogGroomProcedure,
 		svc.GetBacklogGroom,
@@ -2335,6 +2360,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceUpdateTaskHandler.ServeHTTP(w, r)
 		case SessionServiceCreateTaskProcedure:
 			sessionServiceCreateTaskHandler.ServeHTTP(w, r)
+		case SessionServiceDeleteTaskProcedure:
+			sessionServiceDeleteTaskHandler.ServeHTTP(w, r)
 		case SessionServiceGetBacklogGroomProcedure:
 			sessionServiceGetBacklogGroomHandler.ServeHTTP(w, r)
 		case SessionServiceListPlansProcedure:
@@ -2622,6 +2649,10 @@ func (UnimplementedSessionServiceHandler) UpdateTask(context.Context, *connect.R
 
 func (UnimplementedSessionServiceHandler) CreateTask(context.Context, *connect.Request[v1.CreateTaskRequest]) (*connect.Response[v1.CreateTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CreateTask is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) DeleteTask(context.Context, *connect.Request[v1.DeleteTaskRequest]) (*connect.Response[v1.DeleteTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.DeleteTask is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetBacklogGroom(context.Context, *connect.Request[v1.GetBacklogGroomRequest]) (*connect.Response[v1.GetBacklogGroomResponse], error) {

@@ -909,6 +909,22 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Delete a backlog task (`DeleteTask`). Returns the ids of open tasks
+    /// whose dependencies lost it.
+    @discardableResult
+    public func deleteTask(project: String = "", id: String) async throws -> [String] {
+        var request = Ycc_V1_DeleteTaskRequest()
+        request.project = project
+        request.id = id
+        let response = await generated.deleteTask(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.updatedDependents
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Add a new task to the backlog (`CreateTask`): title, P1–P5
     /// priority, and an optional markdown body (scaffolded server-side). `project`
     /// is optional for a single-project daemon. Returns the created task's detail.

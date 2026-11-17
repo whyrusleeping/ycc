@@ -486,6 +486,33 @@ func TestTaskMutationRPCsSucceedWhileWorktreeBusy(t *testing.T) {
 // TestUpdateTask exercises the backlog grooming RPC: all editable task fields
 // persist to the task file; invalid inputs are rejected; an unknown id is
 // NotFound; and a no-field "refresh" re-reads the task without altering it.
+func TestDeleteTask(t *testing.T) {
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},
+		Roles:  config.Roles{Coordinator: "a", Implementer: "a", Reviewers: []string{"a"}},
+	})
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	a, _ := store.Create("Prerequisite", "", 3, nil, nil)
+	b, _ := store.Create("Dependent", "", 3, []string{a.ID}, nil)
+	srv := New(session.NewManager(reg, ws))
+	ctx := context.Background()
+
+	resp, err := srv.DeleteTask(ctx, connect.NewRequest(&v1.DeleteTaskRequest{Id: a.ID}))
+	if err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if got := resp.Msg.UpdatedDependents; len(got) != 1 || got[0] != b.ID {
+		t.Fatalf("updated dependents = %v, want [%s]", got, b.ID)
+	}
+	if _, err := srv.GetTask(ctx, connect.NewRequest(&v1.GetTaskRequest{Id: a.ID})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("GetTask after delete: %v, want NotFound", err)
+	}
+	if _, err := srv.DeleteTask(ctx, connect.NewRequest(&v1.DeleteTaskRequest{Id: a.ID})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("second DeleteTask: %v, want NotFound", err)
+	}
+}
+
 func TestUpdateTask(t *testing.T) {
 	reg := config.NewRegistry(&config.Config{
 		Models: map[string]config.Model{"a": {Backend: "ollama", BaseURL: "http://localhost:1", Model: "model-a"}},

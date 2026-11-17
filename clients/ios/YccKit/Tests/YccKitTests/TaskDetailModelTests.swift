@@ -65,6 +65,15 @@ private final class MockTaskDetailSource: TaskDetailSource, @unchecked Sendable 
         detail.specRefs = specRefs
         return detail
     }
+
+    private(set) var deletedIDs: [String] = []
+    var deleteError: Error?
+
+    func deleteTask(project: String, id: String) async throws -> [String] {
+        if let deleteError { throw deleteError }
+        deletedIDs.append(id)
+        return []
+    }
 }
 
 private func detail(_ id: String, status: String, title: String = "A task") -> Ycc_V1_TaskDetail {
@@ -311,5 +320,34 @@ final class TaskDetailModelTests: XCTestCase {
         let ok = await model.setStatus(.done)
         XCTAssertFalse(ok)
         XCTAssertTrue(model.unauthorized)
+    }
+
+    func testDeleteDropsTheCachedTaskAndBacklogRow() async {
+        let cache = AppDataCache()
+        var row = Ycc_V1_BacklogTaskSummary()
+        row.id = "0010"
+        var other = Ycc_V1_BacklogTaskSummary()
+        other.id = "0011"
+        cache.store([row, other], for: .backlog("proj"))
+        let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
+        let model = TaskDetailModel(source: source, project: "proj", taskID: "0010", cache: cache)
+        await model.load()
+        let ok = await model.delete()
+        XCTAssertTrue(ok)
+        XCTAssertEqual(source.deletedIDs, ["0010"])
+        XCTAssertNil(cache.value(.task(project: "proj", id: "0010"), as: Ycc_V1_TaskDetail.self))
+        XCTAssertEqual(
+            cache.value(.backlog("proj"), as: [Ycc_V1_BacklogTaskSummary].self)?.map(\.id), ["0011"])
+    }
+
+    func testDeleteFailureKeepsTheTaskAndReportsWhy() async {
+        let source = MockTaskDetailSource(detail: detail("0010", status: "todo"))
+        source.deleteError = YccError.rpc(message: "disk full")
+        let model = TaskDetailModel(source: source, taskID: "0010")
+        await model.load()
+        let ok = await model.delete()
+        XCTAssertFalse(ok)
+        XCTAssertEqual(model.errorMessage, "disk full")
+        XCTAssertEqual(model.task?.id, "0010")
     }
 }

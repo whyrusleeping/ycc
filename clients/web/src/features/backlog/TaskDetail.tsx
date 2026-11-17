@@ -1,13 +1,13 @@
 // Task detail (backlog pane or inspector): GetTask with the markdown body and
 // work log, in-place status changes (promoting proposed → todo is one click and
 // never waits on a session: UpdateTask takes only the backlog store lock), the
-// task's dependencies and focused sessions as links, and the editor for the
-// user-maintained frontmatter and body. A failed save keeps the draft and
+// task's dependencies and focused sessions as links, the editor for the
+// user-maintained frontmatter and body, and a confirmed delete. A failed save keeps the draft and
 // shows why; a successful one replaces local state with the daemon's response.
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
-import type { TaskDetail } from "../../gen/ycc/v1/ycc_pb";
+import type { BacklogTaskSummary, TaskDetail } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { installTask, queryKeys, useBacklog, useProjects, useSessionFeed, useTask } from "../../api/queries";
@@ -91,6 +91,8 @@ export function TaskDetailView({
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [statusDraft, setStatusDraft] = useState<TaskStatus | null>(null);
   const [starting, setStarting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const summary = backlog.data?.find((t) => t.id === id);
   const task = q.data;
@@ -146,6 +148,33 @@ export function TaskDetailView({
   const endEdit = () => {
     draftStore.delete(project, id);
     setOpen(null);
+  };
+
+  // Open tasks that lose this dependency (the daemon edits them; done tasks keep theirs).
+  const dependents = (backlog.data ?? []).filter(
+    (t) => t.status.toLowerCase() !== "done" && t.dependsOn.some((d) => normalizeTaskId(d) === id),
+  );
+
+  const deleteTask = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await client.deleteTask({ project, id });
+      // Close before dropping the cached detail so this view never refetches a missing task.
+      if (inInspector) inspector.close();
+      else onClose?.();
+      draftStore.delete(project, id);
+      qc.setQueryData<BacklogTaskSummary[]>(queryKeys.backlog(project), (list) => list?.filter((t) => t.id !== id));
+      qc.removeQueries({ queryKey: queryKeys.task(project, id) });
+      void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) });
+      // Dependents' depends_on changed; refresh them when next shown.
+      void qc.invalidateQueries({ queryKey: ["task", project], refetchType: "none" });
+      toast(`Deleted task ${id}.`, "info");
+    } catch (err) {
+      if (!handleAuth(err)) toast(`Couldn’t delete task ${id}: ${errorMessage(err)}`, "error", { op: "task.delete", err });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // Palette actions for the task on screen (the latest handlers, stable registrations).
@@ -226,7 +255,37 @@ export function TaskDetailView({
             Edit
           </button>
         )}
+        {!open && task && (
+          <button
+            type="button"
+            className="btn ghost small danger-text"
+            disabled={deleting}
+            onClick={() => setConfirmDelete(true)}
+            title="Delete this task from the backlog"
+            data-track="task.delete"
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+        )}
       </TaskTopBar>
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Delete task ${id}?`}
+        body={
+          `“${header.title || "(untitled)"}” will be removed from the backlog.` +
+          (dependents.length
+            ? ` ${dependents.length === 1 ? "Task" : "Tasks"} ${dependents.map((t) => t.id).join(", ")} will no longer depend on it.`
+            : "")
+        }
+        confirmLabel="Delete"
+        danger
+        action="task.delete"
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          void deleteTask();
+        }}
+      />
       <h2 className="task-title">{header.title || "(untitled)"}</h2>
       <div className="task-status-row">
         <StatusPill status={header.status} />

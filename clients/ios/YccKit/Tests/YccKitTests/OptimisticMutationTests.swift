@@ -1060,6 +1060,7 @@ private final class StubTaskDetailSource: TaskDetailSource, @unchecked Sendable 
         project: String, id: String, title: String, status: String,
         priority: Int, body: String, dependsOn: [String], specRefs: [String]
     ) async throws -> Ycc_V1_TaskDetail { detail }
+    func deleteTask(project: String, id: String) async throws -> [String] { [] }
 }
 
 @MainActor
