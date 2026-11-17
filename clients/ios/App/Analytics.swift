@@ -52,7 +52,7 @@ enum Analytics {
         "settings", "drawer", "connect", "new_session", "quick_capture", "add_project",
         "session_settings", "session_usage", "question", "files", "diff", "anthropic_login",
         "model_editor", "tier_editor", "health", "watches", "watch", "activity",
-        "quick_replies", "review_tiers",
+        "quick_replies", "review_tiers", "history",
     ]
 
     static let actions: [String] = [
@@ -80,6 +80,8 @@ enum Analytics {
         "watches.pause", "watches.resume", "watches.run_now", "watches.delete",
         "watches.create", "watches.edit",
         "watches.parked", "watches.active_run", "watches.run_session", "watches.decision_session", "watches.older",
+        "history.branch", "history.open_commit", "history.open_session", "history.open_task",
+        "history.load_more", "history.show_head",
         "refresh", "health.check_now",
     ] + [
         "new_session", "quick_capture", "add_project", "task_edit", "start_work",

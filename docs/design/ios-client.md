@@ -122,6 +122,13 @@ row's context menu), with the name fixed once created. Watch runs stay out of th
 and drawer badges unless they ask a
 question or are flagged, so a run drops back out once answered.
 
+A project's overflow menu also opens **History** (`ListCommits`): one local branch's commits,
+newest first, with subject, short sha, author, age and +/- line counts, paging in as the list
+scrolls. A picker under the title switches branch, with in-flight workstream branches grouped and
+marked; the checked-out branch is requested as HEAD. A row pushes the commit's diff
+(`GetCommitDiff`), and a commit a ycc session recorded carries task and session badges that push
+the task or the session, so Back returns to the history.
+
 Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`
 (from the project overflow menu, or a session's menu for its own worktree). Text files render
 with line numbers and a small built-in syntax highlighter, markdown, SVG and HTML render by default

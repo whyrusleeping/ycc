@@ -25,6 +25,9 @@ enum HomeDestination: Hashable {
     /// A project file or folder (read-only browser/viewer), optionally
     /// resolved against a session's worktree.
     case file(FileRoute)
+    /// A project's git history (one branch's commits), and a commit's diff.
+    case history(project: String)
+    case commitDiff(project: String, sha: String)
     case settings
 }
 

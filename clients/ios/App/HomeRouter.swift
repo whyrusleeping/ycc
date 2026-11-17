@@ -76,6 +76,8 @@ extension HomeDestination {
         case .memory(let project): return "memory:\(project)"
         case .file(let route):
             return "file:\(route.project):\(route.sessionID):\(route.reference.path)"
+        case .history(let project): return "history:\(project)"
+        case .commitDiff(let project, let sha): return "diff:\(project):\(sha)"
         case .settings: return "settings"
         }
     }

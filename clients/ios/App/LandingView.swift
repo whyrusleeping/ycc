@@ -474,6 +474,9 @@ struct LandingView: View {
                         project: project, reference: FileReference(path: "", isDirectory: true)))) {
                         Label("Files", systemImage: "folder")
                     }
+                    NavigationLink(value: HomeDestination.history(project: project)) {
+                        Label("History", systemImage: "clock")
+                    }
                     if let presetActions {
                         Section {
                             presetActionButtons(
@@ -539,6 +542,10 @@ struct LandingView: View {
                 MemoryView(client: client, project: project)
             case let .file(route):
                 FileScreen(route: route)
+            case let .history(project):
+                CommitHistoryView(client: client, project: project, sessionList: model)
+            case let .commitDiff(project, sha):
+                DiffView(title: "Commit \(CommitFormat.shortSha(sha))", content: .commit(project: project, sha: sha))
             case .settings:
                 GlobalSettingsView(client: client, cache: app.dataCache, health: health)
             }
