@@ -68,6 +68,10 @@ export const queryKeys = {
   fileRead: (project: string, sessionId: string, path: string) => ["files", "read", project, sessionId, path] as const,
   /** Every file listing and read (a browser refresh revalidates them). */
   filesAll: ["files"] as const,
+  /** ListCommits pages of one branch ("" = the checked-out HEAD). */
+  commits: (project: string, branch: string) => ["commits", project, branch] as const,
+  /** Every ListCommits query (a refresh revalidates every branch). */
+  commitsAll: ["commits"] as const,
   /** GetHealth: the daemon's latest health-check results. */
   health: ["health"] as const,
   /** ListWatches for a project. */

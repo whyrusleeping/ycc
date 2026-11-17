@@ -1990,6 +1990,120 @@ public nonisolated struct Ycc_V1_GetCommitDiffResponse: Sendable {
   public init() {}
 }
 
+/// ListCommits pages a project's git history on one local branch, newest first
+/// (`git log` order). The cursor pins the branch tip of the first page, so
+/// commits added later do not shift subsequent pages.
+public nonisolated struct Ycc_V1_ListCommitsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  /// local branch name (refs/heads/<branch>); empty => the checked-out HEAD
+  public var branch: String = String()
+
+  /// page size; 0 => 50, capped at 200
+  public var limit: Int32 = 0
+
+  /// opaque next_cursor from the previous page; must come from the same branch
+  public var cursor: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_CommitSummary: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// full hex sha
+  public var sha: String = String()
+
+  public var subject: String = String()
+
+  public var authorName: String = String()
+
+  public var authorEmail: String = String()
+
+  /// RFC 3339
+  public var authoredAt: String = String()
+
+  /// RFC 3339
+  public var committedAt: String = String()
+
+  public var parents: [String] = []
+
+  public var filesChanged: Int32 = 0
+
+  public var additions: Int64 = 0
+
+  public var deletions: Int64 = 0
+
+  /// The ycc session that recorded this commit (commit_made), when known. A
+  /// workstream commit rewritten by rebase is matched by subject and author
+  /// time, so the link is best-effort.
+  public var sessionID: String = String()
+
+  public var sessionTitle: String = String()
+
+  /// backlog task the commit completed, when recorded
+  public var taskID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_BranchRef: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// short name, e.g. main or ycc/ws/<id>-<task>
+  public var name: String = String()
+
+  /// tip commit
+  public var sha: String = String()
+
+  /// checked out in the project's primary tree
+  public var current: Bool = false
+
+  /// set for an in-flight workstream's branch
+  public var workstreamID: String = String()
+
+  /// the workstream's task, when it has one
+  public var taskID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ListCommitsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var commits: [Ycc_V1_CommitSummary] = []
+
+  /// empty on the last page
+  public var nextCursor: String = String()
+
+  /// resolved branch name; empty for a detached HEAD
+  public var branch: String = String()
+
+  /// local branches: current first, then by most recent tip
+  public var branches: [Ycc_V1_BranchRef] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// ListModels enumerates every configured logical model. With an empty session_id,
 /// role assignments are the persisted global defaults. A non-empty session_id must
 /// name a live session and returns that session's current assignments.
@@ -9059,6 +9173,236 @@ nonisolated extension Ycc_V1_GetCommitDiffResponse: SwiftProtobuf.Message, Swift
   public static func ==(lhs: Ycc_V1_GetCommitDiffResponse, rhs: Ycc_V1_GetCommitDiffResponse) -> Bool {
     if lhs.diff != rhs.diff {return false}
     if lhs.truncated != rhs.truncated {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListCommitsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListCommitsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}branch\0\u{1}limit\0\u{1}cursor\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.branch) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.cursor) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.branch.isEmpty {
+      try visitor.visitSingularStringField(value: self.branch, fieldNumber: 2)
+    }
+    if self.limit != 0 {
+      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 3)
+    }
+    if !self.cursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.cursor, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListCommitsRequest, rhs: Ycc_V1_ListCommitsRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.branch != rhs.branch {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.cursor != rhs.cursor {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_CommitSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CommitSummary"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sha\0\u{1}subject\0\u{3}author_name\0\u{3}author_email\0\u{3}authored_at\0\u{3}committed_at\0\u{1}parents\0\u{3}files_changed\0\u{1}additions\0\u{1}deletions\0\u{3}session_id\0\u{3}session_title\0\u{3}task_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sha) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.subject) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.authorName) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.authorEmail) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.authoredAt) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.committedAt) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.parents) }()
+      case 8: try { try decoder.decodeSingularInt32Field(value: &self.filesChanged) }()
+      case 9: try { try decoder.decodeSingularInt64Field(value: &self.additions) }()
+      case 10: try { try decoder.decodeSingularInt64Field(value: &self.deletions) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 12: try { try decoder.decodeSingularStringField(value: &self.sessionTitle) }()
+      case 13: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sha.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha, fieldNumber: 1)
+    }
+    if !self.subject.isEmpty {
+      try visitor.visitSingularStringField(value: self.subject, fieldNumber: 2)
+    }
+    if !self.authorName.isEmpty {
+      try visitor.visitSingularStringField(value: self.authorName, fieldNumber: 3)
+    }
+    if !self.authorEmail.isEmpty {
+      try visitor.visitSingularStringField(value: self.authorEmail, fieldNumber: 4)
+    }
+    if !self.authoredAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.authoredAt, fieldNumber: 5)
+    }
+    if !self.committedAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.committedAt, fieldNumber: 6)
+    }
+    if !self.parents.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.parents, fieldNumber: 7)
+    }
+    if self.filesChanged != 0 {
+      try visitor.visitSingularInt32Field(value: self.filesChanged, fieldNumber: 8)
+    }
+    if self.additions != 0 {
+      try visitor.visitSingularInt64Field(value: self.additions, fieldNumber: 9)
+    }
+    if self.deletions != 0 {
+      try visitor.visitSingularInt64Field(value: self.deletions, fieldNumber: 10)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 11)
+    }
+    if !self.sessionTitle.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionTitle, fieldNumber: 12)
+    }
+    if !self.taskID.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskID, fieldNumber: 13)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_CommitSummary, rhs: Ycc_V1_CommitSummary) -> Bool {
+    if lhs.sha != rhs.sha {return false}
+    if lhs.subject != rhs.subject {return false}
+    if lhs.authorName != rhs.authorName {return false}
+    if lhs.authorEmail != rhs.authorEmail {return false}
+    if lhs.authoredAt != rhs.authoredAt {return false}
+    if lhs.committedAt != rhs.committedAt {return false}
+    if lhs.parents != rhs.parents {return false}
+    if lhs.filesChanged != rhs.filesChanged {return false}
+    if lhs.additions != rhs.additions {return false}
+    if lhs.deletions != rhs.deletions {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.sessionTitle != rhs.sessionTitle {return false}
+    if lhs.taskID != rhs.taskID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_BranchRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".BranchRef"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}sha\0\u{1}current\0\u{3}workstream_id\0\u{3}task_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sha) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.current) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.workstreamID) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.sha.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha, fieldNumber: 2)
+    }
+    if self.current != false {
+      try visitor.visitSingularBoolField(value: self.current, fieldNumber: 3)
+    }
+    if !self.workstreamID.isEmpty {
+      try visitor.visitSingularStringField(value: self.workstreamID, fieldNumber: 4)
+    }
+    if !self.taskID.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskID, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_BranchRef, rhs: Ycc_V1_BranchRef) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.sha != rhs.sha {return false}
+    if lhs.current != rhs.current {return false}
+    if lhs.workstreamID != rhs.workstreamID {return false}
+    if lhs.taskID != rhs.taskID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ListCommitsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListCommitsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}commits\0\u{3}next_cursor\0\u{1}branch\0\u{1}branches\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.commits) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.nextCursor) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.branch) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.branches) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.commits.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.commits, fieldNumber: 1)
+    }
+    if !self.nextCursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.nextCursor, fieldNumber: 2)
+    }
+    if !self.branch.isEmpty {
+      try visitor.visitSingularStringField(value: self.branch, fieldNumber: 3)
+    }
+    if !self.branches.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.branches, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ListCommitsResponse, rhs: Ycc_V1_ListCommitsResponse) -> Bool {
+    if lhs.commits != rhs.commits {return false}
+    if lhs.nextCursor != rhs.nextCursor {return false}
+    if lhs.branch != rhs.branch {return false}
+    if lhs.branches != rhs.branches {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

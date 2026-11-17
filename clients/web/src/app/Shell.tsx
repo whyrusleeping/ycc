@@ -66,6 +66,7 @@ const SECTION_ICONS: Record<(typeof PROJECT_SECTIONS)[number]["key"], IconName> 
   watches: "watches",
   usage: "usage",
   files: "files",
+  history: "history",
   memory: "memory",
 };
 
@@ -135,6 +136,8 @@ function ProjectSwitcher() {
             else if (/^(\/p\/[^/]+)?\/loop\/?$/.test(location.pathname)) navigate(paths.loop(next));
             else if (/^(\/p\/[^/]+)?\/workstreams\/?$/.test(location.pathname)) navigate(paths.workstreams(next));
             else if (/^(\/p\/[^/]+)?\/files(\/|$)/.test(location.pathname)) navigate(paths.files(next));
+            // Branches differ between projects: the new project's checked-out HEAD.
+            else if (/^(\/p\/[^/]+)?\/history\/?$/.test(location.pathname)) navigate(paths.history(next));
             else if (/^(\/p\/[^/]+)?\/(memory|plans)(\/|$)/.test(location.pathname)) navigate(paths.memory(next));
             else if (/^(\/p\/[^/]+)?\/usage\/?$/.test(location.pathname)) navigate(paths.usage(next, location.search));
           }}

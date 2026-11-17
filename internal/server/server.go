@@ -791,6 +791,45 @@ func (s *Server) GetCommitDiff(_ context.Context, req *connect.Request[v1.GetCom
 // commit can never blow up the wire payload or the client's render.
 const maxCommitDiffBytes = 1 << 20
 
+// ListCommits pages a branch's git history with session/task links.
+func (s *Server) ListCommits(_ context.Context, req *connect.Request[v1.ListCommitsRequest]) (*connect.Response[v1.ListCommitsResponse], error) {
+	page, err := s.mgr.ListCommits(req.Msg.Project, req.Msg.Branch, int(req.Msg.Limit), req.Msg.Cursor)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject), errors.Is(err, session.ErrInvalidCommitQuery):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrNotGitRepo):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	resp := &v1.ListCommitsResponse{NextCursor: page.NextCursor, Branch: page.Branch}
+	for _, c := range page.Commits {
+		resp.Commits = append(resp.Commits, &v1.CommitSummary{
+			Sha:          c.SHA,
+			Subject:      c.Subject,
+			AuthorName:   c.AuthorName,
+			AuthorEmail:  c.AuthorEmail,
+			AuthoredAt:   rfc3339(c.AuthoredAt),
+			CommittedAt:  rfc3339(c.CommittedAt),
+			Parents:      c.Parents,
+			FilesChanged: int32(c.Files),
+			Additions:    c.Additions,
+			Deletions:    c.Deletions,
+			SessionId:    c.SessionID,
+			SessionTitle: c.SessionTitle,
+			TaskId:       c.TaskID,
+		})
+	}
+	for _, b := range page.Branches {
+		resp.Branches = append(resp.Branches, &v1.BranchRef{
+			Name: b.Name, Sha: b.SHA, Current: b.Current, WorkstreamId: b.WorkstreamID, TaskId: b.TaskID,
+		})
+	}
+	return connect.NewResponse(resp), nil
+}
+
 // rfc3339 formats a timestamp using the same precision as toProto, returning ""
 // for a zero time so absent timestamps serialize as empty rather than a sentinel.
 func rfc3339(t time.Time) string {

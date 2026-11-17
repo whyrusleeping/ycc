@@ -85,6 +85,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getCommitDiff`(request: Ycc_V1_GetCommitDiffRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetCommitDiffResponse>
 
+    /// ListCommits pages a branch's git history for the history views.
+    @available(iOS 13, *)
+    func `listCommits`(request: Ycc_V1_ListCommitsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListCommitsResponse>
+
     @available(iOS 13, *)
     func `getWorkingChanges`(request: Ycc_V1_GetWorkingChangesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWorkingChangesResponse>
 
@@ -464,6 +468,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `listCommits`(request: Ycc_V1_ListCommitsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListCommitsResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ListCommits", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `getWorkingChanges`(request: Ycc_V1_GetWorkingChangesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetWorkingChangesResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetWorkingChanges", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -829,6 +838,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getActivitySteps = Connect.MethodSpec(name: "GetActivitySteps", service: "ycc.v1.SessionService", type: .unary)
             public static let getSessionAttachment = Connect.MethodSpec(name: "GetSessionAttachment", service: "ycc.v1.SessionService", type: .unary)
             public static let getCommitDiff = Connect.MethodSpec(name: "GetCommitDiff", service: "ycc.v1.SessionService", type: .unary)
+            public static let listCommits = Connect.MethodSpec(name: "ListCommits", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkingChanges = Connect.MethodSpec(name: "GetWorkingChanges", service: "ycc.v1.SessionService", type: .unary)
             public static let subscribe = Connect.MethodSpec(name: "Subscribe", service: "ycc.v1.SessionService", type: .serverStream)
             public static let sendInput = Connect.MethodSpec(name: "SendInput", service: "ycc.v1.SessionService", type: .unary)

@@ -12,6 +12,7 @@ export type IconName =
   | "watches"
   | "usage"
   | "files"
+  | "history"
   | "memory"
   | "settings"
   | "keyboard"
@@ -74,6 +75,14 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   usage: <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />,
   files: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  /** A clock turning back: the project's git history. */
+  history: (
+    <>
+      <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M12 7v5l3.5 2" />
+    </>
+  ),
   memory: (
     <>
       <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />

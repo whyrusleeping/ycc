@@ -90,6 +90,9 @@ const (
 	// SessionServiceGetCommitDiffProcedure is the fully-qualified name of the SessionService's
 	// GetCommitDiff RPC.
 	SessionServiceGetCommitDiffProcedure = "/ycc.v1.SessionService/GetCommitDiff"
+	// SessionServiceListCommitsProcedure is the fully-qualified name of the SessionService's
+	// ListCommits RPC.
+	SessionServiceListCommitsProcedure = "/ycc.v1.SessionService/ListCommits"
 	// SessionServiceGetWorkingChangesProcedure is the fully-qualified name of the SessionService's
 	// GetWorkingChanges RPC.
 	SessionServiceGetWorkingChangesProcedure = "/ycc.v1.SessionService/GetWorkingChanges"
@@ -329,6 +332,8 @@ type SessionServiceClient interface {
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
 	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
+	// ListCommits pages a branch's git history for the history views.
+	ListCommits(context.Context, *connect.Request[v1.ListCommitsRequest]) (*connect.Response[v1.ListCommitsResponse], error)
 	GetWorkingChanges(context.Context, *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
@@ -590,6 +595,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceGetCommitDiffProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("GetCommitDiff")),
+			connect.WithClientOptions(opts...),
+		),
+		listCommits: connect.NewClient[v1.ListCommitsRequest, v1.ListCommitsResponse](
+			httpClient,
+			baseURL+SessionServiceListCommitsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListCommits")),
 			connect.WithClientOptions(opts...),
 		),
 		getWorkingChanges: connect.NewClient[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse](
@@ -1030,6 +1041,7 @@ type sessionServiceClient struct {
 	getActivitySteps       *connect.Client[v1.GetActivityStepsRequest, v1.GetActivityStepsResponse]
 	getSessionAttachment   *connect.Client[v1.GetSessionAttachmentRequest, v1.GetSessionAttachmentResponse]
 	getCommitDiff          *connect.Client[v1.GetCommitDiffRequest, v1.GetCommitDiffResponse]
+	listCommits            *connect.Client[v1.ListCommitsRequest, v1.ListCommitsResponse]
 	getWorkingChanges      *connect.Client[v1.GetWorkingChangesRequest, v1.GetWorkingChangesResponse]
 	subscribe              *connect.Client[v1.SubscribeRequest, v1.Event]
 	sendInput              *connect.Client[v1.SendInputRequest, v1.SendInputResponse]
@@ -1194,6 +1206,11 @@ func (c *sessionServiceClient) GetSessionAttachment(ctx context.Context, req *co
 // GetCommitDiff calls ycc.v1.SessionService.GetCommitDiff.
 func (c *sessionServiceClient) GetCommitDiff(ctx context.Context, req *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
 	return c.getCommitDiff.CallUnary(ctx, req)
+}
+
+// ListCommits calls ycc.v1.SessionService.ListCommits.
+func (c *sessionServiceClient) ListCommits(ctx context.Context, req *connect.Request[v1.ListCommitsRequest]) (*connect.Response[v1.ListCommitsResponse], error) {
+	return c.listCommits.CallUnary(ctx, req)
 }
 
 // GetWorkingChanges calls ycc.v1.SessionService.GetWorkingChanges.
@@ -1579,6 +1596,8 @@ type SessionServiceHandler interface {
 	// GetCommitDiff returns a commit's `git show` diff so the transcript can drill
 	// into what an agent committed from a commit_made row.
 	GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error)
+	// ListCommits pages a branch's git history for the history views.
+	ListCommits(context.Context, *connect.Request[v1.ListCommitsRequest]) (*connect.Response[v1.ListCommitsResponse], error)
 	GetWorkingChanges(context.Context, *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error)
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.Event]) error
 	SendInput(context.Context, *connect.Request[v1.SendInputRequest]) (*connect.Response[v1.SendInputResponse], error)
@@ -1836,6 +1855,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceGetCommitDiffProcedure,
 		svc.GetCommitDiff,
 		connect.WithSchema(sessionServiceMethods.ByName("GetCommitDiff")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListCommitsHandler := connect.NewUnaryHandler(
+		SessionServiceListCommitsProcedure,
+		svc.ListCommits,
+		connect.WithSchema(sessionServiceMethods.ByName("ListCommits")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceGetWorkingChangesHandler := connect.NewUnaryHandler(
@@ -2292,6 +2317,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetSessionAttachmentHandler.ServeHTTP(w, r)
 		case SessionServiceGetCommitDiffProcedure:
 			sessionServiceGetCommitDiffHandler.ServeHTTP(w, r)
+		case SessionServiceListCommitsProcedure:
+			sessionServiceListCommitsHandler.ServeHTTP(w, r)
 		case SessionServiceGetWorkingChangesProcedure:
 			sessionServiceGetWorkingChangesHandler.ServeHTTP(w, r)
 		case SessionServiceSubscribeProcedure:
@@ -2513,6 +2540,10 @@ func (UnimplementedSessionServiceHandler) GetSessionAttachment(context.Context, 
 
 func (UnimplementedSessionServiceHandler) GetCommitDiff(context.Context, *connect.Request[v1.GetCommitDiffRequest]) (*connect.Response[v1.GetCommitDiffResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetCommitDiff is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListCommits(context.Context, *connect.Request[v1.ListCommitsRequest]) (*connect.Response[v1.ListCommitsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListCommits is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetWorkingChanges(context.Context, *connect.Request[v1.GetWorkingChangesRequest]) (*connect.Response[v1.GetWorkingChangesResponse], error) {

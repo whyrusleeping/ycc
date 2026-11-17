@@ -16,6 +16,7 @@ import { WorkstreamsPage } from "../features/workstreams/WorkstreamsPage";
 import { WatchesPage } from "../features/watches/WatchesPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { FilesPage } from "../features/files/FilesPage";
+import { HistoryPage } from "../features/history/HistoryPage";
 import { GetStarted } from "../features/onboarding/GetStarted";
 import { MemoryPage, PlansPage } from "../features/memory/MemoryPage";
 import { ProjectsPage } from "../features/projects/ProjectsPage";
@@ -311,6 +312,34 @@ function UnscopedFiles({ splat }: { splat: string }) {
       question="Which project’s files?"
       target={(name) => `${paths.files(name, splat)}${location.hash}`}
       fallback={() => <FilesPage project="" splat={splat} />}
+    />
+  );
+}
+
+/** `/p/:project/history[?branch=]` and the unscoped `/history` (asks which project). */
+export function HistoryRoutePage() {
+  const { project } = useParams();
+  if (project !== undefined) return <ScopedHistory project={project} />;
+  return <UnscopedHistory />;
+}
+
+function ScopedHistory({ project }: { project: string }) {
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`History · ${project}`);
+  return <HistoryPage key={project} project={project} />;
+}
+
+function UnscopedHistory() {
+  const location = useLocation();
+  useDocumentTitle("History");
+  return (
+    <ProjectChoice
+      title="History"
+      question="Which project’s history?"
+      target={(name) => `${paths.history(name)}${location.search}`}
+      fallback={() => <HistoryPage project="" />}
     />
   );
 }

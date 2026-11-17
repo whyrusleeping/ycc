@@ -8145,6 +8145,146 @@ button.unread-dot:focus-visible {
   animation: pulse 1s steps(2) infinite;
 }
 
+/* History: one branch's git log; a row opens its diff in the inspector. */
+.history-branch select {
+  max-width: 64ch;
+}
+
+.history-branch-notes {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.history-branch-notes .tag {
+  text-decoration: none;
+}
+
+.commit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+  transition: opacity 0.15s;
+}
+
+.commit-list.stale {
+  opacity: 0.55;
+}
+
+.commit-row {
+  padding: 7px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.commit-row:last-child {
+  border-bottom: none;
+}
+
+.commit-row:hover {
+  background: var(--bg-sunk);
+}
+
+.commit-row.selected {
+  background: var(--selected);
+  box-shadow: inset 2px 0 0 var(--accent-strong);
+}
+
+.commit-main {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.commit-subject {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The session/task links take what the meta line leaves (the title ellipsizes). */
+.commit-links {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 12px;
+}
+
+.commit-session {
+  min-width: 0;
+  max-width: 48ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+
+.commit-session::before {
+  content: "session ";
+  color: var(--fg-subtle);
+}
+
+.commit-session:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.commit-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0 12px;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
+.commit-meta > * {
+  flex: none;
+}
+
+.commit-meta > .commit-links {
+  flex: 0 1 auto;
+}
+
+.commit-sha {
+  color: var(--fg);
+}
+
+.commit-stats .add {
+  color: var(--ok);
+}
+
+.commit-stats .del {
+  color: var(--error);
+}
+
+.commit-more {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+
 /* Laptop widths: a narrower sidebar and tighter page gutters. */
 @media (max-width: 1240px) {
   :root {

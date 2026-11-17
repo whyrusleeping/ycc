@@ -682,6 +682,47 @@ message GetCommitDiffResponse {
   bool truncated = 2;
 }
 
+// ListCommits pages a project's git history on one local branch, newest first
+// (`git log` order). The cursor pins the branch tip of the first page, so
+// commits added later do not shift subsequent pages.
+message ListCommitsRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+  string branch = 2;  // local branch name (refs/heads/<branch>); empty => the checked-out HEAD
+  int32 limit = 3;    // page size; 0 => 50, capped at 200
+  string cursor = 4;  // opaque next_cursor from the previous page; must come from the same branch
+}
+message CommitSummary {
+  string sha = 1; // full hex sha
+  string subject = 2;
+  string author_name = 3;
+  string author_email = 4;
+  string authored_at = 5;  // RFC 3339
+  string committed_at = 6; // RFC 3339
+  repeated string parents = 7;
+  int32 files_changed = 8;
+  int64 additions = 9;
+  int64 deletions = 10;
+  // The ycc session that recorded this commit (commit_made), when known. A
+  // workstream commit rewritten by rebase is matched by subject and author
+  // time, so the link is best-effort.
+  string session_id = 11;
+  string session_title = 12;
+  string task_id = 13; // backlog task the commit completed, when recorded
+}
+message BranchRef {
+  string name = 1; // short name, e.g. main or ycc/ws/<id>-<task>
+  string sha = 2;  // tip commit
+  bool current = 3; // checked out in the project's primary tree
+  string workstream_id = 4; // set for an in-flight workstream's branch
+  string task_id = 5;       // the workstream's task, when it has one
+}
+message ListCommitsResponse {
+  repeated CommitSummary commits = 1;
+  string next_cursor = 2; // empty on the last page
+  string branch = 3;      // resolved branch name; empty for a detached HEAD
+  repeated BranchRef branches = 4; // local branches: current first, then by most recent tip
+}
+
 // ListModels enumerates every configured logical model. With an empty session_id,
 // role assignments are the persisted global defaults. A non-empty session_id must
 // name a live session and returns that session's current assignments.
@@ -1693,6 +1734,8 @@ service SessionService {
   // GetCommitDiff returns a commit's `git show` diff so the transcript can drill
   // into what an agent committed from a commit_made row.
   rpc GetCommitDiff(GetCommitDiffRequest) returns (GetCommitDiffResponse);
+  // ListCommits pages a branch's git history for the history views.
+  rpc ListCommits(ListCommitsRequest) returns (ListCommitsResponse);
   rpc GetWorkingChanges(GetWorkingChangesRequest) returns (GetWorkingChangesResponse);
   rpc Subscribe(SubscribeRequest) returns (stream Event);
   rpc SendInput(SendInputRequest) returns (SendInputResponse);

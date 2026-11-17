@@ -1192,7 +1192,12 @@ visible in persisted history after process loss; live rows reflect the current g
 summaries are cached in memory against log file
 identity, size, and modification time; cold or changed logs are read with a summary-only decoder
 that validates the JSON while avoiding materialization of unrelated transcript payloads. The full
-event reader remains authoritative for replay. Reopening a session reconstructs model history and
+event reader remains authoritative for replay. Commit history is read from git: `ListCommits` pages
+one local branch (the checked-out HEAD by default) with a cursor pinned to the first page's tip, and
+lists local branches with in-flight workstream branches marked. Commits recorded by a session's
+`commit_made` events link to that session and task. A workstream rebase rewrites shas, so an
+unmatched commit links to a record with the same subject whose time is within ten minutes of the
+commit's author time; this link is best-effort. Reopening a session reconstructs model history and
 continues its existing event log. Reopening is a daemon detail, never a user step: `SendInput` to a
 session the daemon no longer holds (idle-reaped, stopped, lost to a restart, or fail-stopped on its
 log) reopens it from its persisted log before delivering the input, so typing into any opened

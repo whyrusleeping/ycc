@@ -60,6 +60,17 @@ type SessionSummary struct {
 	// WorkstreamID names the workstream whose tree this session ran in (its
 	// work or integration session); empty for the project's own sessions.
 	WorkstreamID string
+	// Commits are the session's commit_made records, in log order.
+	Commits []SessionCommit
+}
+
+// SessionCommit is one commit a session recorded (commit_made): its sha, the
+// task it completed (if any), the message subject, and when it was recorded.
+type SessionCommit struct {
+	SHA     string
+	Task    string
+	Subject string
+	At      time.Time
 }
 
 // ModelUsage is the total recorded token usage for one logical model name in a
@@ -122,7 +133,26 @@ func reduceSessionSummary(workspace, path string, evs []event.Event) SessionSumm
 		Turns:             proj.Turns,
 		ToolCalls:         proj.ToolCalls,
 		Waiting:           sessionWaitingInput(evs),
+		Commits:           sessionCommits(evs),
 	}
+}
+
+func sessionCommits(evs []event.Event) []SessionCommit {
+	var out []SessionCommit
+	for _, ev := range evs {
+		if ev.Type != event.CommitMade {
+			continue
+		}
+		sha, _ := ev.Data["sha"].(string)
+		if sha = strings.TrimSpace(sha); sha == "" {
+			continue
+		}
+		task, _ := ev.Data["task"].(string)
+		msg, _ := ev.Data["message"].(string)
+		subject, _, _ := strings.Cut(strings.TrimSpace(msg), "\n")
+		out = append(out, SessionCommit{SHA: sha, Task: task, Subject: strings.TrimSpace(subject), At: ev.TS})
+	}
+	return out
 }
 
 // sessionWaitingInput tracks human gates without loading question payloads.
@@ -454,6 +484,7 @@ type sessionSummaryCacheEntry struct {
 func cloneSessionSummary(s SessionSummary) SessionSummary {
 	s.FocusTasks = append([]string(nil), s.FocusTasks...)
 	s.ModelUsage = append([]ModelUsage(nil), s.ModelUsage...)
+	s.Commits = append([]SessionCommit(nil), s.Commits...)
 	return s
 }
 

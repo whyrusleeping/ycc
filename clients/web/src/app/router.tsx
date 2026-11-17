@@ -3,6 +3,7 @@ import { createBrowserRouter } from "react-router";
 import {
   BacklogRoutePage,
   FilesRoutePage,
+  HistoryRoutePage,
   HomePage,
   MemoryRoutePage,
   NewSessionPage,
@@ -42,6 +43,8 @@ export function makeRouter() {
         { path: "p/:project/watches/:name?", element: <WatchesRoutePage /> },
         { path: "files/*", element: <FilesRoutePage /> },
         { path: "p/:project/files/*", element: <FilesRoutePage /> },
+        { path: "history", element: <HistoryRoutePage /> },
+        { path: "p/:project/history", element: <HistoryRoutePage /> },
         { path: "memory", element: <MemoryRoutePage /> },
         { path: "p/:project/memory", element: <MemoryRoutePage /> },
         { path: "p/:project/plans/:name?", element: <PlansRoutePage /> },

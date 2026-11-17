@@ -10,6 +10,7 @@ export const PROJECT_SECTIONS = [
   { key: "watches", label: "Watches" },
   { key: "usage", label: "Usage" },
   { key: "files", label: "Files" },
+  { key: "history", label: "History" },
   { key: "memory", label: "Memory & plans" },
 ] as const;
 
@@ -50,6 +51,12 @@ export const paths = {
     if (opts.lines) out += `#L${opts.lines.start}${opts.lines.end > opts.lines.start ? `-L${opts.lines.end}` : ""}`;
     return out;
   },
+  /**
+   * Git history of one local branch ("" = the checked-out HEAD); unscoped
+   * asks for a project (or uses the sole/default one).
+   */
+  history: (project?: string | null, branch = "") =>
+    `${project ? `/p/${enc(project)}/history` : "/history"}${branch ? `?branch=${enc(branch)}` : ""}`,
   /** Project memory; unscoped asks for a project. */
   memory: (project?: string | null) => (project ? `/p/${enc(project)}/memory` : "/memory"),
   /** The plan library, or one plan. */
@@ -67,7 +74,7 @@ export const paths = {
 };
 
 /** Sections with an unscoped route (usage shows every project; the rest ask which). */
-export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "watches", "usage", "files", "memory"];
+export const UNSCOPED_SECTIONS: readonly ProjectSection[] = ["backlog", "loop", "workstreams", "watches", "usage", "files", "history", "memory"];
 
 /** The unscoped (or scoped) route of a section that has one. */
 export function sectionPath(section: ProjectSection, project: string | null): string | null {
@@ -85,6 +92,8 @@ export function sectionPath(section: ProjectSection, project: string | null): st
       return paths.usage(null);
     case "files":
       return paths.files(null);
+    case "history":
+      return paths.history(null);
     case "memory":
       return paths.memory(null);
     default:

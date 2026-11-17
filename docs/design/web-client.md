@@ -21,10 +21,12 @@ regions:
 
 - a sidebar with the project switcher, the session inbox (meaningful state, needs-answer,
   follow-up and unread markers), and one row of icon links (labels as tooltips) to Backlog, Work
-  loop, Workstreams, Watches, Usage, Files, Memory/Plans, and Settings, so the inbox keeps the
+  loop, Workstreams, Watches, Usage, Files, History, Memory/Plans, and Settings, so the inbox keeps the
   height. While workstreams are in flight, a labelled one-line Workstreams status sits under the
   work-loop lines, and workstream sessions carry a branch mark linking to them. Watch runs stay
-  out of the inbox unless they ask a question or are flagged; they are listed on their watch;
+  out of the inbox unless they ask a question or are flagged; they are listed on their watch. History
+  pages a branch's commits (branch picker, including workstream branches) with session and task
+  badges, and opens a commit's diff in the inspector;
 - a main pane showing the selected surface, typically a session transcript with its composer;
 - a closable, resizable inspector pane for contextual detail: task detail, commit or working-tree
   diffs, file contents, and expanded tool or reasoning rows, so detail opens beside the transcript
