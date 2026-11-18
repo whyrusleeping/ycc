@@ -186,7 +186,7 @@ func waitTool(ws *Workspace) *gollama.Tool {
 			"reasoning is not shown.",
 		Params: obj(map[string]any{
 			"job_ids":   StrArrProp("the job ids to wait on; omit to wait on all live jobs"),
-			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes, or after all (default all)"},
+			"for":       map[string]any{"type": "string", "enum": []string{"any", "all"}, "description": "return after any one finishes (default), or after all; wait again for the rest"},
 			"timeout_s": map[string]any{"type": "integer", "minimum": 1, "description": "timeout in seconds (default 600); on timeout you get partial reports plus the still-running ids, and can wait again"},
 		}),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
@@ -205,7 +205,9 @@ func waitTool(ws *Workspace) *gollama.Tool {
 					return okResult("wait: no matching jobs."), nil
 				}
 			}
-			mode := "all"
+			// Default "any": agents react to each completion (review, follow up,
+			// cancel obsolete siblings) instead of idling until the slowest job.
+			mode := "any"
 			if m, ok := getString(params, "for"); ok {
 				mode = m
 			}

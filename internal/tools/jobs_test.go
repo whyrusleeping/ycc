@@ -52,6 +52,29 @@ func jobsReg(t *testing.T) (*Registry, *jobs.Registry, *captureRec) {
 	return reg, jr, rec
 }
 
+// wait without "for" returns as soon as one target finishes, leaving the rest
+// running; "all" still blocks for every target.
+func TestWaitDefaultsToAny(t *testing.T) {
+	reg, _, _ := jobsReg(t)
+	dispatch(t, reg, "Bash", `{"command":"echo quick","run_in_background":true}`)
+	dispatch(t, reg, "Bash", `{"command":"sleep 30","run_in_background":true}`)
+
+	start := time.Now()
+	res := dispatch(t, reg, "wait", `{"job_ids":["job_1","job_2"],"timeout_s":20}`)
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("default wait blocked on the slow job (%s)", time.Since(start))
+	}
+	if res.IsError || !strings.Contains(res.Content, "quick") || !strings.Contains(res.Content, "still running") ||
+		!strings.Contains(res.Content, "job_2") {
+		t.Fatalf("default wait = %q, want job_1 report with job_2 still running", res.Content)
+	}
+
+	res = dispatch(t, reg, "wait", `{"job_ids":["job_1","job_2"],"for":"all","timeout_s":1}`)
+	if !strings.Contains(res.Content, "still running after 1s: job_2") {
+		t.Fatalf("for=all wait = %q, want timeout with job_2 running", res.Content)
+	}
+}
+
 // A backgrounded command returns a job_id immediately (well under its runtime),
 // wait returns exit 0 + output, and job_started/job_finished are emitted.
 func TestBackgroundBashWaitReturnsExitAndOutput(t *testing.T) {
