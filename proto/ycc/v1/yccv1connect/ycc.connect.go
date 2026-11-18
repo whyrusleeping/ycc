@@ -141,6 +141,15 @@ const (
 	SessionServiceListFilesProcedure = "/ycc.v1.SessionService/ListFiles"
 	// SessionServiceReadFileProcedure is the fully-qualified name of the SessionService's ReadFile RPC.
 	SessionServiceReadFileProcedure = "/ycc.v1.SessionService/ReadFile"
+	// SessionServiceGetPublicationsProcedure is the fully-qualified name of the SessionService's
+	// GetPublications RPC.
+	SessionServiceGetPublicationsProcedure = "/ycc.v1.SessionService/GetPublications"
+	// SessionServicePublishFileProcedure is the fully-qualified name of the SessionService's
+	// PublishFile RPC.
+	SessionServicePublishFileProcedure = "/ycc.v1.SessionService/PublishFile"
+	// SessionServiceUnpublishFileProcedure is the fully-qualified name of the SessionService's
+	// UnpublishFile RPC.
+	SessionServiceUnpublishFileProcedure = "/ycc.v1.SessionService/UnpublishFile"
 	// SessionServiceListModelsProcedure is the fully-qualified name of the SessionService's ListModels
 	// RPC.
 	SessionServiceListModelsProcedure = "/ycc.v1.SessionService/ListModels"
@@ -367,6 +376,11 @@ type SessionServiceClient interface {
 	// project root or a session's live worktree.
 	ListFiles(context.Context, *connect.Request[v1.ListFilesRequest]) (*connect.Response[v1.ListFilesResponse], error)
 	ReadFile(context.Context, *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error)
+	// GetPublications / PublishFile / UnpublishFile share a project file through
+	// the configured share server ([publish]) as a secret public link.
+	GetPublications(context.Context, *connect.Request[v1.GetPublicationsRequest]) (*connect.Response[v1.GetPublicationsResponse], error)
+	PublishFile(context.Context, *connect.Request[v1.PublishFileRequest]) (*connect.Response[v1.PublishFileResponse], error)
+	UnpublishFile(context.Context, *connect.Request[v1.UnpublishFileRequest]) (*connect.Response[v1.UnpublishFileResponse], error)
 	// Settings overlay: enumerate models and change per-role model
 	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -703,6 +717,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceReadFileProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ReadFile")),
+			connect.WithClientOptions(opts...),
+		),
+		getPublications: connect.NewClient[v1.GetPublicationsRequest, v1.GetPublicationsResponse](
+			httpClient,
+			baseURL+SessionServiceGetPublicationsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetPublications")),
+			connect.WithClientOptions(opts...),
+		),
+		publishFile: connect.NewClient[v1.PublishFileRequest, v1.PublishFileResponse](
+			httpClient,
+			baseURL+SessionServicePublishFileProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("PublishFile")),
+			connect.WithClientOptions(opts...),
+		),
+		unpublishFile: connect.NewClient[v1.UnpublishFileRequest, v1.UnpublishFileResponse](
+			httpClient,
+			baseURL+SessionServiceUnpublishFileProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("UnpublishFile")),
 			connect.WithClientOptions(opts...),
 		),
 		listModels: connect.NewClient[v1.ListModelsRequest, v1.ListModelsResponse](
@@ -1059,6 +1091,9 @@ type sessionServiceClient struct {
 	listDir                *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listFiles              *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
 	readFile               *connect.Client[v1.ReadFileRequest, v1.ReadFileResponse]
+	getPublications        *connect.Client[v1.GetPublicationsRequest, v1.GetPublicationsResponse]
+	publishFile            *connect.Client[v1.PublishFileRequest, v1.PublishFileResponse]
+	unpublishFile          *connect.Client[v1.UnpublishFileRequest, v1.UnpublishFileResponse]
 	listModels             *connect.Client[v1.ListModelsRequest, v1.ListModelsResponse]
 	setRoleConfig          *connect.Client[v1.SetRoleConfigRequest, v1.SetRoleConfigResponse]
 	setThinking            *connect.Client[v1.SetThinkingRequest, v1.SetThinkingResponse]
@@ -1296,6 +1331,21 @@ func (c *sessionServiceClient) ListFiles(ctx context.Context, req *connect.Reque
 // ReadFile calls ycc.v1.SessionService.ReadFile.
 func (c *sessionServiceClient) ReadFile(ctx context.Context, req *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error) {
 	return c.readFile.CallUnary(ctx, req)
+}
+
+// GetPublications calls ycc.v1.SessionService.GetPublications.
+func (c *sessionServiceClient) GetPublications(ctx context.Context, req *connect.Request[v1.GetPublicationsRequest]) (*connect.Response[v1.GetPublicationsResponse], error) {
+	return c.getPublications.CallUnary(ctx, req)
+}
+
+// PublishFile calls ycc.v1.SessionService.PublishFile.
+func (c *sessionServiceClient) PublishFile(ctx context.Context, req *connect.Request[v1.PublishFileRequest]) (*connect.Response[v1.PublishFileResponse], error) {
+	return c.publishFile.CallUnary(ctx, req)
+}
+
+// UnpublishFile calls ycc.v1.SessionService.UnpublishFile.
+func (c *sessionServiceClient) UnpublishFile(ctx context.Context, req *connect.Request[v1.UnpublishFileRequest]) (*connect.Response[v1.UnpublishFileResponse], error) {
+	return c.unpublishFile.CallUnary(ctx, req)
 }
 
 // ListModels calls ycc.v1.SessionService.ListModels.
@@ -1631,6 +1681,11 @@ type SessionServiceHandler interface {
 	// project root or a session's live worktree.
 	ListFiles(context.Context, *connect.Request[v1.ListFilesRequest]) (*connect.Response[v1.ListFilesResponse], error)
 	ReadFile(context.Context, *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error)
+	// GetPublications / PublishFile / UnpublishFile share a project file through
+	// the configured share server ([publish]) as a secret public link.
+	GetPublications(context.Context, *connect.Request[v1.GetPublicationsRequest]) (*connect.Response[v1.GetPublicationsResponse], error)
+	PublishFile(context.Context, *connect.Request[v1.PublishFileRequest]) (*connect.Response[v1.PublishFileResponse], error)
+	UnpublishFile(context.Context, *connect.Request[v1.UnpublishFileRequest]) (*connect.Response[v1.UnpublishFileResponse], error)
 	// Settings overlay: enumerate models and change per-role model
 	// assignment mid-flight.
 	ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error)
@@ -1963,6 +2018,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceReadFileProcedure,
 		svc.ReadFile,
 		connect.WithSchema(sessionServiceMethods.ByName("ReadFile")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceGetPublicationsHandler := connect.NewUnaryHandler(
+		SessionServiceGetPublicationsProcedure,
+		svc.GetPublications,
+		connect.WithSchema(sessionServiceMethods.ByName("GetPublications")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServicePublishFileHandler := connect.NewUnaryHandler(
+		SessionServicePublishFileProcedure,
+		svc.PublishFile,
+		connect.WithSchema(sessionServiceMethods.ByName("PublishFile")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceUnpublishFileHandler := connect.NewUnaryHandler(
+		SessionServiceUnpublishFileProcedure,
+		svc.UnpublishFile,
+		connect.WithSchema(sessionServiceMethods.ByName("UnpublishFile")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListModelsHandler := connect.NewUnaryHandler(
@@ -2353,6 +2426,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListFilesHandler.ServeHTTP(w, r)
 		case SessionServiceReadFileProcedure:
 			sessionServiceReadFileHandler.ServeHTTP(w, r)
+		case SessionServiceGetPublicationsProcedure:
+			sessionServiceGetPublicationsHandler.ServeHTTP(w, r)
+		case SessionServicePublishFileProcedure:
+			sessionServicePublishFileHandler.ServeHTTP(w, r)
+		case SessionServiceUnpublishFileProcedure:
+			sessionServiceUnpublishFileHandler.ServeHTTP(w, r)
 		case SessionServiceListModelsProcedure:
 			sessionServiceListModelsHandler.ServeHTTP(w, r)
 		case SessionServiceSetRoleConfigProcedure:
@@ -2612,6 +2691,18 @@ func (UnimplementedSessionServiceHandler) ListFiles(context.Context, *connect.Re
 
 func (UnimplementedSessionServiceHandler) ReadFile(context.Context, *connect.Request[v1.ReadFileRequest]) (*connect.Response[v1.ReadFileResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ReadFile is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetPublications(context.Context, *connect.Request[v1.GetPublicationsRequest]) (*connect.Response[v1.GetPublicationsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetPublications is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) PublishFile(context.Context, *connect.Request[v1.PublishFileRequest]) (*connect.Response[v1.PublishFileResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.PublishFile is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) UnpublishFile(context.Context, *connect.Request[v1.UnpublishFileRequest]) (*connect.Response[v1.UnpublishFileResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.UnpublishFile is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListModels(context.Context, *connect.Request[v1.ListModelsRequest]) (*connect.Response[v1.ListModelsResponse], error) {

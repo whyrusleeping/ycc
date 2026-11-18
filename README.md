@@ -240,6 +240,33 @@ Chat sessions commit finished, verified work without asking: only the files the 
 In the same file, `[chat] finished_work = "ask"` makes the agent ask first, and
 `"commit+push"` also pushes the current branch.
 
+### Sharing files publicly
+
+The file viewer in the web and iOS clients can publish a file as a secret public link through
+`ycc-share`, a small server you run on a public host. It renders Markdown, text, images, PDFs and
+sandboxed HTML at an unguessable URL, and each link expires after 30 days by default. Run it behind
+a TLS reverse proxy (Caddy, nginx) with a random upload token:
+
+```sh
+go install github.com/whyrusleeping/ycc/cmd/ycc-share@latest
+openssl rand -hex 32 > /etc/ycc-share/token
+ycc-share --data /var/lib/ycc-share --public-url https://paste.example.com \
+  --token-file /etc/ycc-share/token     # --listen 127.0.0.1:8095, --ttl 720h, --max-bytes 50MiB
+```
+
+Then point the daemon at it and store the same token on the daemon's machine with
+`ycc token set YCC_PUBLISH_TOKEN`:
+
+```toml
+[publish]
+url       = "https://paste.example.com"
+name      = "paste.example.com"        # shown as "Publish to paste.example.com"
+token_env = "YCC_PUBLISH_TOKEN"
+```
+
+Republishing unchanged contents returns the existing link, and links can be revoked from the
+viewer. [`docs/design/publishing.md`](docs/design/publishing.md) describes the server.
+
 ## Credentials and secrets
 
 - **Subscriptions:** `ycc login anthropic|openai`. Tokens stay on the daemon's machine and

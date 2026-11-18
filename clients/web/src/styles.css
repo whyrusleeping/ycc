@@ -5807,6 +5807,93 @@ th[aria-sort="descending"] .sort-btn {
   gap: 4px;
 }
 
+.publish-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.publish-mark {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--ok);
+  flex: none;
+}
+
+.publish-error {
+  max-width: 28em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Anchored to the (sticky, so positioned) toolbar's right edge rather than the
+   trigger, which may wrap to the left of a narrow inspector's toolbar. */
+.publish-pop {
+  position: absolute;
+  right: 8px;
+  top: calc(100% + 2px);
+  z-index: 20;
+  width: min(360px, calc(100% - 16px));
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.publish-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.publish-entry + .publish-entry {
+  border-top: 1px solid var(--border);
+}
+
+.publish-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+}
+
+.publish-entry.current .publish-head {
+  color: var(--fg);
+}
+
+.publish-url {
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.publish-meta {
+  font-family: var(--mono);
+  font-size: var(--fs-2xs);
+}
+
+.publish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: -8px;
+}
+
+.publish-actions a.copy-btn {
+  text-decoration: none;
+}
+
+.publish-actions .copy-btn.danger-text {
+  color: var(--error);
+}
+
 .segmented.inline {
   display: inline-flex;
   margin: 0;

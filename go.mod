@@ -10,6 +10,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.0.1
 	github.com/urfave/cli/v3 v3.10.1
 	github.com/whyrusleeping/gollama v0.0.0-20260925205342-e19be633c69f
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0

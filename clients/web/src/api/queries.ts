@@ -66,7 +66,11 @@ export const queryKeys = {
   fileList: (project: string, sessionId: string, path: string) => ["files", "list", project, sessionId, path] as const,
   /** ReadFile. */
   fileRead: (project: string, sessionId: string, path: string) => ["files", "read", project, sessionId, path] as const,
-  /** Every file listing and read (a browser refresh revalidates them). */
+  /** GetPublications for one file: the share target and the file's live links. */
+  publications: (project: string, sessionId: string, path: string) => ["files", "publications", project, sessionId, path] as const,
+  /** Every GetPublications result (publishing or unpublishing revalidates them all). */
+  publicationsAll: ["files", "publications"] as const,
+  /** Every file listing, read and publication list (a browser refresh revalidates them). */
   filesAll: ["files"] as const,
   /** ListCommits pages of one branch ("" = the checked-out HEAD). */
   commits: (project: string, branch: string) => ["commits", project, branch] as const,

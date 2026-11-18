@@ -7,6 +7,7 @@ import { paths } from "../src/app/paths";
 import {
   clampLines,
   expandTo,
+  expiryLabel,
   flattenTree,
   isMarkdownPath,
   isRasterPreviewType,
@@ -155,5 +156,15 @@ describe("file contents", () => {
     expect(decodeURIComponent(url.slice(url.indexOf(",") + 1))).toBe('<svg fill="#fff"/>');
     for (const t of ["image/png", "image/bmp", "image/x-icon", "image/avif", "IMAGE/HEIC"]) expect(isRasterPreviewType(t), t).toBe(true);
     for (const t of ["image/svg+xml", "text/html", "application/pdf", ""]) expect(isRasterPreviewType(t), t).toBe(false);
+  });
+
+  it("labels a publication's expiry in whole units left", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    const at = (s: number) => new Date(now + s * 1000).toISOString();
+    expect(expiryLabel("", now)).toBe("never expires");
+    expect(expiryLabel(at(30 * 86400 - 5), now)).toBe("expires in 29 days");
+    expect(expiryLabel(at(86400), now)).toBe("expires in 24 hours");
+    expect(expiryLabel(at(30), now)).toBe("expires in 1 minute");
+    expect(expiryLabel(at(-1), now)).toBe("expired");
   });
 });

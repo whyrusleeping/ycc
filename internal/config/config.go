@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -712,6 +713,9 @@ type Config struct {
 	// user — questions, idle-with-report, errors, work-loop digests, and blocked
 	// implementers. Absent (empty URL) = disabled.
 	Notify Notify `toml:"notify,omitempty"`
+	// Publish configures the share server project files are published to
+	// (docs/design/publishing.md). Absent (empty URL) = publishing disabled.
+	Publish Publish `toml:"publish,omitempty"`
 	// Retry configures automatic retry of transient LLM API failures. All fields
 	// default to 0 (unset), so an absent [retry] block keeps the engine default.
 	Retry Retry `toml:"retry,omitempty"`
@@ -859,6 +863,44 @@ type Notify struct {
 	Auth    string   `toml:"auth,omitempty"`
 	AuthEnv string   `toml:"auth_env,omitempty"`
 	Events  []string `toml:"events,omitempty"`
+}
+
+// Publish names the share server ([publish]). URL is its base URL (empty
+// disables publishing), Name the label clients show (defaulting to the URL's
+// host), and TokenEnv the upload token's name, resolved like a model key_env.
+type Publish struct {
+	URL      string `toml:"url,omitempty"`
+	Name     string `toml:"name,omitempty"`
+	TokenEnv string `toml:"token_env,omitempty"`
+}
+
+// Token resolves the upload token: the environment first, then the
+// machine-local secrets store. Empty when unset.
+func (p Publish) Token() string {
+	return resolveKey(Model{KeyEnv: p.TokenEnv})
+}
+
+func (p Publish) validate() error {
+	if p.URL == "" {
+		if p.Name != "" || p.TokenEnv != "" {
+			return fmt.Errorf("publish: url is required when name or token_env is set")
+		}
+		return nil
+	}
+	u, err := url.Parse(p.URL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("publish.url: want an http(s) base URL, got %q", p.URL)
+	}
+	if err := credenv.ValidateCredentialURL(p.URL); err != nil {
+		return fmt.Errorf("publish.url: %w", err)
+	}
+	if p.TokenEnv == "" {
+		return fmt.Errorf("publish.token_env: required when publish.url is set")
+	}
+	if err := credenv.ValidateKeyRef(p.TokenEnv); err != nil {
+		return fmt.Errorf("publish.token_env: %w", err)
+	}
+	return nil
 }
 
 // NotifyEventKinds is the set of valid notify.events entries. Kept
@@ -1059,6 +1101,9 @@ func (c *Config) validate() error {
 	if c.Budget.SessionCost < 0 || c.Budget.SessionTokens < 0 || c.Budget.LoopCost < 0 || c.Budget.LoopTokens < 0 {
 		return fmt.Errorf("budget: session_cost, session_tokens, loop_cost, and loop_tokens must be non-negative")
 	}
+	if err := c.Publish.validate(); err != nil {
+		return err
+	}
 	for _, k := range c.Notify.Events {
 		if !NotifyEventKinds[k] {
 			return fmt.Errorf("notify.events: unknown event kind %q (valid: question, idle, error, digest, blocked, attention, merged)", k)
@@ -1123,6 +1168,7 @@ func NewRegistry(cfg *Config) *Registry {
 		for _, model := range cfg.Models {
 			credenv.Register(model.KeyEnv)
 		}
+		credenv.Register(cfg.Publish.TokenEnv)
 	}
 	return &Registry{cfg: cfg}
 }
@@ -1251,6 +1297,17 @@ func (r *Registry) Notify() Notify {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.cfg.Notify
+}
+
+// Publish returns the configured share server ([publish]); an empty URL means
+// publishing is disabled.
+func (r *Registry) Publish() Publish {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.cfg == nil {
+		return Publish{}
+	}
+	return r.cfg.Publish
 }
 
 // RetryPolicy starts from engine.DefaultRetryPolicy and overlays each nonzero

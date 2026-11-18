@@ -236,6 +236,21 @@ export function formatSize(bytes: number): string {
 }
 
 /** A reference for a tree/listing entry. */
+/** A publication's expiry ("" = never) as "expires in 29 days", "expires in 5 hours", or "expired". */
+export function expiryLabel(iso: string, now: number = Date.now()): string {
+  if (!iso) return "never expires";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const s = (t - now) / 1000;
+  if (s <= 0) return "expired";
+  const plural = (n: number, unit: string) => `expires in ${n} ${unit}${n === 1 ? "" : "s"}`;
+  // Whole units left, so a fresh 30-day link reads "29 days" rather than overstating.
+  if (s < 3600) return plural(Math.max(1, Math.floor(s / 60)), "minute");
+  if (s < 48 * 3600) return plural(Math.floor(s / 3600), "hour");
+  if (s < 60 * 86400) return plural(Math.floor(s / 86400), "day");
+  return `expires ${new Date(t).toLocaleDateString()}`;
+}
+
 export function entryReference(dir: string, entry: TreeEntry): FileReference {
   return { path: childPath(dir, entry.name), isDirectory: entry.isDir, lines: null };
 }

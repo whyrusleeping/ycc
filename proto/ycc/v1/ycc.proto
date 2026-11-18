@@ -176,6 +176,47 @@ message ReadFileResponse {
   bool root_fallback = 9; // session's workspace is gone; read from the project root
 }
 
+// Publishing (docs/design/publishing.md): the daemon uploads a project file to
+// the share server configured in [publish] and returns a secret public link.
+// Path resolution and confinement are exactly ReadFile's.
+message PublishTarget {
+  string name = 1; // display label, e.g. "paste.example.com"
+  string url = 2;  // share server base URL
+}
+message Publication {
+  string id = 1;
+  string url = 2;          // the secret public link (viewer page)
+  string path = 3;         // root-relative path at publish time
+  string sha256 = 4;       // hex digest of the published bytes
+  int64 size = 5;
+  string published_at = 6; // RFC3339
+  string expires_at = 7;   // RFC3339; "" => never expires
+  bool current = 8;        // matches the file's present contents (path-scoped reads only)
+}
+message GetPublicationsRequest {
+  string project = 1;    // registered project; empty allowed only when exactly one exists
+  string session_id = 2; // optional: resolve the path against this session's workspace
+  string path = 3;       // root-relative file path; empty => every publication in the project
+}
+message GetPublicationsResponse {
+  PublishTarget target = 1;                // unset when publishing is not configured
+  repeated Publication publications = 2;   // unexpired, newest first
+}
+message PublishFileRequest {
+  string project = 1;
+  string session_id = 2;
+  string path = 3;
+}
+message PublishFileResponse {
+  Publication publication = 1; // current is true
+  bool reused = 2;             // an existing link for identical contents was returned
+}
+message UnpublishFileRequest {
+  string project = 1;
+  string id = 2; // Publication.id
+}
+message UnpublishFileResponse {}
+
 message SubscribeRequest {
   string session_id = 1;
   int64 from_seq = 2; // replay events with seq > from_seq, then stream live
@@ -1773,6 +1814,11 @@ service SessionService {
   // project root or a session's live worktree.
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
+  // GetPublications / PublishFile / UnpublishFile share a project file through
+  // the configured share server ([publish]) as a secret public link.
+  rpc GetPublications(GetPublicationsRequest) returns (GetPublicationsResponse);
+  rpc PublishFile(PublishFileRequest) returns (PublishFileResponse);
+  rpc UnpublishFile(UnpublishFileRequest) returns (UnpublishFileResponse);
 
   // Settings overlay: enumerate models and change per-role model
   // assignment mid-flight.

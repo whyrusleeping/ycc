@@ -20,6 +20,7 @@ import { highlightLines, languageForPath, type Span } from "../code/highlight";
 import { Markdown } from "../markdown/Markdown";
 import { relativeTime } from "../sessions/feed";
 import { FileLinksProvider, type FileLinkHandler } from "./FileRef";
+import { PublishControl } from "./PublishControl";
 import { formatReference, type FileReference, type LineRange } from "./fileReference";
 import {
   HIGHLIGHT_LINE_LIMIT,
@@ -188,6 +189,7 @@ function FileContent({
               Open in Files
             </Link>
           )}
+          <PublishControl target={{ ...target, path: resp.path || target.path }} compact={variant === "inspector"} />
         </span>
       </div>
       <FallbackNote show={resp.rootFallback} />

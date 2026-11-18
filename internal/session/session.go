@@ -32,6 +32,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
+	"github.com/whyrusleeping/ycc/internal/publish"
 	"github.com/whyrusleeping/ycc/internal/tools"
 	"github.com/whyrusleeping/ycc/internal/usage"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
@@ -2084,6 +2085,9 @@ type Manager struct {
 	followUpMu        sync.Mutex
 	readMarkMu        sync.Mutex
 	quickReplies      quickReplyStore
+	publishMu         sync.Mutex     // guards publications
+	publishOpMu       sync.Mutex     // serializes PublishFile's check-then-upload
+	publications      *publish.Store // nil until first use: memory-only
 	historyCacheMu    sync.Mutex
 	historyCache      map[string]sessionSummaryCacheEntry
 	usageScans        *usage.Scanner // per-log usage reductions for UsageReport
@@ -2411,6 +2415,9 @@ func (m *Manager) RenameProject(oldName, newName string) (project.Project, error
 	p, err := m.projects.Rename(oldName, newName)
 	if err != nil {
 		return project.Project{}, err
+	}
+	if err := m.publicationStore().RenameProject(oldName, newName, time.Now()); err != nil {
+		return p, fmt.Errorf("project renamed, but relabeling published files failed: %w", err)
 	}
 	if m.workstreams != nil {
 		if err := m.workstreams.RenameProject(oldName, newName); err != nil {

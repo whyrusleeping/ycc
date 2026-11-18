@@ -184,6 +184,52 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// The configured share server (`target` unset when publishing isn't
+    /// configured) and the unexpired publications of one file (`path`), newest
+    /// first, each marked `current` when it matches the file's present contents.
+    public func getPublications(
+        project: String, sessionID: String, path: String
+    ) async throws -> Ycc_V1_GetPublicationsResponse {
+        var request = Ycc_V1_GetPublicationsRequest()
+        request.project = project
+        request.sessionID = sessionID
+        request.path = path
+        let response = await generated.getPublications(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Upload a project file's present contents to the share server and return
+    /// its secret link (`reused` when identical contents were already
+    /// published). Bulk deadline: the daemon allows the upload two minutes.
+    public func publishFile(
+        project: String, sessionID: String, path: String
+    ) async throws -> Ycc_V1_PublishFileResponse {
+        var request = Ycc_V1_PublishFileRequest()
+        request.project = project
+        request.sessionID = sessionID
+        request.path = path
+        let response = await generatedBulk.publishFile(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
+    /// Delete a publication from the share server (its link stops working).
+    public func unpublishFile(project: String, id: String) async throws {
+        var request = Ycc_V1_UnpublishFileRequest()
+        request.project = project
+        request.id = id
+        try unary(await generated.unpublishFile(request: request))
+    }
+
     /// Deregister a project from the daemon. This only removes the registry entry;
     /// it does not delete the workspace or any files on the daemon host.
     public func removeProject(name: String) async throws {

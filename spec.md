@@ -924,8 +924,9 @@ rebase/verify/fast-forward path. Unattended status never bypasses a required gat
 
 - session discovery, start/reopen, transcript/diff reads, event subscription, input, questions,
   interrupt/resume, and hard stop;
-- project registration, directory discovery, and read-only project-confined file browsing
-  (`ListFiles`/`ReadFile`, resolved against a session's live worktree when given one);
+- project registration, directory discovery, read-only project-confined file browsing
+  (`ListFiles`/`ReadFile`, resolved against a session's live worktree when given one), and
+  publishing those files to a share server (§14.3);
 - model, role, reasoning, work-strategy, and review-tier settings;
 - backlog, plans, memory, usage, allowance, budgets, notifications, and work loops;
 - client usage analytics (`RecordUiEvents`/`GetUiAnalytics`, §18.8);
@@ -1110,6 +1111,17 @@ The web and iOS clients show a banner whenever any check is `warn` or `fail`. It
 panel listing every check with its detail, suggested fix, and a re-check action. The web client
 omits the banner while the daemon has no sessions, when its Get started checklist (§19.1) covers
 model setup.
+
+### 14.3 Publishing files
+
+A daemon with a `[publish]` share server (URL, display name, and an upload-token reference
+resolved like a model key) lets clients publish a project file as a secret public link. The daemon
+reads the file under `ReadFile`'s confinement and uploads it to `ycc-share`, a separate public server
+in this repository; clients never hold the upload token. Each publication is a snapshot at an
+unguessable URL that expires after the server's configured lifetime. The daemon records its
+publications in owner-only state so clients can show whether the file's current contents are
+already published (identical bytes reuse their link) and unpublish them. Nothing names a particular
+host. `docs/design/publishing.md` specifies the server API, viewer rendering, and serving headers.
 
 ## 18. Client interaction model
 

@@ -311,13 +311,19 @@ private struct FallbackNote: View {
 struct FileViewerView: View {
     @Environment(AppModel.self) private var app
     @State private var model: FileViewerModel
+    @State private var publications: FilePublicationsModel
     @State private var showRaw = false
     @State private var wrapLines = false
+    /// The publication awaiting the Unpublish confirmation.
+    @State private var confirmUnpublish: Ycc_V1_Publication?
+    /// Title of the publishing error alert ("Couldn’t publish"…).
+    @State private var publishErrorTitle = ""
     private let client: YccClient
 
     init(client: YccClient, route: FileRoute) {
         self.client = client
         _model = State(initialValue: FileViewerModel(source: client, route: route))
+        _publications = State(initialValue: FilePublicationsModel(source: client, route: route))
     }
 
     private var reference: FileReference { model.route.reference }
@@ -333,10 +339,52 @@ struct FileViewerView: View {
                     .navigationTitle(reference.name)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { toolbar }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        publishBanner
+                            .animation(.snappy, value: publications.isPublishing)
+                            .animation(.snappy, value: publications.lastPublished)
+                    }
+                    .confirmationDialog(
+                        "Unpublish this link?",
+                        isPresented: Binding(
+                            get: { confirmUnpublish != nil },
+                            set: { if !$0 { confirmUnpublish = nil } }),
+                        titleVisibility: .visible,
+                        presenting: confirmUnpublish
+                    ) { publication in
+                        Button("Unpublish", role: .destructive) {
+                            Analytics.action("file.unpublish", via: .menu)
+                            Task {
+                                publishErrorTitle = "Couldn’t unpublish"
+                                await publications.unpublish(id: publication.id)
+                            }
+                        }
+                    } message: { publication in
+                        Text("\(publication.url) will stop working for anyone who has it.")
+                    }
+                    .alert(
+                        publishErrorTitle,
+                        isPresented: Binding(
+                            get: { publications.errorMessage != nil },
+                            set: { if !$0 { publications.errorMessage = nil } }),
+                        presenting: publications.errorMessage
+                    ) { _ in
+                        Button("OK", role: .cancel) { publications.errorMessage = nil }
+                    } message: { message in
+                        Text(message)
+                    }
             }
         }
-        .task { await model.load() }
+        .task {
+            await model.load()
+            // Refreshed on every appearance: the file may have changed (or
+            // been published elsewhere) since.
+            if model.content != nil { await publications.load() }
+        }
         .onChange(of: model.unauthorized) { _, unauthorized in
+            if unauthorized { app.handleUnauthorized() }
+        }
+        .onChange(of: publications.unauthorized) { _, unauthorized in
             if unauthorized { app.handleUnauthorized() }
         }
     }
@@ -475,10 +523,196 @@ struct FileViewerView: View {
                         Label("Copy image", systemImage: "doc.on.clipboard")
                     }
                 }
+                if let target = publications.target, model.content != nil {
+                    publishSection(target)
+                }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }
         }
+    }
+
+    // MARK: Publishing
+
+    /// The menu's share-server section: publish (no link for the present
+    /// contents), or the current link's actions, plus earlier versions' links.
+    @ViewBuilder
+    private func publishSection(_ target: Ycc_V1_PublishTarget) -> some View {
+        let name = Self.displayName(target)
+        if let current = publications.current, let url = current.publicURL {
+            Section("Published · \(Self.expiryText(current, capitalized: false))") {
+                Button {
+                    UIPasteboard.general.string = current.url
+                } label: {
+                    Label("Copy published link", systemImage: "link")
+                }
+                ShareLink(item: url) {
+                    Label("Share link…", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    UIApplication.shared.open(url)
+                } label: {
+                    Label("Open in Safari", systemImage: "safari")
+                }
+                Button(role: .destructive) {
+                    confirmUnpublish = current
+                } label: {
+                    Label("Unpublish", systemImage: "trash")
+                }
+                .disabled(publications.unpublishing.contains(current.id))
+                earlierVersionsMenu
+            }
+        } else {
+            Section {
+                Button {
+                    publish()
+                } label: {
+                    Label(publications.isPublishing ? "Publishing…" : "Publish to \(name)", systemImage: "globe")
+                }
+                .disabled(publications.isPublishing)
+                earlierVersionsMenu
+            } header: {
+                if !publications.earlier.isEmpty {
+                    Text("This version isn’t published")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var earlierVersionsMenu: some View {
+        let earlier = publications.earlier
+        if !earlier.isEmpty {
+            Menu {
+                ForEach(earlier, id: \.id) { publication in
+                    Menu {
+                        Section(Self.expiryText(publication, capitalized: true)) {
+                            Button {
+                                UIPasteboard.general.string = publication.url
+                            } label: {
+                                Label("Copy link", systemImage: "link")
+                            }
+                            if let url = publication.publicURL {
+                                Button {
+                                    UIApplication.shared.open(url)
+                                } label: {
+                                    Label("Open in Safari", systemImage: "safari")
+                                }
+                            }
+                            Button(role: .destructive) {
+                                confirmUnpublish = publication
+                            } label: {
+                                Label("Unpublish", systemImage: "trash")
+                            }
+                            .disabled(publications.unpublishing.contains(publication.id))
+                        }
+                    } label: {
+                        Label(Self.publishedText(publication), systemImage: "clock.arrow.circlepath")
+                    }
+                }
+            } label: {
+                Label("Earlier versions (\(earlier.count))", systemImage: "clock")
+            }
+        }
+    }
+
+    private func publish() {
+        Analytics.action("file.publish", via: .menu)
+        Task {
+            publishErrorTitle = "Couldn’t publish"
+            if await publications.publish(), let link = publications.lastPublished?.publication.url {
+                UIPasteboard.general.string = link
+            }
+        }
+    }
+
+    /// Progress while publishing, then the new link (already copied) with
+    /// share and open actions until dismissed.
+    @ViewBuilder
+    private var publishBanner: some View {
+        if publications.isPublishing {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("Publishing to \(publications.target.map(Self.displayName) ?? "share server")…")
+                    .font(.subheadline)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .background(.bar)
+        } else if let result = publications.lastPublished, let url = result.publication.publicURL {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(result.reused ? "Already published · link copied" : "Published · link copied")
+                            .font(.subheadline.weight(.semibold))
+                        Text(result.publication.url)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        publications.lastPublished = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        UIPasteboard.general.string = result.publication.url
+                    } label: {
+                        Label("Copy", systemImage: "link")
+                    }
+                    ShareLink(item: url) {
+                        Label("Share…", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        UIApplication.shared.open(url)
+                    } label: {
+                        Label("Open", systemImage: "safari")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .background(.bar)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private static func displayName(_ target: Ycc_V1_PublishTarget) -> String {
+        target.name.isEmpty ? target.url : target.name
+    }
+
+    /// "Expires Dec 18" (with the year when it isn't this one), or "Never expires".
+    private static func expiryText(_ publication: Ycc_V1_Publication, capitalized: Bool) -> String {
+        let text: String
+        if let date = publication.expiryDate {
+            var style = Date.FormatStyle().month(.abbreviated).day()
+            if !Calendar.current.isDate(date, equalTo: .now, toGranularity: .year) {
+                style = style.year()
+            }
+            text = "expires \(date.formatted(style))"
+        } else {
+            text = "never expires"
+        }
+        return capitalized ? text.prefix(1).uppercased() + text.dropFirst() : text
+    }
+
+    /// "Published 2 hours ago".
+    private static func publishedText(_ publication: Ycc_V1_Publication) -> String {
+        guard let date = publication.publishedDate else { return publication.id }
+        return "Published \(date.formatted(.relative(presentation: .named)))"
     }
 }
 

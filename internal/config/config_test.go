@@ -1065,6 +1065,34 @@ func TestNotifyValidation(t *testing.T) {
 	}
 }
 
+func TestPublishValidation(t *testing.T) {
+	// The upload token must not travel in clear text or go unnamed.
+	for _, p := range []Publish{
+		{URL: "http://paste.example.com", TokenEnv: "PUBLISH_TOKEN"},
+		{URL: "https://paste.example.com"},
+		{URL: "https://paste.example.com", TokenEnv: "YCC_TOKEN"},
+		{URL: "paste.example.com", TokenEnv: "PUBLISH_TOKEN"},
+		{TokenEnv: "PUBLISH_TOKEN"},
+	} {
+		cfg := baseRegistry().cfg
+		cfg.Publish = p
+		if err := cfg.validate(); err == nil {
+			t.Errorf("publish %+v accepted", p)
+		}
+	}
+	for _, p := range []Publish{
+		{},
+		{URL: "https://paste.example.com", TokenEnv: "PUBLISH_TOKEN"},
+		{URL: "http://127.0.0.1:8095", Name: "local", TokenEnv: "PUBLISH_TOKEN"},
+	} {
+		cfg := baseRegistry().cfg
+		cfg.Publish = p
+		if err := cfg.validate(); err != nil {
+			t.Errorf("publish %+v rejected: %v", p, err)
+		}
+	}
+}
+
 func TestRetryPolicy(t *testing.T) {
 	cfg := baseRegistry().cfg
 	cfg.Retry = Retry{MaxAttempts: 5, BaseDelayMS: 250, MaxDelayMS: 10_000, MaxRetryAfterMS: 2000, MaxTotalWaitMS: 4000}

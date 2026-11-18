@@ -294,6 +294,7 @@ JSON="Content-Type: application/json"
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
 | [`ListFiles` / `ReadFile`](#listfiles--readfile) | read-only, project-confined file browsing |
+| [`GetPublications` / `PublishFile` / `UnpublishFile`](#getpublications--publishfile--unpublishfile) | share a project file as a secret public link |
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
 | [`ListSessions`](#listsessions) | live sessions (optionally filtered by project) |
 | [`ListSessionHistory`](#listsessionhistory) | live + persisted sessions, most-recent first |
@@ -474,6 +475,39 @@ shell in any workspace, so project-confined reads do not expand the trust
 surface; the confinement keeps the API's intent legible and prevents accidental
 reach outside a project rather than acting as a security boundary against a
 token holder.
+
+### GetPublications / PublishFile / UnpublishFile
+
+Publishing uploads a project file to the share server configured in the daemon's
+`[publish]` table and returns a secret public link (design:
+[`docs/design/publishing.md`](design/publishing.md)). `GetPublications` and
+`PublishFile` take `project`, optional `sessionId`, and `path`, resolved and
+confined exactly like `ReadFile`.
+
+`GetPublications` returns `target` (`{name, url}`; absent when publishing is not
+configured, so clients hide the action) and the unexpired `publications` of that
+path, newest first. Each has `id`, `url`, `path`, `sha256`, `size`,
+`publishedAt`, `expiresAt` (empty for no expiry), and `current` (its bytes match
+the file now). An empty `path` lists the whole project's publications without
+`current`.
+
+`PublishFile` reads the whole file (at most 64 MiB) and uploads it, unless an
+unexpired publication of identical bytes exists, which is returned with
+`reused: true`. Unconfigured publishing, a missing or rejected token, and an
+oversized file are `failed_precondition`; an unreachable server is
+`unavailable`. `UnpublishFile` takes `project` and the publication `id`, deletes
+it on the server, and forgets it; an unknown id is `not_found`.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","path":"docs/report.md"}' \
+  $B/ycc.v1.SessionService/PublishFile
+```
+
+```json
+{"publication":{"id":"q3V0c2lkZS1zZWNyZXQx","url":"https://paste.example.com/q3V0c2lkZS1zZWNyZXQx/report.md",
+ "path":"docs/report.md","sha256":"9f2c…","size":"1834","publishedAt":"2026-11-18T20:40:00Z",
+ "expiresAt":"2026-12-18T20:40:00Z","current":true}}
+```
 
 ### DiscoverModels / TestModel
 

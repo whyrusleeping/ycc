@@ -34,6 +34,8 @@ var (
 	ErrNotDir = errors.New("not a directory")
 	// ErrNotFile: Read was given a directory or a special file.
 	ErrNotFile = errors.New("not a regular file")
+	// ErrTooLarge: ReadAll was given a file over its limit.
+	ErrTooLarge = errors.New("file is too large")
 )
 
 const (
@@ -358,6 +360,56 @@ func Read(root, p string, maxBytes int64) (File, error) {
 	}
 	out.Data = data
 	return out, nil
+}
+
+// ReadAll returns a root-relative regular file whole, confined exactly like
+// Read. A file over limit bytes (including one that grows while being read)
+// fails with ErrTooLarge.
+func ReadAll(root, p string, limit int64) (rel string, data []byte, err error) {
+	rel, real, err := resolve(root, p)
+	if err != nil {
+		return "", nil, err
+	}
+	if rel == "" {
+		return "", nil, fmt.Errorf("%w: the project root is a directory", ErrNotFile)
+	}
+	rel = filepath.ToSlash(rel)
+	info, err := os.Stat(real)
+	if err != nil {
+		return "", nil, statErr(err, rel)
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("%w: %s", ErrNotFile, rel)
+	}
+	if info.Size() > limit {
+		return "", nil, fmt.Errorf("%w: %s is %d bytes (limit %d)", ErrTooLarge, rel, info.Size(), limit)
+	}
+	// Reopen through the root rather than by the checked name, so a component
+	// swapped for an escaping symlink after the check cannot be followed out.
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return "", nil, statErr(err, rel)
+	}
+	defer r.Close()
+	f, err := r.Open(filepath.FromSlash(rel))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
+			return "", nil, statErr(err, rel)
+		}
+		return "", nil, fmt.Errorf("%w: %s", ErrDenied, rel)
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("%w: %s", ErrNotFile, rel)
+	}
+	data, err = io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return "", nil, fmt.Errorf("read %s: %w", rel, err)
+	}
+	if int64(len(data)) > limit {
+		return "", nil, fmt.Errorf("%w: %s exceeds %d bytes", ErrTooLarge, rel, limit)
+	}
+	return rel, data, nil
 }
 
 func statErr(err error, rel string) error {

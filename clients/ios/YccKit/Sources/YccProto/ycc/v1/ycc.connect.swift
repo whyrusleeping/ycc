@@ -156,6 +156,17 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `readFile`(request: Ycc_V1_ReadFileRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ReadFileResponse>
 
+    /// GetPublications / PublishFile / UnpublishFile share a project file through
+    /// the configured share server ([publish]) as a secret public link.
+    @available(iOS 13, *)
+    func `getPublications`(request: Ycc_V1_GetPublicationsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetPublicationsResponse>
+
+    @available(iOS 13, *)
+    func `publishFile`(request: Ycc_V1_PublishFileRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_PublishFileResponse>
+
+    @available(iOS 13, *)
+    func `unpublishFile`(request: Ycc_V1_UnpublishFileRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_UnpublishFileResponse>
+
     /// Settings overlay: enumerate models and change per-role model
     /// assignment mid-flight.
     @available(iOS 13, *)
@@ -558,6 +569,21 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getPublications`(request: Ycc_V1_GetPublicationsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetPublicationsResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetPublications", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `publishFile`(request: Ycc_V1_PublishFileRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_PublishFileResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/PublishFile", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `unpublishFile`(request: Ycc_V1_UnpublishFileRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_UnpublishFileResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/UnpublishFile", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listModels`(request: Ycc_V1_ListModelsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListModelsResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListModels", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -856,6 +882,9 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let listDir = Connect.MethodSpec(name: "ListDir", service: "ycc.v1.SessionService", type: .unary)
             public static let listFiles = Connect.MethodSpec(name: "ListFiles", service: "ycc.v1.SessionService", type: .unary)
             public static let readFile = Connect.MethodSpec(name: "ReadFile", service: "ycc.v1.SessionService", type: .unary)
+            public static let getPublications = Connect.MethodSpec(name: "GetPublications", service: "ycc.v1.SessionService", type: .unary)
+            public static let publishFile = Connect.MethodSpec(name: "PublishFile", service: "ycc.v1.SessionService", type: .unary)
+            public static let unpublishFile = Connect.MethodSpec(name: "UnpublishFile", service: "ycc.v1.SessionService", type: .unary)
             public static let listModels = Connect.MethodSpec(name: "ListModels", service: "ycc.v1.SessionService", type: .unary)
             public static let setRoleConfig = Connect.MethodSpec(name: "SetRoleConfig", service: "ycc.v1.SessionService", type: .unary)
             public static let setThinking = Connect.MethodSpec(name: "SetThinking", service: "ycc.v1.SessionService", type: .unary)
