@@ -89,7 +89,6 @@ export function TaskDetailView({
   const navigate = useNavigate();
   const [open, setOpen] = useState<OpenDraft | null>(() => draftStore.get(project, id) ?? null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
-  const [statusDraft, setStatusDraft] = useState<TaskStatus | null>(null);
   const [starting, setStarting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -119,8 +118,7 @@ export function TaskDetailView({
   const setStatus = async (status: TaskStatus) => {
     if (statusBusy) return;
     setStatusBusy(status);
-    const updated = await changeTaskStatus(qc, project, id, status);
-    if (updated) setStatusDraft(null);
+    await changeTaskStatus(qc, project, id, status);
     setStatusBusy(null);
   };
 
@@ -300,9 +298,14 @@ export function TaskDetailView({
           <span className="sr-only">Status</span>
           <select
             aria-label="Status"
-            value={statusDraft ?? ((TASK_STATUSES as readonly string[]).includes(status) ? status : "")}
+            value={statusBusy ?? ((TASK_STATUSES as readonly string[]).includes(status) ? status : "")}
             disabled={statusBusy !== null}
-            onChange={(e) => setStatusDraft(e.target.value as TaskStatus)}
+            onChange={(e) => {
+              const next = e.target.value as TaskStatus;
+              if (!next || next === status) return;
+              track.action("task.status", "click", { to: next, surface: variant });
+              void setStatus(next);
+            }}
           >
             {!(TASK_STATUSES as readonly string[]).includes(status) && <option value="">{header.status || "unknown"}</option>}
             {TASK_STATUSES.map((s) => (
@@ -312,18 +315,6 @@ export function TaskDetailView({
             ))}
           </select>
         </label>
-        <button
-          type="button"
-          className="btn small"
-          disabled={statusBusy !== null || !statusDraft || statusDraft === status}
-          onClick={() => {
-            if (!statusDraft) return;
-            track.action("task.status", "click", { to: statusDraft, surface: variant });
-            void setStatus(statusDraft);
-          }}
-        >
-          Apply status
-        </button>
         {status === "proposed" && (
           <button
             type="button"
