@@ -16,6 +16,7 @@ import { ActivityHead } from "../session/Transcript";
 import { activitySummary, foldedTailStart, transcriptBlocks } from "../session/blocks";
 import { reportPresentation } from "../session/report";
 import { useSessionController, useSessionSnapshot } from "../session/useSession";
+import { compactTokenCount } from "../sessions/feed";
 import { Icon } from "../../ui/icons";
 import { JobOutput } from "./JobOutput";
 import {
@@ -46,6 +47,9 @@ export function ActivityPanel({ project, sessionId }: { project: string; session
   const controller = useSessionController(project, sessionId);
   // Only the durable cursor: streaming text must not re-render the overview.
   const cursor = useSyncExternalStore(controller.subscribe, () => controller.getSnapshot().cursor);
+  // The coordinator's context size comes from the session view, not the activity graph.
+  const contextTokens = useSyncExternalStore(controller.subscribe, () => controller.getSnapshot().contextTokens);
+  const rootContext = contextTokens !== null ? compactTokenCount(contextTokens) : null;
   const q = useQuery({
     queryKey: ["sessionActivity", project, sessionId],
     queryFn: ({ signal }) => client.getSessionActivity({ project, sessionId }, { signal }),
@@ -83,12 +87,21 @@ export function ActivityPanel({ project, sessionId }: { project: string; session
     <div className="activity-panel">
       <div className="activity-overview">
         <Summary data={q.data} fetching={q.isFetching} onRefresh={() => void q.refetch()} />
-        <ActivityTree nodes={nodes} range={range} now={now} selected={selected} onSelect={select} />
+        <ActivityTree nodes={nodes} range={range} now={now} rootContext={rootContext} selected={selected} onSelect={select} />
         {range && <Timeline nodes={nodes} range={range} selected={selected} onSelect={select} />}
       </div>
       <div className={`activity-detail${node && isJob(node) ? " job" : ""}`}>
         {node ? (
-          <NodeDetail key={node.id} node={node} nodes={nodes} range={range} now={now} live={q.data.live} controller={controller} />
+          <NodeDetail
+            key={node.id}
+            node={node}
+            nodes={nodes}
+            range={range}
+            now={now}
+            live={q.data.live}
+            rootContext={rootContext}
+            controller={controller}
+          />
         ) : (
           <p className="muted activity-hint">Select an agent or job to see what it did.</p>
         )}
@@ -140,12 +153,14 @@ const ActivityTree = memo(function ActivityTree({
   nodes,
   range,
   now,
+  rootContext,
   selected,
   onSelect,
 }: {
   nodes: readonly ActivityNode[];
   range: TimeRange | null;
   now: number;
+  rootContext: string | null;
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
@@ -184,6 +199,11 @@ const ActivityTree = memo(function ActivityTree({
                   </span>
                 )}
                 {!isJob(node) && node.id !== ROOT_ID && <AgentProgress node={node} />}
+                {node.id === ROOT_ID && rootContext && (
+                  <span className="act-sub" title="Context the coordinator is carrying">
+                    <span>{rootContext} context tokens</span>
+                  </span>
+                )}
               </span>
               {elapsed !== null && <span className="act-elapsed">{formatDuration(elapsed)}</span>}
             </button>
@@ -218,6 +238,7 @@ function NodeDetail({
   range,
   now,
   live,
+  rootContext,
   controller,
 }: {
   node: ActivityNode;
@@ -225,6 +246,7 @@ function NodeDetail({
   range: TimeRange | null;
   now: number;
   live: boolean;
+  rootContext: string | null;
   controller: SessionController;
 }) {
   const job = isJob(node);
@@ -246,6 +268,7 @@ function NodeDetail({
           {elapsed !== null && <span>{formatDuration(elapsed)}</span>}
           {started !== null && <span title={new Date(started).toLocaleString()}>started {new Date(started).toLocaleTimeString()}</span>}
           {parent && parent.id !== ROOT_ID && <span>under {parent.label}</span>}
+          {node.id === ROOT_ID && rootContext && <span title="Context the coordinator is carrying">{rootContext} context tokens</span>}
           {!job && node.status === "running" && (
             <>
               <span className="act-tool">{node.currentTool || "thinking"}</span>

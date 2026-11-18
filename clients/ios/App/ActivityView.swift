@@ -100,7 +100,8 @@ struct SessionActivitySheet: View {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     switch layout {
                     case .tree:
-                        ActivityTreeList(model: model, now: context.date)
+                        ActivityTreeList(model: model, now: context.date,
+                                         contextTokens: session.currentContextTokensEstimate)
                     case .timeline:
                         ActivityTimelineChart(nodes: model.nodes, now: context.date)
                     }
@@ -164,12 +165,15 @@ private struct StatusDot: View {
 private struct ActivityTreeList: View {
     let model: SessionActivityModel
     let now: Date
+    /// The coordinator's context size, from the session view (the activity graph has none).
+    let contextTokens: Int?
 
     var body: some View {
         List {
             ForEach(model.rows) { row in
                 ActivityTreeRowView(
                     row: row, now: now,
+                    contextTokens: row.node.kind == "coordinator" ? contextTokens : nil,
                     isCollapsed: model.collapsed.contains(row.id),
                     toggle: { model.toggleCollapsed(row.id) })
             }
@@ -191,6 +195,7 @@ private struct ActivityTreeList: View {
 private struct ActivityTreeRowView: View {
     let row: ActivityTreeRow
     let now: Date
+    let contextTokens: Int?
     let isCollapsed: Bool
     let toggle: () -> Void
 
@@ -258,6 +263,9 @@ private struct ActivityTreeRowView: View {
         var parts = [ActivityStyle.kindLabel(node)]
         if !node.model.isEmpty { parts.append(node.model) }
         parts.append(status.label)
+        if let contextTokens, contextTokens > 0 {
+            parts.append("\(ActivityGraph.formatTokens(Int64(contextTokens))) ctx")
+        }
         if node.spans.count > 1 { parts.append("\(node.spans.count) rounds") }
         if node.mutates { parts.append("mutating") }
         return parts.joined(separator: " · ")
@@ -485,7 +493,11 @@ private struct AgentDetailView: View {
                     if !node.model.isEmpty { LabeledContent("Model", value: node.model) }
                     let elapsed = ActivityGraph.elapsed(start: node.startedAt, end: node.finishedAt, status: status, now: context.date)
                     if !elapsed.isEmpty { LabeledContent("Elapsed", value: elapsed) }
-                    if status.isActive {
+                    if node.kind == "coordinator", let tokens = session.currentContextTokensEstimate, tokens > 0 {
+                        LabeledContent("Context", value: "≈ \(tokens.formatted()) tokens")
+                    }
+                    // The daemon reports tool/turn progress for subagents only.
+                    if status.isActive, node.kind != "coordinator" {
                         LabeledContent("Current tool", value: node.currentTool.isEmpty ? "—" : node.currentTool)
                         LabeledContent("Progress", value: "\(node.turns) turns · \(ActivityGraph.formatTokens(node.totalTokens)) tokens")
                     }
