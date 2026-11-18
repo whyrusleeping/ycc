@@ -3288,7 +3288,15 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
 
-	logPath := filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
+	// Resolve before opening: OpenLog creates a missing file, and an empty log
+	// left in the primary would shadow a workstream session's worktree log.
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	absWS, logPath, err := m.locateSessionLog(absWS, id)
+	if err != nil {
+		return nil, err
+	}
 	log, err := event.OpenLog(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)
@@ -3384,33 +3392,62 @@ func (m *Manager) SessionLogPath(project, id string) (workspace, logPath string,
 		return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
 	}
 	if s, ok := m.Get(id); ok {
-		workspace = s.Workspace
-	} else {
-		workspace, err = m.resolveProjectWorkspace(project)
+		absWS, err := filepath.Abs(s.Workspace)
 		if err != nil {
+			return "", "", fmt.Errorf("resolve workspace: %w", err)
+		}
+		logPath = filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
+		if _, err := os.Stat(logPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
+			}
 			return "", "", err
 		}
+		return absWS, logPath, nil
+	}
+	workspace, err = m.resolveProjectWorkspace(project)
+	if err != nil {
+		return "", "", err
 	}
 	absWS, err := filepath.Abs(workspace)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workspace: %w", err)
 	}
+	return m.locateSessionLog(absWS, id)
+}
+
+// locateSessionLog resolves a persisted session of the project at absWS to its
+// log and workspace: the project's own log, else — for a finished workstream or
+// integrate-agent session — the log kept in its in-flight workstream's worktree
+// until merge/discard preserves it. A zero-length log counts as missing: older
+// daemons left one in the primary when reopening a worktree session, and it
+// must not shadow the real log. id must already be one path component.
+func (m *Manager) locateSessionLog(absWS, id string) (workspace, logPath string, err error) {
 	logPath = filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
-	if _, err := os.Stat(logPath); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", "", err
-		}
-		// A finished workstream or integrate-agent session keeps its log in the
-		// in-flight workstream's worktree until merge/discard preserves it.
-		if wt, ok := m.workstreamSessionWorktree(absWS, id); ok {
-			wtLog := filepath.Join(wt, ".ycc", "sessions", id, "events.jsonl")
-			if _, werr := os.Stat(wtLog); werr == nil {
-				return wt, wtLog, nil
-			}
-		}
-		return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
+	if err := nonEmptyLog(logPath); err == nil {
+		return absWS, logPath, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", err
 	}
-	return absWS, logPath, nil
+	if wt, ok := m.workstreamSessionWorktree(absWS, id); ok {
+		wtLog := filepath.Join(wt, ".ycc", "sessions", id, "events.jsonl")
+		if nonEmptyLog(wtLog) == nil {
+			return wt, wtLog, nil
+		}
+	}
+	return "", "", fmt.Errorf("%w %q", ErrUnknownSession, id)
+}
+
+// nonEmptyLog reports a missing or zero-length file as os.ErrNotExist.
+func nonEmptyLog(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return os.ErrNotExist
+	}
+	return nil
 }
 
 // workstreamSessionWorktree returns the worktree of the in-flight workstream of
@@ -3479,7 +3516,13 @@ func (m *Manager) SessionTranscript(project, id string) ([]event.Event, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
-	logPath := filepath.Join(absWS, ".ycc", "sessions", id, "events.jsonl")
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return nil, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	_, logPath, err := m.locateSessionLog(absWS, id)
+	if err != nil {
+		return nil, err
+	}
 	events, err := event.ReadLog(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("read event log: %w", err)

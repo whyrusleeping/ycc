@@ -10,6 +10,7 @@ import {
   canRetry,
   canSpawn,
   groupWorkstreams,
+  inFlightProject,
   integrationState,
   isDiscardable,
   isGateEligible,
@@ -101,6 +102,13 @@ describe("lists and indicators", () => {
       title: "2 in flight · 1 working · 1 needs attention",
       tone: "attention",
     });
+  });
+
+  it("names the sole project with work in flight", () => {
+    expect(inFlightProject(undefined)).toBeNull();
+    expect(inFlightProject([ws("a"), ws("b", { status: "ready" })])).toBe("alpha");
+    expect(inFlightProject([ws("a"), ws("b", { project: "beta", status: "merged" })])).toBe("alpha");
+    expect(inFlightProject([ws("a"), ws("b", { project: "beta" })])).toBeNull();
   });
 });
 

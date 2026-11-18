@@ -278,8 +278,9 @@ func (m *Manager) ReopenForInput(id string) (*Session, error) {
 	return m.Reopen(project, id)
 }
 
-// persistedSessionProject names the registered project whose root workspace
-// holds a persisted log for session id.
+// persistedSessionProject names the registered project that holds a persisted
+// log for session id: in its root workspace, or in an in-flight workstream's
+// worktree.
 func (m *Manager) persistedSessionProject(id string) (string, bool) {
 	if id == "" || id == "." || filepath.Base(id) != id {
 		return "", false
@@ -288,6 +289,17 @@ func (m *Manager) persistedSessionProject(id string) (string, bool) {
 		logPath := filepath.Join(p.Path, ".ycc", "sessions", id, "events.jsonl")
 		if _, err := os.Stat(logPath); err == nil {
 			return p.Name, true
+		}
+	}
+	// A finished workstream or integrate-agent session's log is still in its
+	// in-flight workstream's worktree.
+	if m.workstreams != nil {
+		for _, ws := range m.workstreams.List() {
+			if (ws.SessionID == id || ws.IntegrateSessionID == id) && ws.Status.InFlight() {
+				if _, ok := m.projects.Resolve(ws.Project); ok {
+					return ws.Project, true
+				}
+			}
 		}
 	}
 	return "", false

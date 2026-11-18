@@ -181,6 +181,12 @@ export function workstreamIndicator(list: readonly WorkstreamInfo[] | undefined)
   };
 }
 
+/** The one project every in-flight row belongs to, else null (none, or several). */
+export function inFlightProject(list: readonly WorkstreamInfo[] | undefined): string | null {
+  const projects = new Set((list ?? []).filter((w) => !isTerminal(workstreamStatus(w))).map((w) => w.project));
+  return projects.size === 1 ? [...projects][0] || null : null;
+}
+
 export interface MergeAllSummary {
   merged: number;
   error: string | null;

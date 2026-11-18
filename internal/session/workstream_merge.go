@@ -380,9 +380,13 @@ func (m *Manager) preserveWorkstreamSessionID(ws workstream.Workstream, sessionI
 		return
 	}
 	dst := filepath.Join(primary, ".ycc", "sessions", sessionID)
-	if _, err := os.Stat(dst); err == nil {
+	dstLog := filepath.Join(dst, "events.jsonl")
+	if nonEmptyLog(dstLog) == nil {
 		return // already preserved
 	}
+	// An empty log an older daemon left by reopening from the primary would
+	// otherwise survive the no-overwrite copy and hide the real one.
+	_ = os.Remove(dstLog)
 	copyDir(src, dst)
 }
 
