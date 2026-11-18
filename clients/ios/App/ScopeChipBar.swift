@@ -52,7 +52,7 @@ struct ScopeChipBar: View {
 
 /// A squared scope chip. Selected is inverted (primary fill, background-
 /// coloured label); unselected is a hairline outline. The trailing cue is a
-/// small live square while anything runs, plus one plain mono count for the
+/// small live square per active session, plus one plain mono count for the
 /// loudest of question > unread, so a chip stays compact.
 private struct ScopeChip: View {
     let title: String
@@ -93,20 +93,37 @@ private struct ScopeChip: View {
         isSelected ? Color(.systemBackground) : color
     }
 
-    /// The live square always shows while work is in flight, so a project
+    /// The live squares always show while work is in flight, so a project
     /// that also has unread or waiting sessions doesn't look idle; the count
-    /// beside it is the loudest of question > unread.
+    /// beside them is the loudest of question > unread.
     @ViewBuilder
     private var cue: some View {
         if activity.active > 0 {
-            Rectangle()
-                .fill(cueColor(Theme.live))
-                .frame(width: 5, height: 5)
+            liveSquares(activity.active)
         }
         if activity.needsAnswer > 0 {
             count(activity.needsAnswer, color: cueColor(Theme.attention))
         } else if activity.unread > 0 {
             count(activity.unread, color: cueColor(.accentColor))
+        }
+    }
+
+    /// One live square per active session, filled top to bottom in columns
+    /// of three (a full column fits the label's line height), so the chip
+    /// only widens past three sessions.
+    private func liveSquares(_ active: Int) -> some View {
+        let perColumn = 3
+        let columns = (active + perColumn - 1) / perColumn
+        return HStack(alignment: .top, spacing: 2) {
+            ForEach(0..<columns, id: \.self) { column in
+                VStack(spacing: 2) {
+                    ForEach(0..<min(perColumn, active - column * perColumn), id: \.self) { _ in
+                        Rectangle()
+                            .fill(cueColor(Theme.live))
+                            .frame(width: 5, height: 5)
+                    }
+                }
+            }
         }
     }
 
