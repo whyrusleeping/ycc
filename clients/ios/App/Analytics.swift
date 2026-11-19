@@ -52,7 +52,7 @@ enum Analytics {
         "settings", "drawer", "connect", "new_session", "quick_capture", "add_project",
         "session_settings", "session_usage", "question", "files", "diff", "anthropic_login",
         "model_editor", "tier_editor", "health", "watches", "watch", "activity",
-        "quick_replies", "review_tiers", "history",
+        "quick_replies", "review_tiers", "history", "select_text",
     ]
 
     static let actions: [String] = [
@@ -65,7 +65,7 @@ enum Analytics {
         "question.answer",
         "transcript.load_earlier", "transcript.load_detail", "transcript.jump_latest",
         "transcript.expand_activity", "transcript.fold_activity",
-        "message.retry", "message.edit",
+        "message.retry", "message.edit", "message.copy", "message.select_text",
         "sessions.mark_read", "sessions.mark_all_read",
         "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter", "sessions.open_workstreams",
         "drawer.open", "drawer.select_project", "drawer.rename_project", "drawer.remove_project",

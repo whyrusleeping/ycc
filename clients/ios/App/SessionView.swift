@@ -1995,13 +1995,13 @@ struct TranscriptRowView: View, Equatable {
                         // User messages stay plain text — they were typed, not
                         // authored in markdown.
                         Text(text.isEmpty ? " " : text)
+                            .textSelection(.enabled)
                     } else {
                         // Agent messages render as markdown (headings, lists,
                         // inline styles, fenced code blocks).
                         MarkdownText(text: text.isEmpty ? " " : text)
                     }
                 }
-                .textSelection(.enabled)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
@@ -2009,6 +2009,10 @@ struct TranscriptRowView: View, Equatable {
                     in: RoundedRectangle(cornerRadius: 14)
                 )
                 .foregroundStyle(Color.primary)
+                // Long-press offers Copy and Select Text (partial selection
+                // needs UIKit; see SelectableTextSheet).
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14))
+                .selectableMessage(isUser || text.isEmpty ? nil : text, title: "Message")
             }
             if !isUser { Spacer(minLength: 40) }
         }
@@ -2023,7 +2027,6 @@ struct TranscriptRowView: View, Equatable {
                 .font(.headline)
                 .foregroundStyle(Theme.live)
             MarkdownText(text: text)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
@@ -2033,6 +2036,8 @@ struct TranscriptRowView: View, Equatable {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Theme.live.opacity(0.4), lineWidth: 1)
         }
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10))
+        .selectableMessage(text, title: "Finished")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Session finished")
     }
