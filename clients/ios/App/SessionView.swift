@@ -572,6 +572,11 @@ struct SessionView: View {
         }
     }
 
+    /// A status strip above the composer. Icon and text share one font so the
+    /// symbol sits on the text's line. Quiet states (`.secondary`: idle,
+    /// stopped) blend into the bar in secondary text; coloured states read in
+    /// primary text on a light wash of their colour, and their action button
+    /// takes the same colour rather than the accent.
     private func banner(
         _ text: String,
         systemImage: String,
@@ -579,22 +584,32 @@ struct SessionView: View {
         action: (title: String, run: () -> Void)? = nil,
         actionDisabled: Bool = false
     ) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage).foregroundStyle(tint)
-            Text(text).font(.caption).foregroundStyle(.secondary)
-            Spacer()
+        let quiet = tint == .secondary
+        return HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: systemImage).foregroundStyle(tint)
+                Text(text)
+                    .foregroundStyle(quiet ? Color.secondary : Color.primary)
+                    .lineLimit(3)
+            }
+            .font(.footnote)
+            Spacer(minLength: 0)
             if let action {
                 Button(action.title, action: action.run)
-                    .font(.caption.weight(.semibold))
+                    .font(.footnote.weight(.semibold))
                     .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
                     .controlSize(.small)
+                    .tint(tint)
                     .disabled(actionDisabled)
             }
         }
+        // Same height with or without a button, so switching states (idle →
+        // paused) doesn't make the composer jump.
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.08))
+        .background(quiet ? Color.clear : tint.opacity(0.12))
     }
 
     private var inputBar: some View {
@@ -748,7 +763,7 @@ struct SessionView: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Sending “\(pending.choice.reply.label)”…")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
@@ -758,13 +773,14 @@ struct SessionView: View {
                 ])
                 withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = nil }
             }
-            .font(.caption.weight(.semibold))
+            .font(.footnote.weight(.semibold))
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .controlSize(.small)
         }
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.accentFill.opacity(0.12))
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
