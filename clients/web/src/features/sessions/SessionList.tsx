@@ -406,7 +406,17 @@ export function SessionList({
       )}
       {groups.map((g) => (
         <section key={g.kind} className={`session-section ${g.kind}`}>
-          {g.title && <h3 className="section-title">{g.title}</h3>}
+          {g.title && (
+            <h3 className="section-title">
+              {/* Like iOS's section labels: the mark sits in the rows' attention gutter. */}
+              {variant === "sidebar" && (
+                <span className="row-gutter" aria-hidden="true">
+                  {g.kind === "needsAnswer" ? <Icon name="bell" size={12} /> : g.kind === "followUp" ? "⚑" : null}
+                </span>
+              )}
+              {g.title}
+            </h3>
+          )}
           {g.rows.map((row) => (
             <SessionRowView
               key={`${row.project}\u0000${row.session.sessionId}`}

@@ -920,10 +920,36 @@ a.nav-item:hover,
 /* Sidebar rows (SidebarRow): a fixed attention gutter, a quiet where/when line
  * with the age right-aligned, and a two-line title. Hairlines between rows
  * keep the rhythm without boxing anything. */
+/* Section labels must not read as a row's where-line: they carry the iOS
+ * header mark in the gutter, sit heavier, and later sections start under a
+ * full-width rule (the web's stand-in for iOS's separate section cards). */
 .session-list.variant-sidebar .section-title {
-  padding: 12px 10px 4px 22px;
+  display: flex;
+  align-items: center;
+  padding: 10px 10px 4px 0;
   text-transform: lowercase;
   letter-spacing: 0;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.session-list.variant-sidebar .session-section + .session-section {
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.session-list.variant-sidebar .session-section + .session-section .section-title {
+  padding-top: 12px;
+}
+
+.session-list.variant-sidebar .section-title .row-gutter {
+  padding-top: 0;
+  font-size: var(--fs-xs);
+}
+
+.session-list.variant-sidebar .session-section.needsAnswer .section-title,
+.session-list.variant-sidebar .session-section.followUp .section-title .row-gutter {
+  color: var(--warn);
 }
 
 /* Every row in the follow-up section is flagged: the heading says so, and the
@@ -994,17 +1020,25 @@ a.nav-item:hover,
   color: var(--fg-subtle);
 }
 
+/* One 16px line that wraps into its own hidden overflow, so tokens that don't
+ * fit drop out whole instead of being clipped mid-word. */
 .row-where {
   flex: 1;
   min-width: 0;
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  height: 16px;
+  column-gap: 6px;
   overflow: hidden;
   white-space: nowrap;
 }
 
+/* The project outranks task ids (iOS gives tasks lower layout priority): it
+ * keeps the line's first slot and ellipsizes only if it alone overflows. */
 .row-where .project {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1095,9 +1129,13 @@ a.row-task:hover {
   color: var(--warn);
 }
 
+/* The title is a size step above the 11px mono where-line, as on iOS (body vs
+ * caption), so the eye runs down titles rather than alternating stripes. */
 .session-list.variant-sidebar .title-text {
   flex: 1;
   min-width: 0;
+  font-size: var(--fs-base);
+  line-height: 1.38;
   font-weight: 400;
   color: var(--fg);
 }
