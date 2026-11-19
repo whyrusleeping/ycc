@@ -3097,8 +3097,12 @@ pre.clamp {
   font-size: var(--fs-sm);
 }
 
+/* `anywhere` (inherited from .md) shrinks each cell's min-content width to one
+   character, so auto layout squeezes short columns mid-word ("$14|5k").
+   `break-word` sizes columns by whole words; the wrap scrolls if they don't fit. */
 .md-table th,
 .md-table td {
+  overflow-wrap: break-word;
   border: 1px solid var(--border);
   padding: 4px 10px;
   vertical-align: top;
