@@ -205,11 +205,23 @@ public final class NewSessionModel {
     }
 
     /// The label for the current model choice: the picked model, or the daemon's
-    /// default coordinator marked as such, or a bare prompt when unknown.
+    /// default coordinator, or a bare prompt when unknown.
     public var selectedModelTitle: String {
         if !selectedModel.isEmpty { return selectedModel }
         if defaultModelDisabled { return "Choose model" }
-        return defaultModel.isEmpty ? "Model" : "\(defaultModel) (default)"
+        return defaultModel.isEmpty ? "Model" : defaultModel
+    }
+
+    /// The combined model + thinking chip is shown when either is choosable.
+    public var showsAgentPicker: Bool { showsModelPicker || showsThinkingPicker }
+
+    /// The combined chip's label, e.g. "claude · High": the model, plus the
+    /// thinking level once it is known.
+    public var selectedAgentTitle: String {
+        guard showsThinkingPicker, let level = selectedThinking ?? modelDefaultThinking else {
+            return selectedModelTitle
+        }
+        return "\(selectedModelTitle) · \(level.title)"
     }
 
     /// The coordinator model the session will start with.
@@ -235,7 +247,7 @@ public final class NewSessionModel {
     /// The label for the thinking choice.
     public var selectedThinkingTitle: String {
         if let selectedThinking { return selectedThinking.title }
-        return modelDefaultThinking.map { "\($0.title) (default)" } ?? "Thinking"
+        return modelDefaultThinking?.title ?? "Thinking"
     }
 
     private func clampThinking() {

@@ -172,13 +172,17 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertTrue(model.showsThinkingPicker)
         XCTAssertEqual(model.thinkingChoices, ThinkingLevel.allCases)
         XCTAssertEqual(model.modelDefaultThinking, .high)
-        XCTAssertEqual(model.selectedThinkingTitle, "High (default)")
+        XCTAssertEqual(model.selectedThinkingTitle, "High")
+        XCTAssertEqual(model.selectedAgentTitle, "claude · High")
 
         model.selectedThinking = .off
         model.selectedModel = "gpt"
         XCTAssertEqual(model.thinkingChoices, [.low, .medium, .high, .xhigh])
         XCTAssertEqual(model.selectedThinking, .low, "off becomes the lowest supported level")
         XCTAssertNil(model.modelDefaultThinking, "another model's saved level is unknown")
+        XCTAssertEqual(model.selectedAgentTitle, "gpt · Low")
+        model.selectedThinking = nil
+        XCTAssertEqual(model.selectedAgentTitle, "gpt", "an unknown saved level is left out")
 
         model.selectedThinking = .max
         model.selectedModel = "local"

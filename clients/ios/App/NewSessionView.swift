@@ -225,11 +225,8 @@ struct NewSessionView: View {
                         taskChip
                     }
                 }
-                if model.showsModelPicker {
-                    modelChip
-                }
-                if model.showsThinkingPicker {
-                    thinkingChip
+                if model.showsAgentPicker {
+                    agentChip
                 }
                 if model.isDefaultMode {
                     advancedModeChip
@@ -360,59 +357,77 @@ struct NewSessionView: View {
         }
     }
 
-    /// The optional model chip: picks the coordinator model FOR THIS SESSION
-    /// ONLY (the persisted role defaults, edited in Settings, are untouched).
-    /// "Default" leaves the choice to the daemon's configuration.
-    private var modelChip: some View {
-        @Bindable var model = model
-        return Menu {
-            Picker("Model", selection: $model.selectedModel) {
-                if model.defaultModelDisabled {
-                    Text("Choose model…").tag("")
-                } else {
-                    Label {
-                        Text("Default")
-                        if !model.defaultModel.isEmpty {
-                            Text(model.defaultModel)
-                        }
-                    } icon: {
-                        EmptyView()
-                    }
-                    .tag("")
+    /// The coordinator model and thinking level FOR THIS SESSION ONLY (the
+    /// persisted role defaults, edited in Settings, are untouched), in one
+    /// chip labelled e.g. "claude · High" so the row does not overflow.
+    /// The models are listed inline, with "Default" leaving the choice to
+    /// the daemon's configuration; thinking (limited to the levels the model
+    /// supports, "Default" keeping its saved level) is a submenu, or inline
+    /// when there is no model to choose.
+    private var agentChip: some View {
+        Menu {
+            if model.showsModelPicker {
+                modelPicker
+                if model.showsThinkingPicker {
+                    Divider()
+                    thinkingPicker
+                        .pickerStyle(.menu)
                 }
-                ForEach(model.models, id: \.name) { info in
-                    Label {
-                        Text(info.name)
-                        Text(info.model.isEmpty ? info.backend : info.model)
-                    } icon: {
-                        EmptyView()
-                    }
-                    .tag(info.name)
-                }
+            } else {
+                thinkingPicker
             }
         } label: {
-            chipLabel(model.selectedModelTitle, systemImage: "cpu")
+            chipLabel(model.selectedAgentTitle, systemImage: "cpu")
+        }
+        .disabled(model.isStarting)
+        .accessibilityLabel("Model and thinking")
+        .accessibilityValue(model.selectedAgentTitle)
+    }
+
+    private var modelPicker: some View {
+        @Bindable var model = model
+        return Picker("Model", selection: $model.selectedModel) {
+            if model.defaultModelDisabled {
+                Text("Choose model…").tag("")
+            } else {
+                Label {
+                    Text("Default")
+                    if !model.defaultModel.isEmpty {
+                        Text(model.defaultModel)
+                    }
+                } icon: {
+                    EmptyView()
+                }
+                .tag("")
+            }
+            ForEach(model.models, id: \.name) { info in
+                Label {
+                    Text(info.name)
+                    Text(info.model.isEmpty ? info.backend : info.model)
+                } icon: {
+                    EmptyView()
+                }
+                .tag(info.name)
+            }
         }
     }
 
-    /// The coordinator's thinking level FOR THIS SESSION ONLY, limited to the
-    /// levels its model supports. "Default" keeps the model's saved level.
-    private var thinkingChip: some View {
+    private var thinkingPicker: some View {
         @Bindable var model = model
-        return Menu {
-            Picker("Thinking", selection: $model.selectedThinking) {
-                Text(ThinkingPicker.defaultTitle(model.modelDefaultThinking))
-                    .tag(ThinkingLevel?.none)
-                ForEach(model.thinkingChoices) { level in
-                    Text(level.title).tag(ThinkingLevel?.some(level))
-                }
+        return Picker(selection: $model.selectedThinking) {
+            Text(ThinkingPicker.defaultTitle(model.modelDefaultThinking))
+                .tag(ThinkingLevel?.none)
+            ForEach(model.thinkingChoices) { level in
+                Text(level.title).tag(ThinkingLevel?.some(level))
             }
         } label: {
-            chipLabel(model.selectedThinkingTitle, systemImage: "brain")
+            Label {
+                Text("Thinking")
+                Text(model.selectedThinkingTitle)
+            } icon: {
+                Image(systemName: "brain")
+            }
         }
-        .disabled(model.isStarting)
-        .accessibilityLabel("Thinking")
-        .accessibilityValue(model.selectedThinkingTitle)
     }
 
     private func chipLabel(_ title: String, systemImage: String) -> some View {
