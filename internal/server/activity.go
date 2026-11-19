@@ -101,7 +101,8 @@ func activityNodeProto(n sessionview.ActivityNode) *v1.ActivityNode {
 	out := &v1.ActivityNode{Id: n.ID, ParentId: n.ParentID, Kind: n.Kind, Label: truncatePresentationString(n.Label, 512),
 		Actor: n.Actor, Model: n.Model, Status: n.Status, Mutates: n.Mutates, JobId: n.JobID, Result: n.Result,
 		StartedAt: rfc3339(n.Started), FinishedAt: rfc3339(n.Finished),
-		CurrentTool: n.CurrentTool, Turns: int32(n.Turns), TotalTokens: n.TotalTokens, LastActivityAt: rfc3339(n.LastActivity)}
+		CurrentTool: n.CurrentTool, Turns: int32(n.Turns), TotalTokens: n.TotalTokens, LastActivityAt: rfc3339(n.LastActivity),
+		OverallTokens: n.OverallTokens, ContextTokens: n.ContextTokens}
 	for _, sp := range n.Spans {
 		out.Spans = append(out.Spans, &v1.ActivitySpan{JobId: sp.JobID, Round: int32(sp.Round), Status: sp.Status,
 			ContextMode: sp.ContextMode, Prompt: sp.Prompt, StartedAt: rfc3339(sp.Started), FinishedAt: rfc3339(sp.Finished)})

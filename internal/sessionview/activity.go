@@ -53,6 +53,10 @@ type ActivityNode struct {
 	Turns        int
 	TotalTokens  int64
 	LastActivity time.Time
+	// OverallTokens sums every round (the coordinator: the whole session);
+	// ContextTokens is the latest round's newest context estimate, 0 if unknown.
+	OverallTokens int64
+	ContextTokens int64
 }
 
 func isActivityLifecycle(t event.Type) bool {
@@ -113,10 +117,13 @@ func recordActivityEvent(ctx context.Context, tx *sql.Tx, sid string, ev event.E
 		}
 		str := func(k string) string { v, _ := ev.Data[k].(string); return v }
 		name, callID, summary, rowID := str("name"), str("id"), "", ""
-		var tokens, outputTokens int64
+		var tokens, outputTokens, contextTokens int64
 		if usage, ok := ev.Data["usage"].(map[string]any); ok {
 			tokens, _ = number(usage["total"])
 			outputTokens, _ = number(usage["output"])
+		}
+		if n, ok := number(ev.Data["context_tokens_est"]); ok && n > 0 {
+			contextTokens = n
 		}
 		durationMS, _ := number(ev.Data["duration_ms"])
 		isError, _ := ev.Data["error"].(bool)
@@ -133,9 +140,9 @@ func recordActivityEvent(ctx context.Context, tx *sql.Tx, sid string, ev event.E
 		if callID != "" && ev.Type != event.ModelTurn {
 			rowID = "tool-" + callID
 		}
-		_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO activity_progress(session_id,seq,actor,type,name,tokens,ts_unix_ns,call_id,duration_ms,output_tokens,summary,is_error,row_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO activity_progress(session_id,seq,actor,type,name,tokens,ts_unix_ns,call_id,duration_ms,output_tokens,summary,is_error,row_id,context_tokens) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			sid, ev.Seq, actor, string(ev.Type), truncateUTF8(name, 128), tokens, ev.TS.UnixNano(),
-			truncateUTF8(callID, 256), durationMS, outputTokens, summary, isError, rowID)
+			truncateUTF8(callID, 256), durationMS, outputTokens, summary, isError, rowID, contextTokens)
 		return err
 	}
 	if !isActivityLifecycle(ev.Type) {
@@ -150,12 +157,16 @@ func recordActivityEvent(ctx context.Context, tx *sql.Tx, sid string, ev event.E
 }
 
 // ActorProgress aggregates a subagent actor's turn/tool events since its latest
-// spawn: metadata only, never model text.
+// spawn: metadata only, never model text. OverallTokens spans every round, and
+// ContextTokens is the newest context estimate since the latest spawn. The
+// coordinator's entry carries only those two, over the whole session.
 type ActorProgress struct {
-	Turns       int
-	TotalTokens int64
-	CurrentTool string // the latest event was a call still awaiting its result
-	Last        time.Time
+	Turns         int
+	TotalTokens   int64
+	CurrentTool   string // the latest event was a call still awaiting its result
+	Last          time.Time
+	OverallTokens int64
+	ContextTokens int64
 }
 
 // Activity catches up and returns the state, the compacted lifecycle events,
@@ -195,11 +206,33 @@ func (s *Store) Activity(ctx context.Context, sid, logPath string, maxSeq, maxOf
 	if err := rs.Close(); err != nil {
 		return State{}, nil, nil, err
 	}
-	progress := make(map[string]ActorProgress, len(latestSpawn))
+	progress := make(map[string]ActorProgress, len(latestSpawn)+1)
+	// tokens reads an actor's total tokens after totalSince and its newest
+	// context estimate after contextSince (both sequence numbers).
+	tokens := func(actor string, totalSince, contextSince int) (total, contextTokens int64, err error) {
+		if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(tokens),0) FROM activity_progress WHERE session_id=? AND actor=? AND seq>? AND seq<=?`,
+			sid, actor, totalSince, st.IndexedThrough).Scan(&total); err != nil {
+			return 0, 0, err
+		}
+		err = s.db.QueryRowContext(ctx, `SELECT context_tokens FROM activity_progress WHERE session_id=? AND actor=? AND type='model_turn' AND context_tokens>0 AND seq>? AND seq<=? ORDER BY seq DESC LIMIT 1`,
+			sid, actor, contextSince, st.IndexedThrough).Scan(&contextTokens)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
+		}
+		return total, contextTokens, err
+	}
+	var root ActorProgress
+	if root.OverallTokens, root.ContextTokens, err = tokens("coordinator", 0, 0); err != nil {
+		return State{}, nil, nil, err
+	}
+	progress["coordinator"] = root
 	for actor, since := range latestSpawn {
 		var p ActorProgress
 		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(type='model_turn'),0),COALESCE(SUM(tokens),0) FROM activity_progress WHERE session_id=? AND actor=? AND seq>? AND seq<=?`,
 			sid, actor, since, st.IndexedThrough).Scan(&p.Turns, &p.TotalTokens); err != nil {
+			return State{}, nil, nil, err
+		}
+		if p.OverallTokens, p.ContextTokens, err = tokens(actor, 0, since); err != nil {
 			return State{}, nil, nil, err
 		}
 		var typ, name string
@@ -403,12 +436,14 @@ func BuildActivity(events []event.Event, progress map[string]ActorProgress) []Ac
 			}
 		}
 	}
+	root.OverallTokens, root.ContextTokens = progress[root.ID].OverallTokens, progress[root.ID].ContextTokens
 	for _, n := range order[1:] {
 		if n.Actor == "" || len(n.Spans) == 0 {
 			continue
 		}
 		p := progress[n.Actor]
 		n.Turns, n.TotalTokens, n.LastActivity = p.Turns, p.TotalTokens, p.Last
+		n.OverallTokens, n.ContextTokens = p.OverallTokens, p.ContextTokens
 		if latest := n.Spans[len(n.Spans)-1]; latest.Started.After(n.LastActivity) {
 			n.LastActivity = latest.Started
 		}

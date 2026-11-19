@@ -779,7 +779,9 @@ the transcript to one agent. Statuses are `running`, `done`, `failed`, `blocked`
 An agent node also carries progress metadata for its latest round, derived from its indexed
 turn and tool events: `currentTool` (only while running), `turns`, `totalTokens`, and
 `lastActivityAt`. This is never model text, and it works for both foreground and background
-rounds. While the session is live (`live: true`), open work is checked against the job registry.
+rounds. Every actor node, the root included, also carries `overallTokens` (all of its rounds; the
+root's covers the coordinator over the whole session) and `contextTokens` (the newest model turn's
+context estimate in the latest round, 0 when unknown). While the session is live (`live: true`), open work is checked against the job registry.
 Work that was in flight when the session stopped, or before a reopen, reports `lost`, finished at
 the session's last event (or the reopen).
 Clients poll this RPC while an activity view is open. Polling is cheap because the daemon builds

@@ -21,10 +21,16 @@ func TestBuildActivityTree(t *testing.T) {
 	}
 	events := []event.Event{
 		ev("coordinator", event.SessionStarted, nil),
+		ev("coordinator", event.ModelTurn, map[string]any{"usage": map[string]any{"total": 40.0}, "context_tokens_est": 30.0}),
+		// An earlier round counts toward the agent's overall tokens only.
+		ev("coordinator", event.SubagentSpawned, map[string]any{"role": "generic", "agent_id": "agent_1", "model": "m", "round": 0}),
+		ev("agent:agent_1", event.ModelTurn, map[string]any{"usage": map[string]any{"total": 7.0}, "context_tokens_est": 5000.0}),
+		ev("coordinator", event.SubagentFinished, map[string]any{"role": "generic", "agent_id": "agent_1"}),
 		ev("coordinator", event.JobStarted, map[string]any{"id": "job_1", "kind": "agent", "label": "agent_1 turn 1 (opus)"}),
 		ev("coordinator", event.SubagentSpawned, map[string]any{"role": "generic", "agent_id": "agent_1", "job_id": "job_1", "model": "m", "logical_model": "opus", "round": 1,
 			"prompt": "Find the flaky test. " + strings.Repeat("x", maxActivityString)}),
-		ev("agent:agent_1", event.ModelTurn, map[string]any{"usage": map[string]any{"total": 100.0}}),
+		ev("agent:agent_1", event.ModelTurn, map[string]any{"usage": map[string]any{"total": 100.0}, "context_tokens_est": 60.0}),
+		ev("agent:agent_1", event.ModelTurn, map[string]any{}), // a synthetic turn has no estimate
 		ev("agent:agent_1", event.ToolCall, map[string]any{"name": "Bash"}),
 		ev("coordinator", event.JobFinished, map[string]any{"id": "job_1", "kind": "agent", "status": "killed", "tail": "killed"}),
 		ev("coordinator", event.SubagentFinished, map[string]any{"role": "generic", "agent_id": "agent_1", "job_id": "job_1"}),
@@ -78,6 +84,9 @@ func TestBuildActivityTree(t *testing.T) {
 	if len(nodes) != 7 || nodes[0].ID != "coordinator" {
 		t.Fatalf("nodes = %+v", nodes)
 	}
+	if root := nodes[0]; root.OverallTokens != 40 || root.ContextTokens != 30 {
+		t.Fatalf("root = %+v", root)
+	}
 	for _, id := range []string{"job_1", "job_2", "job_4"} {
 		if _, ok := byID[id]; ok {
 			t.Fatalf("agent job %s should be presented by its subagent actors, not as its own node", id)
@@ -85,11 +94,12 @@ func TestBuildActivityTree(t *testing.T) {
 	}
 	agent := byID["agent:agent_1"]
 	if agent.ParentID != "coordinator" || agent.Model != "opus" || agent.Status != "killed" || agent.Result != "killed" ||
-		agent.Turns != 1 || agent.TotalTokens != 100 || agent.CurrentTool != "" || len(agent.Spans) != 1 {
+		agent.Turns != 2 || agent.TotalTokens != 100 || agent.OverallTokens != 107 || agent.ContextTokens != 60 ||
+		agent.CurrentTool != "" || len(agent.Spans) != 2 {
 		t.Fatalf("agent = %+v", agent)
 	}
 	// An oversized prompt keeps its opening, which says what the agent is for.
-	if p := agent.Spans[0].Prompt; !strings.HasPrefix(p, "Find the flaky test. ") || len(p) > maxActivityString+len("…") {
+	if p := agent.Spans[1].Prompt; !strings.HasPrefix(p, "Find the flaky test. ") || len(p) > maxActivityString+len("…") {
 		t.Fatalf("agent prompt = %.40q… (%d bytes)", p, len(p))
 	}
 	impl := byID["implementer"]

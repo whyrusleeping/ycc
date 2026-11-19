@@ -5429,8 +5429,13 @@ type ActivityNode struct {
 	LastActivityAt string `protobuf:"bytes,17,opt,name=last_activity_at,json=lastActivityAt,proto3" json:"last_activity_at,omitempty"` // coordinator: the session's last durable event
 	// GetJobOutput can read this job's retained output (live session only).
 	OutputAvailable bool `protobuf:"varint,18,opt,name=output_available,json=outputAvailable,proto3" json:"output_available,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Actor nodes: tokens across every round (the coordinator: the whole
+	// session), and the newest model turn's context_tokens_est in the latest
+	// round (0 when unknown).
+	OverallTokens int64 `protobuf:"varint,19,opt,name=overall_tokens,json=overallTokens,proto3" json:"overall_tokens,omitempty"`
+	ContextTokens int64 `protobuf:"varint,20,opt,name=context_tokens,json=contextTokens,proto3" json:"context_tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ActivityNode) Reset() {
@@ -5587,6 +5592,20 @@ func (x *ActivityNode) GetOutputAvailable() bool {
 		return x.OutputAvailable
 	}
 	return false
+}
+
+func (x *ActivityNode) GetOverallTokens() int64 {
+	if x != nil {
+		return x.OverallTokens
+	}
+	return 0
+}
+
+func (x *ActivityNode) GetContextTokens() int64 {
+	if x != nil {
+		return x.ContextTokens
+	}
+	return 0
 }
 
 type GetSessionActivityRequest struct {
@@ -15990,7 +16009,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"started_at\x18\x05 \x01(\tR\tstartedAt\x12\x1f\n" +
 	"\vfinished_at\x18\x06 \x01(\tR\n" +
 	"finishedAt\x12\x16\n" +
-	"\x06prompt\x18\a \x01(\tR\x06prompt\"\x8f\x04\n" +
+	"\x06prompt\x18\a \x01(\tR\x06prompt\"\xdd\x04\n" +
 	"\fActivityNode\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tparent_id\x18\x02 \x01(\tR\bparentId\x12\x12\n" +
@@ -16012,7 +16031,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x05turns\x18\x0f \x01(\x05R\x05turns\x12!\n" +
 	"\ftotal_tokens\x18\x10 \x01(\x03R\vtotalTokens\x12(\n" +
 	"\x10last_activity_at\x18\x11 \x01(\tR\x0elastActivityAt\x12)\n" +
-	"\x10output_available\x18\x12 \x01(\bR\x0foutputAvailable\"T\n" +
+	"\x10output_available\x18\x12 \x01(\bR\x0foutputAvailable\x12%\n" +
+	"\x0eoverall_tokens\x18\x13 \x01(\x03R\roverallTokens\x12%\n" +
+	"\x0econtext_tokens\x18\x14 \x01(\x03R\rcontextTokens\"T\n" +
 	"\x19GetSessionActivityRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +

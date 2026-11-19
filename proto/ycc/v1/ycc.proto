@@ -666,6 +666,11 @@ message ActivityNode {
   string last_activity_at = 17; // coordinator: the session's last durable event
   // GetJobOutput can read this job's retained output (live session only).
   bool output_available = 18;
+  // Actor nodes: tokens across every round (the coordinator: the whole
+  // session), and the newest model turn's context_tokens_est in the latest
+  // round (0 when unknown).
+  int64 overall_tokens = 19;
+  int64 context_tokens = 20;
 }
 message GetSessionActivityRequest {
   string project = 1;

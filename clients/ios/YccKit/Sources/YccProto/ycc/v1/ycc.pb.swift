@@ -1989,6 +1989,19 @@ public nonisolated struct Ycc_V1_ActivityNode: @unchecked Sendable {
     set {_uniqueStorage()._outputAvailable = newValue}
   }
 
+  /// Actor nodes: tokens across every round (the coordinator: the whole
+  /// session), and the newest model turn's context_tokens_est in the latest
+  /// round (0 when unknown).
+  public var overallTokens: Int64 {
+    get {_storage._overallTokens}
+    set {_uniqueStorage()._overallTokens = newValue}
+  }
+
+  public var contextTokens: Int64 {
+    get {_storage._contextTokens}
+    set {_uniqueStorage()._contextTokens = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -9128,7 +9141,7 @@ nonisolated extension Ycc_V1_ActivitySpan: SwiftProtobuf.Message, SwiftProtobuf.
 
 nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ActivityNode"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}parent_id\0\u{1}kind\0\u{1}label\0\u{1}actor\0\u{1}model\0\u{1}status\0\u{1}mutates\0\u{3}job_id\0\u{1}result\0\u{3}started_at\0\u{3}finished_at\0\u{1}spans\0\u{3}current_tool\0\u{1}turns\0\u{3}total_tokens\0\u{3}last_activity_at\0\u{3}output_available\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}parent_id\0\u{1}kind\0\u{1}label\0\u{1}actor\0\u{1}model\0\u{1}status\0\u{1}mutates\0\u{3}job_id\0\u{1}result\0\u{3}started_at\0\u{3}finished_at\0\u{1}spans\0\u{3}current_tool\0\u{1}turns\0\u{3}total_tokens\0\u{3}last_activity_at\0\u{3}output_available\0\u{3}overall_tokens\0\u{3}context_tokens\0")
 
   fileprivate class _StorageClass {
     var _id: String = String()
@@ -9149,6 +9162,8 @@ nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf.
     var _totalTokens: Int64 = 0
     var _lastActivityAt: String = String()
     var _outputAvailable: Bool = false
+    var _overallTokens: Int64 = 0
+    var _contextTokens: Int64 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -9177,6 +9192,8 @@ nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf.
       _totalTokens = source._totalTokens
       _lastActivityAt = source._lastActivityAt
       _outputAvailable = source._outputAvailable
+      _overallTokens = source._overallTokens
+      _contextTokens = source._contextTokens
     }
   }
 
@@ -9213,6 +9230,8 @@ nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf.
         case 16: try { try decoder.decodeSingularInt64Field(value: &_storage._totalTokens) }()
         case 17: try { try decoder.decodeSingularStringField(value: &_storage._lastActivityAt) }()
         case 18: try { try decoder.decodeSingularBoolField(value: &_storage._outputAvailable) }()
+        case 19: try { try decoder.decodeSingularInt64Field(value: &_storage._overallTokens) }()
+        case 20: try { try decoder.decodeSingularInt64Field(value: &_storage._contextTokens) }()
         default: break
         }
       }
@@ -9275,6 +9294,12 @@ nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf.
       if _storage._outputAvailable != false {
         try visitor.visitSingularBoolField(value: _storage._outputAvailable, fieldNumber: 18)
       }
+      if _storage._overallTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._overallTokens, fieldNumber: 19)
+      }
+      if _storage._contextTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._contextTokens, fieldNumber: 20)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -9302,6 +9327,8 @@ nonisolated extension Ycc_V1_ActivityNode: SwiftProtobuf.Message, SwiftProtobuf.
         if _storage._totalTokens != rhs_storage._totalTokens {return false}
         if _storage._lastActivityAt != rhs_storage._lastActivityAt {return false}
         if _storage._outputAvailable != rhs_storage._outputAvailable {return false}
+        if _storage._overallTokens != rhs_storage._overallTokens {return false}
+        if _storage._contextTokens != rhs_storage._contextTokens {return false}
         return true
       }
       if !storagesAreEqual {return false}

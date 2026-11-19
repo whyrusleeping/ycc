@@ -220,6 +220,13 @@ public enum ActivityGraph {
         return "\(tokens)"
     }
 
+    /// A node's context size: the coordinator's live session estimate when known
+    /// (fresher than the polled graph), else the graph's newest-turn estimate.
+    public static func contextTokens(_ node: Ycc_V1_ActivityNode, coordinatorLive: Int?) -> Int? {
+        if node.kind == "coordinator", let live = coordinatorLive, live > 0 { return live }
+        return node.contextTokens > 0 ? Int(node.contextTokens) : nil
+    }
+
     private static let fractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

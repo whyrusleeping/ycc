@@ -228,8 +228,15 @@ function AgentProgress({ node }: { node: ActivityNode }) {
   }
   if (node.turns > 0) parts.push(<span key="turns">{node.turns} {node.turns === 1 ? "turn" : "turns"}</span>);
   if (node.totalTokens > 0n) parts.push(<span key="tok">{compactTokens(node.totalTokens)} tok</span>);
+  if (node.contextTokens > 0n) parts.push(<span key="ctx" title="Context this agent is carrying">{compactTokens(node.contextTokens)} ctx</span>);
   if (node.spans.length > 1) parts.push(<span key="r">{node.spans.length} rounds</span>);
   return <span className="act-sub">{parts}</span>;
+}
+
+/** A node's context size: the coordinator's live session estimate, else the activity graph's. */
+function nodeContext(node: ActivityNode, rootContext: string | null): string | null {
+  if (node.id === ROOT_ID && rootContext) return rootContext;
+  return node.contextTokens > 0n ? compactTokens(node.contextTokens) : null;
 }
 
 function NodeDetail({
@@ -254,6 +261,7 @@ function NodeDetail({
   const started = ms(node.startedAt);
   const parent = node.parentId ? nodes.find((n) => n.id === node.parentId) : undefined;
   const lastActive = ms(node.lastActivityAt);
+  const context = nodeContext(node, rootContext);
   return (
     <div className={`activity-node${job ? " job" : ""}`}>
       <div className="activity-node-head">
@@ -268,12 +276,17 @@ function NodeDetail({
           {elapsed !== null && <span>{formatDuration(elapsed)}</span>}
           {started !== null && <span title={new Date(started).toLocaleString()}>started {new Date(started).toLocaleTimeString()}</span>}
           {parent && parent.id !== ROOT_ID && <span>under {parent.label}</span>}
-          {node.id === ROOT_ID && rootContext && <span title="Context the coordinator is carrying">{rootContext} context tokens</span>}
+          {context && <span title="Context this agent is carrying (newest model turn)">{context} context tokens</span>}
+          {!job && node.overallTokens > 0n && (
+            <span title={node.id === ROOT_ID ? "Coordinator tokens over the whole session" : "Tokens across every round"}>
+              {compactTokens(node.overallTokens)} tokens total
+            </span>
+          )}
           {!job && node.status === "running" && (
             <>
               <span className="act-tool">{node.currentTool || "thinking"}</span>
               {node.turns > 0 && <span>{node.turns} {node.turns === 1 ? "turn" : "turns"}</span>}
-              {node.totalTokens > 0n && <span>{compactTokens(node.totalTokens)} tokens</span>}
+              {node.totalTokens > 0n && node.spans.length > 1 && <span>{compactTokens(node.totalTokens)} tokens this round</span>}
               {lastActive !== null && <span>active {formatDuration(Math.max(0, now - lastActive))} ago</span>}
             </>
           )}

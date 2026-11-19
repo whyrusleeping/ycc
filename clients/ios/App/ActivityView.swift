@@ -165,7 +165,7 @@ private struct StatusDot: View {
 private struct ActivityTreeList: View {
     let model: SessionActivityModel
     let now: Date
-    /// The coordinator's context size, from the session view (the activity graph has none).
+    /// The coordinator's live context size, from the session view (fresher than the graph's).
     let contextTokens: Int?
 
     var body: some View {
@@ -173,7 +173,7 @@ private struct ActivityTreeList: View {
             ForEach(model.rows) { row in
                 ActivityTreeRowView(
                     row: row, now: now,
-                    contextTokens: row.node.kind == "coordinator" ? contextTokens : nil,
+                    contextTokens: ActivityGraph.contextTokens(row.node, coordinatorLive: contextTokens),
                     isCollapsed: model.collapsed.contains(row.id),
                     toggle: { model.toggleCollapsed(row.id) })
             }
@@ -493,13 +493,17 @@ private struct AgentDetailView: View {
                     if !node.model.isEmpty { LabeledContent("Model", value: node.model) }
                     let elapsed = ActivityGraph.elapsed(start: node.startedAt, end: node.finishedAt, status: status, now: context.date)
                     if !elapsed.isEmpty { LabeledContent("Elapsed", value: elapsed) }
-                    if node.kind == "coordinator", let tokens = session.currentContextTokensEstimate, tokens > 0 {
+                    if let tokens = ActivityGraph.contextTokens(node, coordinatorLive: session.currentContextTokensEstimate) {
                         LabeledContent("Context", value: "≈ \(tokens.formatted()) tokens")
+                    }
+                    if node.overallTokens > 0 {
+                        LabeledContent("Tokens used", value: "\(node.overallTokens.formatted()) total")
                     }
                     // The daemon reports tool/turn progress for subagents only.
                     if status.isActive, node.kind != "coordinator" {
                         LabeledContent("Current tool", value: node.currentTool.isEmpty ? "—" : node.currentTool)
-                        LabeledContent("Progress", value: "\(node.turns) turns · \(ActivityGraph.formatTokens(node.totalTokens)) tokens")
+                        LabeledContent(node.spans.count > 1 ? "This round" : "Progress",
+                                       value: "\(node.turns) turns · \(ActivityGraph.formatTokens(node.totalTokens)) tokens")
                     }
                     if node.mutates { LabeledContent("Mutates", value: "yes") }
                     if node.spans.isEmpty {
