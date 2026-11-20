@@ -21,6 +21,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 // Watches are daemon-owned recurring checks (docs/design/watches.md). Each run
@@ -1342,7 +1343,14 @@ const quietSessionAge = time.Hour
 // that is still working holds its focused tasks; an idle one's are past focus,
 // and one quiet for over quietSessionAge is omitted.
 func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) string {
+	return m.liveSessionLinesWith(primary, exclude, now, false)
+}
+
+// liveSessionLinesWith is liveSessionLines; detail adds each session's title
+// and the paths it claims in its worktree (list_sessions).
+func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, detail bool) string {
 	primary = canonicalPath(primary)
+	claimsByTree := map[string]map[string][]workspacelease.Claim{}
 	sessions := m.List()
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
 	var b strings.Builder
@@ -1371,6 +1379,17 @@ func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) strin
 			b.WriteString(" in worktree " + s.Workspace)
 		}
 		b.WriteString("\n")
+		if detail {
+			if title := deriveTitle(evs); title != "" {
+				b.WriteString("    title: " + title + "\n")
+			}
+			claims, ok := claimsByTree[s.Workspace]
+			if !ok {
+				claims = m.ownership.ClaimDetails(s.Workspace)
+				claimsByTree[s.Workspace] = claims
+			}
+			b.WriteString(claimLines(sessionClaims(claims, s.ID), now))
+		}
 		jn := 0
 		for _, j := range s.JobInfos() {
 			if j.Status != jobs.Running {

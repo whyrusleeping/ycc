@@ -1,9 +1,11 @@
 package docs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -87,6 +89,81 @@ func (s *Store) ChatFinishedWork() string {
 	default:
 		return ChatCommit
 	}
+}
+
+// projectConfigPath is the per-project configuration file.
+func projectConfigPath(root string) string {
+	return filepath.Join(root, ".ycc", "config.toml")
+}
+
+// experimentalConfig is the [experimental] table of .ycc/config.toml.
+type experimentalConfig struct {
+	Experimental struct {
+		SessionCoordination bool `toml:"session_coordination"`
+	} `toml:"experimental"`
+}
+
+// SessionCoordination reports the project's experimental session-coordination
+// setting ([experimental] session_coordination in <root>/.ycc/config.toml;
+// default off). It reads the file on every call, so a change applies at once;
+// a missing or malformed file reads as off.
+func SessionCoordination(root string) bool {
+	data, err := os.ReadFile(projectConfigPath(root))
+	if err != nil {
+		return false
+	}
+	var cfg experimentalConfig
+	if toml.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	return cfg.Experimental.SessionCoordination
+}
+
+var projectConfigMu sync.Mutex
+
+// SetSessionCoordination persists the setting in <root>/.ycc/config.toml,
+// editing only the session_coordination line (or adding it) so the rest of the
+// file, comments included, is kept. A file that is not valid TOML is refused
+// rather than rewritten.
+func SetSessionCoordination(root string, on bool) error {
+	projectConfigMu.Lock()
+	defer projectConfigMu.Unlock()
+	path := projectConfigPath(root)
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var current experimentalConfig
+	if err := toml.Unmarshal(data, &current); err != nil {
+		return fmt.Errorf("%s is not valid TOML: %w", path, err)
+	}
+	if current.Experimental.SessionCoordination == on {
+		return nil
+	}
+	updated := setTOMLKey(string(data), "experimental", "session_coordination", fmt.Sprintf("%t", on))
+	var check experimentalConfig
+	if err := toml.Unmarshal([]byte(updated), &check); err != nil || check.Experimental.SessionCoordination != on {
+		return fmt.Errorf("could not locate [experimental] session_coordination in %s to change it (an unusual TOML form); edit the file by hand", path)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.toml")
+	if err != nil {
+		return err
+	}
+	_, writeErr := tmp.WriteString(updated)
+	closeErr := tmp.Close()
+	if writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr == nil {
+		writeErr = os.Rename(tmp.Name(), path)
+	}
+	if writeErr != nil {
+		os.Remove(tmp.Name())
+	}
+	return writeErr
 }
 
 // cleanRelPath normalizes a configured workspace-relative path to a clean slash

@@ -147,6 +147,11 @@ public nonisolated struct Ycc_V1_ProjectInfo: Sendable {
   /// Clears the value of `needsOnboarding`. Subsequent reads from it will return its default value.
   public mutating func clearNeedsOnboarding() {self._needsOnboarding = nil}
 
+  /// Experimental session coordination ([experimental] session_coordination
+  /// in the project's .ycc/config.toml; spec §7.3): list_sessions and
+  /// same-file overlap notices. Off by default.
+  public var sessionCoordination: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -293,6 +298,55 @@ public nonisolated struct Ycc_V1_RenameProjectRequest: Sendable {
 }
 
 public nonisolated struct Ycc_V1_RenameProjectResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: Ycc_V1_ProjectInfo {
+    get {_project ?? Ycc_V1_ProjectInfo()}
+    set {_project = newValue}
+  }
+  /// Returns true if `project` has been explicitly set.
+  public var hasProject: Bool {self._project != nil}
+  /// Clears the value of `project`. Subsequent reads from it will return its default value.
+  public mutating func clearProject() {self._project = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _project: Ycc_V1_ProjectInfo? = nil
+}
+
+/// SetProjectSettings changes per-project settings stored in the project's
+/// .ycc/config.toml. Unset fields are left unchanged.
+public nonisolated struct Ycc_V1_SetProjectSettingsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project name
+  public var project: String = String()
+
+  /// Enabling applies to sessions started or reopened afterwards (a running
+  /// session's tools are fixed); disabling applies at once.
+  public var sessionCoordination: Bool {
+    get {_sessionCoordination ?? false}
+    set {_sessionCoordination = newValue}
+  }
+  /// Returns true if `sessionCoordination` has been explicitly set.
+  public var hasSessionCoordination: Bool {self._sessionCoordination != nil}
+  /// Clears the value of `sessionCoordination`. Subsequent reads from it will return its default value.
+  public mutating func clearSessionCoordination() {self._sessionCoordination = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _sessionCoordination: Bool? = nil
+}
+
+public nonisolated struct Ycc_V1_SetProjectSettingsResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5722,7 +5776,7 @@ nonisolated extension Ycc_V1_StartSessionResponse: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ProjectInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{1}git\0\u{3}needs_onboarding\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}path\0\u{1}git\0\u{3}needs_onboarding\0\u{3}session_coordination\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5734,6 +5788,7 @@ nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._
       case 2: try { try decoder.decodeSingularStringField(value: &self.path) }()
       case 3: try { try decoder.decodeSingularMessageField(value: &self._git) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self._needsOnboarding) }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.sessionCoordination) }()
       default: break
       }
     }
@@ -5756,6 +5811,9 @@ nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._
     try { if let v = self._needsOnboarding {
       try visitor.visitSingularBoolField(value: v, fieldNumber: 4)
     } }()
+    if self.sessionCoordination != false {
+      try visitor.visitSingularBoolField(value: self.sessionCoordination, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5764,6 +5822,7 @@ nonisolated extension Ycc_V1_ProjectInfo: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.path != rhs.path {return false}
     if lhs._git != rhs._git {return false}
     if lhs._needsOnboarding != rhs._needsOnboarding {return false}
+    if lhs.sessionCoordination != rhs.sessionCoordination {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6069,6 +6128,79 @@ nonisolated extension Ycc_V1_RenameProjectResponse: SwiftProtobuf.Message, Swift
   }
 
   public static func ==(lhs: Ycc_V1_RenameProjectResponse, rhs: Ycc_V1_RenameProjectResponse) -> Bool {
+    if lhs._project != rhs._project {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetProjectSettingsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetProjectSettingsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_coordination\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self._sessionCoordination) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try { if let v = self._sessionCoordination {
+      try visitor.visitSingularBoolField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetProjectSettingsRequest, rhs: Ycc_V1_SetProjectSettingsRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs._sessionCoordination != rhs._sessionCoordination {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SetProjectSettingsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetProjectSettingsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._project) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._project {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SetProjectSettingsResponse, rhs: Ycc_V1_SetProjectSettingsResponse) -> Bool {
     if lhs._project != rhs._project {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

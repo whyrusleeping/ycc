@@ -60,6 +60,10 @@ message ProjectInfo {
   // backlog tasks. Optional so older daemons remain distinguishable from an
   // explicit "already onboarded" result.
   optional bool needs_onboarding = 4;
+  // Experimental session coordination ([experimental] session_coordination
+  // in the project's .ycc/config.toml; spec §7.3): list_sessions and
+  // same-file overlap notices. Off by default.
+  bool session_coordination = 5;
 }
 message GitStatus {
   string branch = 1;         // "" when detached
@@ -96,6 +100,15 @@ message RenameProjectRequest {
   string new_name = 2; // desired name; must not collide with another project
 }
 message RenameProjectResponse { ProjectInfo project = 1; }
+// SetProjectSettings changes per-project settings stored in the project's
+// .ycc/config.toml. Unset fields are left unchanged.
+message SetProjectSettingsRequest {
+  string project = 1; // registered project name
+  // Enabling applies to sessions started or reopened afterwards (a running
+  // session's tools are fixed); disabling applies at once.
+  optional bool session_coordination = 2;
+}
+message SetProjectSettingsResponse { ProjectInfo project = 1; }
 
 // ListDir — remote directory browsing for the add-project flow.
 // Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
@@ -1812,6 +1825,7 @@ service SessionService {
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
+  rpc SetProjectSettings(SetProjectSettingsRequest) returns (SetProjectSettingsResponse);
   // ListDir lists subdirectories of a daemon-host path (directories only) so
   // remote clients can browse to a workspace for AddProject.
   rpc ListDir(ListDirRequest) returns (ListDirResponse);

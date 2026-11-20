@@ -142,7 +142,8 @@ func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProje
 func (s *Server) projectInfo(name, path string) *v1.ProjectInfo {
 	info := &v1.ProjectInfo{
 		Name: name, Path: path,
-		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(path)),
+		NeedsOnboarding:     proto.Bool(docs.NeedsOnboarding(path)),
+		SessionCoordination: docs.SessionCoordination(path),
 	}
 	if status := s.mgr.ProjectGitStatus(path); status != nil {
 		info.Git = &v1.GitStatus{
@@ -184,8 +185,31 @@ func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.Rename
 	}
 	return connect.NewResponse(&v1.RenameProjectResponse{Project: &v1.ProjectInfo{
 		Name: p.Name, Path: p.Path,
-		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
+		NeedsOnboarding:     proto.Bool(docs.NeedsOnboarding(p.Path)),
+		SessionCoordination: docs.SessionCoordination(p.Path),
 	}}), nil
+}
+
+// SetProjectSettings changes per-project settings in the project's
+// .ycc/config.toml and returns the updated project.
+func (s *Server) SetProjectSettings(_ context.Context, req *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error) {
+	if strings.TrimSpace(req.Msg.Project) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("project is required"))
+	}
+	if req.Msg.SessionCoordination != nil {
+		if err := s.mgr.SetSessionCoordination(req.Msg.Project, req.Msg.GetSessionCoordination()); err != nil {
+			if errors.Is(err, session.ErrUnknownProject) {
+				return nil, connect.NewError(connect.CodeNotFound, err)
+			}
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	for _, p := range s.mgr.Projects() {
+		if p.Name == req.Msg.Project {
+			return connect.NewResponse(&v1.SetProjectSettingsResponse{Project: s.projectInfo(p.Name, p.Path)}), nil
+		}
+	}
+	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("%w %q", session.ErrUnknownProject, req.Msg.Project))
 }
 
 // ListSessions returns all live sessions and their current status, optionally

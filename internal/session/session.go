@@ -228,6 +228,15 @@ type Session struct {
 	planOnly     bool
 	planOnlyTold bool
 
+	// Experimental session coordination (coordination.go). coordination is
+	// fixed when the session is built; coordinationOn reads the live project
+	// setting. Overlap notices from other sessions wait in notices (memory
+	// only) for the next checkpoint.
+	coordination   bool
+	coordinationOn func() bool
+	noticeMu       sync.Mutex
+	notices        []overlapNotice
+
 	// contextSummary is a test seam; nil uses the deterministic durable-evidence
 	// summary builder.
 	contextSummary contextSummaryBuilder
@@ -750,6 +759,11 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 			return nil, err
 		}
 		msgs = append(msgs, textMessages(notes)...)
+		notices, err := s.drainCoordinationNotices()
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, textMessages(notices)...)
 		plan, err := s.planOnlyNote()
 		if err != nil {
 			return nil, err
@@ -817,6 +831,11 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 		return nil, err
 	}
 	msgs = append(msgs, textMessages(notes)...)
+	notices, err := s.drainCoordinationNotices()
+	if err != nil {
+		return nil, err
+	}
+	msgs = append(msgs, textMessages(notices)...)
 	plan, err := s.planOnlyNote()
 	if err != nil {
 		return nil, err
@@ -2148,6 +2167,11 @@ type Manager struct {
 	// (projectrecency.go).
 	recency projectRecency
 
+	// overlapSeen records each (worktree, path, session pair) already told of
+	// a same-file overlap (coordination.go), so a pair hears of a path once.
+	overlapMu   sync.Mutex
+	overlapSeen map[string]bool
+
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
 	// scheduler can start a session (which takes mu) while holding it.
@@ -2235,6 +2259,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		groomCancel:       groomCancel,
 	}
 	m.integrateAgent = m.runIntegrateSession
+	m.ownership.SetOverlapNotifier(m.claimOverlap)
 	m.gitSyncWG.Add(1)
 	go m.runGitSyncPoller()
 	return m
@@ -3064,6 +3089,10 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
 	deps.HeldTasks = func() map[string]string { return m.heldTasks(absWS, id) }
 	deps.OtherSessions = func() string { return m.otherSessionsNote(absWS, id, time.Now()) }
+	coordination := m.coordinationEnabled(absWS)
+	if coordination {
+		deps.ListSessions = func(path string) (string, error) { return m.listSessionsFor(absWS, id, path, time.Now()) }
+	}
 	if mode == watchMode {
 		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
 	} else if !unattended && m.watchSchedulerRunning() {
@@ -3094,6 +3123,8 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		implementer:    implName,
 		reviewers:      reviewerNames,
 		thinkLevels:    map[string]string{},
+		coordination:   coordination,
+		coordinationOn: func() bool { return m.coordinationEnabled(absWS) },
 	}
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log

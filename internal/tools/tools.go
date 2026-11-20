@@ -400,13 +400,14 @@ const fileWriteWait = 2 * time.Minute
 // invokes claim so the session's changeset attributes the path correctly when
 // other sessions share the tree; a failed write must not claim (it would make
 // another session's file look like this one's work). Shared bookkeeping
-// (backlog, memory) is never claimed. release is idempotent.
-func (w *Workspace) acquireFileWrite(ctx context.Context, path string) (release, claim func(), err error) {
+// (backlog, memory) is never claimed. claim returns any overlap notice for the
+// tool result. release is idempotent.
+func (w *Workspace) acquireFileWrite(ctx context.Context, path string) (release func(), claim func() string, err error) {
 	noop := func() {}
 	fallback := w.ownershipFallback(path)
-	claim = noop
+	claim = func() string { return "" }
 	if w.Ownership != nil && (w.SharedBookkeeping == nil || !w.SharedBookkeeping(path)) {
-		claim = func() { w.Ownership.RecordWrite(path, fallback, w.MutationToken) }
+		claim = func() string { return w.Ownership.RecordWrite(path, fallback, w.MutationToken) }
 	}
 	if w.DocsWriteLock != nil {
 		if unlock, ok := w.DocsWriteLock(path); ok {

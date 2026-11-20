@@ -314,6 +314,7 @@ func newGenericAgentLoop(d *Deps, spec AgentSpec, actor string, writeAccess bool
 		agentWS.WriteRoots = tools.NormalizeRoots(d.WriteRoots)
 		agentWS.Emitter = d.Emitter.With(actor)
 		reg.Add(tools.Worker(agentWS)...)
+		reg.Add(coordinationTools(d)...)
 		system = sys(genericCodingAgentSystem, false, d.Workspace)
 	} else {
 		reg.Add(tools.ReadOnlyInspect(agentWS)...)

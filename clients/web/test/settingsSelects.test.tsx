@@ -30,6 +30,7 @@ vi.mock("../src/api/queries", () => ({
   useModes: () => ({ isPending: true }),
   useBudget: () => ({ isPending: true }),
   useQuickReplies: () => ({ isPending: true }),
+  useProjects: () => ({ isPending: true }),
 }));
 vi.mock("../src/features/session/useSession", () => ({
   useSessionController: () => ({}),

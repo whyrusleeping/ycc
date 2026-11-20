@@ -46,6 +46,17 @@ func TestClaimsAttributeWritesPerScopeThroughAliases(t *testing.T) {
 		t.Fatal("unscoped split should be nil")
 	}
 
+	if notice := s.RecordWrite(filepath.Join(root, "shared.go"), root, b); notice != "" {
+		t.Fatalf("notice without a notifier: %q", notice)
+	}
+	var overlaps []Overlap
+	s.SetOverlapNotifier(func(o Overlap) string { overlaps = append(overlaps, o); return "n" })
+	s.RecordWrite(filepath.Join(root, "b.go"), root, b) // only b claims it
+	if notice := s.RecordWrite(filepath.Join(root, "shared.go"), root, b); notice != "n" ||
+		len(overlaps) != 1 || overlaps[0].Path != "shared.go" || overlaps[0].Writer != "s_b" || !reflect.DeepEqual(overlaps[0].Others, []string{"s_a"}) {
+		t.Fatalf("overlap notice=%q overlaps=%+v", notice, overlaps)
+	}
+
 	s.ReleaseClaims(root, "s_a", []string{"shared.go"})
 	if got := s.Claims(root)["shared.go"]; !reflect.DeepEqual(got, []string{"s_b"}) {
 		t.Fatalf("after release shared.go = %v", got)
@@ -96,6 +107,9 @@ func TestClaimsPersistAcrossRestartAndGenerationGuardsRelease(t *testing.T) {
 	want := map[string][]string{"a.go": {"s_a"}, "b.go": {"s_b"}}
 	if got := restarted.Claims(root); !reflect.DeepEqual(got, want) {
 		t.Fatalf("claims after restart = %v, want %v", got, want)
+	}
+	if details := restarted.ClaimDetails(root)["a.go"]; len(details) != 1 || details[0].Since.IsZero() {
+		t.Fatalf("claim time lost across restart: %+v", details)
 	}
 
 	// A claim recorded after the caller sampled the generation survives a

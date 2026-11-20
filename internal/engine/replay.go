@@ -348,9 +348,9 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
-		case event.PlanOnlyDelivered:
-			// The plan-only note enters at a Steer checkpoint like job_notified,
-			// with the same mid-batch deferral.
+		case event.PlanOnlyDelivered, event.CoordinationNotice:
+			// The plan-only note and coordination notices enter at a Steer
+			// checkpoint like job_notified, with the same mid-batch deferral.
 			text := str(ev.Data, "text")
 			if text == "" {
 				continue

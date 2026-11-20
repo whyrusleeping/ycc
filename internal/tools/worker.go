@@ -599,6 +599,15 @@ type mutationReceipt struct {
 	Region    *mutationRegion  `json:"changed_region,omitempty"`
 }
 
+// withNotice appends a coordination notice (see workspacelease overlaps) to a
+// tool result.
+func withNotice(res *gollama.ToolResult, notice string) *gollama.ToolResult {
+	if res != nil && notice != "" {
+		res.Content += "\n" + notice
+	}
+	return res
+}
+
 func mutationResult(receipt mutationReceipt) *gollama.ToolResult {
 	var b strings.Builder
 	verb := receipt.Operation
@@ -899,12 +908,12 @@ func writeFile(ws *Workspace) *gollama.Tool {
 					return errResult("Write: %v", err), nil
 				}
 			}
-			claim()
+			notice := claim()
 			release()
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
 			}
-			return mutationResult(receipt), nil
+			return withNotice(mutationResult(receipt), notice), nil
 		},
 	}
 }
@@ -984,7 +993,7 @@ func editFile(ws *Workspace) *gollama.Tool {
 			if err := atomicPublish(publishPath, []byte(updated), info.Mode(), false); err != nil {
 				return errResult("Edit: %v", err), nil
 			}
-			claim()
+			notice := claim()
 			release()
 			if ws.OnWrite != nil {
 				ws.OnWrite(abs)
@@ -998,7 +1007,7 @@ func editFile(ws *Workspace) *gollama.Tool {
 				Revision:  digestHex([]byte(updated)),
 				Region:    newMutationRegion(startLine, oldStr, newStr),
 			}
-			return mutationResult(receipt), nil
+			return withNotice(mutationResult(receipt), notice), nil
 		},
 	}
 }
@@ -1352,7 +1361,7 @@ func reviewExecutionResult(err error, ctxErr error) string {
 // read-only; otherwise it runs as a plain `sh -c`. The process-group/timeout/
 // truncation handling is identical in both cases.
 func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollama.ToolResult, error) {
-	return func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+	return func(ctx context.Context, params any) (toolRes *gollama.ToolResult, toolErr error) {
 		cmdStr, ok := getString(params, "command")
 		if !ok {
 			return errResult("bash: missing 'command'"), nil
@@ -1409,7 +1418,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		// Their writes are attributed afterwards instead (see shellclaims.go).
 		if !sandboxed {
 			before := ws.snapshotShell()
-			defer ws.claimShellChanges(before)
+			defer func() { toolRes = withNotice(toolRes, ws.claimShellChanges(before)) }()
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -1606,7 +1615,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		defer job.ExecutionComplete()
 		defer cancelTimeout()
 		err := cmd.Wait()
-		ws.claimShellChanges(before)
+		notice := ws.claimShellChanges(before)
 		status := jobs.Done
 		exitInfo := "exit 0"
 		if err != nil && timeout > 0 && cmdCtx.Err() == context.DeadlineExceeded {
@@ -1632,6 +1641,9 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		} else {
 			result += fmt.Sprintf("\n[full output artifact %s: %d bytes/%d lines, sha256 %s; retrieve ranges with tool_output]",
 				artifact.id, artifact.bytes, artifact.lines, artifact.digest)
+		}
+		if notice != "" {
+			result += "\n" + notice
 		}
 		// Finish returns false if the job was already killed (kill_job / session
 		// end), in which case that path owns the job_finished emission.

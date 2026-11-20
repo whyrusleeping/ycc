@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -940,5 +941,47 @@ func TestShellWritesAreClaimedForTheirScope(t *testing.T) {
 	}
 	if got := claims["theirs.txt"]; len(got) != 1 || got[0] != "s_other" {
 		t.Fatalf("theirs.txt claims = %v", claims)
+	}
+}
+
+// A write to a path another scope already claims reports the overlap in the
+// writer's tool result: directly for file tools, and for a shell when the other
+// claim predates the command.
+func TestOverlappingWritesReportNotices(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	ownership := workspacelease.NewService()
+	var got []workspacelease.Overlap
+	ownership.SetOverlapNotifier(func(o workspacelease.Overlap) string {
+		got = append(got, o)
+		return "NOTICE " + o.Path
+	})
+	other := ownership.NewScopedToken("s_other", "other session")
+	for _, name := range []string{"edited.txt", "shelled.txt"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("theirs\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ownership.RecordWrite(filepath.Join(root, name), root, other)
+	}
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: root, Ownership: ownership,
+		MutationToken: ownership.NewScopedToken("s_me", "my session")})...)
+	if res := dispatch(t, reg, "Edit", `{"file_path":"edited.txt","old_string":"theirs","new_string":"mine"}`); res.IsError || !strings.Contains(res.Content, "NOTICE edited.txt") {
+		t.Fatalf("Edit result lacks the overlap notice: %s", res.Content)
+	}
+	if res := dispatch(t, reg, "Bash", `{"command":"echo mine > shelled.txt && echo new > fresh.txt"}`); res.IsError || !strings.Contains(res.Content, "NOTICE shelled.txt") || strings.Contains(res.Content, "fresh.txt") {
+		t.Fatalf("Bash result overlap notices wrong: %s", res.Content)
+	}
+	want := []workspacelease.Overlap{
+		{Path: "edited.txt", Writer: "s_me", Others: []string{"s_other"}},
+		{Path: "shelled.txt", Writer: "s_me", Others: []string{"s_other"}},
+	}
+	for i := range got {
+		got[i].Worktree = ""
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("overlaps = %+v, want %+v", got, want)
 	}
 }

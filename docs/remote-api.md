@@ -293,6 +293,7 @@ JSON="Content-Type: application/json"
 | [`ListProjects`](#listprojects) | list registered projects (multi-project daemon) |
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
+| [`SetProjectSettings`](#setprojectsettings) | change per-project settings in the project's `.ycc/config.toml` |
 | [`ListFiles` / `ReadFile`](#listfiles--readfile) | read-only, project-confined file browsing |
 | [`GetPublications` / `PublishFile` / `UnpublishFile`](#getpublications--publishfile--unpublishfile) | share a project file as a secret public link |
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
@@ -334,7 +335,8 @@ a question there — with ties (including never-used projects) by name. Clients 
 the returned order. Each project also
 reports `needsOnboarding`: `true` when its configured spec entry point has no substantive content
 and its backlog has no tasks, otherwise an explicitly present `false`. Clients can use this to show
-the onboarding preset only where it is relevant.
+the onboarding preset only where it is relevant. `sessionCoordination` reports the project's
+experimental session-coordination setting (spec §7.3; omitted when off).
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{}' \
@@ -414,6 +416,19 @@ Unknown name → `not_found`; collision with another project → `already_exists
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"name":"otherrepo","newName":"webapp"}' \
   $B/ycc.v1.SessionService/RenameProject
+```
+
+### SetProjectSettings
+
+Changes per-project settings stored in the project's `.ycc/config.toml`; fields left unset are
+unchanged, and the rest of the file is kept. The response is the updated `ProjectInfo`. Today the
+only setting is the experimental `sessionCoordination` (spec §7.3): turning it on applies to sessions
+started or reopened afterwards, turning it off applies at once. Missing `project` →
+`invalid_argument`; unknown project → `not_found`.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","sessionCoordination":true}' \
+  $B/ycc.v1.SessionService/SetProjectSettings
 ```
 
 ### ListFiles / ReadFile
@@ -1437,6 +1452,8 @@ Common `type` values (initial set; full table in spec §5.2):
 `pause_requested` / `pause_cancelled`, `interrupted` / `resumed`, `user_input` / `user_input_delivered`, `plan_proposed`,
 `review_submitted`, `decision_made`, `doc_updated`, `commit_made`,
 `plan_only_changed` / `plan_only_delivered` (see [`SetPlanOnly`](#setplanonly)),
+`coordination_notice` (actor `system`, `{text, notices:[{path, session}]}`: another session's write
+to a file this session claims, delivered at a checkpoint; spec §7.3),
 `context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
 `session_reopened`, `log`, and the transient `turn_delta`.
 

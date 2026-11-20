@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Path claims attribute writes to the scope (session) that made them. They
@@ -19,8 +20,64 @@ import (
 // uncommitted work stays attributed to it. With PersistClaims they also
 // survive a daemon restart, stored per worktree in its git directory.
 
-// claimSet maps a scope to the generation at which it last claimed a path.
-type claimSet map[string]uint64
+// claimSet maps a scope to its claim on a path.
+type claimSet map[string]claimEntry
+
+// claimEntry is one scope's claim: the generation of its latest write and when
+// it first claimed the path.
+type claimEntry struct {
+	gen   uint64
+	since time.Time
+}
+
+// Claim is one scope's claim on a path, for display. Gen is the claim
+// generation of the scope's latest write of the path (0 when loaded from disk).
+type Claim struct {
+	Scope string
+	Since time.Time // zero when unknown (claims persisted before it was recorded)
+	Gen   uint64
+}
+
+// Overlap reports a write to a path that other scopes had already claimed.
+type Overlap struct {
+	Worktree string   // canonical worktree
+	Path     string   // repository-relative slash path
+	Writer   string   // the writing scope
+	Others   []string // the other claiming scopes, sorted
+}
+
+// SetOverlapNotifier installs fn to hear about overlapping writes (RecordWrite
+// and NotifyOverlaps). It returns text for the writer's tool result, or "".
+// fn runs outside the service lock.
+func (s *Service) SetOverlapNotifier(fn func(Overlap) string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onOverlap = fn
+}
+
+// NotifyOverlaps passes each overlap to the notifier and joins the texts it
+// returns (one per line).
+func (s *Service) NotifyOverlaps(overlaps []Overlap) string {
+	if s == nil || len(overlaps) == 0 {
+		return ""
+	}
+	s.mu.Lock()
+	fn := s.onOverlap
+	s.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	var notes []string
+	for _, o := range overlaps {
+		if text := fn(o); text != "" {
+			notes = append(notes, text)
+		}
+	}
+	return strings.Join(notes, "\n")
+}
 
 // PersistClaims makes claims durable: each worktree's claims are loaded from,
 // and saved to, <git-dir>/ycc/claims.json. Call once before use.
@@ -46,18 +103,30 @@ func (s *Service) Generation() uint64 {
 }
 
 // RecordWrite attributes a write of path to token's scope. Unscoped tokens and
-// paths outside a canonical worktree are ignored.
-func (s *Service) RecordWrite(path, fallback string, token *Token) {
+// paths outside a canonical worktree are ignored. When other scopes already
+// claim the path, the overlap notifier is told and its text returned.
+func (s *Service) RecordWrite(path, fallback string, token *Token) string {
 	if s == nil || token == nil || token.scope == "" {
-		return
+		return ""
 	}
 	key, rel, ok := relativeToWorktree(path, fallback)
 	if !ok {
-		return
+		return ""
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var others []string
+	for scope := range s.claimsLocked(key)[rel] {
+		if scope != token.scope {
+			others = append(others, scope)
+		}
+	}
 	s.recordLocked(key, []string{rel}, token.scope)
+	s.mu.Unlock()
+	if len(others) == 0 {
+		return ""
+	}
+	sort.Strings(others)
+	return s.NotifyOverlaps([]Overlap{{Worktree: key, Path: rel, Writer: token.scope, Others: others}})
 }
 
 // RecordWrites attributes writes of repository-relative paths in the worktree
@@ -79,16 +148,20 @@ func (s *Service) recordLocked(key string, paths []string, scope string) {
 	byPath := s.claimsLocked(key)
 	added := false
 	s.gen++
+	now := time.Now()
 	for _, rel := range paths {
 		set := byPath[rel]
 		if set == nil {
 			set = make(claimSet)
 			byPath[rel] = set
 		}
-		if _, ok := set[scope]; !ok {
+		entry, ok := set[scope]
+		if !ok {
 			added = true
+			entry.since = now
 		}
-		set[scope] = s.gen
+		entry.gen = s.gen
+		set[scope] = entry
 	}
 	if added {
 		s.saveLocked(key)
@@ -118,6 +191,45 @@ func (s *Service) Claims(root string) map[string][]string {
 		out[path] = list
 	}
 	return out
+}
+
+// ClaimDetails returns, for the worktree containing root, each claimed
+// repository-relative path and its claims sorted by scope.
+func (s *Service) ClaimDetails(root string) map[string][]Claim {
+	if s == nil {
+		return nil
+	}
+	key, err := Canonical(root)
+	if err != nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byPath := s.claimsLocked(key)
+	out := make(map[string][]Claim, len(byPath))
+	for path, set := range byPath {
+		list := make([]Claim, 0, len(set))
+		for scope, entry := range set {
+			list = append(list, Claim{Scope: scope, Since: entry.since, Gen: entry.gen})
+		}
+		sort.Slice(list, func(i, j int) bool { return list[i].Scope < list[j].Scope })
+		out[path] = list
+	}
+	return out
+}
+
+// PathClaims resolves path (relative paths against fallback's worktree) to its
+// canonical worktree and repository-relative form and returns its claims
+// sorted by scope. ok is false when path is not inside a git worktree.
+func (s *Service) PathClaims(path, fallback string) (worktree, rel string, claims []Claim, ok bool) {
+	if s == nil {
+		return "", "", nil, false
+	}
+	worktree, rel, ok = relativeToWorktree(path, fallback)
+	if !ok {
+		return "", "", nil, false
+	}
+	return worktree, rel, s.ClaimDetails(worktree)[rel], true
 }
 
 // Split partitions the claims in the worktree containing root into paths scope
@@ -193,8 +305,8 @@ func (s *Service) ReleaseAll(root string, paths []string, before uint64) {
 	changed := false
 	for _, path := range paths {
 		set := byPath[path]
-		for scope, gen := range set {
-			if gen <= before {
+		for scope, entry := range set {
+			if entry.gen <= before {
 				delete(set, scope)
 				changed = true
 			}
@@ -258,7 +370,11 @@ func (s *Service) claimsLocked(key string) map[string]claimSet {
 	for rel, scopes := range record.Claims {
 		set := make(claimSet, len(scopes))
 		for _, scope := range scopes {
-			set[scope] = 0
+			var entry claimEntry
+			if unix := record.Since[rel][scope]; unix > 0 {
+				entry.since = time.Unix(unix, 0)
+			}
+			set[scope] = entry
 		}
 		byPath[rel] = set
 	}
@@ -267,9 +383,12 @@ func (s *Service) claimsLocked(key string) map[string]claimSet {
 
 const claimsRecordVersion = 1
 
+// claimsRecord is the persisted form. Since (path -> scope -> unix seconds of
+// the first claim) is optional so older records and daemons stay compatible.
 type claimsRecord struct {
-	Version int                 `json:"version"`
-	Claims  map[string][]string `json:"claims"`
+	Version int                         `json:"version"`
+	Claims  map[string][]string         `json:"claims"`
+	Since   map[string]map[string]int64 `json:"since,omitempty"`
 }
 
 // saveLocked persists key's claims (best effort: attribution degrades to
@@ -282,11 +401,17 @@ func (s *Service) saveLocked(key string) {
 	if path == "" {
 		return
 	}
-	record := claimsRecord{Version: claimsRecordVersion, Claims: map[string][]string{}}
+	record := claimsRecord{Version: claimsRecordVersion, Claims: map[string][]string{}, Since: map[string]map[string]int64{}}
 	for rel, set := range s.claims[key] {
 		scopes := make([]string, 0, len(set))
-		for scope := range set {
+		for scope, entry := range set {
 			scopes = append(scopes, scope)
+			if !entry.since.IsZero() {
+				if record.Since[rel] == nil {
+					record.Since[rel] = map[string]int64{}
+				}
+				record.Since[rel][scope] = entry.since.Unix()
+			}
 		}
 		sort.Strings(scopes)
 		record.Claims[rel] = scopes

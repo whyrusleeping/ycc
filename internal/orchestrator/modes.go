@@ -98,6 +98,7 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		},
 	}
 	reg := tools.New()
+	reg.Add(coordinationTools(d)...)
 	switch mode {
 	case "chat":
 		policy := d.Docs.ChatFinishedWork()

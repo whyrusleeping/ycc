@@ -601,6 +601,39 @@ remain the way to isolate builds and tests completely.
 `docs/design/async-jobs.md` explains the single-delivery and concurrent-mutation
 rationale.
 
+Session coordination is an experimental, per-project awareness layer over those claims, set by
+`[experimental] session_coordination` in the project's `.ycc/config.toml` (default off; there is no
+daemon-wide switch, so enabling it for one project never affects another). Clients read it from
+`ProjectInfo` and change it with `SetProjectSettings`, which edits only that line. A session gets the
+feature when the setting is on as it is built (started or reopened), because its tool set is fixed
+then; turning the setting off applies at once: the tool answers that coordination is off and no
+further notices are delivered. With the setting off nothing is added.
+
+- **`list_sessions`** is a read-only tool for coordinators and mutating subagents (implementers and
+  mutating generic agents), not read-only agents. Without arguments it lists the project's other
+  top-level sessions in the primary tree and its workstreams, as the `list_backlog` footer does
+  (sessions quiet for over an hour are omitted): id,
+  mode, activity state, held or earlier focus, a one-line title (the opening prompt, or the task when
+  the prompt is the mode default), worktree, running jobs, and the paths the session claims with
+  claim age, each bounded and marked when cut. `path=` lists the claimants of a path in the project's
+  primary tree or one of its workstreams, including sessions that have ended, with live or ended
+  state, last activity, and focus. Claims are
+  evidence of uncommitted past writes, not reservations; claim times persist with the claims.
+- **Overlap notices.** A write that touches a path another session's scope already claims tells
+  both sides once per path and session pair: the writer in its Write/Edit result, or in its Bash
+  result when a shell changed a path another scope claimed before the command started (the shell
+  still does not claim it), and the other session's live coordinator at its next safe checkpoint.
+  That coordinator is never woken and its `wait` does not end early; the notice simply waits for its
+  next run. Each side is told only if its own session has the feature. Backlog task files and `memory.md`
+  are never claimed, so they never cause one. A notice names the path, the other session, and its
+  focused task or title. Neither output names a session of another project, even one registered in
+  the same repository. Delivered notices enter history as one user-role message recorded as a
+  `coordination_notice` event (actor `system`) where it entered, so replay, reopen and rollover
+  reproduce it; notices still pending are memory-only and are not restored after reopen or restart
+  (`list_sessions` rediscovers the overlap).
+
+Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations.
+
 ### 7.4 Reasoning settings
 
 Thinking and effort resolve per logical model, with a session-only per-model override taking
@@ -1159,7 +1192,8 @@ picker for a new or live session applies to that session (§7.4). Thinking picke
 model's reported levels.
 The web Settings page is ordered for someone setting ycc up: models (subscription logins and the
 model list with each model's health), which model does each job (roles, reasoning, and work
-implementation together), code review tiers, notifications, spending limits, and daemon status.
+implementation together), code review tiers, notifications, spending limits, per-project experimental
+settings (§7.3), and daemon status.
 Roles are labelled by what they do (the coordinator is the "main agent") with the configuration
 name alongside.
 The model editor distinguishes model-list discovery from testing the exact unsaved configuration

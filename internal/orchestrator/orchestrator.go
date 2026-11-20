@@ -113,7 +113,12 @@ type Deps struct {
 	// OtherSessions describes the project's other live sessions for
 	// list_backlog. Nil-safe: when unset nothing is appended.
 	OtherSessions func() string
-	Repo          *git.Repo
+	// ListSessions backs the experimental list_sessions tool: the project's
+	// other sessions, or with a path that path's claimants. Set only when the
+	// project enabled session coordination when the session was built; it
+	// returns ErrCoordinationDisabled once the setting is turned off.
+	ListSessions func(path string) (string, error)
+	Repo         *git.Repo
 	// Baseline is captured when the session is assembled, before coordinator or
 	// worker tools can mutate the task tree. All review and commit scope derives
 	// from this immutable snapshot. BaselineErr records why a resumed legacy or
@@ -764,6 +769,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				MutationToken: token,
 				DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
 			})...)
+			reg.Add(coordinationTools(d)...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 			activeLoop = loop
@@ -1184,6 +1190,7 @@ func newImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token) *e
 		Emitter: d.Emitter.With("implementer"), Ownership: d.Ownership,
 		MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
 	})...)
+	reg.Add(coordinationTools(d)...)
 	loop := d.newLoop(spec, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 	loop.ContextLengthHandled = true
 	return loop

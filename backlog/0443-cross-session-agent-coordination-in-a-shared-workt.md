@@ -1,7 +1,7 @@
 ---
 id: "0443"
 title: 'Experimental session awareness: list_sessions, path ownership lookup, and same-file overlap notices'
-status: todo
+status: done
 priority: 3
 created: "2026-10-09"
 updated: "2026-11-20"
@@ -12,6 +12,7 @@ spec_refs:
 ---
 
 ## Description
+
 Current state: redesigned and accepted on 2026-11-20 (session s_18f059896f075e5a); not started. The
 dependency 0440 (write-scoped worktree leases with per-session change attribution) is done. This
 task delivers the awareness part of cross-session coordination. Related tasks:
@@ -77,6 +78,7 @@ non-waking announcements and ownership facts, not conversations.
   stays advisory, as with 0440.
 
 ## Acceptance criteria
+
 - The per-project setting is off by default, persists in `.ycc/config.toml`, and can be changed from
   the web Settings page; enabling it for one project does not affect another.
 - With the setting off, no tool or notice is added and behaviour is unchanged. Turning it off stops
@@ -91,4 +93,8 @@ non-waking announcements and ownership facts, not conversations.
 - spec.md §7.3 (or a linked design doc) describes the feature and its per-project experimental
   setting.
 
-## Work log
+## Outcome
+
+Per-project [experimental] session_coordination in .ycc/config.toml (default off; syntax-aware single-value edit, refuses forms it cannot locate) exposed as ProjectInfo.session_coordination + SetProjectSettings RPC and a per-project Experimental section in web Settings. Sessions built with it on get list_sessions (coordinators, implementers, mutating generic agents): other sessions with title, focus, jobs and claimed paths with claim age (claim times persisted), or path= claimants incl. ended sessions, scoped to the project (symlink-resolved; other projects never named). Overlapping writes notify once per path/pair: writer in Write/Edit/Bash result, other live coordinator at its next checkpoint via a system-actor coordination_notice (never woken; replay/history/rollover handle it; pending notices memory-only, dropped when off). Spec §7.3, remote-api.md. Review: opus accepted; sol's last finding (exotic TOML such as unicode-escaped keys) fails safe with an error and was judged non-blocking.
+
+Commit: session coordination (experimental, per project): list_sessions, path ownership lookup, same-file overlap notices

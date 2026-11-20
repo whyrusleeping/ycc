@@ -27,9 +27,10 @@ type Service struct {
 	released chan struct{}
 	// claims: canonical worktree -> repository-relative path -> scope -> the
 	// generation of its latest claim (see claims.go).
-	claims  map[string]map[string]claimSet
-	gen     uint64
-	persist bool
+	claims    map[string]map[string]claimSet
+	gen       uint64
+	persist   bool
+	onOverlap func(Overlap) string
 }
 
 type entry struct {

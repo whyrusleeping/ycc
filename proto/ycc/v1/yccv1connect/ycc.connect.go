@@ -134,6 +134,9 @@ const (
 	// SessionServiceRenameProjectProcedure is the fully-qualified name of the SessionService's
 	// RenameProject RPC.
 	SessionServiceRenameProjectProcedure = "/ycc.v1.SessionService/RenameProject"
+	// SessionServiceSetProjectSettingsProcedure is the fully-qualified name of the SessionService's
+	// SetProjectSettings RPC.
+	SessionServiceSetProjectSettingsProcedure = "/ycc.v1.SessionService/SetProjectSettings"
 	// SessionServiceListDirProcedure is the fully-qualified name of the SessionService's ListDir RPC.
 	SessionServiceListDirProcedure = "/ycc.v1.SessionService/ListDir"
 	// SessionServiceListFilesProcedure is the fully-qualified name of the SessionService's ListFiles
@@ -369,6 +372,7 @@ type SessionServiceClient interface {
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
+	SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
@@ -699,6 +703,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceRenameProjectProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("RenameProject")),
+			connect.WithClientOptions(opts...),
+		),
+		setProjectSettings: connect.NewClient[v1.SetProjectSettingsRequest, v1.SetProjectSettingsResponse](
+			httpClient,
+			baseURL+SessionServiceSetProjectSettingsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SetProjectSettings")),
 			connect.WithClientOptions(opts...),
 		),
 		listDir: connect.NewClient[v1.ListDirRequest, v1.ListDirResponse](
@@ -1088,6 +1098,7 @@ type sessionServiceClient struct {
 	addProject             *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject          *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
 	renameProject          *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
+	setProjectSettings     *connect.Client[v1.SetProjectSettingsRequest, v1.SetProjectSettingsResponse]
 	listDir                *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listFiles              *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
 	readFile               *connect.Client[v1.ReadFileRequest, v1.ReadFileResponse]
@@ -1316,6 +1327,11 @@ func (c *sessionServiceClient) RemoveProject(ctx context.Context, req *connect.R
 // RenameProject calls ycc.v1.SessionService.RenameProject.
 func (c *sessionServiceClient) RenameProject(ctx context.Context, req *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
 	return c.renameProject.CallUnary(ctx, req)
+}
+
+// SetProjectSettings calls ycc.v1.SessionService.SetProjectSettings.
+func (c *sessionServiceClient) SetProjectSettings(ctx context.Context, req *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error) {
+	return c.setProjectSettings.CallUnary(ctx, req)
 }
 
 // ListDir calls ycc.v1.SessionService.ListDir.
@@ -1674,6 +1690,7 @@ type SessionServiceHandler interface {
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
+	SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
@@ -2000,6 +2017,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceRenameProjectProcedure,
 		svc.RenameProject,
 		connect.WithSchema(sessionServiceMethods.ByName("RenameProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSetProjectSettingsHandler := connect.NewUnaryHandler(
+		SessionServiceSetProjectSettingsProcedure,
+		svc.SetProjectSettings,
+		connect.WithSchema(sessionServiceMethods.ByName("SetProjectSettings")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListDirHandler := connect.NewUnaryHandler(
@@ -2420,6 +2443,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceRemoveProjectHandler.ServeHTTP(w, r)
 		case SessionServiceRenameProjectProcedure:
 			sessionServiceRenameProjectHandler.ServeHTTP(w, r)
+		case SessionServiceSetProjectSettingsProcedure:
+			sessionServiceSetProjectSettingsHandler.ServeHTTP(w, r)
 		case SessionServiceListDirProcedure:
 			sessionServiceListDirHandler.ServeHTTP(w, r)
 		case SessionServiceListFilesProcedure:
@@ -2679,6 +2704,10 @@ func (UnimplementedSessionServiceHandler) RemoveProject(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.RenameProject is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetProjectSettings is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {
