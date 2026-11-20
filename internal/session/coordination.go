@@ -58,16 +58,21 @@ func (m *Manager) listSessionsFor(absWS, self, path string, now time.Time) (stri
 	if strings.TrimSpace(path) != "" {
 		return m.pathClaimants(absWS, path, now)
 	}
-	lines := m.liveSessionLinesWith(m.primaryTreeFor(absWS), self, now, true)
-	if lines == "" {
-		return "No other session in this project has been active in the last hour. Use path= to find who claims a file, including ended sessions.", nil
+	primary := m.primaryTreeFor(absWS)
+	lines := m.liveSessionLinesWith(primary, self, now, true)
+	board := m.boardSection(primary, now)
+	if board == "" {
+		board = "Project notice board: no active notices.\n"
 	}
-	out := "Other sessions in this project (sessions idle for over an hour are omitted; path= finds any claimant). " +
+	if lines == "" {
+		return "No other session in this project has been active in the last hour. Use path= to find who claims a file, including ended sessions.\n" + board, nil
+	}
+	out := "Other sessions in this project (sessions idle for over an hour are omitted unless they declared an intent; path= finds any claimant). " +
 		"Claims are uncommitted writes, not reservations.\n" + lines
 	if len(out) > listSessionsMaxBytes {
-		out = clipText(out, listSessionsMaxBytes) + "\n[truncated]"
+		out = clipText(out, listSessionsMaxBytes) + "\n[truncated]\n"
 	}
-	return out, nil
+	return out + board, nil
 }
 
 // pathClaim is one path a session claims and when it first claimed it.

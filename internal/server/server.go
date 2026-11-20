@@ -212,6 +212,46 @@ func (s *Server) SetProjectSettings(_ context.Context, req *connect.Request[v1.S
 	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("%w %q", session.ErrUnknownProject, req.Msg.Project))
 }
 
+// ListProjectNotices returns a project's notice board: active notices and live
+// sessions' intents (empty while session coordination is off).
+func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
+	notices, intents, err := s.mgr.ProjectNoticeBoard(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	resp := &v1.ListProjectNoticesResponse{}
+	for _, n := range notices {
+		resp.Notices = append(resp.Notices, &v1.ProjectNotice{
+			Id: n.ID, Text: n.Text, Subject: n.Subject, SessionId: n.SessionID, Actor: n.Actor, TaskIds: n.Tasks,
+			PostedAt: n.PostedAt.UTC().Format(time.RFC3339), ExpiresAt: n.ExpiresAt.UTC().Format(time.RFC3339),
+		})
+	}
+	for _, in := range intents {
+		resp.Intents = append(resp.Intents, &v1.SessionIntent{SessionId: in.SessionID, Text: in.Text, SetAt: in.SetAt.UTC().Format(time.RFC3339)})
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// ClearProjectNotice clears an active notice on the user's behalf.
+func (s *Server) ClearProjectNotice(_ context.Context, req *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error) {
+	if strings.TrimSpace(req.Msg.Id) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("id is required"))
+	}
+	if err := s.mgr.ClearProjectNotice(req.Msg.Project, req.Msg.Id, req.Msg.Reason); err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject), errors.Is(err, session.ErrUnknownNotice):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, orchestrator.ErrCoordinationDisabled):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.ClearProjectNoticeResponse{}), nil
+}
+
 // ListSessions returns all live sessions and their current status, optionally
 // filtered to a single project.
 func (s *Server) ListSessions(_ context.Context, req *connect.Request[v1.ListSessionsRequest]) (*connect.Response[v1.ListSessionsResponse], error) {

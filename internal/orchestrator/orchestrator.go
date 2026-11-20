@@ -118,7 +118,11 @@ type Deps struct {
 	// project enabled session coordination when the session was built; it
 	// returns ErrCoordinationDisabled once the setting is turned off.
 	ListSessions func(path string) (string, error)
-	Repo         *git.Repo
+	// Board backs the experimental notice board tools (set_intent,
+	// post_notice, clear_notice) for coordinators. Set under the same
+	// condition as ListSessions.
+	Board NoticeBoard
+	Repo  *git.Repo
 	// Baseline is captured when the session is assembled, before coordinator or
 	// worker tools can mutate the task tree. All review and commit scope derives
 	// from this immutable snapshot. BaselineErr records why a resumed legacy or

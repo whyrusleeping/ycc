@@ -66,7 +66,19 @@ func Presets() []Preset {
 
 // BuildMode returns a mode's tools and system prompt. Direct work mode omits
 // worker-agent tools; edits to configured design docs emit doc_updated events.
+// A session built with experimental session coordination also gets
+// list_sessions and, outside integrate mode, the notice board tools.
 func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
+	reg, system := buildMode(mode, d, unattended)
+	reg.Add(coordinationTools(d)...)
+	if mode != "integrate" && d.Board != nil {
+		reg.Add(boardTools(d)...)
+		system += boardGuidance
+	}
+	return reg, system
+}
+
+func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
 	ws := &tools.Workspace{
 		Root:          d.Workspace,
 		Env:           append([]string(nil), d.Env...),
@@ -98,7 +110,6 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		},
 	}
 	reg := tools.New()
-	reg.Add(coordinationTools(d)...)
 	switch mode {
 	case "chat":
 		policy := d.Docs.ChatFinishedWork()

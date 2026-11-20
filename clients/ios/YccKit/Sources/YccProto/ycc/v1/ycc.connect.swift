@@ -146,6 +146,14 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `setProjectSettings`(request: Ycc_V1_SetProjectSettingsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SetProjectSettingsResponse>
 
+    /// ListProjectNotices / ClearProjectNotice read and clear the experimental
+    /// project notice board; a clear here is recorded as made by the user.
+    @available(iOS 13, *)
+    func `listProjectNotices`(request: Ycc_V1_ListProjectNoticesRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListProjectNoticesResponse>
+
+    @available(iOS 13, *)
+    func `clearProjectNotice`(request: Ycc_V1_ClearProjectNoticeRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ClearProjectNoticeResponse>
+
     /// ListDir lists subdirectories of a daemon-host path (directories only) so
     /// remote clients can browse to a workspace for AddProject.
     @available(iOS 13, *)
@@ -562,6 +570,16 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `listProjectNotices`(request: Ycc_V1_ListProjectNoticesRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListProjectNoticesResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ListProjectNotices", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `clearProjectNotice`(request: Ycc_V1_ClearProjectNoticeRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ClearProjectNoticeResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ClearProjectNotice", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listDir`(request: Ycc_V1_ListDirRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListDirResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListDir", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -888,6 +906,8 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let removeProject = Connect.MethodSpec(name: "RemoveProject", service: "ycc.v1.SessionService", type: .unary)
             public static let renameProject = Connect.MethodSpec(name: "RenameProject", service: "ycc.v1.SessionService", type: .unary)
             public static let setProjectSettings = Connect.MethodSpec(name: "SetProjectSettings", service: "ycc.v1.SessionService", type: .unary)
+            public static let listProjectNotices = Connect.MethodSpec(name: "ListProjectNotices", service: "ycc.v1.SessionService", type: .unary)
+            public static let clearProjectNotice = Connect.MethodSpec(name: "ClearProjectNotice", service: "ycc.v1.SessionService", type: .unary)
             public static let listDir = Connect.MethodSpec(name: "ListDir", service: "ycc.v1.SessionService", type: .unary)
             public static let listFiles = Connect.MethodSpec(name: "ListFiles", service: "ycc.v1.SessionService", type: .unary)
             public static let readFile = Connect.MethodSpec(name: "ReadFile", service: "ycc.v1.SessionService", type: .unary)

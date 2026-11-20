@@ -1349,6 +1349,8 @@ func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) strin
 // liveSessionLinesWith is liveSessionLines; detail adds each session's title
 // and the paths it claims in its worktree (list_sessions).
 func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, detail bool) string {
+	// Intent lines are part of experimental session coordination.
+	intents := m.coordinationEnabled(primary)
 	primary = canonicalPath(primary)
 	claimsByTree := map[string]map[string][]workspacelease.Claim{}
 	sessions := m.List()
@@ -1360,7 +1362,12 @@ func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, d
 		}
 		evs := s.Log().Snapshot()
 		working := s.activelyWorking()
-		if !working && len(evs) > 0 && now.Sub(evs[len(evs)-1].TS) > quietSessionAge {
+		intent := ""
+		if intents {
+			intent, _ = s.intent()
+		}
+		// A declared intent keeps a quiet session listed.
+		if !working && intent == "" && len(evs) > 0 && now.Sub(evs[len(evs)-1].TS) > quietSessionAge {
 			continue
 		}
 		kind := s.Mode
@@ -1379,6 +1386,9 @@ func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, d
 			b.WriteString(" in worktree " + s.Workspace)
 		}
 		b.WriteString("\n")
+		if intent != "" {
+			fmt.Fprintf(&b, "    intent: %q\n", intent)
+		}
 		if detail {
 			if title := deriveTitle(evs); title != "" {
 				b.WriteString("    title: " + title + "\n")
@@ -1423,11 +1433,16 @@ func sessionActivityState(s *Session, evs []event.Event) string {
 // otherSessionsNote is the work-selection view of the project's other live
 // sessions, appended to list_backlog.
 func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string {
-	lines := m.liveSessionLines(m.primaryTreeFor(absWS), exclude, now)
-	if lines == "" {
-		return "Other sessions in this project: none has been active in the last hour (daemon state).\n"
+	primary := m.primaryTreeFor(absWS)
+	board := ""
+	if m.coordinationEnabled(primary) {
+		board = m.boardSection(primary, now)
 	}
-	return "Other live sessions in this project (daemon state; those idle for over an hour are omitted):\n" + lines
+	lines := m.liveSessionLines(primary, exclude, now)
+	if lines == "" {
+		return "Other sessions in this project: none has been active in the last hour (daemon state).\n" + board
+	}
+	return "Other live sessions in this project (daemon state; those idle for over an hour are omitted):\n" + lines + board
 }
 
 // scheduleWatchFromChat is the schedule_watch hook; the tool has already

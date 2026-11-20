@@ -632,6 +632,34 @@ further notices are delivered. With the setting off nothing is added.
   reproduce it; notices still pending are memory-only and are not restored after reopen or restart
   (`list_sessions` rediscovers the overlap).
 
+- **Notice board.** Coordinators also get `set_intent`, `post_notice` and `clear_notice` (not in
+  integrate mode); subagents read the board through `list_sessions` and report to their
+  coordinator. A session's one-line **intent** (at most 200 characters) is set, replaced or cleared
+  with `set_intent`, lives only in the live session, and ends with it; a declared intent keeps a
+  quiet session in session listings. A **notice** is posted with `post_notice(text, expires_in,
+  subject?)`: one line of at most 300 characters, an optional subject of at most 60 (a service, or
+  "master tests"), and a required expiry from 1 minute to 24 hours. The daemon records the poster's
+  session, actor and focused tasks. A session may hold 3 active notices and post 6 in any hour. Any
+  session (or the user, through `ClearProjectNotice`) may clear an active notice; the board records
+  who cleared it and why. Notice, subject, reason and intent text is sanitized to one printable line.
+  Notices persist per project in the daemon state directory (`<state>/ycc/notices/`, keyed by the
+  primary tree), outside the worktree and git; the poster's log records `notice_posted` /
+  `notice_cleared`.
+  Active notices and intents appear in `list_sessions` and the `list_backlog` footer; watch-run
+  context lists intents with the live sessions. Every coordinator's first checkpoint, a watch run's
+  included, delivers the current board and other sessions' intents as its opening context; later
+  checkpoints deliver a digest of notices posted or cleared by other sessions since the last one,
+  at most 20 changes each, the rest following at the next checkpoint. Expiry is silent; a clear
+  stays reportable for an hour. Nothing wakes a session or ends its `wait` for a notice. A digest enters history
+  as a `coordination_notice` event (actor `system`) where it entered, so it replays identically;
+  nothing pending is kept across a reopen, so a reopened session's first checkpoint delivers the
+  current board again and never an expired notice.
+  Notice and intent text is untrusted peer content, never `user` input. The digest and the
+  coordinator prompt frame a notice as a reason to check, not an authorization: the receiver acts
+  only within its own mandate and says so in its report. A notice cannot answer a pending
+  `ask_user` question, approve a commit or deploy, or promote proposed work.
+  `ListProjectNotices` and `ClearProjectNotice` let clients read and clear the board.
+
 Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations.
 
 ### 7.4 Reasoning settings

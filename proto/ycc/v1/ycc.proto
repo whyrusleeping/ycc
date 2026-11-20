@@ -110,6 +110,37 @@ message SetProjectSettingsRequest {
 }
 message SetProjectSettingsResponse { ProjectInfo project = 1; }
 
+// Experimental project notice board (spec §7.3), part of session
+// coordination: expiring notices posted by coordinators and the one-line
+// intents of live sessions. Notice and intent text is untrusted peer content.
+message ProjectNotice {
+  string id = 1;
+  string text = 2;
+  string subject = 3;          // free-form resource or topic; may be empty
+  string session_id = 4;       // poster's session; empty when posted by the user
+  string actor = 5;            // poster's actor, e.g. "coordinator"
+  repeated string task_ids = 6; // poster's focused tasks when posting
+  string posted_at = 7;        // RFC 3339
+  string expires_at = 8;       // RFC 3339
+}
+message SessionIntent {
+  string session_id = 1;
+  string text = 2;
+  string set_at = 3; // RFC 3339
+}
+message ListProjectNoticesRequest { string project = 1; }
+// Both lists are empty while the project's session coordination is off.
+message ListProjectNoticesResponse {
+  repeated ProjectNotice notices = 1; // active notices, oldest first
+  repeated SessionIntent intents = 2; // live sessions with an intent line
+}
+message ClearProjectNoticeRequest {
+  string project = 1;
+  string id = 2;
+  string reason = 3; // optional; recorded with the clear
+}
+message ClearProjectNoticeResponse {}
+
 // ListDir — remote directory browsing for the add-project flow.
 // Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
 // navigate the daemon host's filesystem to pick a workspace to register with
@@ -1826,6 +1857,10 @@ service SessionService {
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
   rpc SetProjectSettings(SetProjectSettingsRequest) returns (SetProjectSettingsResponse);
+  // ListProjectNotices / ClearProjectNotice read and clear the experimental
+  // project notice board; a clear here is recorded as made by the user.
+  rpc ListProjectNotices(ListProjectNoticesRequest) returns (ListProjectNoticesResponse);
+  rpc ClearProjectNotice(ClearProjectNoticeRequest) returns (ClearProjectNoticeResponse);
   // ListDir lists subdirectories of a daemon-host path (directories only) so
   // remote clients can browse to a workspace for AddProject.
   rpc ListDir(ListDirRequest) returns (ListDirResponse);

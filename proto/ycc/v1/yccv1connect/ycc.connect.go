@@ -137,6 +137,12 @@ const (
 	// SessionServiceSetProjectSettingsProcedure is the fully-qualified name of the SessionService's
 	// SetProjectSettings RPC.
 	SessionServiceSetProjectSettingsProcedure = "/ycc.v1.SessionService/SetProjectSettings"
+	// SessionServiceListProjectNoticesProcedure is the fully-qualified name of the SessionService's
+	// ListProjectNotices RPC.
+	SessionServiceListProjectNoticesProcedure = "/ycc.v1.SessionService/ListProjectNotices"
+	// SessionServiceClearProjectNoticeProcedure is the fully-qualified name of the SessionService's
+	// ClearProjectNotice RPC.
+	SessionServiceClearProjectNoticeProcedure = "/ycc.v1.SessionService/ClearProjectNotice"
 	// SessionServiceListDirProcedure is the fully-qualified name of the SessionService's ListDir RPC.
 	SessionServiceListDirProcedure = "/ycc.v1.SessionService/ListDir"
 	// SessionServiceListFilesProcedure is the fully-qualified name of the SessionService's ListFiles
@@ -373,6 +379,10 @@ type SessionServiceClient interface {
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error)
+	// ListProjectNotices / ClearProjectNotice read and clear the experimental
+	// project notice board; a clear here is recorded as made by the user.
+	ListProjectNotices(context.Context, *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error)
+	ClearProjectNotice(context.Context, *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
@@ -709,6 +719,18 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceSetProjectSettingsProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("SetProjectSettings")),
+			connect.WithClientOptions(opts...),
+		),
+		listProjectNotices: connect.NewClient[v1.ListProjectNoticesRequest, v1.ListProjectNoticesResponse](
+			httpClient,
+			baseURL+SessionServiceListProjectNoticesProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ListProjectNotices")),
+			connect.WithClientOptions(opts...),
+		),
+		clearProjectNotice: connect.NewClient[v1.ClearProjectNoticeRequest, v1.ClearProjectNoticeResponse](
+			httpClient,
+			baseURL+SessionServiceClearProjectNoticeProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ClearProjectNotice")),
 			connect.WithClientOptions(opts...),
 		),
 		listDir: connect.NewClient[v1.ListDirRequest, v1.ListDirResponse](
@@ -1099,6 +1121,8 @@ type sessionServiceClient struct {
 	removeProject          *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
 	renameProject          *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
 	setProjectSettings     *connect.Client[v1.SetProjectSettingsRequest, v1.SetProjectSettingsResponse]
+	listProjectNotices     *connect.Client[v1.ListProjectNoticesRequest, v1.ListProjectNoticesResponse]
+	clearProjectNotice     *connect.Client[v1.ClearProjectNoticeRequest, v1.ClearProjectNoticeResponse]
 	listDir                *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listFiles              *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
 	readFile               *connect.Client[v1.ReadFileRequest, v1.ReadFileResponse]
@@ -1332,6 +1356,16 @@ func (c *sessionServiceClient) RenameProject(ctx context.Context, req *connect.R
 // SetProjectSettings calls ycc.v1.SessionService.SetProjectSettings.
 func (c *sessionServiceClient) SetProjectSettings(ctx context.Context, req *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error) {
 	return c.setProjectSettings.CallUnary(ctx, req)
+}
+
+// ListProjectNotices calls ycc.v1.SessionService.ListProjectNotices.
+func (c *sessionServiceClient) ListProjectNotices(ctx context.Context, req *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
+	return c.listProjectNotices.CallUnary(ctx, req)
+}
+
+// ClearProjectNotice calls ycc.v1.SessionService.ClearProjectNotice.
+func (c *sessionServiceClient) ClearProjectNotice(ctx context.Context, req *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error) {
+	return c.clearProjectNotice.CallUnary(ctx, req)
 }
 
 // ListDir calls ycc.v1.SessionService.ListDir.
@@ -1691,6 +1725,10 @@ type SessionServiceHandler interface {
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error)
+	// ListProjectNotices / ClearProjectNotice read and clear the experimental
+	// project notice board; a clear here is recorded as made by the user.
+	ListProjectNotices(context.Context, *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error)
+	ClearProjectNotice(context.Context, *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
 	ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error)
@@ -2023,6 +2061,18 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceSetProjectSettingsProcedure,
 		svc.SetProjectSettings,
 		connect.WithSchema(sessionServiceMethods.ByName("SetProjectSettings")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceListProjectNoticesHandler := connect.NewUnaryHandler(
+		SessionServiceListProjectNoticesProcedure,
+		svc.ListProjectNotices,
+		connect.WithSchema(sessionServiceMethods.ByName("ListProjectNotices")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceClearProjectNoticeHandler := connect.NewUnaryHandler(
+		SessionServiceClearProjectNoticeProcedure,
+		svc.ClearProjectNotice,
+		connect.WithSchema(sessionServiceMethods.ByName("ClearProjectNotice")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListDirHandler := connect.NewUnaryHandler(
@@ -2445,6 +2495,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceRenameProjectHandler.ServeHTTP(w, r)
 		case SessionServiceSetProjectSettingsProcedure:
 			sessionServiceSetProjectSettingsHandler.ServeHTTP(w, r)
+		case SessionServiceListProjectNoticesProcedure:
+			sessionServiceListProjectNoticesHandler.ServeHTTP(w, r)
+		case SessionServiceClearProjectNoticeProcedure:
+			sessionServiceClearProjectNoticeHandler.ServeHTTP(w, r)
 		case SessionServiceListDirProcedure:
 			sessionServiceListDirHandler.ServeHTTP(w, r)
 		case SessionServiceListFilesProcedure:
@@ -2708,6 +2762,14 @@ func (UnimplementedSessionServiceHandler) RenameProject(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SetProjectSettings is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ListProjectNotices(context.Context, *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListProjectNotices is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ClearProjectNotice(context.Context, *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ClearProjectNotice is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListDir(context.Context, *connect.Request[v1.ListDirRequest]) (*connect.Response[v1.ListDirResponse], error) {

@@ -99,11 +99,17 @@ const (
 	// about the latest plan-only state, at the Steer checkpoint where it entered
 	// the conversation (data: { plan_only, text }), so replay places it exactly.
 	PlanOnlyDelivered Type = "plan_only_delivered"
-	// CoordinationNotice records experimental same-file overlap notices from
-	// other sessions entering the coordinator's conversation as user-role
-	// context at a Steer checkpoint (actor "system"; data: { text, notices:
-	// [{ path, session }] }), so replay places them exactly.
+	// CoordinationNotice records experimental coordination context from other
+	// sessions entering the coordinator's conversation as user-role context at
+	// a Steer checkpoint (actor "system"; data: { text, notices?: [{ path,
+	// session }], board?: [{ id, change }] }): same-file overlap notices or a
+	// project notice board digest. Replay places it exactly.
 	CoordinationNotice Type = "coordination_notice"
+	// NoticePosted / NoticeCleared record this session posting or clearing a
+	// project notice board entry (data: { id, text, subject?, expires_at } /
+	// { id, reason }). They do not enter the conversation.
+	NoticePosted  Type = "notice_posted"
+	NoticeCleared Type = "notice_cleared"
 	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"

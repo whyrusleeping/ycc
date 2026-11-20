@@ -294,6 +294,7 @@ JSON="Content-Type: application/json"
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
 | [`SetProjectSettings`](#setprojectsettings) | change per-project settings in the project's `.ycc/config.toml` |
+| [`ListProjectNotices` / `ClearProjectNotice`](#listprojectnotices--clearprojectnotice) | read / clear the experimental project notice board |
 | [`ListFiles` / `ReadFile`](#listfiles--readfile) | read-only, project-confined file browsing |
 | [`GetPublications` / `PublishFile` / `UnpublishFile`](#getpublications--publishfile--unpublishfile) | share a project file as a secret public link |
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
@@ -429,6 +430,23 @@ started or reopened afterwards, turning it off applies at once. Missing `project
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","sessionCoordination":true}' \
   $B/ycc.v1.SessionService/SetProjectSettings
+```
+
+### ListProjectNotices / ClearProjectNotice
+
+Read and clear a project's experimental notice board (spec §7.3). `ListProjectNotices` returns the
+active `notices` (oldest first: `id`, `text`, `subject`, poster `sessionId` and `actor`, `taskIds`,
+RFC 3339 `postedAt` / `expiresAt`) and the `intents` of live sessions (`sessionId`, `text`,
+`setAt`); both are empty while the project's `sessionCoordination` is off. Notice and intent text is
+untrusted peer content. `ClearProjectNotice` clears an active notice as the user, with an optional
+`reason`. Unknown project, or a notice that is not active → `not_found`; missing `id` →
+`invalid_argument`; coordination off → `failed_precondition`.
+
+```
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc"}' \
+  $B/ycc.v1.SessionService/ListProjectNotices
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","id":"n3","reason":"tests are green"}' \
+  $B/ycc.v1.SessionService/ClearProjectNotice
 ```
 
 ### ListFiles / ReadFile
@@ -1452,8 +1470,10 @@ Common `type` values (initial set; full table in spec §5.2):
 `pause_requested` / `pause_cancelled`, `interrupted` / `resumed`, `user_input` / `user_input_delivered`, `plan_proposed`,
 `review_submitted`, `decision_made`, `doc_updated`, `commit_made`,
 `plan_only_changed` / `plan_only_delivered` (see [`SetPlanOnly`](#setplanonly)),
-`coordination_notice` (actor `system`, `{text, notices:[{path, session}]}`: another session's write
-to a file this session claims, delivered at a checkpoint; spec §7.3),
+`coordination_notice` (actor `system`, `{text, notices?:[{path, session}], board?:[{id, change}]}`:
+another session's write to a file this session claims, or a project notice board digest, delivered
+at a checkpoint; spec §7.3), `notice_posted` / `notice_cleared` (this session posted or cleared a
+board notice: `{id, text, subject?, expires_at}` / `{id, reason}`),
 `context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
 `session_reopened`, `log`, and the transient `turn_delta`.
 

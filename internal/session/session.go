@@ -236,6 +236,16 @@ type Session struct {
 	coordinationOn func() bool
 	noticeMu       sync.Mutex
 	notices        []overlapNotice
+	// Notice board (noticeboard.go): board is set when coordination is.
+	// boardSeen holds the active notices this session has been told of;
+	// boardOpened is set once its first digest (the current board) is out.
+	// The intent line lives only as long as the live session. All under
+	// noticeMu.
+	board       *sessionBoard
+	boardOpened bool
+	boardSeen   map[string]bool
+	intentText  string
+	intentAt    time.Time
 
 	// contextSummary is a test seam; nil uses the deterministic durable-evidence
 	// summary builder.
@@ -764,6 +774,11 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 			return nil, err
 		}
 		msgs = append(msgs, textMessages(notices)...)
+		digest, err := s.drainBoardDigest(time.Now())
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, textMessages(digest)...)
 		plan, err := s.planOnlyNote()
 		if err != nil {
 			return nil, err
@@ -836,6 +851,11 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 		return nil, err
 	}
 	msgs = append(msgs, textMessages(notices)...)
+	digest, err := s.drainBoardDigest(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	msgs = append(msgs, textMessages(digest)...)
 	plan, err := s.planOnlyNote()
 	if err != nil {
 		return nil, err
@@ -2171,6 +2191,10 @@ type Manager struct {
 	// a same-file overlap (coordination.go), so a pair hears of a path once.
 	overlapMu   sync.Mutex
 	overlapSeen map[string]bool
+	// boards caches each project's notice board (noticeboard.go), keyed by
+	// canonical primary tree.
+	boardMu sync.Mutex
+	boards  map[string]boardState
 
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
@@ -3125,6 +3149,10 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		thinkLevels:    map[string]string{},
 		coordination:   coordination,
 		coordinationOn: func() bool { return m.coordinationEnabled(absWS) },
+	}
+	if coordination {
+		s.board = &sessionBoard{m: m, s: s, primary: m.primaryTreeFor(absWS)}
+		deps.Board = s.board
 	}
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log
