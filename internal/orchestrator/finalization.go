@@ -436,6 +436,9 @@ func changesetNotes(changes *git.Changeset) []string {
 	if len(changes.Preexisting) > 0 {
 		notes = append(notes, fmt.Sprintf("included whole, with changes already uncommitted before this session (%d): %s", len(changes.Preexisting), boundedPathList(changes.Preexisting, 1024)))
 	}
+	if len(changes.Partial) > 0 {
+		notes = append(notes, fmt.Sprintf("committed only this session's lines; other sessions' uncommitted lines stay in the worktree (%d): %s", len(changes.Partial), boundedPathList(changes.Partial, 1024)))
+	}
 	if len(changes.Shared) > 0 {
 		notes = append(notes, fmt.Sprintf("included whole, also written by another session (%d): %s", len(changes.Shared), boundedPathList(changes.Shared, 1024)))
 	}

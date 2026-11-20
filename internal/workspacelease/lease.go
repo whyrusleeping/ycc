@@ -31,6 +31,12 @@ type Service struct {
 	gen       uint64
 	persist   bool
 	onOverlap func(Overlap) string
+
+	// linesMu guards the line attribution of bookkeeping files (lines.go):
+	// canonical worktree -> repository-relative path -> record.
+	linesMu sync.Mutex
+	lines   map[string]map[string]*lineFile
+	live    func(scope string) bool
 }
 
 type entry struct {

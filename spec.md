@@ -228,17 +228,20 @@ children finished. Child statuses alone do not establish parent completion.
 
 The selected task's canonical document is explicitly included in its changeset even when it was
 untracked, unstaged, or staged at session startup. Review sees its full change against HEAD, and
-acceptance commits it with the implementation. Other baseline-dirty files stay excluded while
+acceptance commits it with the implementation. Backlog task files and `memory.md`, the task's own
+document included, are committed line by line where another live session's line changes are recorded
+in them (§7.3): the commit takes HEAD plus only this session's and unattributed lines, and the other
+session's lines stay uncommitted in the worktree. Other baseline-dirty files stay excluded while
 unchanged. Once the session changes one again, it is included whole, earlier uncommitted changes and
 all, and the manifest and commit result list it as preexisting; precise hunk attribution is not
 attempted. The `commit` tool's optional `paths` adopts further whole files the same way, such as
-another task's work that must land together. A commit may therefore carry other uncommitted work in
-shared files: the agent names co-included tasks in its message or outcome rather than splitting or
-abandoning work to avoid it. Files the session neither changed nor named are never committed, and
-whole-tree commits are never made. Inclusion refuses a baseline index version distinct from both
-HEAD and the baseline worktree, or a new staged version distinct from HEAD, the accepted baseline
-index, and the current worktree. Normal bookkeeping can thus update an already-staged task without
-discarding independently staged content.
+another task's work that must land together, and a bookkeeping file named there is taken whole. A
+commit may therefore carry other uncommitted work in shared files: the agent names co-included tasks
+in its message or outcome rather than splitting or abandoning work to avoid it. Files the session
+neither changed nor named are never committed, and whole-tree commits are never made. Inclusion
+refuses a baseline index version distinct from both HEAD and the baseline worktree, or a new staged
+version distinct from HEAD, the accepted baseline index, and the current worktree. Normal
+bookkeeping can thus update an already-staged task without discarding independently staged content.
 Worktree snapshots (the session baseline, changesets, and the initial commit of a workspace ycc
 initializes) leave out untracked, non-ignored files over 100 MiB rather than hashing them into the
 object store. Session start shows a warning naming them, and commit results list any still present;
@@ -569,8 +572,35 @@ delegates to) is an attribution scope. Writes record a claim on the path for tha
   another scope already claims them, because a concurrent session's writes can land in the same
   window. Background shells claim when they exit.
 
-Backlog task files and `memory.md` are the exception: they are shared bookkeeping and are never
-claimed. A session's changeset — reviewed, inspected by clients, and committed — then:
+Backlog task files and `memory.md` are the exception: they are shared bookkeeping, never claimed,
+and attributed by line instead. Each scoped write of one, whether a structured docs-store write or a
+file-tool Edit/Write (both under the docs store lock), is recorded as that session's line changes
+against the file's HEAD content, persisted per worktree in its git directory
+(`ycc/bookkeeping-lines.json`). Changes nobody recorded (shell edits, client writes, hand edits) are
+unattributed, as are the lines of a session that is no longer live, so a finished session's
+leftovers ride along with the next commit of that file. Where another live session's line changes
+are recorded in a bookkeeping file, the changeset takes HEAD plus only this session's and
+unattributed lines, listing the file as partial, or leaves the file out when this session changed
+none of it. A session that deletes or replaces another's inserted lines, or edits a file another
+session created, takes that session's change along so the result stays well-formed; a list item,
+indented or blank line it adds under a heading or key line another session added keeps that line,
+and the line of the same heading or key it replaced, but not the rest of that session's change. A
+task file whose line version would still not parse as a task, or a file with a change that could not
+be diffed, is refused, naming the alternatives: commit it whole through `paths`, or wait for the
+other session's commit. Each line view is taken under the docs store lock, so a write is never seen
+apart from its attribution, and compares content with HEAD by the blob it cleans to, so line-ending
+conversion does not count as a change. The versions a session's review and commit inspections hand
+out are recorded by line identity (read-only client inspections do not replace them), so when a
+commit takes one of them (or the whole content), the remaining sessions' lines, and this session's
+later ones, stay attributed on top of the new HEAD; any other HEAD change re-anchors the record with
+the remaining differences unattributed. Publishing a partial commit, or retrying it, leaves the
+file's index entry alone when something other than the old HEAD content was staged there.
+Bookkeeping files with no live session's recorded changes follow the rules below. Watch runs, which
+have no commit tool, commit their own bookkeeping lines when they report, so their notes do not
+linger for a later commit to sweep in; if that commit fails, the report is refused unless it is an
+alert naming the uncommitted edits.
+
+A session's changeset — reviewed, inspected by clients, and committed — then:
 
 - excludes paths that only other scopes claimed;
 - includes paths both claimed, reporting them as shared;

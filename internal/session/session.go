@@ -2284,6 +2284,12 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	}
 	m.integrateAgent = m.runIntegrateSession
 	m.ownership.SetOverlapNotifier(m.claimOverlap)
+	// Bookkeeping lines of sessions that are no longer live ride along with
+	// the next commit of that file rather than staying stranded.
+	m.ownership.SetLiveScopes(func(scope string) bool {
+		_, live := m.Get(scope)
+		return live
+	})
 	m.gitSyncWG.Add(1)
 	go m.runGitSyncPoller()
 	return m
@@ -3107,6 +3113,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	// The session id is the attribution scope shared by the coordinator and every
 	// agent it delegates to (see workspacelease claims).
 	deps.CoordinatorToken = m.ownership.NewScopedToken(id, fmt.Sprintf("session %s coordinator", id))
+	deps.Docs.SetWriteObserver(deps.RecordBookkeeping)
 	deps.MemorySource = func(kind docs.MemoryKind) docs.MemoryProvenance {
 		return memorySourceFromEvents(id, log.Snapshot(), kind)
 	}

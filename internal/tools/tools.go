@@ -320,7 +320,8 @@ type Workspace struct {
 	// held across the write (see docs.Store.DocsWriteLock).
 	DocsWriteLock func(path string) (unlock func(), ok bool)
 	// SharedBookkeeping, when set, reports paths (backlog task files, memory)
-	// whose writes are not attributed to this scope (see docs.Store.IsBookkeeping).
+	// whose writes are attributed by line rather than claimed for this scope
+	// (see docs.Store.IsBookkeeping and workspacelease.Service.RecordLines).
 	SharedBookkeeping func(path string) bool
 	// WriteWait bounds how long a Write/Edit waits for an operation-scoped
 	// worktree section held by another scope (zero means fileWriteWait).
@@ -400,8 +401,8 @@ const fileWriteWait = 2 * time.Minute
 // invokes claim so the session's changeset attributes the path correctly when
 // other sessions share the tree; a failed write must not claim (it would make
 // another session's file look like this one's work). Shared bookkeeping
-// (backlog, memory) is never claimed. claim returns any overlap notice for the
-// tool result. release is idempotent.
+// (backlog, memory) is never claimed; claim records its line changes instead.
+// claim returns any overlap notice for the tool result. release is idempotent.
 func (w *Workspace) acquireFileWrite(ctx context.Context, path string) (release func(), claim func() string, err error) {
 	noop := func() {}
 	fallback := w.ownershipFallback(path)
@@ -411,6 +412,17 @@ func (w *Workspace) acquireFileWrite(ctx context.Context, path string) (release 
 	}
 	if w.DocsWriteLock != nil {
 		if unlock, ok := w.DocsWriteLock(path); ok {
+			if w.Ownership != nil && w.SharedBookkeeping != nil && w.SharedBookkeeping(path) {
+				// Shared bookkeeping is attributed line by line instead of
+				// claimed; the docs lock orders this write with the others.
+				before, _ := os.ReadFile(path)
+				claim = func() string {
+					if after, err := os.ReadFile(path); err == nil {
+						w.Ownership.RecordLines(path, fallback, w.MutationToken, before, after)
+					}
+					return ""
+				}
+			}
 			var once sync.Once
 			return func() { once.Do(unlock) }, claim, nil
 		}

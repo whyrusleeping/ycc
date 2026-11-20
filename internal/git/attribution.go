@@ -34,6 +34,21 @@ type Attribution struct {
 	// edit, so bookkeeping travels with whichever session commits next instead
 	// of blocking or being stranded.
 	Bookkeeping func(path string) bool
+	// Lines, when set, gives this scope's line-attributed version of a
+	// bookkeeping path at commit head: HEAD plus only this scope's and
+	// unattributed line changes (see workspacelease.Service.LineView). With
+	// ok, the path is decided by it instead of the rules above: left out
+	// unless mine, and otherwise included with that content, which leaves other
+	// scopes' lines in the worktree (Partial). exists=false means that version
+	// has no file. An error (HEAD moved during inspection) fails it. record
+	// is set for inspections that may be committed (not read-only ones).
+	Lines func(head, path string, record bool) (content []byte, exists, mine, ok bool, err error)
+	// Whole lists files, absolute or relative to Repo.Dir, that are adopted
+	// whole even when Lines covers them (a commit's explicitly named paths).
+	Whole []string
+	// BookkeepingOnly limits the changeset to bookkeeping paths Lines reports
+	// as this scope's.
+	BookkeepingOnly bool
 }
 
 // Baseline returns the (possibly rebased) baseline this changeset was computed

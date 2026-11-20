@@ -94,12 +94,27 @@ type Store struct {
 	// discovers duplicate IDs. Ordinary reads never call it. When acquisition is
 	// refused, the read returns the raw tasks and leaves repair for a later read.
 	repairLease func() (release func(), err error)
+	// observer, when set, hears every task and memory write made through this
+	// Store, under the store lock (see SetWriteObserver).
+	observer func(path string, before, after []byte)
 }
 
 // NewStore returns a Store for the backlog under workspaceRoot.
 func NewStore(workspaceRoot string) *Store {
 	dir := filepath.Clean(filepath.Join(workspaceRoot, "backlog"))
 	return &Store{dir: dir, mu: lockFor(dir), cfg: loadSpecConfig(workspaceRoot)}
+}
+
+// SetWriteObserver installs fn to hear each task file or memory.md write made
+// through this Store, with the file's content before (nil when absent) and
+// after. It runs under the store lock, so writes to one file reach it in
+// order. Sessions use it to attribute their bookkeeping lines.
+func (s *Store) SetWriteObserver(fn func(path string, before, after []byte)) { s.observer = fn }
+
+func (s *Store) observe(path string, before []byte, after string) {
+	if s.observer != nil {
+		s.observer(path, before, []byte(after))
+	}
 }
 
 // Dir returns the backlog directory path.
@@ -903,6 +918,7 @@ func (s *Store) write(t *Task) error {
 		body += "\n"
 	}
 	content := "---\n" + string(front) + "---\n\n" + strings.TrimLeft(body, "\n")
+	before, _ := os.ReadFile(t.Path)
 	tmp, err := os.CreateTemp(filepath.Dir(t.Path), ".task-*")
 	if err != nil {
 		return err
@@ -924,10 +940,25 @@ func (s *Store) write(t *Task) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, t.Path)
+	if err := os.Rename(tmpPath, t.Path); err != nil {
+		return err
+	}
+	s.observe(t.Path, before, content)
+	return nil
 }
 
 var frontmatterRe = regexp.MustCompile(`(?s)\A---\n(.*?)\n---\n?(.*)\z`)
+
+// ValidTaskContent reports whether data is a well-formed task file: its
+// frontmatter decodes into a task with an id.
+func ValidTaskContent(data []byte) bool {
+	m := frontmatterRe.FindSubmatch(data)
+	if m == nil {
+		return false
+	}
+	var t Task
+	return yaml.Unmarshal(m[1], &t) == nil && t.ID != ""
+}
 
 func parseFile(path string) (*Task, error) {
 	data, err := os.ReadFile(path)

@@ -5,14 +5,17 @@ status: todo
 priority: 2
 created: "2026-11-20"
 updated: "2026-11-20"
-depends_on: []
+depends_on:
+    - "0566"
+    - "0567"
+    - "0568"
 spec_refs:
     - spec.md#6.2
     - spec.md#7.3
 ---
 
 ## Description
-Current state: accepted on 2026-11-20 (session s_18f059896f075e5a); not started; no design chosen. This was found while reviewing the wheeler project's session logs for 0443 (experimental session awareness), but it is independent of that feature.
+Current state: accepted on 2026-11-20 (session s_18f059896f075e5a). Split on 2026-11-20 into 0566 (commit only a session's own lines of backlog and memory files, with watch runs committing their own bookkeeping), 0567 (refuse or narrow commits of code files another live session also changed) and 0568 (surface history rewrites and stashes on a shared HEAD); this task closes when they are done and its criteria are checked together. This was found while reviewing the wheeler project's session logs for 0443 (experimental session awareness), but it is independent of that feature.
 
 ## Why
 In the wheeler project from 2026-11-15 to 2026-11-20, many parallel sessions worked in one shared tree. Session logs show:

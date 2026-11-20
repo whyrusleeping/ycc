@@ -116,9 +116,28 @@ func watchReport(d *Deps) *gollama.Tool {
 			if d.WatchReport == nil {
 				return tools.ErrResult("watch_report: this session is not a watch run"), nil
 			}
+			// Commit the run's own backlog and memory lines now: nothing else
+			// would, and left dirty they would ride along with a later commit.
+			subject := singleLine(r.Summary)
+			if len(subject) > 120 {
+				subject = validUTF8Prefix(subject, 120) + "…"
+			}
+			committed, commitErr := commitBookkeeping(ctx, d, "Watch run notes: "+subject)
+			if commitErr != nil && committed == "" {
+				if r.Status != WatchAlert {
+					return tools.ErrResult("watch_report: this run's backlog/memory edits could not be committed: %v. Fix the cause and call watch_report again, undo those edits, or report status=alert naming them for the user; nothing was recorded", commitErr), nil
+				}
+				r.Summary += "\nThis run's backlog/memory edits are uncommitted: " + commitErr.Error()
+			}
 			msg, err := d.WatchReport(r)
 			if err != nil {
 				return tools.ErrResult("watch_report: %v", err), nil
+			}
+			if committed != "" {
+				msg += "\nCommitted this run's backlog/memory edits as " + committed + "."
+			}
+			if commitErr != nil && committed != "" {
+				msg += "\n" + commitErr.Error()
 			}
 			return &gollama.ToolResult{Content: msg, Structured: &tools.Control{Stop: true, Report: r.Summary}}, nil
 		},

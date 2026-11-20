@@ -335,16 +335,25 @@ func (d *Deps) changeset(taskID string, extra ...string) (*git.Changeset, error)
 		// Extra paths (commit's explicit paths) are adopted whole like the task
 		// document; relative ones resolve against the repository's workspace.
 		return append([]string{path}, extra...), nil
-	})
+	}, extra, false)
 }
 
 // sessionChangeset is this session's attributed changes since its baseline,
 // with paths adopted whole; unlike changeset it names no task.
 func (d *Deps) sessionChangeset(paths ...string) (*git.Changeset, error) {
-	return d.scopedChangeset(func() ([]string, error) { return paths, nil })
+	return d.scopedChangeset(func() ([]string, error) { return paths, nil }, paths, false)
 }
 
-func (d *Deps) scopedChangeset(adopt func() ([]string, error)) (*git.Changeset, error) {
+// bookkeepingChangeset is only this session's own line changes to backlog
+// task files and memory.md.
+func (d *Deps) bookkeepingChangeset() (*git.Changeset, error) {
+	return d.scopedChangeset(func() ([]string, error) { return nil, nil }, nil, true)
+}
+
+// scopedChangeset inspects the session's changes with adopt's files included.
+// whole lists the explicitly named ones, which stay whole even when they are
+// bookkeeping files otherwise committed line by line.
+func (d *Deps) scopedChangeset(adopt func() ([]string, error), whole []string, bookkeepingOnly bool) (*git.Changeset, error) {
 	if d.Repo == nil {
 		return nil, fmt.Errorf("git repository is not available")
 	}
@@ -366,22 +375,40 @@ func (d *Deps) scopedChangeset(adopt func() ([]string, error)) (*git.Changeset, 
 	if err != nil {
 		return nil, err
 	}
-	if attr := d.attribution(); attr != nil {
+	attr := d.attribution()
+	if bookkeepingOnly && (attr == nil || attr.Lines == nil) {
+		return nil, fmt.Errorf("bookkeeping line attribution is not available")
+	}
+	if attr != nil {
+		attr.Whole, attr.BookkeepingOnly = whole, bookkeepingOnly
 		return d.Repo.ChangesFor(d.Baseline, attr, paths...)
 	}
 	return d.Repo.ChangesIncluding(d.Baseline, paths...)
 }
 
 // attribution narrows this session's changeset in a worktree shared with other
-// sessions: paths only other scopes wrote through file tools are excluded. It
+// sessions: paths only other scopes wrote through file tools are excluded, and
+// backlog task files and memory.md take only this session's line changes. It
 // is nil (strict single-owner attribution) without a scoped ownership service.
 func (d *Deps) attribution() *git.Attribution {
 	if d.Ownership == nil || d.CoordinatorToken.Scope() == "" {
 		return nil
 	}
 	d.pruneCleanClaims()
-	mine, foreign := d.Ownership.Split(d.Workspace, d.CoordinatorToken.Scope())
-	return &git.Attribution{Mine: mine, Foreign: foreign, Bookkeeping: BookkeepingPaths(d.Workspace, d.Docs)}
+	scope := d.CoordinatorToken.Scope()
+	mine, foreign := d.Ownership.Split(d.Workspace, scope)
+	return &git.Attribution{
+		Mine: mine, Foreign: foreign, Bookkeeping: BookkeepingPaths(d.Workspace, d.Docs),
+		Lines: BookkeepingLines(d.Workspace, d.Docs, d.Ownership, scope),
+	}
+}
+
+// RecordBookkeeping attributes a structured write of a backlog task file or
+// memory.md to this session's line changes (docs.Store.SetWriteObserver).
+func (d *Deps) RecordBookkeeping(path string, before, after []byte) {
+	if d.Ownership != nil {
+		d.Ownership.RecordLines(path, d.Workspace, d.CoordinatorToken, before, after)
+	}
 }
 
 // pruneCleanClaims retires every scope's claims on paths that now match HEAD
@@ -420,6 +447,48 @@ func (d *Deps) releaseCleanClaims(paths []string) {
 // paths (Git's namespace, rooted at the worktree's top level) for change
 // attribution. It returns nil when store is nil or the worktree is unknown.
 func BookkeepingPaths(workspace string, store *docs.Store) func(string) bool {
+	abs := workspacePaths(workspace, store)
+	if abs == nil {
+		return nil
+	}
+	return func(rel string) bool {
+		path, ok := abs(rel)
+		return ok && store.IsBookkeeping(path)
+	}
+}
+
+// BookkeepingLines is the git.Attribution.Lines view of scope's own line
+// changes to bookkeeping files. It holds the docs store lock, so a write and
+// its attribution are never seen apart. A task file whose line version would
+// not be a well-formed task is refused with the alternatives. It returns nil
+// when store or ownership is nil or the worktree is unknown.
+func BookkeepingLines(workspace string, store *docs.Store, ownership *workspacelease.Service, scope string) func(head, path string, record bool) ([]byte, bool, bool, bool, error) {
+	abs := workspacePaths(workspace, store)
+	if abs == nil || ownership == nil {
+		return nil
+	}
+	return func(head, rel string, record bool) ([]byte, bool, bool, bool, error) {
+		path, inWorkspace := abs(rel)
+		if inWorkspace {
+			if unlock, ok := store.DocsWriteLock(path); ok {
+				defer unlock()
+			}
+		}
+		content, exists, mine, ok, err := ownership.LineView(workspace, head, rel, scope, record)
+		if err != nil || !ok || !mine || !exists || !inWorkspace || store.IsMemory(path) {
+			return content, exists, mine, ok, err
+		}
+		if !docs.ValidTaskContent(content) {
+			return nil, false, false, false, fmt.Errorf("%s: this session's lines depend on another live session's uncommitted lines there, and without them the task does not parse; name it in paths to commit it whole (and name the other work), or wait for that session to commit", rel)
+		}
+		return content, exists, mine, ok, nil
+	}
+}
+
+// workspacePaths maps repository-relative paths to absolute paths in
+// workspace (false outside it); nil when store is nil or the worktree is
+// unknown.
+func workspacePaths(workspace string, store *docs.Store) func(string) (string, bool) {
 	if store == nil {
 		return nil
 	}
@@ -431,12 +500,12 @@ func BookkeepingPaths(workspace string, store *docs.Store) func(string) bool {
 	if err != nil {
 		return nil
 	}
-	return func(rel string) bool {
+	return func(rel string) (string, bool) {
 		inWorkspace, err := filepath.Rel(resolved, filepath.Join(top, filepath.FromSlash(rel)))
 		if err != nil || inWorkspace == ".." || strings.HasPrefix(inWorkspace, ".."+string(filepath.Separator)) {
-			return false
+			return "", false
 		}
-		return store.IsBookkeeping(filepath.Join(workspace, inWorkspace))
+		return filepath.Join(workspace, inWorkspace), true
 	}
 }
 
@@ -1617,7 +1686,7 @@ func FormatAskManyAnswers(qs []Question, ans []string) string {
 func commitTool(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "commit",
-		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Files the session changed are committed whole, including other uncommitted work already in them (the result lists those). Detailed execution remains in session events and git history.",
+		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Files the session changed are committed whole, including other uncommitted work already in them (the result lists those); backlog task files and memory.md take only this session's own lines. Detailed execution remains in session events and git history.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id being committed"),
 			"message": tools.StrProp("concise commit message"),
@@ -1867,6 +1936,7 @@ func attributionNote(changes *git.Changeset) string {
 	}
 	line("SHARED WORKTREE — also written by another session (included; their edits to these files ride along)", changes.Shared)
 	line("Excluded — written only by another session", changes.Foreign)
+	line("Included line by line — only this session's lines; other sessions' uncommitted lines stay in the worktree", changes.Partial)
 	line("Included — already dirty before this session; earlier changes ride along", changes.Preexisting)
 	line("Excluded — dirty before this session and since written by another session", changes.Deferred)
 	if changes.MovedFrom != "" {
