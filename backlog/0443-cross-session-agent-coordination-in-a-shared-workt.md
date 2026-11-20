@@ -25,11 +25,24 @@ another live session holds is marked not actionable. Agents cannot coordinate di
 "I'm refactoring internal/tools/worker.go, hold off" or "I need X exported from your package".
 
 ### Design
-The feature is behind an experimental opt-in, `[experimental] session_messages = true`, in the
-project's `.ycc/config.toml` or daemon-wide in `ycc.toml`. This is the first `[experimental]` key.
-The tools are registered only when the opt-in is enabled.
-
-- **`list_sessions`** (read-only, coordinator tool). It lists the other top-level live sessions in
+- **Setting.** The feature is a daemon-wide experimental setting, `[experimental] session_messages`
+  in `ycc.toml` (default off; the first `[experimental]` key), with no per-project key. It is changed
+  from the web Settings page through a new RPC that persists it, following `SetWorkImplementation`;
+  its current value is returned with the other daemon settings. The iOS toggle is in 0562. Because a
+  session's tool set is fixed when its loop is built (user decision, 2026-11-20,
+  s_18f059896f075e5a):
+  - enabling applies to new and reopened sessions, and the toggle says so;
+  - disabling applies immediately: `message_session` in already-running sessions refuses new sends,
+    and no session is woken by a message. Messages already queued are still delivered at the
+    receiver's next checkpoint.
+- **Who can use the tools** (user decision, 2026-11-20, s_18f059896f075e5a). Coordinators send and
+  receive. Mutating subagents (implementers and mutating generic agents) get read-only
+  `list_sessions`, which shows claimed paths, but not `message_session`. Read-only subagents get
+  neither. Subagents never receive messages; the receiving coordinator relays one with
+  `send_to_agent` when relevant. Subagent-to-subagent messaging is not planned, since the
+  coordinator already relays between its own agents. Sending from subagents to other sessions is
+  the proposed follow-up 0563.
+- **`list_sessions`** (read-only). It lists the other top-level live sessions in
   the project's primary tree and its workstreams, reusing `liveSessionLines`. Each row gives the id,
   mode, activity state, focused tasks (held or not held), worktree, running jobs, a one-line session
   title, and a bounded list of paths the session has claimed (from the worktree claims registry).
@@ -62,7 +75,12 @@ The tools are registered only when the opt-in is enabled.
   reservations, the third idea in this task's original draft, are deferred.
 
 ## Acceptance criteria
-- With the opt-in off, neither tool is offered and no behaviour changes.
+- The web Settings page toggles the setting, which persists in `ycc.toml` across daemon restarts.
+  While it is off, new sessions are not offered the tools and no other behaviour changes; turning
+  it off refuses sends from running sessions and stops message-driven wakes without dropping queued
+  messages.
+- Coordinators get both tools, mutating subagents get only `list_sessions`, and read-only subagents
+  get neither.
 - `list_sessions` shows other live sessions in the main tree and workstreams with focus, state, jobs,
   and claimed paths; it omits the caller and sessions of other projects.
 - `message_session` delivers to a running receiver at its next checkpoint, ends a receiver's blocking
