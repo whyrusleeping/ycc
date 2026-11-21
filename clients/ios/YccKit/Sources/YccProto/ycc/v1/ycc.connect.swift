@@ -25,6 +25,10 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `listSessionHistory`(request: Ycc_V1_ListSessionHistoryRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListSessionHistoryResponse>
 
+    /// SearchSessions full-text searches one project's session messages.
+    @available(iOS 13, *)
+    func `searchSessions`(request: Ycc_V1_SearchSessionsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_SearchSessionsResponse>
+
     /// ListHomeSessions returns the registered projects plus every distinct
     /// project's first history page and work-loop membership in one round trip,
     /// for a client's cross-project home list.
@@ -412,6 +416,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     @available(iOS 13, *)
     public func `listSessionHistory`(request: Ycc_V1_ListSessionHistoryRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListSessionHistoryResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListSessionHistory", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `searchSessions`(request: Ycc_V1_SearchSessionsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SearchSessionsResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/SearchSessions", idempotencyLevel: .unknown, request: request, headers: headers)
     }
 
     @available(iOS 13, *)
@@ -875,6 +884,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let startSession = Connect.MethodSpec(name: "StartSession", service: "ycc.v1.SessionService", type: .unary)
             public static let listSessions = Connect.MethodSpec(name: "ListSessions", service: "ycc.v1.SessionService", type: .unary)
             public static let listSessionHistory = Connect.MethodSpec(name: "ListSessionHistory", service: "ycc.v1.SessionService", type: .unary)
+            public static let searchSessions = Connect.MethodSpec(name: "SearchSessions", service: "ycc.v1.SessionService", type: .unary)
             public static let listHomeSessions = Connect.MethodSpec(name: "ListHomeSessions", service: "ycc.v1.SessionService", type: .unary)
             public static let setSessionFollowUp = Connect.MethodSpec(name: "SetSessionFollowUp", service: "ycc.v1.SessionService", type: .unary)
             public static let markSessionsRead = Connect.MethodSpec(name: "MarkSessionsRead", service: "ycc.v1.SessionService", type: .unary)

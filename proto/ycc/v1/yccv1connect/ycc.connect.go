@@ -45,6 +45,9 @@ const (
 	// SessionServiceListSessionHistoryProcedure is the fully-qualified name of the SessionService's
 	// ListSessionHistory RPC.
 	SessionServiceListSessionHistoryProcedure = "/ycc.v1.SessionService/ListSessionHistory"
+	// SessionServiceSearchSessionsProcedure is the fully-qualified name of the SessionService's
+	// SearchSessions RPC.
+	SessionServiceSearchSessionsProcedure = "/ycc.v1.SessionService/SearchSessions"
 	// SessionServiceListHomeSessionsProcedure is the fully-qualified name of the SessionService's
 	// ListHomeSessions RPC.
 	SessionServiceListHomeSessionsProcedure = "/ycc.v1.SessionService/ListHomeSessions"
@@ -320,6 +323,8 @@ type SessionServiceClient interface {
 	// ListSessionHistory enumerates all sessions for a project (live + persisted
 	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
+	// SearchSessions full-text searches one project's session messages.
+	SearchSessions(context.Context, *connect.Request[v1.SearchSessionsRequest]) (*connect.Response[v1.SearchSessionsResponse], error)
 	// ListHomeSessions returns the registered projects plus every distinct
 	// project's first history page and work-loop membership in one round trip,
 	// for a client's cross-project home list.
@@ -533,6 +538,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceListSessionHistoryProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ListSessionHistory")),
+			connect.WithClientOptions(opts...),
+		),
+		searchSessions: connect.NewClient[v1.SearchSessionsRequest, v1.SearchSessionsResponse](
+			httpClient,
+			baseURL+SessionServiceSearchSessionsProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("SearchSessions")),
 			connect.WithClientOptions(opts...),
 		),
 		listHomeSessions: connect.NewClient[v1.ListHomeSessionsRequest, v1.ListHomeSessionsResponse](
@@ -1090,6 +1101,7 @@ type sessionServiceClient struct {
 	startSession           *connect.Client[v1.StartSessionRequest, v1.StartSessionResponse]
 	listSessions           *connect.Client[v1.ListSessionsRequest, v1.ListSessionsResponse]
 	listSessionHistory     *connect.Client[v1.ListSessionHistoryRequest, v1.ListSessionHistoryResponse]
+	searchSessions         *connect.Client[v1.SearchSessionsRequest, v1.SearchSessionsResponse]
 	listHomeSessions       *connect.Client[v1.ListHomeSessionsRequest, v1.ListHomeSessionsResponse]
 	setSessionFollowUp     *connect.Client[v1.SetSessionFollowUpRequest, v1.SetSessionFollowUpResponse]
 	markSessionsRead       *connect.Client[v1.MarkSessionsReadRequest, v1.MarkSessionsReadResponse]
@@ -1201,6 +1213,11 @@ func (c *sessionServiceClient) ListSessions(ctx context.Context, req *connect.Re
 // ListSessionHistory calls ycc.v1.SessionService.ListSessionHistory.
 func (c *sessionServiceClient) ListSessionHistory(ctx context.Context, req *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	return c.listSessionHistory.CallUnary(ctx, req)
+}
+
+// SearchSessions calls ycc.v1.SessionService.SearchSessions.
+func (c *sessionServiceClient) SearchSessions(ctx context.Context, req *connect.Request[v1.SearchSessionsRequest]) (*connect.Response[v1.SearchSessionsResponse], error) {
+	return c.searchSessions.CallUnary(ctx, req)
 }
 
 // ListHomeSessions calls ycc.v1.SessionService.ListHomeSessions.
@@ -1666,6 +1683,8 @@ type SessionServiceHandler interface {
 	// ListSessionHistory enumerates all sessions for a project (live + persisted
 	// on-disk logs), most-recent first. ListSessions stays live-only.
 	ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error)
+	// SearchSessions full-text searches one project's session messages.
+	SearchSessions(context.Context, *connect.Request[v1.SearchSessionsRequest]) (*connect.Response[v1.SearchSessionsResponse], error)
 	// ListHomeSessions returns the registered projects plus every distinct
 	// project's first history page and work-loop membership in one round trip,
 	// for a client's cross-project home list.
@@ -1875,6 +1894,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceListSessionHistoryProcedure,
 		svc.ListSessionHistory,
 		connect.WithSchema(sessionServiceMethods.ByName("ListSessionHistory")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceSearchSessionsHandler := connect.NewUnaryHandler(
+		SessionServiceSearchSessionsProcedure,
+		svc.SearchSessions,
+		connect.WithSchema(sessionServiceMethods.ByName("SearchSessions")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListHomeSessionsHandler := connect.NewUnaryHandler(
@@ -2433,6 +2458,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceListSessionsHandler.ServeHTTP(w, r)
 		case SessionServiceListSessionHistoryProcedure:
 			sessionServiceListSessionHistoryHandler.ServeHTTP(w, r)
+		case SessionServiceSearchSessionsProcedure:
+			sessionServiceSearchSessionsHandler.ServeHTTP(w, r)
 		case SessionServiceListHomeSessionsProcedure:
 			sessionServiceListHomeSessionsHandler.ServeHTTP(w, r)
 		case SessionServiceSetSessionFollowUpProcedure:
@@ -2638,6 +2665,10 @@ func (UnimplementedSessionServiceHandler) ListSessions(context.Context, *connect
 
 func (UnimplementedSessionServiceHandler) ListSessionHistory(context.Context, *connect.Request[v1.ListSessionHistoryRequest]) (*connect.Response[v1.ListSessionHistoryResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListSessionHistory is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) SearchSessions(context.Context, *connect.Request[v1.SearchSessionsRequest]) (*connect.Response[v1.SearchSessionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.SearchSessions is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListHomeSessions(context.Context, *connect.Request[v1.ListHomeSessionsRequest]) (*connect.Response[v1.ListHomeSessionsResponse], error) {

@@ -10,6 +10,8 @@ spec_refs: []
 ---
 
 ## Description
+Current state: todo, not started, nothing blocking. Verification runs on the configured Mac (see the 2026-11-10 work-log entry).
+
 The `QuestionSheet` batch/single answer logic lives entirely in the App layer
 (`clients/ios/App/SessionView.swift`) — per-question `texts`/`selected` state,
 `allAnswered`, and `submitBatch()` positional-answer assembly. App-layer SwiftUI
@@ -36,3 +38,4 @@ per-question selection/text, `allAnswered`, positional batch assembly) into a sm
 - Environment preflight: this workspace host is Linux (`uname -s`), `swift` is not on PATH, and YccKit's `KeychainStore.swift` imports Apple's `Security` framework. The required full YccKit `swift test` cannot be verified here by installing Linux Swift alone. `.github/workflows/ci.yml` defines a macOS Swift job, but the GitHub CLI is absent and no accessible remote verification path has been established in this session. No implementation was started.
 - Unblock with an accessible macOS Swift environment (or an authorized remote CI execution path) capable of running `swift test --package-path clients/ios/YccKit` against the implementation. Then resume the extraction and regression tests; all acceptance criteria remain outstanding.
 - 2026-11-10: Unblocked. The configured Mac (`ssh mac`, checkout `~/ycc-build`, see `.ycc/tmp/README.md`) is reachable and has `swift` and `xcodebuild`. Run `swift test` there.
+- 2026-11-21 groom: added a current-state line at the top. Not started: `QuestionSheet`, `allAnswered` and `submitBatch()` are still private to `clients/ios/App/SessionView.swift`, and YccKit has no answer-collection type.

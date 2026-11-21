@@ -2454,6 +2454,16 @@ func (m *Manager) resolveProjectWorkspace(name string) (string, error) {
 	return "", fmt.Errorf("%w: project is required when %d projects are registered", ErrUnknownProject, len(projects))
 }
 
+// ProjectWorkspace resolves a project (see resolveProjectWorkspace) to its
+// absolute root workspace.
+func (m *Manager) ProjectWorkspace(name string) (string, error) {
+	ws, err := m.resolveProjectWorkspace(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(ws)
+}
+
 // AddProject registers a workspace under an optional name.
 func (m *Manager) AddProject(path, name string) (project.Project, error) {
 	return m.projects.Add(path, name)
@@ -3557,8 +3567,16 @@ func (m *Manager) workstreamSessionWorktree(absWS, id string) (string, bool) {
 // indexing upper bound. A live log's sequence and byte offset are read through
 // Log's durability lock and exclude a write that has not completed fsync. A -1
 // boundary means a closed persisted log may be indexed through its complete newline-terminated
-// file snapshot.
+// file snapshot. A named project confines resolution to that project
+// (ProjectSessionLog).
 func (m *Manager) SessionViewLogPath(project, id string) (workspace, logPath string, durableSeq, durableOffset int64, err error) {
+	if project != "" {
+		root, err := m.ProjectWorkspace(project)
+		if err != nil {
+			return "", "", 0, 0, err
+		}
+		return m.ProjectSessionLog(root, id)
+	}
 	workspace, logPath, err = m.SessionLogPath(project, id)
 	if err != nil {
 		return "", "", 0, 0, err
@@ -3566,6 +3584,43 @@ func (m *Manager) SessionViewLogPath(project, id string) (workspace, logPath str
 	if live, ok := m.Get(id); ok {
 		seq, offset := live.Log().DurableBoundary()
 		return workspace, logPath, int64(seq), offset, nil
+	}
+	return workspace, logPath, -1, -1, nil
+}
+
+// ProjectSessionLog is SessionViewLogPath confined to the project at the
+// absolute root workspace absWS. A live session with this id counts only when
+// it runs in absWS or one of the project's in-flight worktrees; otherwise the
+// project's own persisted log is used, never another project's.
+func (m *Manager) ProjectSessionLog(absWS, id string) (workspace, logPath string, durableSeq, durableOffset int64, err error) {
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return "", "", 0, 0, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	if s, ok := m.Get(id); ok {
+		live, err := filepath.Abs(s.Workspace)
+		if err != nil {
+			return "", "", 0, 0, fmt.Errorf("resolve workspace: %w", err)
+		}
+		inProject := live == absWS
+		if !inProject {
+			_, worktrees := m.workstreamSessionOwners(absWS)
+			_, inProject = worktrees[live]
+		}
+		if inProject {
+			logPath = filepath.Join(live, ".ycc", "sessions", id, "events.jsonl")
+			if _, err := os.Stat(logPath); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return "", "", 0, 0, fmt.Errorf("%w %q", ErrUnknownSession, id)
+				}
+				return "", "", 0, 0, err
+			}
+			seq, offset := s.Log().DurableBoundary()
+			return live, logPath, int64(seq), offset, nil
+		}
+	}
+	workspace, logPath, err = m.locateSessionLog(absWS, id)
+	if err != nil {
+		return "", "", 0, 0, err
 	}
 	return workspace, logPath, -1, -1, nil
 }

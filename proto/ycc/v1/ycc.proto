@@ -474,6 +474,40 @@ message ListSessionHistoryResponse {
   repeated SessionSummary pinned = 3;
 }
 
+// SearchSessions full-text searches one project's sessions: user input,
+// coordinator assistant text, and asked questions with their human answers.
+message SearchSessionsRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+  // Whitespace-separated terms, all required, each matched as a word prefix.
+  // An empty query returns no hits but still starts an index refresh.
+  string query = 2;
+  string cursor = 3; // opaque next_cursor from a prior page of the same query
+  int32 limit = 4;   // zero means 20; capped at 100
+}
+message SessionSearchSpan {
+  string text = 1;
+  bool match = 2; // a matched term, rendered highlighted
+}
+message SessionSearchHit {
+  SessionSummary session = 1;
+  // Presentation row id (GetSessionView rows) of the best-ranked match.
+  string row_id = 2;
+  string kind = 3; // user | assistant | question | answer
+  repeated SessionSearchSpan snippet = 4;
+  int32 match_count = 5; // matching messages in the session
+  string timestamp = 6;  // RFC3339 of the matching event
+}
+message SearchSessionsResponse {
+  // One hit per session: best bm25 rank first, then most recent.
+  repeated SessionSearchHit hits = 1;
+  string next_cursor = 2; // empty when there are no more hits
+  // The index refresh this request started is still running, so sessions
+  // not yet indexed (or their newest messages) are missing from hits.
+  bool indexing = 3;
+  int32 indexed_sessions = 4;
+  int32 total_sessions = 5;
+}
+
 // ListHomeSessions replaces a home screen's ListProjects plus per-project
 // ListSessionHistory and GetWorkLoop fan-out with one request.
 message ListHomeSessionsRequest {
@@ -1794,6 +1828,8 @@ service SessionService {
   // ListSessionHistory enumerates all sessions for a project (live + persisted
   // on-disk logs), most-recent first. ListSessions stays live-only.
   rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
+  // SearchSessions full-text searches one project's session messages.
+  rpc SearchSessions(SearchSessionsRequest) returns (SearchSessionsResponse);
   // ListHomeSessions returns the registered projects plus every distinct
   // project's first history page and work-loop membership in one round trip,
   // for a client's cross-project home list.

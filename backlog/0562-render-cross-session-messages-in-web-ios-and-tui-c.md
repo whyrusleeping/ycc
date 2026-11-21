@@ -15,12 +15,13 @@ spec_refs:
 
 ## Description
 Current state: proposed follow-up to 0443 (experimental session awareness: `list_sessions`, path
-ownership lookup, overlap notices) and 0564 (experimental project notice board). Those tasks ship
+ownership lookup, overlap notices) and 0564 (experimental project notice board). Both are done
+(`4096a81`, `41c611e`), and they ship
 only the web per-project toggle and the generic event fallback. This task is separate because it
 touches three clients and needs the iOS build and screenshot check on the Mac.
 
 Reviews of the wheeler project's logs on 2026-11-20 put ownership surfaces ahead of transcript
-styling. On 2026-11-18 the user opened a fresh session just to ask why a service was down. On
+styling. The user asked for those reviews in session s_18f059896f075e5a at event 152. On 2026-11-18 the user opened a fresh session just to ask why a service was down. On
 2026-11-20 a session sat in `ask_user` for 33 minutes about a deploy whose context was known
 to other sessions.
 
@@ -43,3 +44,4 @@ to other sessions.
   Playwright screenshot.
 
 ## Work log
+- 2026-11-21 groom: noted that dependencies 0443 and 0564 are done, with their commits, and cited the session that requested the wheeler log reviews. Still proposed.

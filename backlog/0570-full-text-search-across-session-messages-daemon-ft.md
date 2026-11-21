@@ -5,14 +5,17 @@ status: todo
 priority: 3
 created: "2026-11-20"
 updated: "2026-11-21"
-depends_on: []
+depends_on:
+    - "0571"
+    - "0572"
+    - "0573"
 spec_refs:
     - spec.md#18.6 Session history and reopen
     - docs/design/web-client.md
 ---
 
 ## Description
-**Status:** accepted (todo). Scope decided by the user on 2026-11-20 in the session that created this task. Nothing is implemented.
+**Status:** accepted; split on 2026-11-21 into 0571 (daemon index, RPC and spec), 0572 (web UI) and 0573 (iOS UI, built on the Mac). This parent closes after all three, checked against the criteria below. Scope decided by the user on 2026-11-20 in the session that created this task.
 
 ## Problem
 

@@ -47,6 +47,8 @@ type Server struct {
 	subUsage   *subusage.Service
 	viewMu     sync.Mutex
 	viewStores map[string]*sessionview.Store
+	searchMu   sync.Mutex
+	searches   map[string]*projectSearch // by root workspace
 	// viewKeepalive is how long a SubscribeSessionView stream may stay silent
 	// before an empty SessionViewUpdate is sent (see sessionViewKeepalive).
 	viewKeepalive  time.Duration

@@ -7,12 +7,14 @@ created: "2026-08-06"
 updated: "2026-09-17"
 depends_on: []
 spec_refs:
-    - 9. Modes (the home menu)
+    - 9.1 Unattended work loop
     - "20.6"
 ---
 
 ## Description
-The daemon-side work loop (task 0179) has unit coverage, including tests that exercise `realRunSession` through a narrower `startSession` seam. The remaining verification gap is a documented client-driven, real-model end-to-end run covering session lifecycle, event-log accounting, budgets, reclaim, graceful stop and digest delivery; do not duplicate runner tests already present. Use a scratch workspace, explicit bounded spend/runtime, and an authorized notification destination. If credentials, budget or notification setup are unavailable, report the missing gate rather than substituting fake evidence.
+Current state: blocked, not started. It needs an authorized notification destination for the digest push. On 2026-11-21 the `[notify]` section of `~/.config/ycc/ycc.toml` was still empty, and `plans/work-loop-smoke.md` did not exist.
+
+The daemon-side work loop (task 0179, done) has unit coverage, including tests that exercise `realRunSession` through a narrower `startSession` seam. The remaining verification gap is a documented client-driven, real-model end-to-end run covering session lifecycle, event-log accounting, budgets, reclaim, graceful stop and digest delivery; do not duplicate runner tests already present. Use a scratch workspace, explicit bounded spend/runtime, and an authorized notification destination. If credentials, budget or notification setup are unavailable, report the missing gate rather than substituting fake evidence.
 
 ## Scope
 - Write `plans/work-loop-smoke.md` (mirroring `plans/remote-access-smoke.md`): start a daemon on a scratch workspace with 2–3 small ready backlog tasks, start a loop via `StartWorkLoop`, observe `GetWorkLoop` advancing through sessions, gracefully `StopWorkLoop` mid-drain, and verify the end-of-batch digest + the ntfy `digest` push.
@@ -25,4 +27,5 @@ The daemon-side work loop (task 0179) has unit coverage, including tests that ex
 - Any defect found is fixed with a regression test; `go build ./... && go test ./...` green.
 
 ## Work log
-- 2026-09-17 preflight: global `~/.config/ycc/ycc.toml` has an empty `[notify]` section, project `.ycc/config.toml` has no notification destination, and no notification environment setting is present. The required authorized ntfy digest destination is unavailable; no live loop was started. Unblock by configuring/authorizing a notification destination for the bounded scratch smoke. This administrative update was deferred until after task 0284 finalization because the changeset ownership guard rejected modifying this already-dirty, unrelated task during that task's implementation.
+- 2026-09-17 preflight: global `~/.config/ycc/ycc.toml` has an empty `[notify]` section, project `.ycc/config.toml` has no notification destination, and no notification environment setting is present. The required authorized ntfy digest destination is unavailable; no live loop was started. Unblock by configuring/authorizing a notification destination for the bounded scratch smoke. This administrative update was deferred until after task 0284 (live smoke of codex stateless reasoning replay) finalization because the changeset ownership guard rejected modifying this already-dirty, unrelated task during that task's implementation.
+- 2026-11-21 groom: added a current-state line; the blocker still holds because `[notify]` is still empty. Glossed 0179 and 0284. Repointed the stale spec ref "9. Modes (the home menu)" to §9.1 "Unattended work loop".

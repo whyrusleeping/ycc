@@ -19,3 +19,4 @@ Current state: proposed on 2026-11-20 by the agent working on 0566 (line attribu
 - Publishing a commit never drops an index entry staged after the changeset was inspected; the entry is kept or the publication reports it.
 
 ## Work log
+- 2026-11-21 groom: reviewed, no change. Filed in `9d0f0ed` alongside 0566. Still proposed.

@@ -1449,6 +1449,105 @@ public nonisolated struct Ycc_V1_ListSessionHistoryResponse: Sendable {
   public init() {}
 }
 
+/// SearchSessions full-text searches one project's sessions: user input,
+/// coordinator assistant text, and asked questions with their human answers.
+public nonisolated struct Ycc_V1_SearchSessionsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  /// Whitespace-separated terms, all required, each matched as a word prefix.
+  /// An empty query returns no hits but still starts an index refresh.
+  public var query: String = String()
+
+  /// opaque next_cursor from a prior page of the same query
+  public var cursor: String = String()
+
+  /// zero means 20; capped at 100
+  public var limit: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SessionSearchSpan: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var text: String = String()
+
+  /// a matched term, rendered highlighted
+  public var match: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_SessionSearchHit: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var session: Ycc_V1_SessionSummary {
+    get {_session ?? Ycc_V1_SessionSummary()}
+    set {_session = newValue}
+  }
+  /// Returns true if `session` has been explicitly set.
+  public var hasSession: Bool {self._session != nil}
+  /// Clears the value of `session`. Subsequent reads from it will return its default value.
+  public mutating func clearSession() {self._session = nil}
+
+  /// Presentation row id (GetSessionView rows) of the best-ranked match.
+  public var rowID: String = String()
+
+  /// user | assistant | question | answer
+  public var kind: String = String()
+
+  public var snippet: [Ycc_V1_SessionSearchSpan] = []
+
+  /// matching messages in the session
+  public var matchCount: Int32 = 0
+
+  /// RFC3339 of the matching event
+  public var timestamp: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _session: Ycc_V1_SessionSummary? = nil
+}
+
+public nonisolated struct Ycc_V1_SearchSessionsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// One hit per session: best bm25 rank first, then most recent.
+  public var hits: [Ycc_V1_SessionSearchHit] = []
+
+  /// empty when there are no more hits
+  public var nextCursor: String = String()
+
+  /// The index refresh this request started is still running, so sessions
+  /// not yet indexed (or their newest messages) are missing from hits.
+  public var indexing: Bool = false
+
+  public var indexedSessions: Int32 = 0
+
+  public var totalSessions: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// ListHomeSessions replaces a home screen's ListProjects plus per-project
 /// ListSessionHistory and GetWorkLoop fan-out with one request.
 public nonisolated struct Ycc_V1_ListHomeSessionsRequest: Sendable {
@@ -8366,6 +8465,195 @@ nonisolated extension Ycc_V1_ListSessionHistoryResponse: SwiftProtobuf.Message, 
     if lhs.sessions != rhs.sessions {return false}
     if lhs.nextCursor != rhs.nextCursor {return false}
     if lhs.pinned != rhs.pinned {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SearchSessionsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SearchSessionsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}query\0\u{1}cursor\0\u{1}limit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.query) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.cursor) }()
+      case 4: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.query.isEmpty {
+      try visitor.visitSingularStringField(value: self.query, fieldNumber: 2)
+    }
+    if !self.cursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.cursor, fieldNumber: 3)
+    }
+    if self.limit != 0 {
+      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SearchSessionsRequest, rhs: Ycc_V1_SearchSessionsRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.query != rhs.query {return false}
+    if lhs.cursor != rhs.cursor {return false}
+    if lhs.limit != rhs.limit {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SessionSearchSpan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SessionSearchSpan"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}match\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.match) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
+    }
+    if self.match != false {
+      try visitor.visitSingularBoolField(value: self.match, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SessionSearchSpan, rhs: Ycc_V1_SessionSearchSpan) -> Bool {
+    if lhs.text != rhs.text {return false}
+    if lhs.match != rhs.match {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SessionSearchHit: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SessionSearchHit"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}session\0\u{3}row_id\0\u{1}kind\0\u{1}snippet\0\u{3}match_count\0\u{1}timestamp\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._session) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.rowID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.snippet) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.matchCount) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.timestamp) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._session {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.rowID.isEmpty {
+      try visitor.visitSingularStringField(value: self.rowID, fieldNumber: 2)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 3)
+    }
+    if !self.snippet.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.snippet, fieldNumber: 4)
+    }
+    if self.matchCount != 0 {
+      try visitor.visitSingularInt32Field(value: self.matchCount, fieldNumber: 5)
+    }
+    if !self.timestamp.isEmpty {
+      try visitor.visitSingularStringField(value: self.timestamp, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SessionSearchHit, rhs: Ycc_V1_SessionSearchHit) -> Bool {
+    if lhs._session != rhs._session {return false}
+    if lhs.rowID != rhs.rowID {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.snippet != rhs.snippet {return false}
+    if lhs.matchCount != rhs.matchCount {return false}
+    if lhs.timestamp != rhs.timestamp {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SearchSessionsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SearchSessionsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}hits\0\u{3}next_cursor\0\u{1}indexing\0\u{3}indexed_sessions\0\u{3}total_sessions\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.hits) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.nextCursor) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.indexing) }()
+      case 4: try { try decoder.decodeSingularInt32Field(value: &self.indexedSessions) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.totalSessions) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.hits.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.hits, fieldNumber: 1)
+    }
+    if !self.nextCursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.nextCursor, fieldNumber: 2)
+    }
+    if self.indexing != false {
+      try visitor.visitSingularBoolField(value: self.indexing, fieldNumber: 3)
+    }
+    if self.indexedSessions != 0 {
+      try visitor.visitSingularInt32Field(value: self.indexedSessions, fieldNumber: 4)
+    }
+    if self.totalSessions != 0 {
+      try visitor.visitSingularInt32Field(value: self.totalSessions, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SearchSessionsResponse, rhs: Ycc_V1_SearchSessionsResponse) -> Bool {
+    if lhs.hits != rhs.hits {return false}
+    if lhs.nextCursor != rhs.nextCursor {return false}
+    if lhs.indexing != rhs.indexing {return false}
+    if lhs.indexedSessions != rhs.indexedSessions {return false}
+    if lhs.totalSessions != rhs.totalSessions {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

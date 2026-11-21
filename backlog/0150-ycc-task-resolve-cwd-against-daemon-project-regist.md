@@ -11,7 +11,7 @@ spec_refs: []
 ---
 
 ## Description
-`ycc task` (task 0143) prefers a reachable local persistent daemon; without `--project` the RPCs then target the daemon's *default workspace*. If the user runs `ycc task add` from a different repo than the daemon's default, the task is filed into the wrong backlog. Flagged as a nit in review of 0143.
+`ycc task` (task 0143, CLI backlog parity: `ycc task add / list / show`, done in `e0c8c07`) prefers a reachable local persistent daemon; without `--project` the RPCs then target the daemon's *default workspace*. If the user runs `ycc task add` from a different repo than the daemon's default, the task is filed into the wrong backlog. Flagged as a nit in review of 0143.
 
 Improve resolution: when using a local daemon without `--project`, resolve the CLI's cwd/--workspace against the daemon's project registry (ListProjects) and pass the matching project name; if the cwd matches no registered project, fall back to the direct docs.Store on the cwd (with a note), rather than silently writing to the daemon's default workspace.
 
@@ -22,3 +22,4 @@ Improve resolution: when using a local daemon without `--project`, resolve the C
 
 
 ## Work log
+- 2026-11-21 groom: glossed 0143. Still open: `taskBackend` in cmd/ycc/task.go still sends an empty project to a local daemon when `--project` is absent. Still proposed.

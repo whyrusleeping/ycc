@@ -15,7 +15,7 @@ spec_refs:
 ---
 
 ## Description
-Current state: accepted on 2026-11-20 (session s_18f059896f075e5a). Split on 2026-11-20 into 0566 (commit only a session's own lines of backlog and memory files, with watch runs committing their own bookkeeping), 0567 (refuse or narrow commits of code files another live session also changed) and 0568 (surface history rewrites and stashes on a shared HEAD); this task closes when they are done and its criteria are checked together. This was found while reviewing the wheeler project's session logs for 0443 (experimental session awareness), but it is independent of that feature.
+Current state: accepted on 2026-11-20 (session s_18f059896f075e5a, event 430: "Yes, file a todo task for the commit sweep-in / git-plumbing problem"). Split on 2026-11-20 into 0566 (commit only a session's own lines of backlog and memory files, with watch runs committing their own bookkeeping; done in `9d0f0ed`), 0567 (refuse or narrow commits of code files another live session also changed; todo) and 0568 (surface history rewrites and stashes on a shared HEAD; todo). This task closes when they are done and its criteria are checked together. This was found while reviewing the wheeler project's session logs for 0443 (experimental session awareness), but it is independent of that feature.
 
 ## Why
 In the wheeler project from 2026-11-15 to 2026-11-20, many parallel sessions worked in one shared tree. Session logs show:
@@ -49,3 +49,4 @@ Make the supported commit path good enough that agents stop working around it in
 - spec §6.2 and §7.3 describe the chosen behaviour.
 
 ## Work log
+- 2026-11-21 groom: recorded in the current state that 0566 is done (`9d0f0ed`) and 0567 and 0568 are still todo, and cited the acceptance event. The criteria stay unchecked until the slices land together.

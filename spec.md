@@ -1314,6 +1314,26 @@ the log ends while the coordinator waits on one, reopen restores that exact ques
 result, and the answer is recorded as usual before the model continues. Answering such a persisted
 question reopens the session; answer RPCs never resume a transcript with no restorable question.
 
+`SearchSessions` full-text searches one project's sessions. Indexed text is user input,
+coordinator assistant text (model turns and idle reports), asked questions with their options, and
+non-automatic answers. Tool calls and results, thinking, subagent turns, and plan, review and commit
+summaries are not indexed. The index is a rebuildable FTS5 database at
+`<root workspace>/.ycc/session-search.sqlite`, owner-only like the presentation index. It follows
+each log from a durable byte watermark with the same source-change checks: live logs only within
+their post-fsync boundary, and a replaced or rewritten log, a schema change, or a deleted database
+reindexes from JSONL. Each indexed message carries the presentation row id the session view assigns
+to the same event, so a hit names a row that `GetSessionView` serves. Search and presentation reads
+that name a project resolve logs within that project and its in-flight worktrees; a live session of
+the same id elsewhere never stands in. Every request starts a refresh
+pass over the project's history, newest session first, or queues one behind a running pass, and a
+pass drops sessions whose logs are gone. The request waits up to 1.5 s for that pass. If the pass is still
+running, as during a first backfill, the response sets `indexing` with indexed/total session counts
+and answers from what is indexed so far. A query's whitespace-separated terms are all required and
+each matches as a word prefix; FTS5 syntax in the input is literal. Results have one hit per
+session: its best-ranked message (bm25, then newest), the session summary, the row id and message
+kind, a snippet split into highlighted and plain spans, and the session's matching-message count.
+Pages use an opaque cursor. Clients open a hit at its row, paging earlier history in as needed.
+
 Sessions also have a user-owned follow-up bookmark, independent of agent status. The daemon's
 `SetSessionFollowUp` RPC sets or clears a boolean and its original `flagged_at` timestamp;
 repeated sets are idempotent. Bookmarks live in the project's root workspace at
