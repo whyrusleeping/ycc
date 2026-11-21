@@ -113,6 +113,18 @@ struct SessionView: View {
     /// swipe-dismiss can hide it while the pending gate persists — reopen via the
     /// banner).
     @State private var showQuestionSheet = false
+    /// Whether the answer sheet's content is actually in a window (reported by
+    /// ``WindowPresenceProbe``). `showQuestionSheet` alone can stay true for a
+    /// presentation UIKit never put on screen — one requested as the app woke
+    /// from the background — which hid both the sheet and the banner.
+    @State private var questionSheetOnScreen = false
+    /// Bumped by every answer-sheet request, so a newer one (or a closed gate)
+    /// supersedes a request still waiting to present.
+    @State private var questionSheetRequest = 0
+    /// A question whose presentation was skipped while the scene was inactive.
+    @State private var questionSheetOnActive: String?
+    /// Uptime when the scene last became active; presentation waits it out.
+    @State private var activeSince: TimeInterval = 0
     /// The question the sheet last showed. Answering closes the gate
     /// optimistically while the sheet is still animating away; keep rendering
     /// the question until it is gone instead of flashing an empty sheet.
@@ -358,6 +370,8 @@ struct SessionView: View {
                     // out-of-range index.
                     .id(pending.rowID)
                     .trackedView("question")
+                    .background(WindowPresenceProbe { questionSheetOnScreen = $0 })
+                    .onDisappear { questionSheetOnScreen = false }
                 }
             }
             // Present/dismiss the sheet as the pending gate opens and clears — the
@@ -372,16 +386,13 @@ struct SessionView: View {
                 if let question = model.pendingQuestion { sheetQuestion = question }
                 // A question restored after a failed answer waits behind the banner
                 // rather than re-presenting the sheet over the error alert.
-                let show = rowID != nil && rowID != model.rolledBackQuestionRowID
-                guard show, oldRowID == rowID else {
-                    showQuestionSheet = show
+                guard let rowID, rowID != model.rolledBackQuestionRowID else {
+                    questionSheetRequest &+= 1
+                    questionSheetOnActive = nil
+                    showQuestionSheet = false
                     return
                 }
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 450_000_000)
-                    guard model.pendingQuestion?.rowID == rowID, !showQuestionSheet else { return }
-                    showQuestionSheet = true
-                }
+                requestQuestionSheet(rowID: rowID, delay: oldRowID == rowID ? 0.45 : 0)
             }
             .onChange(of: model.unauthorized) { _, isUnauthorized in
                 if isUnauthorized { app.handleUnauthorized() }
@@ -438,7 +449,14 @@ struct SessionView: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
+                    activeSince = ProcessInfo.processInfo.systemUptime
                     model.reconnect()
+                    // Retry a presentation skipped while inactive, or one the
+                    // flag claims but no window shows.
+                    if let rowID = model.pendingQuestion?.rowID, !questionSheetOnScreen,
+                       questionSheetOnActive == rowID || showQuestionSheet {
+                        requestQuestionSheet(rowID: rowID, delay: 0)
+                    }
                 } else {
                     // Backgrounding may be the last thing that happens to this view;
                     // don't leave what is on screen counted as unread.
@@ -500,19 +518,59 @@ struct SessionView: View {
         }
     }
 
-    /// When a question is pending but the sheet was swipe-dismissed, offer a way
-    /// back in (the transcript row also still shows it as waiting).
+    /// When a question is pending but the sheet is not on screen (swipe-dismissed,
+    /// or a presentation that never appeared), offer a way back in (the
+    /// transcript row also still shows it as waiting).
     @ViewBuilder
     private var pendingQuestionBanner: some View {
-        if model.pendingQuestion != nil, !showQuestionSheet {
+        if let pending = model.pendingQuestion, !questionSheetOnScreen {
             banner(
                 "A question is waiting",
                 systemImage: "questionmark.bubble.fill",
                 tint: Theme.attention,
-                action: ("Answer", { showQuestionSheet = true })
+                action: ("Answer", {
+                    requestQuestionSheet(rowID: pending.rowID, delay: 0, userInitiated: true)
+                })
             )
         }
     }
+
+    /// Present the answer sheet for pending question `rowID` after `delay`,
+    /// and no sooner than ``questionSheetWakeSettle`` after the scene became
+    /// active: a sheet requested while the app is still waking can be marked
+    /// presented without ever reaching the screen. A flag already stuck on such
+    /// a presentation is reset first, and one that still does not appear is
+    /// cleared so the banner offers Answer again.
+    /// `userInitiated` (Answer, a tap on the row) also opens a question whose
+    /// failed answer was rolled back, which otherwise waits behind the banner.
+    private func requestQuestionSheet(rowID: String, delay: TimeInterval, userInitiated: Bool = false) {
+        questionSheetRequest &+= 1
+        let request = questionSheetRequest
+        let wait = max(delay, activeSince + Self.questionSheetWakeSettle - ProcessInfo.processInfo.systemUptime)
+        Task { @MainActor in
+            func current() -> Bool {
+                request == questionSheetRequest && model.pendingQuestion?.rowID == rowID
+                    && (userInitiated || rowID != model.rolledBackQuestionRowID) && !questionSheetOnScreen
+            }
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+            guard current() else { return }
+            guard scenePhase == .active else {
+                questionSheetOnActive = rowID
+                return
+            }
+            questionSheetOnActive = nil
+            if showQuestionSheet {
+                showQuestionSheet = false
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard current() else { return }
+            }
+            showQuestionSheet = true
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if current(), showQuestionSheet { showQuestionSheet = false }
+        }
+    }
+
+    private static let questionSheetWakeSettle: TimeInterval = 0.8
 
     /// Chrome follows the view model's *display* state: the durable phase,
     /// overridden while a control the user just triggered awaits its echo, so
@@ -838,6 +896,10 @@ struct SessionView: View {
                     },
                     onOpenReview: { task, snapshot in
                         workingChangesTarget = WorkingChangesTarget(task: task, snapshot: snapshot)
+                    },
+                    onOpenQuestion: { rowID in
+                        Analytics.action("question.open_from_row")
+                        requestQuestionSheet(rowID: rowID, delay: 0, userInitiated: true)
                     },
                     loadPicture: { [client, project, sessionID] attachmentID in
                         guard !attachmentID.isEmpty,
@@ -1580,6 +1642,7 @@ private struct DurableTranscriptRows: View {
     let onLoadEarlier: () -> Void
     let onOpenCommit: (String) -> Void
     let onOpenReview: (String, String) -> Void
+    let onOpenQuestion: (String) -> Void
     let loadPicture: @Sendable (String) async -> Data?
     let onEditFailedMessage: (String) -> Void
 
@@ -1616,6 +1679,7 @@ private struct DurableTranscriptRows: View {
                     showsActorHeading: showsActorHeading,
                     onOpenCommit: onOpenCommit,
                     onOpenReview: onOpenReview,
+                    onOpenQuestion: onOpenQuestion,
                     loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
                     loadPicture: loadPicture
                 )
@@ -1850,6 +1914,9 @@ struct TranscriptRowView: View, Equatable {
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
     var onOpenReview: (String, String) -> Void = { _, _ in }
+    /// Opens the answer sheet from a waiting question row; nil where the row
+    /// cannot answer (the Activity sheet).
+    var onOpenQuestion: ((String) -> Void)?
     /// Fetches a large abbreviated row only when its disclosure is opened.
     var loadDetail: @MainActor (String) async -> Void = { _ in }
     /// Lazily retrieves a retained user picture. Returning nil renders the
@@ -1915,7 +1982,9 @@ struct TranscriptRowView: View, Equatable {
                 name: name, status: status, args: args, output: output,
                 loadDetail: detailLoader)
         case .question(let prompt, let options, let answer):
-            QuestionRowView(prompt: prompt, options: options, answer: answer)
+            QuestionRowView(
+                prompt: prompt, options: options, answer: answer,
+                onAnswer: answer == nil ? onOpenQuestion.map { open in { open(row.id) } } : nil)
         case .assumption(let questions, let response):
             VStack(alignment: .leading, spacing: 4) {
                 AssumptionRowView(questions: questions, response: response)
@@ -2539,17 +2608,60 @@ private struct ToolRowView: View {
     }
 }
 
+/// Reports, after the fact, whether the view it backs is in a window: proof
+/// that a presented sheet's content reached the screen, which `onAppear` is
+/// not.
+private struct WindowPresenceProbe: UIViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeUIView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.isUserInteractionEnabled = false
+        view.onChange = onChange
+        return view
+    }
+
+    func updateUIView(_ view: ProbeView, context: Context) {
+        view.onChange = onChange
+    }
+
+    final class ProbeView: UIView {
+        var onChange: ((Bool) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            let inWindow = window != nil
+            // Not during UIKit's hierarchy update: state writes belong to the
+            // next run-loop turn (delivered even if this view is gone by then).
+            let report = onChange
+            DispatchQueue.main.async { report?(inWindow) }
+        }
+    }
+}
+
 /// A pending or resolved `ask_user` question row.
 private struct QuestionRowView: View {
     let prompt: String
     let options: [String]
     let answer: String?
+    /// Opens the answer sheet; set only while the question waits.
+    var onAnswer: (() -> Void)?
 
     var body: some View {
+        if let onAnswer {
+            Button(action: onAnswer) { card }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the answer sheet")
+        } else {
+            card
+        }
+    }
+
+    private var card: some View {
         // Attention is "needs you"; once answered the card goes neutral so an
         // old question doesn't keep reading as an open gate.
         let tint: Color = answer == nil ? Theme.attention : .secondary
-        VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: answer == nil ? "questionmark.bubble" : "checkmark.bubble")
                     .foregroundStyle(answer == nil ? Theme.attention : Theme.live)
@@ -2568,7 +2680,7 @@ private struct QuestionRowView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.live)
             } else {
-                Text("waiting for an answer")
+                Text(onAnswer == nil ? "waiting for an answer" : "waiting for an answer · tap to answer")
                     .font(.caption2.monospaced())
                     .foregroundStyle(Theme.attention)
             }

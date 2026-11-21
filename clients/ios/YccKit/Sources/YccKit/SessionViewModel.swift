@@ -746,6 +746,11 @@ public final class SessionViewModel {
             // questioning one is probed for a live stream.
             startIndexedLoop(stream: false, revalidate: true, probeLive: true)
         }
+        // An unchanged revalidation or a cursor resume never re-requests a
+        // pending question's detail that failed before the model was parked.
+        if let rowID = projection.pendingDetailRowID {
+            Task { [weak self] in await self?.loadDetail(rowID: rowID) }
+        }
     }
 
     /// Stop any open stream. Safe to call repeatedly.
@@ -1090,10 +1095,35 @@ public final class SessionViewModel {
                 return
             }
             projection.installIndexedDetail(row)
+            if pendingStateNeedsDetail { pendingDetailRetryDelay = 0 }
             reconcileOptimisticState()
             transcriptRevision &+= 1
         } catch {
-            actionError = Self.actionMessage("load detail", error)
+            if pendingStateNeedsDetail, projection.needsIndexedPendingDetail(rowID: rowID) {
+                // The answer controls wait on this row. A failed fetch (often
+                // one in flight while the app was suspended) retries instead of
+                // leaving the question without its sheet or banner.
+                retryPendingDetail(rowID: rowID)
+            } else {
+                actionError = Self.actionMessage("load detail", error)
+            }
+        }
+    }
+
+    /// Current backoff for re-fetching a pending question's detail; 0 when the
+    /// last fetch succeeded.
+    @ObservationIgnored private var pendingDetailRetryDelay: UInt64 = 0
+
+    private func retryPendingDetail(rowID: String) {
+        let delay = pendingDetailRetryDelay == 0
+            ? backoff.initial : min(pendingDetailRetryDelay * 2, backoff.maximum)
+        pendingDetailRetryDelay = delay
+        let sleep = self.sleep
+        Task { [weak self] in
+            do { try await sleep(delay) } catch { return }
+            // A parked model retries when it is shown again (resumeParked).
+            guard let self, self.parkedAt == nil else { return }
+            await self.loadDetail(rowID: rowID)
         }
     }
 

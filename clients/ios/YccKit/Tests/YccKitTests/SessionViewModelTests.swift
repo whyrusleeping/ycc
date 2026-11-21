@@ -49,6 +49,8 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     let detail: Ycc_V1_SessionPresentationRow
     private let lock = NSLock()
     private var _detailRequests: [String] = []
+    /// Detail requests that fail before one succeeds.
+    var detailFailures = 0
     var detailRequests: [String] { lock.lock(); defer { lock.unlock() }; return _detailRequests }
 
     init(view: Ycc_V1_GetSessionViewResponse, detail: Ycc_V1_SessionPresentationRow) {
@@ -62,6 +64,12 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     }
     func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
         recordDetailRequest(rowId)
+        let fail: Bool = lock.withLock {
+            guard detailFailures > 0 else { return false }
+            detailFailures -= 1
+            return true
+        }
+        if fail { throw YccError.rpc(message: "deadline exceeded") }
         return detail
     }
     private func recordDetailRequest(_ rowID: String) {
@@ -465,6 +473,35 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(source.detailRequests, ["seq-4"])
         XCTAssertEqual(vm.pendingQuestion?.questions.map(\.prompt), ["first", "second"])
         XCTAssertTrue(vm.durableRows.isEmpty, "state-only detail must not inject an out-of-page row")
+    }
+
+    func testIndexedPendingDetailRetriesAFailedFetch() async {
+        var state = Ycc_V1_SessionViewState()
+        state.indexedThroughSeq = 20
+        state.phase = "running"
+        state.pendingRowID = "seq-4"
+        state.pendingQuestionsTruncated = true
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state = state
+        var detail = Ycc_V1_SessionPresentationRow()
+        detail.id = "seq-4"
+        detail.positionSeq = 4
+        detail.updatedSeq = 4
+        detail.events = [event(4, "question_asked", #"{"question":"long?","options":["a","b"]}"#)]
+        let source = IndexedPendingSource(view: view, detail: detail)
+        source.detailFailures = 2
+        let vm = SessionViewModel(
+            source: source, sessionID: "indexed", mode: .persisted,
+            backoff: .init(initial: 1_000_000, maximum: 2_000_000))
+
+        vm.start()
+        await waitUntil { vm.pendingQuestion != nil }
+
+        // A fetch that fails (e.g. one in flight while the app was suspended)
+        // must not leave the question without answer controls.
+        XCTAssertEqual(source.detailRequests, ["seq-4", "seq-4", "seq-4"])
+        XCTAssertEqual(vm.pendingQuestion?.prompt, "long?")
+        XCTAssertNil(vm.actionError, "a retried pending detail is not an action failure")
     }
 
     private func indexedPageFixture() -> (Ycc_V1_GetSessionViewResponse, Ycc_V1_GetSessionViewPageResponse) {

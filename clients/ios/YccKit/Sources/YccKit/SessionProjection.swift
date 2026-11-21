@@ -1001,6 +1001,9 @@ public struct SessionProjection: Sendable, Equatable {
         indexedPendingDetailRowID == rowID
     }
 
+    /// The pending-question row whose full detail is still required, if any.
+    public var pendingDetailRowID: String? { indexedPendingDetailRowID }
+
     /// Replace an abbreviated loaded row only if it is still the same version.
     /// A detail response racing a newer tool result must never overwrite it. A
     /// required pending-question detail may restore state without inserting its
