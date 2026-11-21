@@ -248,21 +248,25 @@ export function moveCursor(ids: readonly string[], current: string | null, delta
 /** How the backlog page lays tasks out. */
 export type BacklogView = "table" | "board";
 
+/** Card order within a board column: priority then newest, or newest created first. */
+export type BoardSort = "priority" | "newest";
+
 export interface BoardColumn {
   /** The column's status (a TASK_STATUSES value, or an unknown status the store returned). */
   status: string;
-  /** Matching cards, highest priority first, then newest. */
+  /** Matching cards in the board's BoardSort order. */
   tasks: BacklogTaskSummary[];
   /** Folded to a narrow strip (done while "Show done" is off); still a drop target. */
   collapsed: boolean;
 }
 
-function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary): number {
-  // Done is history: newest first. Everything else: priority, then newest.
-  if (a.status.toLowerCase() !== "done") {
+function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary, order: BoardSort): number {
+  // Done is history: newest first. Otherwise priority first unless sorting by newest.
+  if (order === "priority" && a.status.toLowerCase() !== "done") {
     const p = priorityOf(a) - priorityOf(b);
     if (p !== 0) return p;
   }
+  // Ids are allocated monotonically, so the highest id is the most recently created.
   return compareIds(b.id, a.id);
 }
 
@@ -273,7 +277,7 @@ function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary): number {
  * "Show done" is off, so dragging a card to done always works. Tasks with a
  * status outside TASK_STATUSES get trailing columns rather than vanishing.
  */
-export function boardColumns(tasks: readonly BacklogTaskSummary[], f: BacklogFilter): BoardColumn[] {
+export function boardColumns(tasks: readonly BacklogTaskSummary[], f: BacklogFilter, order: BoardSort = "priority"): BoardColumn[] {
   const cards = filterTasks(tasks, { ...f, showDone: true });
   const groups = new Map<string, BacklogTaskSummary[]>();
   for (const t of cards) {
@@ -286,7 +290,7 @@ export function boardColumns(tasks: readonly BacklogTaskSummary[], f: BacklogFil
   for (const s of [...groups.keys()].sort()) if (!isTaskStatus(s) && !f.statuses.length) statuses.push(s);
   return statuses.map((status) => ({
     status,
-    tasks: (groups.get(status) ?? []).sort(compareCards),
+    tasks: (groups.get(status) ?? []).sort((a, b) => compareCards(a, b, order)),
     collapsed: status === "done" && !f.showDone && !f.statuses.includes("done"),
   }));
 }

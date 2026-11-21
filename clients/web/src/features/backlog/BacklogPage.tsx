@@ -46,6 +46,7 @@ import {
   type BacklogFilter,
   type BacklogView,
   type BoardDirection,
+  type BoardSort,
   type BacklogSort,
   type SortKey,
 } from "./model";
@@ -66,6 +67,24 @@ function initialView(): BacklogView {
 function saveView(v: BacklogView) {
   try {
     localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // ignore
+  }
+}
+
+const BOARD_SORT_KEY = "ycc.backlogBoardSort";
+
+function initialBoardSort(): BoardSort {
+  try {
+    return localStorage.getItem(BOARD_SORT_KEY) === "newest" ? "newest" : "priority";
+  } catch {
+    return "priority";
+  }
+}
+
+function saveBoardSort(s: BoardSort) {
+  try {
+    localStorage.setItem(BOARD_SORT_KEY, s);
   } catch {
     // ignore
   }
@@ -112,6 +131,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   const [creating, setCreating] = useState(false);
   const [promoting, setPromoting] = useState<string | null>(null);
   const [view, setViewState] = useState<BacklogView>(initialView);
+  const [boardSort, setBoardSortState] = useState<BoardSort>(initialBoardSort);
   const [moving, setMoving] = useState<ReadonlySet<string>>(() => new Set());
   const filterRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -135,13 +155,20 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   const all = backlog.data;
   const rows = useMemo(() => (all ? sortTasks(filterTasks(all, filter), sort) : []), [all, filter, sort]);
   const counts = useMemo(() => statusCounts(all ?? []), [all]);
-  const columns = useMemo(() => (all && view === "board" ? boardColumns(all, filter) : []), [all, filter, view]);
+  const columns = useMemo(
+    () => (all && view === "board" ? boardColumns(all, filter, boardSort) : []),
+    [all, filter, view, boardSort],
+  );
   // Card ids per expanded column (keyboard movement skips the collapsed Done strip).
   const boardIds = useMemo(() => columns.map((c) => (c.collapsed ? [] : c.tasks.map((t) => t.id))), [columns]);
   const ids = useMemo(() => (view === "board" ? boardIds.flat() : rows.map((r) => r.id)), [view, boardIds, rows]);
   const setView = (v: BacklogView) => {
     setViewState(v);
     saveView(v);
+  };
+  const setBoardSort = (s: BoardSort) => {
+    setBoardSortState(s);
+    saveBoardSort(s);
   };
 
   const open = (id: string) => navigate(paths.task(project, id));
@@ -376,6 +403,25 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             />
             Show done
           </label>
+          {view === "board" && (
+            <span className="segmented inline backlog-board-sort" role="group" aria-label="Sort cards">
+              {(["priority", "newest"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={boardSort === s}
+                  className={boardSort === s ? "selected" : ""}
+                  onClick={() => {
+                    track.action("backlog.board_sort", "click", { by: s });
+                    setBoardSort(s);
+                  }}
+                  title={s === "priority" ? "Highest priority first, then newest" : "Most recently created first"}
+                >
+                  {s === "priority" ? "Priority" : "Newest"}
+                </button>
+              ))}
+            </span>
+          )}
           {(isFiltered(filter) || filter.showDone) && (
             <button type="button" className="link small" data-track="backlog.filter_reset" onClick={() => setFilter(DEFAULT_FILTER)}>
               Reset

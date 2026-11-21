@@ -181,6 +181,9 @@ describe("backlog model", () => {
     expect(cols[5]).toMatchObject({ collapsed: true });
     expect(ids(cols[5].tasks)).toEqual(["0012", "0001"]);
     expect(boardColumns(tasks, { ...DEFAULT_FILTER, showDone: true }).find((c) => c.status === "done")!.collapsed).toBe(false);
+    // Newest order ignores priority.
+    const newest = boardColumns([...tasks, t("0011", { status: "todo", priority: 1 }), t("0014", { status: "todo", priority: 5 })], DEFAULT_FILTER, "newest");
+    expect(ids(newest[1].tasks)).toEqual(["0014", "0011", "0004", "0002"]);
   });
 
   it("narrows board columns and cards by the filter", () => {
