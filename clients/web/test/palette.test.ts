@@ -2,7 +2,7 @@
 // and the default (empty-query) list.
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
-import { BacklogTaskSummarySchema, ProjectInfoSchema, SessionSummarySchema } from "../src/gen/ycc/v1/ycc_pb";
+import { BacklogTaskSummarySchema, ProjectInfoSchema, SessionSearchHitSchema, SessionSummarySchema } from "../src/gen/ycc/v1/ycc_pb";
 import { fuzzyItem, fuzzyWord, rank } from "../src/features/palette/fuzzy";
 import { fileItem, paletteResults, parseQuery, type PaletteSources } from "../src/features/palette/items";
 import type { AppAction } from "../src/app/actions";
@@ -119,5 +119,23 @@ describe("palette items", () => {
     expect(fileItem("new session", "alpha")).toBeNull();
     expect(fileItem("capture", "alpha")).toBeNull();
     expect(paletteResults(src(), "spec.md")[0].item.kind).toBe("file");
+  });
+
+  it("lists message hits after the best fuzzy matches, opening at the hit's row", () => {
+    const hit = create(SessionSearchHitSchema, {
+      session: s("s9", 9, { title: "old chat" }),
+      rowId: "seq-42",
+      kind: "user",
+      snippet: [{ text: "where the " }, { text: "login", match: true }, { text: " lives" }],
+    });
+    const messages = { project: "alpha", hits: [hit] };
+    const all = paletteResults(src({ messages }), "login");
+    const at = all.findIndex((x) => x.item.kind === "message");
+    expect(at).toBe(Math.min(5, all.length - 1));
+    const item = all[at].item;
+    expect(item).toMatchObject({ id: "message:alpha:s9", title: "where the login lives", to: "/p/alpha/s/s9?row=seq-42" });
+    expect(item.detail).toBe("You · now · old chat");
+    expect(paletteResults(src({ messages }), "@login").some((x) => x.item.kind === "message")).toBe(true);
+    expect(paletteResults(src({ messages }), "#login").some((x) => x.item.kind === "message")).toBe(false);
   });
 });

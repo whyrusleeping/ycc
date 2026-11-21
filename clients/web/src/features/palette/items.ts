@@ -1,7 +1,8 @@
-// Command palette entries (pure): sessions from the Recent feed, backlog
-// tasks, projects, pages, a file path, and every registered action, plus the
-// query prefixes that narrow to one kind and the empty-query default list.
-import type { BacklogTaskSummary, ProjectInfo } from "../../gen/ycc/v1/ycc_pb";
+// Command palette entries (pure): sessions from the Recent feed, full-text
+// message hits, backlog tasks, projects, pages, a file path, and every
+// registered action, plus the query prefixes that narrow to one kind and the
+// empty-query default list.
+import type { BacklogTaskSummary, ProjectInfo, SessionSearchHit, SessionSearchSpan } from "../../gen/ycc/v1/ycc_pb";
 import type { AppAction } from "../../app/actions";
 import { PROJECT_SECTIONS, paths, sectionPath } from "../../app/paths";
 import { SETTINGS_SECTIONS } from "../settings/sections";
@@ -9,9 +10,10 @@ import { statusLabel } from "../backlog/model";
 import { displayProject, displayTitle, lifecycleLabel, needsAnswer, taskIds, type FeedRow } from "../sessions/feed";
 import { isInboxSession } from "../sessions/attention";
 import { visualOrder } from "../sessions/navigation";
+import { hitKindLabel, hitPath, snippetText } from "../sessions/messageHits";
 import { rank, type FuzzyMatch } from "./fuzzy";
 
-export type PaletteKind = "session" | "task" | "project" | "page" | "action" | "file";
+export type PaletteKind = "session" | "message" | "task" | "project" | "page" | "action" | "file";
 
 export interface PaletteItem {
   id: string;
@@ -22,6 +24,8 @@ export interface PaletteItem {
   secondary: string;
   /** Right-hand detail, e.g. "alpha · 5m ago". */
   detail?: string;
+  /** Message hits show their snippet (matched terms highlighted) as the title. */
+  snippet?: readonly SessionSearchSpan[];
   /** A marker before the title. */
   marker?: "needs" | "unread" | null;
   /** Keyboard shortcut label. */
@@ -59,6 +63,8 @@ export interface PaletteSources {
   target: string | null;
   shortcutLabel: (a: AppAction) => string | undefined;
   loopSessionIds?: ReadonlySet<string>;
+  /** SearchSessions hits for the current query in one project. */
+  messages?: { project: string; hits: readonly SessionSearchHit[] };
 }
 
 export function sessionItems(src: PaletteSources, personalOnly = false): PaletteItem[] {
@@ -80,6 +86,28 @@ export function sessionItems(src: PaletteSources, personalOnly = false): Palette
       to: paths.session(row.project, s.sessionId),
       boost: (waiting ? 3 : unread ? 1 : 0) + (s.sessionId === src.activeSessionId ? -4 : 0),
     } satisfies PaletteItem;
+  });
+}
+
+export function messageItems(src: PaletteSources): PaletteItem[] {
+  const m = src.messages;
+  if (!m) return [];
+  return m.hits.flatMap((hit) => {
+    const s = hit.session;
+    if (!s) return [];
+    const when = src.relativeTime(hit.timestamp || s.lastActivity || s.startedAt);
+    return [
+      {
+        id: `message:${m.project}:${s.sessionId}`,
+        kind: "message",
+        title: snippetText(hit.snippet),
+        secondary: displayTitle(s),
+        // Who said it and when stay visible; the session title truncates.
+        detail: [hitKindLabel(hit.kind), when, displayTitle(s)].filter(Boolean).join(" · "),
+        snippet: hit.snippet,
+        to: hitPath(m.project, hit),
+      } satisfies PaletteItem,
+    ];
   });
 }
 
@@ -167,6 +195,8 @@ export function fileItem(text: string, target: string | null): PaletteItem | nul
 }
 
 const DEFAULT_SESSIONS = 6;
+/** Message hits follow this many of the best fuzzy matches. */
+const TOP_MATCHES = 5;
 
 /** The palette's results for a query: ranked, or a short default list when empty. */
 export function paletteResults(src: PaletteSources, rawQuery: string, limit = 60): { item: PaletteItem; match: FuzzyMatch | null }[] {
@@ -186,8 +216,12 @@ export function paletteResults(src: PaletteSources, rawQuery: string, limit = 60
     return [...flagged, ...recent, ...actions, ...main].slice(0, limit).map((item) => ({ item, match: null }));
   }
   const file = mode === "all" ? fileItem(text, src.target) : null;
-  const ranked = rank([...actions, ...sessions, ...pages, ...tasks], text, (i) => ({ title: i.title, secondary: i.secondary, boost: i.boost }), limit);
-  const out = ranked.map((r) => ({ item: r.item, match: r.match as FuzzyMatch | null }));
+  const messages = mode === "all" || mode === "sessions" ? messageItems(src).slice(0, limit) : [];
+  const ranked = rank([...actions, ...sessions, ...pages, ...tasks], text, (i) => ({ title: i.title, secondary: i.secondary, boost: i.boost }), limit - messages.length);
+  const fuzzy = ranked.map((r) => ({ item: r.item, match: r.match as FuzzyMatch | null }));
+  // Full-text hits are already ranked by the daemon: they follow the best few
+  // fuzzy matches rather than sinking below a long tail of weak ones.
+  const out = [...fuzzy.slice(0, TOP_MATCHES), ...messages.map((item) => ({ item, match: null })), ...fuzzy.slice(TOP_MATCHES)];
   // A query shaped like a path means that file: offer it first.
   if (file) out.unshift({ item: file, match: null });
   return out;

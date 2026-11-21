@@ -114,3 +114,22 @@ export async function findMatch(
     return { kind: "none" };
   }
 }
+
+export type SeekResult = "found" | "missing" | "failed" | "cancelled";
+
+/**
+ * Page earlier history in until the row with `rowId` is loaded (a session
+ * search hit may name a row far back). "missing" means the whole history is
+ * loaded and the row is not in it; "failed" that an earlier page did not load.
+ */
+export async function seekRow(source: SearchSource, rowId: string, isCancelled: () => boolean = () => false): Promise<SeekResult> {
+  for (;;) {
+    if (isCancelled()) return "cancelled";
+    if (source.rows().some((r) => r.id === rowId)) return "found";
+    if (!source.hasEarlier()) return "missing";
+    const loaded = await source.loadEarlier();
+    if (isCancelled()) return "cancelled";
+    // A failed page leaves the cursor in place: stop rather than spin.
+    if (!loaded && source.hasEarlier()) return "failed";
+  }
+}

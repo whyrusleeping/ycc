@@ -84,6 +84,8 @@ export const queryKeys = {
   watch: (project: string, name: string, limit: number) => ["watches", "one", project, name, limit] as const,
   /** Every watch query (a mutation revalidates them all). */
   watchesAll: ["watches"] as const,
+  /** SearchSessions: one project's full-text message search. */
+  sessionSearch: (project: string, query: string, limit: number) => ["sessionSearch", project, query, limit] as const,
 };
 
 export function makeQueryClient(): QueryClient {

@@ -18,6 +18,7 @@ import { compactTokenCount, formatSessionDuration, sessionDurationMs } from "../
 import type { SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 import { useDropZone } from "../attachments/pictures";
 import { useTranscriptSearch } from "./SearchBar";
+import { useRowJump, type RowJumpTarget } from "./rowJump";
 import { FileLinksProvider } from "../files/FileRef";
 import { useSessionFileLinks } from "../files/links";
 import { Link, useNavigate } from "react-router";
@@ -194,6 +195,7 @@ export function SessionView({
   focusTasks = [],
   mode,
   timing,
+  focusRow = null,
 }: {
   project: string;
   sessionId: string;
@@ -204,6 +206,8 @@ export function SessionView({
   mode?: string;
   /** Start, last activity and liveness from its history summary, when known. */
   timing?: Pick<SessionSummary, "startedAt" | "lastActivity" | "live">;
+  /** Open scrolled to this row (a session search hit). */
+  focusRow?: RowJumpTarget | null;
 }) {
   const controller = useSessionController(project, sessionId);
   const snap = useSessionSnapshot(controller);
@@ -213,6 +217,7 @@ export function SessionView({
   const status = statusText(snap);
   const search = useTranscriptSearch(controller, snap.rows);
   const showSearch = search.show;
+  const jump = useRowJump(controller, snap.installed, focusRow);
   // File references in the transcript open the viewer in the inspector,
   // resolved against this session's live worktree.
   const fileLinks = useSessionFileLinks(project, sessionId, "main");
@@ -460,12 +465,18 @@ export function SessionView({
           </button>
         </div>
       )}
+      {jump.seeking && (
+        <div className="banner" role="status">
+          Loading earlier history to reach the matching message…
+        </div>
+      )}
       <FileLinksProvider value={fileLinks}>
         <Transcript
           controller={controller}
           snap={snap}
           onEditFailed={(t, pictures) => composer.current?.setDraft(t, pictures)}
           search={search}
+          rowJump={jump}
         />
       </FileLinksProvider>
       {snap.mode === "live" && snap.pendingQuestion ? (

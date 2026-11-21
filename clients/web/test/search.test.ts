@@ -13,7 +13,7 @@ import {
 } from "../src/gen/ycc/v1/ycc_pb";
 import { SessionController, type SessionApi } from "../src/features/session/controller";
 import type { TranscriptRow } from "../src/features/session/projection";
-import { findMatch, matchingRowIds, rowSearchText, type SearchSource } from "../src/features/session/search";
+import { findMatch, matchingRowIds, rowSearchText, seekRow, type SearchSource } from "../src/features/session/search";
 
 function row(id: string, text: string): TranscriptRow {
   return { id, kind: { type: "model", text }, seq: 0, updatedSeq: 0, actor: "coordinator", ts: "", detailAvailable: false };
@@ -76,6 +76,25 @@ describe("search matching", () => {
     const src = pagedSource([[row("a", "x")], [row("b", "x")], [row("c", "hit")]]);
     const result = await findMatch(src, "hit", null, "older", () => src.loads >= 1);
     expect(result).toEqual({ kind: "cancelled" });
+    expect(src.loads).toBe(1);
+  });
+});
+
+describe("seeking a row (opening a session search hit)", () => {
+  it("pages earlier history until the row is loaded", async () => {
+    const src = pagedSource([[row("n1", "")], [row("m1", "")], [row("o1", "")]]);
+    expect(await seekRow(src, "n1")).toBe("found");
+    expect(src.loads).toBe(0);
+    expect(await seekRow(src, "o1")).toBe("found");
+    expect(src.loads).toBe(2);
+  });
+
+  it("reports a row missing from the whole history, a failed page, and cancellation", async () => {
+    expect(await seekRow(pagedSource([[row("a", "")], [row("b", "")]]), "zzz")).toBe("missing");
+    const failing: SearchSource = { rows: () => [row("a", "")], hasEarlier: () => true, loadEarlier: async () => false };
+    expect(await seekRow(failing, "zzz")).toBe("failed");
+    const src = pagedSource([[row("a", "")], [row("b", "")], [row("c", "")]]);
+    expect(await seekRow(src, "c", () => src.loads >= 1)).toBe("cancelled");
     expect(src.loads).toBe(1);
   });
 });

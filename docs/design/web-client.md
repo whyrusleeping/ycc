@@ -118,10 +118,24 @@ state, the task and session it is working on now, the tasks it completed (most r
 first), and its blocked and in-review counts. This status carries no unread marks or
 notifications. The sidebar and keyboard next/previous navigation share
 the same filter. The main list provides visible search and Inbox, Unread, Needs answer, Follow-up,
-Active, and All history filters; Active also lists running automatic sessions. Search is explicitly
-limited to loaded history and paging remains
-available. Default palette suggestions use the inbox; explicit palette search can reach all loaded
-history. Work-loop outcome notifications remain separate from routine per-session notifications.
+Active, and All history filters; Active also lists running automatic sessions. Its search matches
+titles, projects, ids and tasks of loaded rows only, and paging remains available. Default palette
+suggestions use the inbox; explicit palette search can reach all loaded history. Work-loop outcome
+notifications remain separate from routine per-session notifications.
+
+Message search reaches the rest of a project's history through `SearchSessions` (spec §18.6). The
+list's search field and plain or `@` palette queries of two or more characters send a debounced
+request for the current project: the list's scope, otherwise the last viewed project, otherwise the
+sole registered one. The list shows up to 30 hits in a "Messages in <project>" section above the
+loaded title matches, and the palette shows up to 8 after its five best fuzzy matches. Each hit
+shows the session title, who wrote the message (you, the agent, a question or an answer), the
+snippet with matched terms highlighted, and its age; the list also shows the session's
+matching-message count. While the response reports `indexing`, both surfaces say that the history
+is still being indexed (with indexed/total session counts) and re-query every two seconds until
+it completes. Selecting a hit opens `/…/s/<id>?row=<row id>`. The session view pages earlier
+history in until that row is loaded, says so while it pages, scrolls the row into the upper third,
+unfolds it if needed and marks it with a brief accent fill. A row no longer in the session raises
+an informational toast. Each navigation jumps again, even to the same URL.
 
 Classification uses durable origin and human participation from session summaries, never title,
 mode, or preset heuristics. Unknown legacy origins remain visible; current-loop membership is

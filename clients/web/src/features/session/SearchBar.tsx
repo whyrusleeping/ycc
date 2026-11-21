@@ -27,7 +27,7 @@ export interface TranscriptSearch {
   focusToken: number;
 }
 
-function controllerSource(controller: SessionController): SearchSource {
+export function controllerSource(controller: SessionController): SearchSource {
   return {
     rows: () => controller.projection.rows,
     hasEarlier: () => controller.hasEarlier(),
