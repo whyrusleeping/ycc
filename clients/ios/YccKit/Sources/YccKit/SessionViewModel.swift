@@ -434,21 +434,114 @@ public final class SessionViewModel {
         isLoadingEarlier = true
         let cursor = earlierCursor
         let generation = streamGeneration
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.isLoadingEarlier = false }
+        earlierLoad = Task { [weak self] in
+            guard let self else { return .superseded }
+            defer {
+                self.isLoadingEarlier = false
+                self.earlierLoad = nil
+            }
             do {
                 let page = try await self.source.getSessionViewPage(
                     project: self.project, sessionId: self.sessionID, cursor: cursor)
-                guard cursor == self.earlierCursor, generation == self.streamGeneration else { return }
+                guard cursor == self.earlierCursor, generation == self.streamGeneration else { return .superseded }
                 let replaySpan = LatencyDiagnostics.shared.begin("transcript.replay")
                 defer { replaySpan.end(events: page.rows.reduce(0) { $0 + $1.events.count }, rows: page.rows.count) }
                 let decoded = try await Self.decodeIndexedRows(page.rows)
-                guard cursor == self.earlierCursor, generation == self.streamGeneration else { return }
+                guard cursor == self.earlierCursor, generation == self.streamGeneration else { return .superseded }
                 self.installEarlierPage(page, decoded: decoded)
+                return .installed
             } catch {
-                guard generation == self.streamGeneration, !Task.isCancelled else { return }
+                guard generation == self.streamGeneration, !Task.isCancelled else { return .superseded }
                 self.actionError = Self.actionMessage("load earlier", error)
+                return .failed
+            }
+        }
+    }
+
+    private enum EarlierLoadOutcome {
+        case installed
+        case failed
+        /// A reconnect, resume or snapshot install overtook the fetch.
+        case superseded
+    }
+
+    /// The fetch ``loadEarlierRows()`` started, so ``seekRow(_:while:)`` can
+    /// wait on it.
+    @ObservationIgnored private var earlierLoad: Task<EarlierLoadOutcome, Never>?
+
+    public enum RowSeekResult: Equatable, Sendable {
+        /// The row is among ``visibleDurableRows``.
+        case found
+        /// The whole history is loaded and the row is not in it.
+        case missing
+        /// An earlier page did not load (its error is in ``actionError``).
+        case failed
+        case cancelled
+    }
+
+    /// How long ``seekRow(_:while:)`` waits for a resume catch-up to bring
+    /// a row it cannot find, and how often it looks.
+    static let seekCatchUpWait: UInt64 = 5_000_000_000
+    static let seekCatchUpPoll: UInt64 = 50_000_000
+
+    /// Load earlier pages until `rowID` is among ``visibleDurableRows``, to
+    /// open the transcript at a row far back (a session search hit). It stops
+    /// (``RowSeekResult/cancelled``) once `shouldContinue` turns false or the
+    /// task is cancelled. A row found in a cached transcript that is still
+    /// catching up is reported at once; a revalidating snapshot may then
+    /// replace it, so the caller re-seeks when ``resumeCatchUpCount`` advances
+    /// and the row is gone.
+    public func seekRow(
+        _ rowID: String, while shouldContinue: () -> Bool = { true }
+    ) async -> RowSeekResult {
+        var catchUpWaited: UInt64 = 0
+        while true {
+            if Task.isCancelled || !shouldContinue() { return .cancelled }
+            if let index = durableRows.firstIndex(where: { $0.id == rowID }) {
+                // The legacy source holds every row and mounts a suffix.
+                if !source.supportsIndexedSessionView, index < earlierRowCount {
+                    earlierRowCount = index
+                }
+                return .found
+            }
+            guard source.supportsIndexedSessionView, !earlierCursor.isEmpty else {
+                // A cached transcript shown again may not have caught up with
+                // the daemon yet: a newer row arrives with the catch-up. (A
+                // quiet session sends none until its keepalive, so the wait
+                // is bounded.)
+                if isParked || isCatchingUpAfterResume, catchUpWaited < Self.seekCatchUpWait {
+                    try? await Task.sleep(nanoseconds: Self.seekCatchUpPoll)
+                    catchUpWaited += Self.seekCatchUpPoll
+                    continue
+                }
+                return .missing
+            }
+            // A parked model is about to be resumed by the screen presenting
+            // it, which would discard a page fetched against the old stream.
+            if isParked, catchUpWaited < Self.seekCatchUpWait {
+                try? await Task.sleep(nanoseconds: Self.seekCatchUpPoll)
+                catchUpWaited += Self.seekCatchUpPoll
+                continue
+            }
+            var outcome: EarlierLoadOutcome?
+            if let earlierLoad {
+                outcome = await earlierLoad.value
+            } else {
+                let cursor = earlierCursor
+                loadEarlierRows()
+                if let earlierLoad {
+                    outcome = await earlierLoad.value
+                } else if earlierCursor != cursor {
+                    outcome = .installed  // a prefetched page, installed in place
+                }
+            }
+            if Task.isCancelled || !shouldContinue() { return .cancelled }
+            switch outcome {
+            case .installed, .superseded:
+                // A superseded fetch is retried against the current rows.
+                continue
+            case .failed, nil:
+                return .failed
             }
         }
     }

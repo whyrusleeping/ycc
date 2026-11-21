@@ -86,6 +86,34 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     }
 }
 
+/// Earlier pages keyed by cursor; an unknown cursor fails.
+private final class CursorPageSource: SessionTranscriptSource, @unchecked Sendable {
+    let view: Ycc_V1_GetSessionViewResponse
+    let pages: [String: Ycc_V1_GetSessionViewPageResponse]
+    private let lock = NSLock()
+    private var _cursors: [String] = []
+    var cursors: [String] { lock.withLock { _cursors } }
+
+    init(view: Ycc_V1_GetSessionViewResponse, pages: [String: Ycc_V1_GetSessionViewPageResponse]) {
+        self.view = view
+        self.pages = pages
+    }
+    var supportsIndexedSessionView: Bool { true }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse { view }
+    func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        lock.withLock { _cursors.append(cursor) }
+        guard let page = pages[cursor] else { throw YccError.rpc(message: "deadline exceeded") }
+        return page
+    }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound(message: "attachment not found")
+    }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
 private final class IndexedPageSource: SessionTranscriptSource, @unchecked Sendable {
     let view: Ycc_V1_GetSessionViewResponse
     let page: Ycc_V1_GetSessionViewPageResponse
@@ -563,6 +591,55 @@ final class SessionViewModelTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(vm.durableRows.map(\.id), ["seq-10"])
         XCTAssertEqual(vm.projection.lastPersistedSeq, 20)
+    }
+
+    func testSeekRowLoadsEarlierPagesUntilTheRowIsInstalled() async {
+        func row(_ seq: Int64) -> Ycc_V1_SessionPresentationRow {
+            var r = Ycc_V1_SessionPresentationRow()
+            r.id = "seq-\(seq)"
+            r.positionSeq = seq
+            r.updatedSeq = seq
+            r.events = [event(seq, "user_input", #"{"text":"m\#(seq)"}"#, actor: "user")]
+            return r
+        }
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 30
+        view.earlierCursor = "c20"
+        view.rows = [row(30)]
+        var page20 = Ycc_V1_GetSessionViewPageResponse()
+        page20.indexedThroughSeq = 30
+        page20.rows = [row(20)]
+        page20.earlierCursor = "c10"
+        var page10 = Ycc_V1_GetSessionViewPageResponse()
+        page10.indexedThroughSeq = 30
+        page10.rows = [row(10)]
+        let source = CursorPageSource(view: view, pages: ["c20": page20, "c10": page10])
+        let vm = SessionViewModel(source: source, sessionID: "seek", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+
+        let found = await vm.seekRow("seq-10")
+        XCTAssertEqual(found, .found)
+        XCTAssertEqual(vm.visibleDurableRows.map(\.id), ["seq-10", "seq-20", "seq-30"])
+        XCTAssertEqual(source.cursors, ["c20", "c10"])
+
+        let missing = await vm.seekRow("seq-99")
+        XCTAssertEqual(missing, .missing, "the whole history is loaded")
+        XCTAssertEqual(source.cursors.count, 2)
+    }
+
+    func testSeekRowStopsWhenAnEarlierPageFails() async {
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 30
+        view.earlierCursor = "c20"
+        let source = CursorPageSource(view: view, pages: [:])
+        let vm = SessionViewModel(source: source, sessionID: "seek", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        let result = await vm.seekRow("seq-10")
+        XCTAssertEqual(result, .failed)
+        XCTAssertNotNil(vm.actionError)
+        XCTAssertEqual(source.cursors, ["c20"])
     }
 
     func testInitialReplayReadinessWaitsForInstalledHistory() async {

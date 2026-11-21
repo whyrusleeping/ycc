@@ -129,6 +129,17 @@ marked; the checked-out branch is requested as HEAD. A row pushes the commit's d
 (`GetCommitDiff`), and a commit a ycc session recorded carries task and session badges that push
 the task or the session, so Back returns to the history.
 
+A project's session list has a message search field (`SearchSessions`, spec §18.6; the unscoped
+feed has none). Two or more characters send a debounced query for that project, and the list gives
+way to up to 30 hits under "messages in <project>": the session title, the message's age, the
+snippet with matched terms highlighted, who wrote it, and the session's matching-message count.
+While the response reports `indexing`, a note says the history is still being indexed (with
+indexed/total session counts) and the query repeats every two seconds until it completes. A hit
+pushes its session opened at the matching row: the transcript pages earlier history in until the
+row is loaded (saying so above the composer), scrolls it to the top, and briefly tints it; follow
+mode stays off as when opening at an unread reply. A row no longer in the session says so and the
+transcript opens at the latest row instead.
+
 Project files are browsable read-only through the daemon's project-confined `ListFiles`/`ReadFile`
 (from the project overflow menu, or a session's menu for its own worktree). Text files render
 with line numbers and a small built-in syntax highlighter, markdown, SVG and HTML render by default

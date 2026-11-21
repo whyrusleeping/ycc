@@ -161,6 +161,15 @@ struct SessionView: View {
     /// leaves. Created on first appearance, never in `init` (which SwiftUI
     /// may run and discard many times).
     @State private var presentation: SessionPresentation?
+    /// Earlier pages are loading to reach ``focusRowID``.
+    @State private var isSeekingRow = false
+    /// Why the transcript could not open at ``focusRowID``, shown briefly.
+    @State private var rowSeekNotice: String?
+    /// The row a search hit opened at, marked briefly once scrolled to.
+    @State private var flashRowID: String?
+    /// The transcript was opened at ``focusRowID`` and the reader has not
+    /// moved since (no drag, no Jump to latest).
+    @State private var holdsFocusRow = false
 
     private let client: YccClient
     private let sessionList: SessionListModel?
@@ -175,6 +184,8 @@ struct SessionView: View {
     /// The display name carried in from the list, so the pushed screen is
     /// identifiable before (or without) any event arriving.
     private let title: String
+    /// A row to open at instead of the latest one (a session search hit).
+    private let focusRowID: String?
     private static let bottomAnchor = "transcript-bottom"
     private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let dragQuietPeriod: TimeInterval = 0.35
@@ -186,9 +197,11 @@ struct SessionView: View {
     private static let autoLoadEarlierReach: CGFloat = 80
     init(
         client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "",
+        focusRowID: String? = nil,
         models: SessionModelCache? = nil, sessionList: SessionListModel? = nil
     ) {
         self.client = client
+        self.focusRowID = focusRowID
         self.sessionList = sessionList
         self.project = project
         self.sessionID = sessionID
@@ -237,6 +250,7 @@ struct SessionView: View {
                         await pinInitialTranscript(proxy: proxy)
                     }
                     .onChange(of: model.resumeCatchUpCount) { _, count in
+                        reseekFocusRowAfterCatchUp(proxy: proxy)
                         guard let baseline = unreadRecheckAfterCatchUp, count > baseline else { return }
                         unreadRecheckAfterCatchUp = nil
                         Task { await pinUnreadReplyAfterCatchUp(proxy: proxy) }
@@ -487,6 +501,7 @@ struct SessionView: View {
                 quickReplyUndoBar(pending)
             }
             streamFailureBanner
+            rowSeekBanner
             if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
@@ -515,6 +530,19 @@ struct SessionView: View {
                     model.retryConnection()
                 })
             )
+        }
+    }
+
+    /// Opening at a search hit far back pages earlier history in first; a
+    /// row no longer in the session says so for a moment.
+    @ViewBuilder
+    private var rowSeekBanner: some View {
+        if isSeekingRow {
+            banner(
+                "Loading earlier history to reach the matching message…",
+                systemImage: "clock.arrow.circlepath", tint: .secondary)
+        } else if let rowSeekNotice {
+            banner(rowSeekNotice, systemImage: "info.circle", tint: .secondary)
         }
     }
 
@@ -548,7 +576,7 @@ struct SessionView: View {
         let request = questionSheetRequest
         let wait = max(delay, activeSince + Self.questionSheetWakeSettle - ProcessInfo.processInfo.systemUptime)
         Task { @MainActor in
-            func current() -> Bool {
+            @MainActor func current() -> Bool {
                 request == questionSheetRequest && model.pendingQuestion?.rowID == rowID
                     && (userInitiated || rowID != model.rolledBackQuestionRowID) && !questionSheetOnScreen
             }
@@ -886,6 +914,7 @@ struct SessionView: View {
                 DurableTranscriptRows(
                     model: model,
                     expandedRuns: expandedActivityRuns,
+                    flashRowID: flashRowID,
                     onToggleRun: { run in toggleActivityRun(run) },
                     onLoadEarlier: {
                         Analytics.action("transcript.load_earlier")
@@ -1017,6 +1046,7 @@ struct SessionView: View {
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
                     guard model.hasCompletedInitialReplay else { return }
+                    if holdsFocusRow { holdsFocusRow = false }
                     if isBrowsingEarlier {
                         isBrowsingEarlier = false
                         historyAnchor = nil
@@ -1197,6 +1227,10 @@ struct SessionView: View {
     @MainActor
     private func pinInitialTranscript(proxy: ScrollViewProxy) async {
         guard !Task.isCancelled, model.hasCompletedInitialReplay, !didRunInitialPin else { return }
+        if let focusRowID {
+            await openAtRow(focusRowID, proxy: proxy)
+            return
+        }
         // An unread session opens at the top of the agent's newest reply so it
         // reads from its start. A running session keeps following the live
         // edge, matching the list, which never badges a running session unread.
@@ -1239,6 +1273,57 @@ struct SessionView: View {
                 model.noteFirstDisplay()
             }
         }
+    }
+
+    /// Open at a session search hit's row, paging earlier history in until it
+    /// is loaded. Like opening at an unread reply this is scrollback: follow
+    /// mode stays off until a drag or Jump to latest. A drag while pages load
+    /// hands the transcript back to the reader and stops the paging.
+    @MainActor
+    private func openAtRow(_ rowID: String, proxy: ScrollViewProxy) async {
+        didRunInitialPin = true
+        stopFollowingLatest()
+        isBrowsingEarlier = true
+        dragActivity.sawLiveEdge = false
+        if !model.visibleDurableRows.contains(where: { $0.id == rowID }) {
+            // Hold the mounted rows still while earlier pages prepend.
+            historyAnchor = model.visibleDurableRows.first?.id
+            isSeekingRow = true
+        }
+        let result = await model.seekRow(rowID, while: { isBrowsingEarlier })
+        isSeekingRow = false
+        switch result {
+        case .found:
+            holdsFocusRow = true
+            await pinUnreadReply(rowID, proxy: proxy)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { flashRowID = rowID }
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            withAnimation(.easeOut(duration: 0.6)) { flashRowID = nil }
+        case .missing, .failed:
+            // A failed page already raised its own error.
+            if result == .missing {
+                rowSeekNotice = "The matching message is no longer in this session."
+            }
+            historyAnchor = nil
+            isBrowsingEarlier = false
+            isFollowingLatest = true
+            requestScrollToLatest(proxy: proxy)
+            guard result == .missing else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            rowSeekNotice = nil
+        case .cancelled:
+            break
+        }
+    }
+
+    /// A cached transcript's revalidating snapshot can replace the rows the
+    /// search hit was opened at: page back to it, unless the reader has
+    /// moved on (a drag or Jump to latest).
+    private func reseekFocusRowAfterCatchUp(proxy: ScrollViewProxy) {
+        guard let rowID = focusRowID, holdsFocusRow, !isSeekingRow,
+              !model.visibleDurableRows.contains(where: { $0.id == rowID }) else { return }
+        Task { await openAtRow(rowID, proxy: proxy) }
     }
 
     /// The resume catch-up of a cached transcript has landed after the
@@ -1319,6 +1404,7 @@ struct SessionView: View {
     private func jumpToLatestPill(proxy: ScrollViewProxy) -> some View {
         Button {
             Analytics.action("transcript.jump_latest")
+            holdsFocusRow = false
             historyAnchor = nil
             isBrowsingEarlier = false
             isFollowingLatest = true
@@ -1638,6 +1724,8 @@ private struct DurableTranscriptRows: View {
     let model: SessionViewModel
     /// Keys of activity runs the reader has expanded.
     let expandedRuns: Set<String>
+    /// The row a search hit opened at, while it is marked.
+    let flashRowID: String?
     let onToggleRun: (TranscriptBlocks.Run) -> Void
     let onLoadEarlier: () -> Void
     let onOpenCommit: (String) -> Void
@@ -1685,6 +1773,14 @@ private struct DurableTranscriptRows: View {
                 )
                 .equatable()
                 .modifier(ActivityRunRail(isInRun: inRun))
+                .background {
+                    if item.id == flashRowID {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.15))
+                            .padding(-6)
+                            .transition(.opacity)
+                    }
+                }
                 .id(item.id)
             case .runHeader(let run):
                 ActivityRunHeader(run: run) { onToggleRun(run) }
