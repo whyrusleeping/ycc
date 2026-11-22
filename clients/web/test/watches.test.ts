@@ -89,6 +89,7 @@ describe("editor draft", () => {
         brief: "Check lag",
         intervalSecs: 7200n,
         model: "claude",
+        thinking: "high",
         probe: "curl -fsS x",
         probeAlways: true,
         expires: "2026-11-20T18:30:00Z",
@@ -102,6 +103,7 @@ describe("editor draft", () => {
       brief: "Check lag",
       intervalSecs: 7200n,
       model: "claude",
+      thinking: "high",
       probe: "curl -fsS x",
       probeAlways: true,
       expires: "2026-11-20T18:30:00Z",
@@ -144,6 +146,7 @@ describe("editor draft", () => {
     expect(def.allowedActions).toEqual(["one"]);
     expect(def.intervalSecs).toBe(1800n);
     expect(def.expires).toBe("");
+    expect(def.thinking).toBe("");
   });
 });
 

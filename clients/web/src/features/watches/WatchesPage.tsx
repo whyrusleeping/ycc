@@ -16,6 +16,8 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Modal } from "../../ui/Modal";
 import { toast } from "../../ui/toast";
 import { relativeTime } from "../sessions/feed";
+import { clampThinking, levelsNamed, thinkingTitle } from "../session/settings";
+import { ThinkingSelect } from "../session/ThinkingSelect";
 import {
   buildDefinition,
   draftError,
@@ -400,7 +402,10 @@ function WatchDetail({ project, name }: { project: string; name: string }) {
               <dt>Every</dt>
               <dd>{formatInterval(d?.intervalSecs ?? 0n)}</dd>
               <dt>Model</dt>
-              <dd>{d?.model || <span className="muted">coordinator default</span>}</dd>
+              <dd>
+                {d?.model || <span className="muted">coordinator default</span>}
+                {d?.thinking && <span className="muted"> · {thinkingTitle(d.thinking)} reasoning</span>}
+              </dd>
               <dt>Probe</dt>
               <dd>
                 {d?.probe ? (
@@ -589,6 +594,10 @@ function WatchEditor({
     setError(null);
   };
   const modelChoices = (models.data?.models ?? []).filter((m) => !m.disabled || m.name === draft.model);
+  // Runs use the watch's model, else the coordinator default.
+  const runModel = (model: string) => model || models.data?.coordinator || "";
+  const runLevels = (model: string) => levelsNamed(runModel(model), models.data?.models ?? []);
+  const savedThinking = runModel(draft.model) === models.data?.coordinator ? models.data?.coordinatorThinking ?? "" : "";
   const problem = draftError(draft, creating);
 
   const submit = async (e?: FormEvent) => {
@@ -686,7 +695,16 @@ function WatchEditor({
           </label>
           <label className="field-label grow">
             Model
-            <select value={draft.model} onChange={(e) => set("model", e.target.value)} disabled={models.isPending}>
+            <select
+              value={draft.model}
+              onChange={(e) => {
+                const model = e.target.value;
+                // A picked level moves to one the new model supports.
+                setDraft((d) => ({ ...d, model, thinking: clampThinking(d.thinking, runLevels(model)) }));
+                setError(null);
+              }}
+              disabled={models.isPending}
+            >
               <option value="">Coordinator default</option>
               {modelChoices.map((m) => (
                 <option key={m.name} value={m.name}>
@@ -695,6 +713,17 @@ function WatchEditor({
                 </option>
               ))}
             </select>
+          </label>
+          <label className="field-label">
+            Reasoning
+            <ThinkingSelect
+              label="Reasoning for runs"
+              value={draft.thinking}
+              levels={runLevels(draft.model)}
+              defaultLabel={savedThinking ? `Model default (${thinkingTitle(savedThinking)})` : "Model default"}
+              disabled={models.isPending}
+              onChange={(thinking) => set("thinking", thinking)}
+            />
           </label>
         </div>
         <label className="field-label">

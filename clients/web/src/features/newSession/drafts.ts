@@ -5,6 +5,7 @@ const emptyDraft = (): NewSessionDraft => ({
   project: "",
   mode: "",
   model: "",
+  thinking: "",
   prompt: "",
   preset: "",
   pictures: [],

@@ -10,17 +10,23 @@ import { Modal } from "../../ui/Modal";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { toast } from "../../ui/toast";
 import { track } from "../../app/analytics";
-import { SLOT_THINKING, STRATEGIES, moveSlot, newSlot, tierPayload, tierProblem, type SlotDraft, type TierDraft } from "./tiers";
+import type { ModelInfo } from "../../gen/ycc/v1/ycc_pb";
+import { clampThinking, levelsNamed } from "../session/settings";
+import { ThinkingSelect } from "../session/ThinkingSelect";
+import { STRATEGIES, moveSlot, newSlot, tierPayload, tierProblem, type SlotDraft, type TierDraft } from "./tiers";
 
 export function TierEditorDialog({
   draft,
   modelNames,
+  models = [],
   tierNames,
   onClose,
 }: {
   draft: TierDraft | null;
   /** Enabled logical models (slot pickers). */
   modelNames: readonly string[];
+  /** ListModels entries: each slot model's thinking levels. */
+  models?: readonly ModelInfo[];
   tierNames: readonly string[];
   onClose: () => void;
 }) {
@@ -28,7 +34,7 @@ export function TierEditorDialog({
   const title = !draft ? "" : draft.existing ? `Review tier · ${draft.name}` : "New review tier";
   return (
     <Modal open={draft !== null} onClose={() => (closeGuard.current ?? onClose)()} title={title} className="tier-editor-dialog" view="tier_editor" flow="tier_editor">
-      {draft && <TierEditor key={draft.existing ? draft.name : "new"} initial={draft} modelNames={modelNames} tierNames={tierNames} onClose={onClose} closeGuard={closeGuard} />}
+      {draft && <TierEditor key={draft.existing ? draft.name : "new"} initial={draft} modelNames={modelNames} models={models} tierNames={tierNames} onClose={onClose} closeGuard={closeGuard} />}
     </Modal>
   );
 }
@@ -36,12 +42,14 @@ export function TierEditorDialog({
 function TierEditor({
   initial,
   modelNames,
+  models,
   tierNames,
   onClose,
   closeGuard,
 }: {
   initial: TierDraft;
   modelNames: readonly string[];
+  models: readonly ModelInfo[];
   tierNames: readonly string[];
   onClose: () => void;
   closeGuard: RefObject<(() => void) | null>;
@@ -146,7 +154,11 @@ function TierEditor({
                     <span className="muted">#{i + 1}</span>
                     <label className="field-label inline">
                       Model
-                      <select aria-label={`Reviewer ${i + 1} model`} value={s.model} onChange={(e) => setSlot(s.key, { model: e.target.value })}>
+                      <select aria-label={`Reviewer ${i + 1} model`} value={s.model} onChange={(e) => {
+                          const model = e.target.value;
+                          // A picked level moves to one the new model supports.
+                          setSlot(s.key, { model, thinking: clampThinking(s.thinking, levelsNamed(model, models)) });
+                        }}>
                         {!s.model && <option value="">Choose a model…</option>}
                         {s.model && !modelNames.includes(s.model) && <option value={s.model}>{s.model} (disabled or missing)</option>}
                         {modelNames.map((m) => (
@@ -158,17 +170,13 @@ function TierEditor({
                     </label>
                     <label className="field-label inline">
                       Thinking
-                      <select
-                        aria-label={`Reviewer ${i + 1} thinking`}
+                      <ThinkingSelect
+                        label={`Reviewer ${i + 1} thinking`}
                         value={s.thinking}
-                        onChange={(e) => setSlot(s.key, { thinking: e.target.value })}
-                      >
-                        {SLOT_THINKING.map((t) => (
-                          <option key={t.value} value={t.value}>
-                            {t.title}
-                          </option>
-                        ))}
-                      </select>
+                        levels={levelsNamed(s.model, models)}
+                        defaultLabel="Inherit"
+                        onChange={(thinking) => setSlot(s.key, { thinking })}
+                      />
                     </label>
                     <span className="spacer" />
                     <button

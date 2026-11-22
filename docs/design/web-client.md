@@ -155,12 +155,22 @@ non-loopback address) the client explains why notifications are unavailable.
 ### Session input and pictures
 
 Starting, re-opening, and steering sessions use the same RPCs as the other clients: `StartSession`
-(project, mode, opening-prompt preset, optional per-session coordinator model, prompt, pictures),
+(project, mode, opening-prompt preset, optional per-session coordinator model and thinking level,
+prompt, pictures),
 `ResumeSession` (the read-only history paints first, then the view goes live from its cursor), and
 `SendInput`. Starting from the daemon-wide inbox asks which project, offering the last viewed
 one first. Per-session reasoning and role models are changed with `SetThinking` and
-`SetRoleConfig` scoped to the session; per-session usage is `GetUsage` grouped by session and model,
-filtered to that session.
+`SetRoleConfig` scoped to the session, which leave the saved defaults unchanged; per-session usage is
+`GetUsage` grouped by session and model, filtered to that session.
+
+Every model picker has a reasoning picker beside it: new session (sent as `coordinator_thinking`
+with `StartSession` or `SpawnWorkstream`), each role in the session panel, the Settings role rows,
+review-tier reviewer slots, and the watch editor. Each offers only the selected model's
+`ModelInfo.thinking_levels` (a reviewers picker offers any reviewer model's), keeps a current level
+outside that list visible rather than rewriting it, and, where the RPC allows, offers the model's
+default as a blank choice. Changing the model moves a picked level with the daemon's clamp rule
+(spec §7.4). The model editor edits the `thinking_levels` override; with it off, the backend's
+default list applies.
 
 New session is a project and a prompt, starting chat (`ListModes.defaultMode`). It has no mode or
 preset grid: explicit mode choice sits in a collapsed **Advanced** disclosure, which opens by itself

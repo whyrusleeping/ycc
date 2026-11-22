@@ -12,16 +12,6 @@ export const STRATEGIES = [
   { value: "self", title: "Coordinator self-review", detail: "The coordinator reviews the change itself; no reviewer agent." },
 ] as const;
 
-export const SLOT_THINKING = [
-  { value: "", title: "Inherit" },
-  { value: "off", title: "Off" },
-  { value: "low", title: "Low" },
-  { value: "medium", title: "Medium" },
-  { value: "high", title: "High" },
-  { value: "xhigh", title: "X-High" },
-  { value: "max", title: "Max" },
-] as const;
-
 export function parseStrategy(v: string): ReviewStrategy {
   return ["coordinator", "self", "self-review"].includes(v.trim().toLowerCase()) ? "self" : "agents";
 }

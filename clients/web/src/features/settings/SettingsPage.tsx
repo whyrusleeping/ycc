@@ -23,7 +23,8 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { MenuButton } from "../../ui/Menu";
 import { toast } from "../../ui/toast";
 import { track } from "../../app/analytics";
-import { THINKING_LEVELS, parseThinking, roleModelChoices, type ThinkingLevel } from "../session/settings";
+import { levelsAnyOf, levelsNamed, parseThinking, roleModelChoices, type ThinkingLevel } from "../session/settings";
+import { ThinkingSelect } from "../session/ThinkingSelect";
 import { budgetRows } from "../usage/model";
 import { openAnthropicLogin, openOpenAILogin } from "./AnthropicLogin";
 import { ModelEditorDialog, type EditorTarget } from "./ModelEditor";
@@ -137,6 +138,7 @@ export function SettingsPage() {
       <ModelEditorDialog
         target={editor}
         existingNames={(models.data?.models ?? []).map((m) => m.name)}
+        models={models.data?.models ?? []}
         onClose={() => setEditor(null)}
       />
     </div>
@@ -266,6 +268,10 @@ function RolesSection({ data }: { data: ModelsData }) {
     track.action("settings.role", "click", { role: "reviewers" });
     void run("reviewers", () => client.setRoleConfig({ sessionId: "", reviewers: next }), refresh);
   };
+  // While a chosen model is unapplied, or any assignment is saving and
+  // refreshing, a row's reasoning would target a model other than the one shown.
+  const hold = (field: Role): ReasoningHold =>
+    roleModels[field] && roleModels[field] !== data[field] ? "pending" : busy ? "saving" : null;
   const modelPick = (field: Role) => {
     const draft = roleModels[field];
     const changed = !!draft && draft !== data[field];
@@ -296,7 +302,7 @@ function RolesSection({ data }: { data: ModelsData }) {
         <div className="role-rows">
           <RoleRow role="coordinator">
             {modelPick("coordinator")}
-            <ReasoningPick data={data} role="coordinator" />
+            <ReasoningPick data={data} role="coordinator" hold={hold("coordinator")} />
           </RoleRow>
           <RoleRow role="reviewers">
             <fieldset className="settings-reviewers" disabled={!!busy}>
@@ -309,11 +315,11 @@ function RolesSection({ data }: { data: ModelsData }) {
                 </label>
               ))}
             </fieldset>
-            <ReasoningPick data={data} role="reviewers" />
+            <ReasoningPick data={data} role="reviewers" hold={busy ? "saving" : null} />
           </RoleRow>
           <RoleRow role="implementer">
             {modelPick("implementer")}
-            <ReasoningPick data={data} role="implementer" />
+            <ReasoningPick data={data} role="implementer" hold={hold("implementer")} />
           </RoleRow>
         </div>
       )}
@@ -339,12 +345,16 @@ function RoleRow({ role, children }: { role: keyof typeof ROLE_TEXT; children: R
   );
 }
 
-function ReasoningPick({ data, role }: { data: ModelsData; role: keyof typeof THINKING_FIELD }) {
+/** Why a role's reasoning picker is held: its model is chosen but unapplied, or an assignment is saving. */
+type ReasoningHold = "pending" | "saving" | null;
+
+function ReasoningPick({ data, role, hold = null }: { data: ModelsData; role: keyof typeof THINKING_FIELD; hold?: ReasoningHold }) {
   const qc = useQueryClient();
   const { busy, error, run } = useApply("settings.thinking");
   // Optimistic: a picked level shows at once; a failure reverts it.
   const [pending, setPending] = useState<ThinkingLevel | null>(null);
   const current = parseThinking(data[THINKING_FIELD[role]]);
+  const supported = role === "reviewers" ? levelsAnyOf(data.reviewers, data.models) : levelsNamed(data[role], data.models);
   const choose = async (level: ThinkingLevel) => {
     if (busy || level === current) return;
     track.action("settings.thinking", "click", { role, level });
@@ -354,19 +364,15 @@ function ReasoningPick({ data, role }: { data: ModelsData; role: keyof typeof TH
   };
   return (
     <label className="reasoning-pick">
-      <span className="muted small">Reasoning</span>
-      <select
-        aria-label={`${ROLE_TEXT[role].title} reasoning`}
-        aria-disabled={!!busy}
+      <span className="muted small">{hold === "pending" ? "Reasoning · apply the model first" : "Reasoning"}</span>
+      <ThinkingSelect
+        label={`${ROLE_TEXT[role].title} reasoning`}
+        busy={!!busy}
+        disabled={hold !== null}
         value={pending ?? current}
-        onChange={(e) => void choose(e.target.value as ThinkingLevel)}
-      >
-        {THINKING_LEVELS.map((l) => (
-          <option key={l.value} value={l.value}>
-            {l.title}
-          </option>
-        ))}
-      </select>
+        levels={supported}
+        onChange={(level) => void choose(level as ThinkingLevel)}
+      />
       {error && (
         <span className="error small" role="alert">
           {error}
@@ -512,7 +518,7 @@ function ReviewTiersSection({ models }: { models: readonly ModelInfo[] }) {
           </p>
         </>
       )}
-      <TierEditorDialog draft={editing} modelNames={modelNames} tierNames={list.map((t) => t.name)} onClose={() => setEditing(null)} />
+      <TierEditorDialog draft={editing} modelNames={modelNames} models={models} tierNames={list.map((t) => t.name)} onClose={() => setEditing(null)} />
       <ConfirmDialog
         open={removing !== null}
         title={removingTier?.builtin ? `Revert ${removing}?` : `Remove ${removing}?`}

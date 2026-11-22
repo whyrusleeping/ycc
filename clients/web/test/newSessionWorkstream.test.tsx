@@ -36,7 +36,7 @@ vi.mock("../src/api/queries", async (importOriginal) => {
   });
   const models = create(ListModelsResponseSchema, {
     coordinator: "big",
-    models: [create(ModelInfoSchema, { name: "big" }), create(ModelInfoSchema, { name: "fast" })],
+    models: [create(ModelInfoSchema, { name: "big" }), create(ModelInfoSchema, { name: "fast", thinkingLevels: ["low", "medium", "high"] })],
   });
   const tasks = [create(BacklogTaskSummarySchema, { id: "0042", title: "Fix it", status: "todo", priority: 2, ready: true })];
   return {
@@ -113,7 +113,12 @@ const submit = () => act(() => container.querySelector<HTMLButtonElement>("butto
 it("spawns a workstream with the same session choices and opens its session", async () => {
   await render();
   await act(() => container.querySelector<HTMLButtonElement>(".mode-card")!.click()); // Chat
+  const reasoning = () => container.querySelector<HTMLSelectElement>('select[aria-label="Coordinator reasoning for this session"]')!;
+  await choose(reasoning(), "max");
   await choose(container.querySelector<HTMLSelectElement>('select[aria-label="Coordinator model for this session"]')!, "fast");
+  // The picked level moves to the nearest one the new model supports.
+  expect(reasoning().value).toBe("high");
+  expect(Array.from(reasoning().options).map((o) => o.value)).toEqual(["", "low", "medium", "high"]);
   await type(container.querySelector("textarea")!, "  look at this ");
   expect(toggle().checked).toBe(false);
   await act(() => toggle().click());
@@ -128,6 +133,7 @@ it("spawns a workstream with the same session choices and opens its session", as
     mode: "chat",
     prompt: "look at this",
     coordinatorModel: "fast",
+    coordinatorThinking: "high",
     preset: "",
     images: [],
     taskId: "0042",
@@ -142,7 +148,7 @@ it("starts a plain session while the toggle is off", async () => {
   await type(container.querySelector("textarea")!, "hello");
   await submit();
   expect(client.spawnWorkstream).not.toHaveBeenCalled();
-  expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ project: "alpha", prompt: "hello" }));
+  expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ project: "alpha", prompt: "hello", coordinatorThinking: "" }));
   expect(container.querySelector(".workstream-options")).toBeNull();
   expect(location).toBe("/p/alpha/s/s_plain");
   expect(track.submit).toHaveBeenCalledWith("new_session", expect.objectContaining({ workstream: false }));

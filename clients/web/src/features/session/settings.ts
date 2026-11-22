@@ -13,14 +13,8 @@ export const THINKING_LEVELS = [
 ] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number]["value"];
 
-/** Scope a reasoning change targets; "all" is the empty wire role. */
-export const THINKING_ROLES = [
-  { value: "all", title: "All roles" },
-  { value: "coordinator", title: "Coordinator" },
-  { value: "implementer", title: "Implementer" },
-  { value: "reviewers", title: "Reviewers" },
-] as const;
-export type ThinkingRole = (typeof THINKING_ROLES)[number]["value"];
+/** A role with its own thinking picker (SetThinking's wire role). */
+export type ThinkingRole = "coordinator" | "implementer" | "reviewers";
 
 export interface RoleThinking {
   coordinator: ThinkingLevel;
@@ -34,28 +28,63 @@ export function parseThinking(value: string): ThinkingLevel {
   return (THINKING_LEVELS.find((l) => l.value === v)?.value ?? "medium") as ThinkingLevel;
 }
 
-export function thinkingRoleWire(role: ThinkingRole): string {
-  return role === "all" ? "" : role;
-}
+const rank = (level: string) => THINKING_LEVELS.findIndex((l) => l.value === level);
 
-/** The known level for a scope ("all" shows the coordinator's as representative). */
-export function thinkingFor(role: ThinkingRole, levels: RoleThinking): ThinkingLevel {
-  return role === "implementer" ? levels.implementer : role === "reviewers" ? levels.reviewers : levels.coordinator;
+/** The display title of a level ("X-High"); an unknown value shows as is. */
+export function thinkingTitle(level: string): string {
+  return THINKING_LEVELS.find((l) => l.value === level)?.title ?? level;
 }
 
 /**
- * Whether applying `level` at `role` changes anything. For "all" any divergent
- * role counts, so unifying the roles at the coordinator's level still applies.
+ * The levels a model supports (ModelInfo.thinking_levels), lowest first.
+ * Unknown levels are dropped; an empty list (an older daemon, or a model not in
+ * the list) offers every level.
  */
-export function needsThinkingApply(role: ThinkingRole, level: ThinkingLevel, levels: RoleThinking): boolean {
-  if (role === "all") return level !== levels.coordinator || level !== levels.implementer || level !== levels.reviewers;
-  return level !== thinkingFor(role, levels);
+export function supportedLevels(info: ModelInfo | undefined): ThinkingLevel[] {
+  const wanted = new Set((info?.thinkingLevels ?? []).map((l) => l.trim().toLowerCase()));
+  const out = THINKING_LEVELS.map((l) => l.value).filter((l) => wanted.has(l));
+  return out.length ? out : THINKING_LEVELS.map((l) => l.value);
 }
 
-/** Levels after a successful SetThinking. */
-export function withThinking(role: ThinkingRole, level: ThinkingLevel, levels: RoleThinking): RoleThinking {
-  if (role === "all") return { coordinator: level, implementer: level, reviewers: level };
-  return { ...levels, [role]: level };
+/** The levels supported by the model named `name`. */
+export function levelsNamed(name: string, models: readonly ModelInfo[]): ThinkingLevel[] {
+  return supportedLevels(models.find((m) => m.name === name));
+}
+
+/** The levels any of `names` supports: a role with several models (the reviewers); the daemon clamps per model. */
+export function levelsAnyOf(names: readonly string[], models: readonly ModelInfo[]): ThinkingLevel[] {
+  if (!names.length) return THINKING_LEVELS.map((l) => l.value);
+  const any = new Set(names.flatMap((n) => levelsNamed(n, models)));
+  return THINKING_LEVELS.map((l) => l.value).filter((l) => any.has(l));
+}
+
+/**
+ * A picker's choices: the supported levels plus `current` when it is a known
+ * level outside them, so a saved level is never rewritten just by showing it.
+ */
+export function levelChoices(supported: readonly ThinkingLevel[], current = ""): ThinkingLevel[] {
+  if (rank(current) < 0 || supported.includes(current as ThinkingLevel)) return [...supported];
+  return THINKING_LEVELS.map((l) => l.value).filter((l) => l === current || supported.includes(l));
+}
+
+/**
+ * `level` mapped onto `supported` as the daemon clamps a new choice (spec §7.4):
+ * a supported level is kept, "off" becomes the lowest supported level, and any
+ * other level the nearest supported level above "off" (ties go to the higher
+ * one). "" (the model's default), an unknown level, or an empty list is kept.
+ */
+export function clampThinking(level: string, supported: readonly string[]): string {
+  const want = rank(level);
+  if (want < 0 || !supported.length || supported.includes(level)) return level;
+  const ranked = supported.filter((s) => rank(s) >= 0).sort((a, b) => rank(a) - rank(b));
+  if (!ranked.length) return level;
+  if (level === "off") return ranked[0];
+  let best = "";
+  for (const s of ranked) {
+    if (s === "off") continue;
+    if (!best || Math.abs(rank(s) - want) <= Math.abs(rank(best) - want)) best = s;
+  }
+  return best || ranked[0];
 }
 
 /**

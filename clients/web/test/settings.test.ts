@@ -1,39 +1,58 @@
-// Session settings: reasoning scopes, role-model choices, and the
+// Session settings: thinking levels per model, role-model choices, and the
 // session-scoped usage breakdown.
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import { ModelInfoSchema, UsageRowSchema } from "../src/gen/ycc/v1/ycc_pb";
 import {
+  clampThinking,
   formatCost,
-  needsThinkingApply,
+  levelChoices,
+  levelsAnyOf,
+  levelsNamed,
   parseThinking,
   roleModelChoices,
   sessionUsage,
-  thinkingFor,
-  thinkingRoleWire,
-  withThinking,
+  supportedLevels,
 } from "../src/features/session/settings";
 
-const levels = { coordinator: "high", implementer: "low", reviewers: "high" } as const;
+const ALL = ["off", "low", "medium", "high", "xhigh", "max"];
 
 describe("session settings", () => {
-  it("parses levels with a medium fallback and maps scopes to wire roles", () => {
+  it("parses levels with a medium fallback", () => {
     expect(parseThinking("XHIGH")).toBe("xhigh");
     expect(parseThinking("")).toBe("medium");
     expect(parseThinking("bogus")).toBe("medium");
-    expect(thinkingRoleWire("all")).toBe("");
-    expect(thinkingRoleWire("reviewers")).toBe("reviewers");
   });
 
-  it("only applies real changes; 'all' unifies divergent roles", () => {
-    expect(thinkingFor("all", levels)).toBe("high");
-    expect(thinkingFor("implementer", levels)).toBe("low");
-    expect(needsThinkingApply("coordinator", "high", levels)).toBe(false);
-    expect(needsThinkingApply("implementer", "high", levels)).toBe(true);
-    expect(needsThinkingApply("all", "high", levels)).toBe(true);
-    expect(needsThinkingApply("all", "high", { coordinator: "high", implementer: "high", reviewers: "high" })).toBe(false);
-    expect(withThinking("all", "off", levels)).toEqual({ coordinator: "off", implementer: "off", reviewers: "off" });
-    expect(withThinking("reviewers", "max", levels)).toEqual({ ...levels, reviewers: "max" });
+  it("offers a model's reported levels in scale order, or every level when none are known", () => {
+    const models = [
+      create(ModelInfoSchema, { name: "gpt", thinkingLevels: ["xhigh", "low", "medium", "high", "bogus"] }),
+      create(ModelInfoSchema, { name: "local", thinkingLevels: ["off", "high"] }),
+      create(ModelInfoSchema, { name: "old" }),
+    ];
+    expect(supportedLevels(models[0])).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(supportedLevels(undefined)).toEqual(ALL);
+    expect(levelsNamed("old", models)).toEqual(ALL);
+    expect(levelsNamed("missing", models)).toEqual(ALL);
+    expect(levelsAnyOf(["gpt", "local"], models)).toEqual(["off", "low", "medium", "high", "xhigh"]);
+    expect(levelsAnyOf([], models)).toEqual(ALL);
+    // A saved level outside the list stays visible rather than being rewritten.
+    expect(levelChoices(["off", "high"], "max")).toEqual(["off", "high", "max"]);
+    expect(levelChoices(["off", "high"], "")).toEqual(["off", "high"]);
+  });
+
+  it("clamps a picked level like the daemon (spec 7.4)", () => {
+    expect(clampThinking("high", ["low", "medium", "high"])).toBe("high");
+    expect(clampThinking("off", ["low", "medium", "high", "xhigh"])).toBe("low");
+    expect(clampThinking("max", ["low", "medium", "high", "xhigh"])).toBe("xhigh");
+    expect(clampThinking("low", ["off", "high"])).toBe("high");
+    // Ties go to the higher level; off is never a non-off level's target.
+    expect(clampThinking("medium", ["off", "low", "high"])).toBe("high");
+    expect(clampThinking("high", ["off"])).toBe("off");
+    // Model default, unknown values and an unknown list are kept.
+    expect(clampThinking("", ["low"])).toBe("");
+    expect(clampThinking("adaptive", ["low"])).toBe("adaptive");
+    expect(clampThinking("max", [])).toBe("max");
   });
 
   it("offers enabled models plus a disabled one the role holds", () => {

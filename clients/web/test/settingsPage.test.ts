@@ -18,6 +18,7 @@ import {
   rolesOf,
   suggestName,
   testModelRequest,
+  toggleThinkingLevel,
   toggleReviewer,
   upsertModelRequest,
   validateDraft,
@@ -91,6 +92,7 @@ describe("model drafts", () => {
       thinking: "",
       effort: "",
       thinkingDisplay: "",
+      thinkingLevels: { levels: [] },
       auth: "api-key",
       disabled: false,
       notes: "",
@@ -112,6 +114,19 @@ describe("model drafts", () => {
     expect(modelConfigPayload(d)).toMatchObject({ name: "claude", model: "claude-x", priceOutput: 15, disabled: true, notes: "Deep review" });
     expect(modelConfigPayload(d)).not.toHaveProperty("priceInput");
     expect(draftFromConfig(c, true)).toMatchObject({ name: "claude-copy", notes: "Deep review" });
+  });
+
+  it("edits the thinking_levels override; no override is sent empty so a saved one clears", () => {
+    const plain = draftFromConfig(create(ModelConfigSchema, { name: "a", backend: "openai" }));
+    expect(plain.thinkingLevels).toBeNull();
+    expect(modelConfigPayload(plain).thinkingLevels).toEqual({ levels: [] });
+    const custom = draftFromConfig(create(ModelConfigSchema, { name: "a", thinkingLevels: { levels: ["high", "off", "bogus"] } }));
+    expect(custom.thinkingLevels).toEqual(["off", "high"]);
+    expect(modelConfigPayload(custom).thinkingLevels).toEqual({ levels: ["off", "high"] });
+    expect(toggleThinkingLevel(["off", "high"], "low", true)).toEqual(["off", "low", "high"]);
+    expect(toggleThinkingLevel(["off", "high"], "off", false)).toEqual(["high"]);
+    // The last level stays: an empty override would mean the backend default.
+    expect(toggleThinkingLevel(["high"], "high", false)).toEqual(["high"]);
   });
 
   it("invalidates a test result only for request-shaping fields", () => {

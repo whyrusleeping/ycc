@@ -5,6 +5,7 @@
 // daemon resolves locally. No secret value has a field here, and payloads are
 // built from an allowlist so nothing else can ride along.
 import type { HealthCheck, ModelConfig, ModelInfo } from "../../gen/ycc/v1/ycc_pb";
+import { THINKING_LEVELS, type ThinkingLevel } from "../session/settings";
 
 export const BACKENDS = [
   { value: "anthropic", title: "Anthropic" },
@@ -53,6 +54,8 @@ export interface ModelDraft {
   thinking: string;
   effort: string;
   thinkingDisplay: string;
+  /** The thinking_levels override; null offers the backend's default levels. */
+  thinkingLevels: ThinkingLevel[] | null;
   priceInput: string;
   priceOutput: string;
   priceCacheRead: string;
@@ -73,6 +76,7 @@ export function emptyDraft(): ModelDraft {
     thinking: "",
     effort: "",
     thinkingDisplay: "",
+    thinkingLevels: null,
     priceInput: "",
     priceOutput: "",
     priceCacheRead: "",
@@ -82,6 +86,21 @@ export function emptyDraft(): ModelDraft {
 }
 
 const price = (v: number | undefined) => (v === undefined ? "" : String(v));
+
+/** Known levels in scale order; none (no override) is null. */
+function levelOverride(levels: readonly string[]): ThinkingLevel[] | null {
+  const out = THINKING_LEVELS.map((l) => l.value).filter((l) => levels.includes(l));
+  return out.length ? out : null;
+}
+
+/**
+ * Turn one level of a custom override on or off, in scale order. The last
+ * level stays: an empty override means "backend default".
+ */
+export function toggleThinkingLevel(levels: readonly ThinkingLevel[], level: ThinkingLevel, on: boolean): ThinkingLevel[] {
+  if (!on && levels.length <= 1) return [...levels];
+  return THINKING_LEVELS.map((l) => l.value).filter((l) => (l === level ? on : levels.includes(l)));
+}
 
 /** Seed an editor from GetModelConfig (duplicate = a copy under a new name). */
 export function draftFromConfig(c: ModelConfig, duplicate = false): ModelDraft {
@@ -96,6 +115,7 @@ export function draftFromConfig(c: ModelConfig, duplicate = false): ModelDraft {
     thinking: c.thinking,
     effort: c.effort,
     thinkingDisplay: c.thinkingDisplay,
+    thinkingLevels: levelOverride(c.thinkingLevels?.levels ?? []),
     priceInput: price(c.priceInput),
     priceOutput: price(c.priceOutput),
     priceCacheRead: price(c.priceCacheRead),
@@ -209,6 +229,7 @@ export const MODEL_CONFIG_FIELDS = [
   "thinking",
   "effort",
   "thinkingDisplay",
+  "thinkingLevels",
   "priceInput",
   "priceOutput",
   "priceCacheRead",
@@ -227,6 +248,8 @@ export interface ModelConfigPayload {
   thinking: string;
   effort: string;
   thinkingDisplay: string;
+  /** Always sent: an empty list clears a saved override (the backend default applies). */
+  thinkingLevels: { levels: string[] };
   priceInput?: number;
   priceOutput?: number;
   priceCacheRead?: number;
@@ -247,6 +270,7 @@ export function modelConfigPayload(d: ModelDraft): ModelConfigPayload {
     thinking: d.thinking,
     effort: d.effort,
     thinkingDisplay: d.thinkingDisplay,
+    thinkingLevels: { levels: [...(d.thinkingLevels ?? [])] },
     auth: d.auth,
     disabled: !d.enabled,
     notes: d.notes.trim(),

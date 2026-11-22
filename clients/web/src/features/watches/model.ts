@@ -112,6 +112,8 @@ export interface WatchDraft {
   every: string;
   unit: IntervalUnit;
   model: string;
+  /** Thinking level for runs; "" = the run model's saved level. */
+  thinking: string;
   probe: string;
   probeAlways: boolean;
   /** A datetime-local value ("YYYY-MM-DDTHH:mm", local time); "" = never. */
@@ -121,7 +123,7 @@ export interface WatchDraft {
 }
 
 export function emptyDraft(): WatchDraft {
-  return { name: "", brief: "", every: "30", unit: "minutes", model: "", probe: "", probeAlways: false, expires: "", allowedActions: "" };
+  return { name: "", brief: "", every: "30", unit: "minutes", model: "", thinking: "", probe: "", probeAlways: false, expires: "", allowedActions: "" };
 }
 
 /** The interval in the largest unit that divides it evenly. */
@@ -158,6 +160,7 @@ export function draftFromWatch(w: Watch): WatchDraft {
     brief: d?.brief ?? "",
     ...splitInterval(Number(d?.intervalSecs ?? 0)),
     model: d?.model ?? "",
+    thinking: d?.thinking ?? "",
     probe: d?.probe ?? "",
     probeAlways: d?.probeAlways ?? false,
     expires: toLocalInput(d?.expires ?? ""),
@@ -189,6 +192,7 @@ export function buildDefinition(d: WatchDraft): MessageInitShape<typeof WatchDef
     brief: d.brief.trim(),
     intervalSecs: BigInt(intervalSecs(d)),
     model: d.model,
+    thinking: d.thinking,
     probe: d.probe.trim(),
     probeAlways: d.probe.trim() !== "" && d.probeAlways,
     expires: fromLocalInput(d.expires),

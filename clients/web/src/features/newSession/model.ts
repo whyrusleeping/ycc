@@ -106,6 +106,8 @@ export interface NewSessionDraft {
   mode: string;
   /** Coordinator override for this session only; "" = configured default. */
   model: string;
+  /** Coordinator thinking level for this session only; "" = the model's saved level. */
+  thinking: string;
   prompt: string;
   /** Name of the applied preset while its mode is still selected. */
   preset: string;
@@ -187,6 +189,7 @@ function sessionChoices(draft: NewSessionDraft) {
     mode: draft.mode,
     prompt: draft.prompt.trim(),
     coordinatorModel: draft.model,
+    coordinatorThinking: draft.thinking,
     preset: draft.preset,
     images: toImageAttachments(draft.pictures),
   };

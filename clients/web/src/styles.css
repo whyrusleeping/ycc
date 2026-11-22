@@ -4580,6 +4580,11 @@ th[aria-sort="descending"] .sort-btn {
   flex: 1;
 }
 
+/* The watch editor's interval count: room for the model and reasoning pickers. */
+.watch-editor .editor-row input[type="number"] {
+  width: 10ch;
+}
+
 .editor-actions {
   display: flex;
   align-items: center;
@@ -7274,6 +7279,28 @@ button.chip.discovered.selected {
   color: var(--fg);
   margin-bottom: 4px;
   padding: 0;
+}
+
+.thinking-levels {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thinking-levels legend {
+  font-size: var(--fs-xs);
+  color: var(--fg);
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.level-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
 }
 
 .model-test {

@@ -4,7 +4,7 @@
 // notes, and a live connection test of the unsaved draft. Mirrors iOS ModelEditorView.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { DiscoverModelsResponse, TestModelResponse } from "../../gen/ycc/v1/ycc_pb";
+import type { DiscoverModelsResponse, ModelInfo, TestModelResponse } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys } from "../../api/queries";
@@ -25,20 +25,25 @@ import {
   probeFingerprint,
   suggestName,
   testModelRequest,
+  toggleThinkingLevel,
   upsertModelRequest,
   validateDraft,
   type ModelDraft,
 } from "./models";
+import { THINKING_LEVELS, supportedLevels, thinkingTitle } from "../session/settings";
 
 export type EditorTarget = { kind: "new" } | { kind: "edit"; name: string } | { kind: "duplicate"; name: string };
 
 export function ModelEditorDialog({
   target,
   existingNames,
+  models = [],
   onClose,
 }: {
   target: EditorTarget | null;
   existingNames: readonly string[];
+  /** ListModels entries: the edited model's reported thinking levels. */
+  models?: readonly ModelInfo[];
   onClose: () => void;
 }) {
   const closeGuard = useRef<(() => void) | null>(null);
@@ -53,14 +58,15 @@ export function ModelEditorDialog({
       view="model_editor"
       flow={target ? `model_editor.${target.kind}` : undefined}
     >
-      {target && <ModelEditor key={key} target={target} existingNames={existingNames} onClose={onClose} closeGuard={closeGuard} />}
+      {target && <ModelEditor key={key} target={target} existingNames={existingNames} models={models} onClose={onClose} closeGuard={closeGuard} />}
     </Modal>
   );
 }
 
-function ModelEditor({ target, existingNames, onClose, closeGuard }: {
+function ModelEditor({ target, existingNames, models, onClose, closeGuard }: {
   target: EditorTarget;
   existingNames: readonly string[];
+  models: readonly ModelInfo[];
   onClose: () => void;
   closeGuard: RefObject<(() => void) | null>;
 }) {
@@ -83,19 +89,31 @@ function ModelEditor({ target, existingNames, onClose, closeGuard }: {
     if (config.isError) return <p className="error" role="alert">{errorMessage(config.error, "Couldn’t load the model.")}</p>;
     return <p className="muted">Loading…</p>;
   }
-  return <EditorForm target={target} initial={draft!} existingNames={existingNames} onClose={onClose} closeGuard={closeGuard} />;
+  return (
+    <EditorForm
+      target={target}
+      initial={draft!}
+      existingNames={existingNames}
+      sourceInfo={models.find((m) => m.name === source)}
+      onClose={onClose}
+      closeGuard={closeGuard}
+    />
+  );
 }
 
 function EditorForm({
   target,
   initial,
   existingNames,
+  sourceInfo,
   onClose,
   closeGuard,
 }: {
   target: EditorTarget;
   initial: ModelDraft;
   existingNames: readonly string[];
+  /** The edited (or duplicated) model as ListModels reports it. */
+  sourceInfo: ModelInfo | undefined;
   onClose: () => void;
   closeGuard: RefObject<(() => void) | null>;
 }) {
@@ -384,6 +402,7 @@ function EditorForm({
           </select>
         </label>
       </div>
+      <ThinkingLevelsField d={d} initial={initial} sourceInfo={sourceInfo} onChange={(levels) => set("thinkingLevels", levels)} />
       <fieldset className="price-fields">
         <legend>
           Pricing <span className="muted">($ per million tokens; blank uses built-in prices or leaves it unpriced)</span>
@@ -455,5 +474,61 @@ function EditorForm({
         }}
       />
     </form>
+  );
+}
+
+/**
+ * The thinking_levels override: which levels thinking pickers offer for this
+ * model. Off ("Custom levels" unchecked) keeps the backend's default list.
+ */
+function ThinkingLevelsField({
+  d,
+  initial,
+  sourceInfo,
+  onChange,
+}: {
+  d: ModelDraft;
+  initial: ModelDraft;
+  sourceInfo: ModelInfo | undefined;
+  onChange: (levels: ModelDraft["thinkingLevels"]) => void;
+}) {
+  const levels = d.thinkingLevels;
+  // The backend default is known while the saved model had no override and
+  // its backend is unchanged: then ListModels reports exactly that list.
+  const defaultKnown = !!sourceInfo?.thinkingLevels.length && initial.thinkingLevels === null && sourceInfo.backend === d.backend;
+  return (
+    <fieldset className="thinking-levels">
+      <legend>Thinking levels</legend>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={levels !== null}
+          onChange={(e) => onChange(e.target.checked ? supportedLevels(sourceInfo) : null)}
+        />
+        Custom levels
+      </label>
+      {levels !== null && (
+        <div className="level-checks" role="group" aria-label="Offered thinking levels">
+          {THINKING_LEVELS.map((l) => (
+            <label key={l.value} className="check">
+              <input
+                type="checkbox"
+                checked={levels.includes(l.value)}
+                disabled={levels.length === 1 && levels[0] === l.value}
+                onChange={(e) => onChange(toggleThinkingLevel(levels, l.value, e.target.checked))}
+              />
+              {l.title}
+            </label>
+          ))}
+        </div>
+      )}
+      <span className="muted small">
+        {levels === null
+          ? `Thinking pickers offer this backend’s default levels${
+              defaultKnown ? `: ${supportedLevels(sourceInfo).map(thinkingTitle).join(", ")}` : ""
+            }.`
+          : "Thinking pickers offer only these levels; another level picked for this model moves to the nearest one."}
+      </span>
+    </fieldset>
   );
 }

@@ -2,7 +2,7 @@
 // Recent feed, last-viewed project first), then a prompt starting chat. A
 // project that needs onboarding is offered the onboarding preset; an Advanced
 // disclosure keeps explicit mode choice. Also an optional per-session
-// coordinator model and pictures → StartSession, or
+// coordinator model and reasoning level, and pictures → StartSession, or
 // with "Separate workstream" on → SpawnWorkstream (plus an optional task and
 // base ref). On success it navigates straight into the live session.
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,6 +22,8 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { Icon } from "../../ui/icons";
 import { spawnableTasks } from "../workstreams/model";
 import { NewSessionDraftStore } from "./drafts";
+import { clampThinking, levelsNamed, thinkingTitle } from "../session/settings";
+import { ThinkingSelect } from "../session/ThinkingSelect";
 import {
   applyPreset,
   buildStartRequest,
@@ -104,6 +106,10 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   // A start error is about the draft that was sent; editing pictures moves on.
   useEffect(() => setError(null), [pictures.pictures]);
 
+  // The coordinator's thinking picker follows the selected (or default) model.
+  const runModel = draft.model || choice.defaultModel;
+  const thinkingLevels = levelsNamed(runModel, models.data?.models ?? []);
+  const savedThinking = runModel === choice.defaultModel ? models.data?.coordinatorThinking ?? "" : "";
   const projectList = projects.data ?? [];
   const asking = projectSeeded && projectList.length > 1 && !draft.project;
   const choices = useMemo(() => projectChoices(projectList, lastViewedProject.get()), [projectList]);
@@ -347,8 +353,10 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                 value={draft.model}
                 disabled={starting}
                 onChange={(e) => {
-                  track.action("new_session.model", "click", { model: e.target.value ? "override" : "default" });
-                  setDraft((d) => ({ ...d, model: e.target.value }));
+                  const model = e.target.value;
+                  track.action("new_session.model", "click", { model: model ? "override" : "default" });
+                  // A picked level moves to one the new model supports.
+                  setDraft((d) => ({ ...d, model, thinking: clampThinking(d.thinking, levelsNamed(model || choice.defaultModel, choice.models)) }));
                 }}
                 title="Coordinator model for this session only"
               >
@@ -363,6 +371,23 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                   </option>
                 ))}
               </select>
+            </label>
+          )}
+          {choice.models.length > 0 && (
+            <label className="chip-select">
+              <span>Reasoning</span>
+              <ThinkingSelect
+                label="Coordinator reasoning for this session"
+                title="Coordinator reasoning for this session only; your saved default is unchanged"
+                value={draft.thinking}
+                levels={thinkingLevels}
+                defaultLabel={savedThinking ? `Default (${thinkingTitle(savedThinking)})` : "Default"}
+                disabled={starting}
+                onChange={(thinking) => {
+                  track.action("new_session.thinking", "click", { thinking: thinking || "default" });
+                  setDraft((d) => ({ ...d, thinking }));
+                }}
+              />
             </label>
           )}
           {selectedMode && otherMode && (

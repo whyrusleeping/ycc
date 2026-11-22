@@ -123,22 +123,33 @@ it("applies the default tier only after explicit confirmation, retaining a faile
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Tier unavailable");
 });
 
-it("keeps reasoning focus while saving and ignores repeated choices (session: true)", async () => {
+it("applies a session reasoning level once, to that session only, keeping focus while saving", async () => {
   let resolve!: (value: object) => void;
   rpc.setThinking.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
   await render(true);
-  const group = container.querySelector('[aria-label="Reasoning level"]')!;
-  const high = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "High")!;
-  high.focus();
-  await act(() => high.click());
-  expect(high.disabled).toBe(false);
-  expect(high.getAttribute("aria-disabled")).toBe("true");
-  expect(document.activeElement).toBe(high);
-  await act(() => high.click());
-  expect(rpc.setThinking).toHaveBeenCalledTimes(1);
+  const select = container.querySelector<HTMLSelectElement>('[aria-label="Implementer reasoning"]')!;
+  select.focus();
+  await change(select, "high");
+  expect(select.disabled).toBe(false);
+  expect(select.getAttribute("aria-disabled")).toBe("true");
+  expect(document.activeElement).toBe(select);
+  await change(select, "max");
+  expect(rpc.setThinking).toHaveBeenCalledExactlyOnceWith({ sessionId: "session", role: "implementer", level: "high" });
   await act(async () => resolve({}));
-  expect(high.getAttribute("aria-disabled")).toBe("false");
-  expect(document.activeElement).toBe(high);
+  expect(select.getAttribute("aria-disabled")).toBe("false");
+  expect(document.activeElement).toBe(select);
+});
+
+it.each([false, true])("offers only the role model's thinking levels (session: %s)", async (session) => {
+  models.models[0].thinkingLevels = ["low", "medium", "high"];
+  models.models[1].thinkingLevels = ["off", "high"];
+  models.reviewers = ["first", "second"];
+  await render(session);
+  const options = (label: string) =>
+    Array.from(container.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!.options).map((o) => o.value);
+  const coordinator = session ? "Coordinator reasoning" : "Main agent reasoning";
+  expect(options(coordinator)).toEqual(["low", "medium", "high"]);
+  expect(options("Reviewers reasoning")).toEqual(["off", "low", "medium", "high"]);
 });
 
 it("saves a daemon reasoning level once while keeping the select usable", async () => {
@@ -155,4 +166,39 @@ it("saves a daemon reasoning level once while keeping the select usable", async 
   expect(rpc.setThinking).toHaveBeenCalledExactlyOnceWith({ sessionId: "", role: "coordinator", level: "high" });
   await act(async () => resolve({}));
   expect(select.getAttribute("aria-disabled")).toBe("false");
+});
+
+it.each([false, true])("holds a role's reasoning while a different model is chosen but not applied (session: %s)", async (session) => {
+  await render(session);
+  const model = container.querySelector<HTMLSelectElement>(`[aria-label="${session ? "Coordinator model" : "Default coordinator model"}"]`)!;
+  const reasoning = container.querySelector<HTMLSelectElement>(`[aria-label="${session ? "Coordinator reasoning" : "Main agent reasoning"}"]`)!;
+  expect(reasoning.disabled).toBe(false);
+  await change(model, "second");
+  expect(reasoning.disabled).toBe(true);
+  expect(container.textContent).toContain("apply the model first");
+  await change(model, "first");
+  expect(reasoning.disabled).toBe(false);
+});
+
+it("holds the session reviewers' reasoning while a reviewer change is unapplied", async () => {
+  await render(true);
+  const reasoning = container.querySelector<HTMLSelectElement>('[aria-label="Reviewers reasoning"]')!;
+  const second = Array.from(container.querySelectorAll<HTMLLabelElement>(".settings-reviewers label")).find((l) => l.textContent?.includes("second"))!;
+  await act(() => second.querySelector("input")!.click());
+  expect(reasoning.disabled).toBe(true);
+});
+
+it("holds every default reasoning picker while a role assignment is saving", async () => {
+  let resolve!: (value: object) => void;
+  rpc.setRoleConfig.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+  await render(false);
+  const reviewers = container.querySelector<HTMLSelectElement>('[aria-label="Reviewers reasoning"]')!;
+  const second = Array.from(container.querySelectorAll<HTMLLabelElement>(".settings-reviewers label")).find((l) => l.textContent?.includes("second"))!;
+  await act(() => second.querySelector("input")!.click());
+  expect(rpc.setRoleConfig).toHaveBeenCalledExactlyOnceWith({ sessionId: "", reviewers: ["first", "second"] });
+  for (const label of ["Main agent reasoning", "Reviewers reasoning", "Implementer reasoning"]) {
+    expect(container.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!.disabled).toBe(true);
+  }
+  await act(async () => resolve({}));
+  expect(reviewers.disabled).toBe(false);
 });

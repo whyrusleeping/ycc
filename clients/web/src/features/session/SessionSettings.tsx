@@ -1,5 +1,6 @@
-// The per-session settings panel (inspector): reasoning level by role scope
-// (SetThinking), role models (SetRoleConfig scoped to the session), the
+// The per-session settings panel (inspector): role models (SetRoleConfig
+// scoped to the session) each with a reasoning select limited to the model's
+// levels (SetThinking scoped to the session), the
 // coordinator context meter with rollover, and this session's usage (GetUsage
 // grouped by session and model). Model selects are drafts until Apply; the
 // daemon's error is shown verbatim.
@@ -16,20 +17,17 @@ import { compactTokenCount } from "../sessions/feed";
 import { usageSearch } from "../usage/model";
 import { useSessionController, useSessionSnapshot } from "./useSession";
 import {
-  THINKING_LEVELS,
-  THINKING_ROLES,
   formatCost,
-  needsThinkingApply,
+  levelsAnyOf,
+  levelsNamed,
   parseThinking,
   roleModelChoices,
   sessionUsage,
-  thinkingFor,
-  thinkingRoleWire,
-  withThinking,
   type RoleThinking,
   type ThinkingLevel,
   type ThinkingRole,
 } from "./settings";
+import { ThinkingSelect } from "./ThinkingSelect";
 
 export function SessionSettingsPanel({ project, sessionId }: { project: string; sessionId: string }) {
   const controller = useSessionController(project, sessionId);
@@ -86,7 +84,6 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
   // Without a live session, ListModels/SetThinking would address the global
   // defaults, so the controls only load (and apply) for a live session.
   const models = useModels(sessionId, live);
-  const [role, setRole] = useState<ThinkingRole>("all");
   const [levels, setLevels] = useState<RoleThinking | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,12 +117,12 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
     }
   };
 
-  const chooseLevel = (level: ThinkingLevel) => {
-    if (busy || !levels || !needsThinkingApply(role, level, levels)) return;
+  const chooseLevel = (role: ThinkingRole, level: ThinkingLevel) => {
+    if (busy || !levels || level === levels[role]) return;
     track.action("session_settings.thinking", "click", { role, level });
     void apply(
-      () => client.setThinking({ sessionId, level, role: thinkingRoleWire(role) }),
-      () => setLevels(withThinking(role, level, levels)),
+      () => client.setThinking({ sessionId, level, role }),
+      () => setLevels({ ...levels, [role]: level }),
     );
   };
 
@@ -144,45 +141,32 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
   if (!live) return null;
   if (models.isPending) return <p className="muted">Loading settings…</p>;
   if (models.isError || !data) return <p className="error" role="alert">{errorMessage(models.error, "Couldn’t load models.")}</p>;
-  const current = levels ? thinkingFor(role, levels) : "medium";
   const shownReviewers = reviewers ?? data.reviewers;
   const reviewersChanged =
     reviewers !== null &&
     (reviewers.length !== data.reviewers.length || reviewers.some((r) => !data.reviewers.includes(r)));
+  // The levels follow the role's applied model(s): SetThinking targets those,
+  // so the picker waits while a different model is chosen but not applied.
+  const thinkingPick = (role: ThinkingRole, title: string, supported: ThinkingLevel[], pending: boolean) => (
+    <label className="settings-row">
+      <span className="muted small">{pending ? "Reasoning · apply the model first" : "Reasoning"}</span>
+      <ThinkingSelect
+        label={`${title} reasoning`}
+        value={levels?.[role] ?? "medium"}
+        levels={supported}
+        busy={busy}
+        disabled={pending}
+        onChange={(level) => chooseLevel(role, level as ThinkingLevel)}
+      />
+    </label>
+  );
+  const pendingModel = (field: "coordinator" | "implementer") => !!roleModels[field] && roleModels[field] !== data[field];
 
   return (
     <>
       {error && <p className="error settings-error" role="alert">{error}</p>}
       <section className="settings-section">
-        <h3>Reasoning</h3>
-        <label className="settings-row">
-          <span>Scope</span>
-          <select aria-label="Reasoning scope" value={role} disabled={busy} onChange={(e) => setRole(e.target.value as ThinkingRole)}>
-            {THINKING_ROLES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="segmented" role="group" aria-label="Reasoning level">
-          {THINKING_LEVELS.map((l) => (
-            <button
-              key={l.value}
-              type="button"
-              aria-pressed={current === l.value}
-              className={current === l.value ? "selected" : ""}
-              aria-disabled={busy}
-              onClick={() => chooseLevel(l.value)}
-            >
-              {l.title}
-            </button>
-          ))}
-        </div>
-        <p className="muted small">Applies from the next turn and is saved as the model’s default.</p>
-      </section>
-      <section className="settings-section">
-        <h3>Models</h3>
+        <h3>Models and reasoning</h3>
         <label className="settings-row">
           <span>Coordinator</span>
           <select aria-label="Coordinator model" value={roleModels.coordinator ?? data.coordinator} disabled={busy} onChange={(e) => setRoleModels((draft) => ({ ...draft, coordinator: e.target.value }))}>
@@ -194,6 +178,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
             ))}
           </select>
         </label>
+        {thinkingPick("coordinator", "Coordinator", levelsNamed(data.coordinator, data.models), pendingModel("coordinator"))}
         <button type="button" className="btn small" disabled={busy || !roleModels.coordinator || roleModels.coordinator === data.coordinator} onClick={() => setRoleModel("coordinator", roleModels.coordinator!)}>
           Apply coordinator model
         </button>
@@ -208,6 +193,7 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
             ))}
           </select>
         </label>
+        {thinkingPick("implementer", "Implementer", levelsNamed(data.implementer, data.models), pendingModel("implementer"))}
         <button type="button" className="btn small" disabled={busy || !roleModels.implementer || roleModels.implementer === data.implementer} onClick={() => setRoleModel("implementer", roleModels.implementer!)}>
           Apply implementer model
         </button>
@@ -245,7 +231,11 @@ function ReasoningAndRoles({ sessionId, live }: { sessionId: string; live: boole
             </div>
           )}
         </fieldset>
-        <p className="muted small">Model changes apply to this session only.</p>
+        {thinkingPick("reviewers", "Reviewers", levelsAnyOf(data.reviewers, data.models), reviewersChanged)}
+        <p className="muted small">
+          Changes apply to this session only, from its next turn; your defaults in Settings stay unchanged. Roles that share a model share its
+          reasoning level.
+        </p>
       </section>
     </>
   );

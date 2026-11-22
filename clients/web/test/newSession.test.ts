@@ -37,6 +37,7 @@ const draft = (over: Partial<NewSessionDraft> = {}): NewSessionDraft => ({
   project: "alpha",
   mode: "chat",
   model: "",
+  thinking: "",
   prompt: "",
   preset: "",
   pictures: [],
@@ -115,11 +116,12 @@ describe("new session", () => {
   it("builds the StartSession request", () => {
     const data = new Uint8Array([9]);
     const pic = { id: "p", data, mediaType: "image/jpeg", filename: "a.jpg", previewUrl: "blob:x" };
-    expect(buildStartRequest(draft({ prompt: "  do it \n", model: "fast", preset: "spec-doctor", pictures: [pic] }))).toEqual({
+    expect(buildStartRequest(draft({ prompt: "  do it \n", model: "fast", thinking: "high", preset: "spec-doctor", pictures: [pic] }))).toEqual({
       project: "alpha",
       mode: "chat",
       prompt: "do it",
       coordinatorModel: "fast",
+      coordinatorThinking: "high",
       preset: "spec-doctor",
       images: [{ data, mediaType: "image/jpeg", filename: "a.jpg" }],
     });
@@ -137,7 +139,7 @@ describe("new session", () => {
   it("builds a workstream request with the same session choices plus task and base", () => {
     const data = new Uint8Array([9]);
     const pic = { id: "p", data, mediaType: "image/jpeg", filename: "a.jpg", previewUrl: "blob:x" };
-    const d = draft({ workstream: true, prompt: " do it ", model: "fast", preset: "spec-doctor", pictures: [pic], taskId: "0042", baseRef: " main " });
+    const d = draft({ workstream: true, prompt: " do it ", model: "fast", thinking: "low", preset: "spec-doctor", pictures: [pic], taskId: "0042", baseRef: " main " });
     expect(buildWorkstreamRequest(d)).toEqual({
       ...buildStartRequest(d),
       taskId: "0042",
