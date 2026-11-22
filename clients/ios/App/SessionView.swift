@@ -2835,10 +2835,8 @@ private struct QuestionSheet: View {
     /// sent in the background, so a second tap before the dismissal finishes
     /// must not send again.
     @State private var submitted = false
-    /// Per-question free-text drafts.
-    @State private var texts: [String]
-    /// Per-question selected option index (-1 = none).
-    @State private var selected: [Int]
+    /// Per-question drafts (picked option or typed text), keyed to the gate.
+    @State private var answers: QuestionAnswers
 
     init(
         pending: SessionProjection.PendingQuestion,
@@ -2848,8 +2846,7 @@ private struct QuestionSheet: View {
         self.pending = pending
         self.onAnswerSingle = onAnswerSingle
         self.onAnswerBatch = onAnswerBatch
-        _texts = State(initialValue: Array(repeating: "", count: pending.questions.count))
-        _selected = State(initialValue: Array(repeating: -1, count: pending.questions.count))
+        _answers = State(initialValue: QuestionAnswers(for: pending))
     }
 
     var body: some View {
@@ -2892,10 +2889,6 @@ private struct QuestionSheet: View {
                                 question.options.isEmpty ? "Type an answer…" : "Or type your own…",
                                 text: binding(index), axis: .vertical)
                                 .lineLimit(1...4)
-                                .onChange(of: text(at: index)) { _, newValue in
-                                    // Typing overrides a picked option.
-                                    if !newValue.isEmpty { setSelected(-1, at: index) }
-                                }
                             if !pending.isBatch {
                                 singleSendSection
                             }
@@ -2914,18 +2907,21 @@ private struct QuestionSheet: View {
                                     Spacer()
                                 }
                             }
-                            .disabled(!allAnswered)
+                            .disabled(!canSubmitBatch)
                         } footer: {
-                            if !allAnswered {
+                            if !canSubmitBatch {
                                 Text("Answer every question to submit.")
                             }
                         }
                         .id(Self.submitAnchor)
-                        .listRowBackground(allAnswered ? Theme.accentFill : Color(.tertiarySystemFill))
-                        .foregroundStyle(allAnswered ? Theme.onAccentFill : Color.secondary)
+                        .listRowBackground(canSubmitBatch ? Theme.accentFill : Color(.tertiarySystemFill))
+                        .foregroundStyle(canSubmitBatch ? Theme.onAccentFill : Color.secondary)
                     }
                 }
             }
+            // The sheet's `.id(rowID)` rebuilds it for a new gate; this keeps
+            // the drafts sized if the same gate changes shape.
+            .onChange(of: pending) { _, newValue in answers.sync(to: newValue) }
             .navigationTitle(pending.isBatch ? "Answer questions" : "Question")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -2948,8 +2944,7 @@ private struct QuestionSheet: View {
     ) -> some View {
         Button {
             if pending.isBatch {
-                setSelected(optIdx, at: index)
-                setText("", at: index)
+                answers.select(option: optIdx, at: index)
                 advance(from: index, proxy: proxy)
             } else {
                 // Single question: an option tap answers immediately.
@@ -2957,9 +2952,9 @@ private struct QuestionSheet: View {
             }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: selectedValue(at: index) == optIdx
+                Image(systemName: answers.selection(at: index) == optIdx
                     ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selectedValue(at: index) == optIdx ? Color.accentColor : .secondary)
+                    .foregroundStyle(answers.selection(at: index) == optIdx ? Color.accentColor : .secondary)
                 Text(option)
                     // Color.primary, not `.primary`: inside a Form button the
                     // hierarchical style resolves to the tint (accent).
@@ -2974,71 +2969,35 @@ private struct QuestionSheet: View {
     /// the submit button) into view. Scanning for the next *unanswered* question
     /// keeps revisiting an earlier answer from bouncing the user back down.
     private func advance(from index: Int, proxy: ScrollViewProxy) {
-        let next = pending.questions.indices.first { candidate in
-            candidate > index && !isAnswered(candidate)
-        }
-        let target = next.map(Self.anchor(forQuestion:)) ?? Self.submitAnchor
+        let target = answers.nextUnanswered(after: index).map(Self.anchor(forQuestion:))
+            ?? Self.submitAnchor
         withAnimation(.snappy) {
             proxy.scrollTo(target, anchor: .top)
         }
     }
 
-    // Bounds-safe accessors for the per-question `@State` arrays. These arrays
-    // are seeded to `pending.questions.count` in `init` and the `.id(rowID)` on
-    // the sheet rebuilds this view when the gate changes, but guarding here means
-    // a transient shape desync can never trap on an out-of-range subscript.
-    private func text(at index: Int) -> String {
-        texts.indices.contains(index) ? texts[index] : ""
-    }
-
-    private func setText(_ value: String, at index: Int) {
-        guard texts.indices.contains(index) else { return }
-        texts[index] = value
-    }
-
-    private func selectedValue(at index: Int) -> Int {
-        selected.indices.contains(index) ? selected[index] : -1
-    }
-
-    private func setSelected(_ value: Int, at index: Int) {
-        guard selected.indices.contains(index) else { return }
-        selected[index] = value
-    }
-
-    /// A binding to a per-question text draft, with a trailing send button for
-    /// the single-question case.
+    /// A binding to a per-question text draft.
     private func binding(_ index: Int) -> Binding<String> {
-        Binding(get: { text(at: index) }, set: { setText($0, at: index) })
+        Binding(get: { answers.text(at: index) }, set: { answers.setText($0, at: index) })
     }
 
     /// For a single question, provide an inline send action for free text.
     private var singleSendSection: some View {
         Button("Send") {
-            submitSingle(optionIndex: -1, text: text(at: 0))
+            submitSingle(optionIndex: -1, text: answers.text(at: 0))
         }
-        .disabled(text(at: 0).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(!answers.hasText(at: 0))
     }
 
-    /// Whether question `index` has an answer (a picked option or typed text).
-    private func isAnswered(_ index: Int) -> Bool {
-        if selectedValue(at: index) >= 0 { return true }
-        return !text(at: index).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var allAnswered: Bool {
-        pending.questions.indices.allSatisfy(isAnswered)
-    }
+    /// Whether the drafts answer every question the sheet shows.
+    private var canSubmitBatch: Bool { answers.isComplete(for: pending) }
 
     private func submitBatch() {
-        let answers: [(text: String, optionIndex: Int)] = pending.questions.indices.map { i in
-            let sel = selectedValue(at: i)
-            if sel >= 0 { return (text: "", optionIndex: sel) }
-            return (text: text(at: i), optionIndex: -1)
-        }
-        guard !submitted else { return }
+        guard !submitted, canSubmitBatch else { return }
+        let batch = answers.batchAnswers
         submitted = true
         dismiss()
-        Task { await onAnswerBatch(answers) }
+        Task { await onAnswerBatch(batch) }
     }
 
     /// Dismiss immediately and answer in the background; the view model closes

@@ -1,15 +1,16 @@
 ---
 id: "0226"
 title: Extract iOS answer-sheet index/answer logic into YccKit for test coverage
-status: todo
+status: done
 priority: 3
 created: "2026-07-30"
-updated: "2026-11-10"
+updated: "2026-11-22"
 depends_on: []
 spec_refs: []
 ---
 
 ## Description
+
 Current state: todo, not started, nothing blocking. Verification runs on the configured Mac (see the 2026-11-10 work-log entry).
 
 The `QuestionSheet` batch/single answer logic lives entirely in the App layer
@@ -28,14 +29,15 @@ per-question selection/text, `allAnswered`, positional batch assembly) into a sm
 `SessionProjection`. The SwiftUI view becomes a thin renderer over it.
 
 ## Acceptance criteria
+
 - [ ] Answer-collection state + `allAnswered` + batch assembly live in a YccKit type
 - [ ] Unit tests cover: single vs batch, option-vs-text precedence, and a gate
       changing shape (fewer→more questions) without any out-of-range access
 - [ ] `QuestionSheet` renders over the extracted model; behavior unchanged
 - [ ] `swift test` in YccKit passes
 
-## Work log
-- Environment preflight: this workspace host is Linux (`uname -s`), `swift` is not on PATH, and YccKit's `KeychainStore.swift` imports Apple's `Security` framework. The required full YccKit `swift test` cannot be verified here by installing Linux Swift alone. `.github/workflows/ci.yml` defines a macOS Swift job, but the GitHub CLI is absent and no accessible remote verification path has been established in this session. No implementation was started.
-- Unblock with an accessible macOS Swift environment (or an authorized remote CI execution path) capable of running `swift test --package-path clients/ios/YccKit` against the implementation. Then resume the extraction and regression tests; all acceptance criteria remain outstanding.
-- 2026-11-10: Unblocked. The configured Mac (`ssh mac`, checkout `~/ycc-build`, see `.ycc/tmp/README.md`) is reachable and has `swift` and `xcodebuild`. Run `swift test` there.
-- 2026-11-21 groom: added a current-state line at the top. Not started: `QuestionSheet`, `allAnswered` and `submitBatch()` are still private to `clients/ios/App/SessionView.swift`, and YccKit has no answer-collection type.
+## Outcome
+
+QuestionAnswers (YccKit) holds the per-question option/text drafts keyed to the gate rowID. It handles sync/resize, bounds-safe access, override rules, nextUnanswered, batch assembly, and isComplete(for:), which guards batch Submit against a gate that has grown. QuestionSheet now renders over it. Six unit tests cover single and batch questions, override precedence, and gate growth/shrink. YccKit swift test passed (665 tests) and the app built on the Mac. Live sim checks of the batch and single paths passed.
+
+Commit: iOS: extract answer-sheet drafts into YccKit QuestionAnswers with tests
