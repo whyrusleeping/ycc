@@ -21,6 +21,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 // Watches are daemon-owned recurring checks (docs/design/watches.md). Each run
@@ -1342,7 +1343,16 @@ const quietSessionAge = time.Hour
 // that is still working holds its focused tasks; an idle one's are past focus,
 // and one quiet for over quietSessionAge is omitted.
 func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) string {
+	return m.liveSessionLinesWith(primary, exclude, now, false)
+}
+
+// liveSessionLinesWith is liveSessionLines; detail adds each session's title
+// and the paths it claims in its worktree (list_sessions).
+func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, detail bool) string {
+	// Intent lines are part of experimental session coordination.
+	intents := m.coordinationEnabled(primary)
 	primary = canonicalPath(primary)
+	claimsByTree := map[string]map[string][]workspacelease.Claim{}
 	sessions := m.List()
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
 	var b strings.Builder
@@ -1352,7 +1362,12 @@ func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) strin
 		}
 		evs := s.Log().Snapshot()
 		working := s.activelyWorking()
-		if !working && len(evs) > 0 && now.Sub(evs[len(evs)-1].TS) > quietSessionAge {
+		intent := ""
+		if intents {
+			intent, _ = s.intent()
+		}
+		// A declared intent keeps a quiet session listed.
+		if !working && intent == "" && len(evs) > 0 && now.Sub(evs[len(evs)-1].TS) > quietSessionAge {
 			continue
 		}
 		kind := s.Mode
@@ -1371,6 +1386,20 @@ func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) strin
 			b.WriteString(" in worktree " + s.Workspace)
 		}
 		b.WriteString("\n")
+		if intent != "" {
+			fmt.Fprintf(&b, "    intent: %q\n", intent)
+		}
+		if detail {
+			if title := deriveTitle(evs); title != "" {
+				b.WriteString("    title: " + title + "\n")
+			}
+			claims, ok := claimsByTree[s.Workspace]
+			if !ok {
+				claims = m.ownership.ClaimDetails(s.Workspace)
+				claimsByTree[s.Workspace] = claims
+			}
+			b.WriteString(claimLines(sessionClaims(claims, s.ID), now))
+		}
 		jn := 0
 		for _, j := range s.JobInfos() {
 			if j.Status != jobs.Running {
@@ -1404,11 +1433,16 @@ func sessionActivityState(s *Session, evs []event.Event) string {
 // otherSessionsNote is the work-selection view of the project's other live
 // sessions, appended to list_backlog.
 func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string {
-	lines := m.liveSessionLines(m.primaryTreeFor(absWS), exclude, now)
-	if lines == "" {
-		return "Other sessions in this project: none has been active in the last hour (daemon state).\n"
+	primary := m.primaryTreeFor(absWS)
+	board := ""
+	if m.coordinationEnabled(primary) {
+		board = m.boardSection(primary, now)
 	}
-	return "Other live sessions in this project (daemon state; those idle for over an hour are omitted):\n" + lines
+	lines := m.liveSessionLines(primary, exclude, now)
+	if lines == "" {
+		return "Other sessions in this project: none has been active in the last hour (daemon state).\n" + board
+	}
+	return "Other live sessions in this project (daemon state; those idle for over an hour are omitted):\n" + lines + board
 }
 
 // scheduleWatchFromChat is the schedule_watch hook; the tool has already

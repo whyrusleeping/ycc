@@ -101,6 +101,22 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
+	db, err := openPrivateDB(path, "")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	s := &Store{db: db}
+	if err := s.init(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// openPrivateDB creates the database owner-only, then opens it with the
+// driver's DSN query parameters (empty for none).
+func openPrivateDB(path, params string) (*sql.DB, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -122,17 +138,7 @@ func Open(path string) (*Store, error) {
 	if err := f.Close(); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
-	if err := s.init(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return s, nil
+	return sql.Open("sqlite", path+params)
 }
 
 func (s *Store) Close() error { return s.db.Close() }

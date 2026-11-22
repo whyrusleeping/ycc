@@ -61,6 +61,10 @@ struct LandingView: View {
     /// The project overflow's preset actions (onboarding, docs check), placed
     /// by the daemon; created with the list model for the same connection.
     @State private var presetActions: PresetActionsModel?
+    /// Message search (`SearchSessions`) behind the project list's search
+    /// field; created with the list model for the same connection.
+    @State private var search: SessionSearchModel?
+    @State private var searchText = ""
 
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
@@ -309,10 +313,19 @@ struct LandingView: View {
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
+        .onChange(of: search?.unauthorized ?? false) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+        // Message search follows the scoped project; the unscoped feed has none.
+        .task(id: MessageSearchKey(project: model?.selectedProject, text: searchText)) {
+            await search?.run(project: model?.selectedProject, input: searchText)
+        }
         // Remember the scope the user actually browses, so Backlog from the
         // unscoped feed preselects where they were.
         .onChange(of: model?.selectedProject) { _, project in
             if let project, !project.isEmpty { lastViewedProject = project }
+            // The unscoped feed has no search field to show the query in.
+            if project == nil { searchText = "" }
         }
     }
 
@@ -364,7 +377,11 @@ struct LandingView: View {
         return NavigationStack(path: $router.path) {
             Group {
                 if let model {
-                    content(model)
+                    if let project = model.selectedProject, let search {
+                        messageSearchable(model, project: project, search: search)
+                    } else {
+                        content(model)
+                    }
                 } else {
                     ProgressView()
                 }
@@ -516,10 +533,11 @@ struct LandingView: View {
         // but never force-unwrap in a lazily-built destination.
         if let client = app.client {
             switch destination {
-            case let .session(id, project, live, title):
+            case let .session(id, project, live, title, focusRow):
                 SessionView(
                     client: client, project: project, sessionID: id,
                     live: live, title: title,
+                    focusRowID: focusRow.isEmpty ? nil : focusRow,
                     models: app.dataCache.sessionModels, sessionList: model)
             case let .taskDetail(project, taskID, title):
                 TaskDetailView(
@@ -612,6 +630,72 @@ struct LandingView: View {
             }
         } else {
             sessionList(model)
+        }
+    }
+
+    // MARK: - Message search
+
+    /// A project's session list with its message search field: once the field
+    /// holds a searchable query, the list gives way to the matching messages.
+    private func messageSearchable(
+        _ model: SessionListModel, project: String, search: SessionSearchModel
+    ) -> some View {
+        Group {
+            if SessionSearchModel.searchableQuery(searchText).isEmpty {
+                content(model)
+            } else {
+                messageResults(project: project, search: search)
+            }
+        }
+        .searchable(text: $searchText, prompt: "Search messages")
+        .autocorrectionDisabled()
+        .textInputAutocapitalization(.never)
+    }
+
+    private func messageResults(project: String, search: SessionSearchModel) -> some View {
+        List {
+            if let note = search.indexingNote {
+                Label(note, systemImage: "hourglass")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if let error = search.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.attention)
+            }
+            if !search.hits.isEmpty {
+                Section {
+                    ForEach(search.hits, id: \.session.sessionID) { hit in
+                        Button {
+                            Analytics.action("sessions.open_search_hit")
+                            // A drill-in pushes, as a session row does.
+                            router.path.append(.session(
+                                id: hit.session.sessionID, project: project,
+                                live: hit.session.live,
+                                title: SessionListModel.displayTitle(for: hit.session),
+                                focusRow: hit.rowID))
+                        } label: {
+                            MessageHitRow(hit: hit)
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                } header: {
+                    Text("messages in \(project)")
+                        .font(.caption.monospaced())
+                        .textCase(nil)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .overlay {
+            if search.hits.isEmpty {
+                if search.isSearching || search.query.isEmpty {
+                    if search.errorMessage == nil { ProgressView() }
+                } else if !search.indexing {
+                    ContentUnavailableView.search(text: search.query)
+                }
+            }
         }
     }
 
@@ -854,6 +938,7 @@ struct LandingView: View {
             model = SessionListModel(source: client, readMarks: app.readMarks)
             health = HealthModel(source: client)
             presetActions = PresetActionsModel(source: client, cache: app.dataCache)
+            search = SessionSearchModel(source: client)
         }
         // Health and the preset actions are supplementary: never hold the
         // session list up for them.
@@ -928,6 +1013,67 @@ struct LandingView: View {
             return
         }
         model.selectedProject = name
+    }
+}
+
+/// What the message search runs for: the scoped project and the field's text.
+private struct MessageSearchKey: Equatable {
+    let project: String?
+    let text: String
+}
+
+/// One message search hit: the session's title and the message's age, who
+/// wrote it and how many messages match, then the snippet with the matched
+/// terms highlighted.
+private struct MessageHitRow: View {
+    let hit: Ycc_V1_SessionSearchHit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(SessionListModel.displayTitle(for: hit.session))
+                    .font(.body)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let date = SessionSearchModel.date(of: hit) {
+                    Text(SessionListModel.compactAge(of: date))
+                        .font(.caption.monospaced())
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .accessibilityLabel(date.formatted(.relative(presentation: .named, unitsStyle: .wide)))
+                }
+            }
+            Text(snippet)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+            Text(meta)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    private var meta: String {
+        let who = SessionSearchModel.kindLabel(hit.kind).lowercased()
+        guard hit.matchCount > 1 else { return who }
+        return "\(who) · \(hit.matchCount) matching messages"
+    }
+
+    private var snippet: AttributedString {
+        var out = AttributedString()
+        for span in hit.snippet {
+            var part = AttributedString(span.text.replacingOccurrences(of: "\n", with: " "))
+            if span.match {
+                part.foregroundColor = .primary
+                part.backgroundColor = Color.accentColor.opacity(0.2)
+                part.inlinePresentationIntent = .stronglyEmphasized
+            }
+            out += part
+        }
+        return out
     }
 }
 

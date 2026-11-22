@@ -27,9 +27,16 @@ type Service struct {
 	released chan struct{}
 	// claims: canonical worktree -> repository-relative path -> scope -> the
 	// generation of its latest claim (see claims.go).
-	claims  map[string]map[string]claimSet
-	gen     uint64
-	persist bool
+	claims    map[string]map[string]claimSet
+	gen       uint64
+	persist   bool
+	onOverlap func(Overlap) string
+
+	// linesMu guards the line attribution of bookkeeping files (lines.go):
+	// canonical worktree -> repository-relative path -> record.
+	linesMu sync.Mutex
+	lines   map[string]map[string]*lineFile
+	live    func(scope string) bool
 }
 
 type entry struct {

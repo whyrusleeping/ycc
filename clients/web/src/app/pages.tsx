@@ -1,5 +1,5 @@
 // Routed main-pane surfaces.
-import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useProjects, useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { errorMessage } from "../api/client";
@@ -74,6 +74,11 @@ export function ProjectPage() {
 /** `/p/:project/s/:sessionId` and `/s/:sessionId`. */
 export function SessionPage() {
   const { project = "", sessionId = "" } = useParams();
+  // `?row=` (a session search hit) opens at that row; each navigation jumps anew.
+  const [params] = useSearchParams();
+  const location = useLocation();
+  const row = params.get("row");
+  const focusRow = useMemo(() => (row ? { rowId: row, key: location.key } : null), [row, location.key]);
   const { feed } = useSessionFeed(null);
   const summary = feed?.rows.find((r) => r.session.sessionId === sessionId)?.session;
   const title = summary ? displayTitle(summary) : sessionId;
@@ -81,7 +86,7 @@ export function SessionPage() {
   useDocumentTitle(title);
   const focus = useMemo(() => (summary ? taskIds(summary) : []), [summary]);
   return (
-    <SessionView key={`${project}\u0000${sessionId}`} project={project} sessionId={sessionId} title={title} focusTasks={focus} mode={summary?.mode} timing={summary} />
+    <SessionView key={`${project}\u0000${sessionId}`} project={project} sessionId={sessionId} title={title} focusTasks={focus} mode={summary?.mode} timing={summary} focusRow={focusRow} />
   );
 }
 

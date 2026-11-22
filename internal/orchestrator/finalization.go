@@ -121,6 +121,9 @@ func finalizeTaskWithJournal(ctx context.Context, d *Deps, taskID, message, outc
 			}
 			return shortCommit(head), nil
 		}
+		if err := d.refuseLiveShared(preflight, paths); err != nil {
+			return "", err
+		}
 		completion, err := d.Docs.PrepareCompletion(taskID, outcome, message)
 		if err != nil {
 			return "", err
@@ -409,6 +412,9 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 			return "", git.CommitUncreated, true, fmt.Errorf("re-anchor finalization: %w", err)
 		}
 	}
+	if err := d.refuseLiveShared(changes, record.Paths); err != nil {
+		return "", git.CommitUncreated, true, err
+	}
 	if record.Commit == nil {
 		record.Commit = changes.Recovery()
 		if err := journal.Save(record); err != nil {
@@ -429,12 +435,61 @@ func finishGitCommit(d *Deps, record *finalizationRecord, journal finalizationJo
 	return knownSHA, state, true, fmt.Errorf("commit changeset %s: %w", changes.ID, err)
 }
 
+// refuseLiveShared refuses a commit that would take another live session's
+// uncommitted changes along: a file in the changeset that another live session
+// also claims (Changeset.Shared, or a shell overlap that session recorded;
+// never backlog or memory files) is committed only when named, the commit
+// call's explicit paths, as given (spec §7.3). Files adopted only to rebuild an
+// earlier finalization's scope do not count as named. Claims of sessions that
+// are no longer live do not refuse; their files ride along whole, as reported
+// in the commit result.
+func (d *Deps) refuseLiveShared(changes *git.Changeset, paths []string) error {
+	if d.Ownership == nil || len(changes.Paths) == 0 {
+		return nil
+	}
+	claims := d.Ownership.Claims(d.Workspace)
+	if len(claims) == 0 {
+		return nil
+	}
+	explicit, err := d.Repo.RepoPaths(paths)
+	if err != nil {
+		return err
+	}
+	named := make(map[string]bool, len(explicit))
+	for _, path := range explicit {
+		named[path] = true
+	}
+	scope := d.CoordinatorToken.Scope()
+	var held []string
+	for _, path := range changes.Paths {
+		if named[path] {
+			continue
+		}
+		for _, owner := range claims[path] {
+			if owner != scope && d.Ownership.Live(owner) {
+				held = append(held, path)
+				break
+			}
+		}
+	}
+	if len(held) == 0 {
+		return nil
+	}
+	return fmt.Errorf("refused: another live session also has uncommitted changes in files this session changed, and committing them would take its changes too (%d): %s. "+
+		"Only whole files can be committed, not hunks. Either wait for the other session to commit them (its commit takes this session's edits to them along, so tell it or the user), "+
+		"move further work on them to a separate workstream, or take them whole deliberately: name them in paths and name the other session's work in the message or outcome",
+		len(held), boundedPathList(held, 1024))
+}
+
 // changesetNotes reports what a committed changeset carried beyond this
 // session's own edits, for the commit tool's result.
 func changesetNotes(changes *git.Changeset) []string {
 	var notes []string
 	if len(changes.Preexisting) > 0 {
 		notes = append(notes, fmt.Sprintf("included whole, with changes already uncommitted before this session (%d): %s", len(changes.Preexisting), boundedPathList(changes.Preexisting, 1024)))
+	}
+	if len(changes.Partial) > 0 {
+		notes = append(notes, fmt.Sprintf("committed only this session's lines; other sessions' uncommitted lines stay in the worktree (%d): %s", len(changes.Partial), boundedPathList(changes.Partial, 1024)))
 	}
 	if len(changes.Shared) > 0 {
 		notes = append(notes, fmt.Sprintf("included whole, also written by another session (%d): %s", len(changes.Shared), boundedPathList(changes.Shared, 1024)))

@@ -11,7 +11,7 @@ spec_refs: []
 ---
 
 ## Description
-Status: todo. Blocked by 0554 (daemon: per-model thinking levels and session-only thinking overrides). This task delivers the web-client part of the 2026-11-15 user request: every model picker gets a thinking picker beside it. It is separate from 0554 because it is a separate client deliverable with its own verification.
+Status: todo and ready. Nothing is implemented yet: `SessionSettings.tsx` still has the separate "Reasoning scope" picker, and no web source reads `thinking_levels`. Its dependency 0554 (daemon: per-model thinking levels and session-only thinking overrides) is done in `60846e4`, and the iOS sibling 0556 is done. This task delivers the web-client part of the 2026-11-15 user request (session s_4b1af51cc639dc47, event 2; scope answers at event 64): every model picker gets a thinking picker beside it. It is separate from 0554 because it is a separate client deliverable with its own verification.
 
 ## Work
 - Shared web control: a thinking select limited to the selected model's `ModelInfo.thinking_levels`. When the model changes, it moves to the nearest supported level. An empty value means "model default" wherever the RPC allows it.
@@ -28,3 +28,4 @@ Status: todo. Blocked by 0554 (daemon: per-model thinking levels and session-onl
 - [ ] `npm run typecheck` and the vitest suite pass (node v24 via nvm). Playwright screenshots of new session, the session panel and the watch editor have been checked.
 
 ## Work log
+- 2026-11-21 groom: replaced the stale "Blocked by 0554" with the current state. 0554 is done (`60846e4`), and the web side is not started, per a grep of clients/web/src. Cited the request's session.

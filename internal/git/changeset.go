@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	pathpkg "path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -100,6 +101,10 @@ type Changeset struct {
 	Shared      []string
 	Preexisting []string
 	Deferred    []string
+	// Partial lists included bookkeeping paths committed line by line: HEAD
+	// plus only this scope's (and unattributed) line changes, leaving other
+	// scopes' uncommitted lines in the worktree (see Attribution.Lines).
+	Partial []string
 	// Unclaimed lists included paths no file tool of this scope wrote (shell
 	// or generator output, structured docs writes, or another writer that left
 	// no claim); their attribution is approximate.
@@ -125,6 +130,9 @@ type CommitRecovery struct {
 	BaseCommit  string   `json:"base_commit"`
 	Tree        string   `json:"tree"`
 	Paths       []string `json:"paths"`
+	// KeepStaged lists partially committed paths (Changeset.Partial) whose
+	// index entry publication leaves alone when it holds staged content.
+	KeepStaged []string `json:"keep_staged,omitempty"`
 }
 
 // Recovery returns the non-secret, immutable identity needed to resume Commit.
@@ -137,6 +145,7 @@ func (c *Changeset) Recovery() *CommitRecovery {
 		BaseCommit:  c.BaseCommit,
 		Tree:        c.Tree,
 		Paths:       append([]string(nil), c.Paths...),
+		KeepStaged:  append([]string(nil), c.Partial...),
 	}
 }
 
@@ -411,6 +420,12 @@ func (r *Repo) InspectChangesFor(b *Baseline, attr *Attribution, paths ...string
 	return r.inspectIncluding(b, adopted, attr, false)
 }
 
+// RepoPaths maps files, absolute or relative to Repo.Dir, to the sorted,
+// deduplicated repository-relative slash paths a Changeset lists.
+func (r *Repo) RepoPaths(paths []string) ([]string, error) {
+	return r.canonicalAdoptedPaths(paths)
+}
+
 func (r *Repo) canonicalAdoptedPaths(paths []string) ([]string, error) {
 	root, err := r.run("rev-parse", "--show-toplevel")
 	if err != nil {
@@ -510,6 +525,11 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		_, staged := stagedPaths[path]
 		return differs || staged
 	}
+	lines, err := r.lineVersions(attr, head, persist, currentPaths, stagedPaths, b.dirtyPaths)
+	if err != nil {
+		return nil, err
+	}
+	bookkeepingOnly := attr != nil && attr.BookkeepingOnly
 	explicit := adopted
 	var preexisting, deferred, reported []string
 	isAdopted := make(map[string]bool, len(adopted))
@@ -517,6 +537,15 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		isAdopted[path] = true
 	}
 	for path := range b.dirtyPaths {
+		if lines.decided[path] {
+			if lines.excluded[path] && changedSince(path) {
+				deferred = append(deferred, path)
+			}
+			continue
+		}
+		if bookkeepingOnly {
+			continue
+		}
 		if isAdopted[path] {
 			// Explicitly adopted whole; still disclose its earlier changes.
 			if _, differs := currentPaths[path]; differs {
@@ -540,9 +569,14 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	reported = append(reported, preexisting...)
 	sort.Strings(reported)
 	sort.Strings(deferred)
-	adopted = append(append([]string(nil), adopted...), preexisting...)
+	adopted = nil
+	for _, path := range append(append([]string(nil), explicit...), preexisting...) {
+		if !lines.decided[path] && !bookkeepingOnly {
+			adopted = append(adopted, path)
+		}
+	}
 	sort.Strings(adopted)
-	owned := make(map[string]bool, len(adopted))
+	owned := make(map[string]bool, len(adopted)+len(lines.include))
 	for _, path := range adopted {
 		// Compare staged variants in each snapshot before assigning ownership;
 		// committing the worktree must not silently discard a staged version.
@@ -567,6 +601,40 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		}
 		owned[path] = true
 	}
+	var partial []string
+	for path, v := range lines.include {
+		// Publishing the commit resets the path's index entry; refuse to
+		// discard staged state (content, mode, or a staged removal) that is
+		// neither HEAD's, the worktree's, nor this version, now or at the
+		// baseline.
+		entry := func(tree string) (string, error) {
+			out, err := r.run("--literal-pathspecs", "ls-tree", "--full-tree", tree, "--", path)
+			if fields := strings.Fields(out); err == nil && len(fields) >= 3 {
+				return fields[0] + " " + fields[2], nil
+			}
+			return "", err
+		}
+		var entries [6]string
+		for i, tree := range []string{head, indexTree, worktreeTree, b.indexTree, b.worktreeTree} {
+			if entries[i], err = entry(tree); err != nil {
+				return nil, err
+			}
+		}
+		if v.blob != "" {
+			entries[5] = v.mode + " " + v.blob
+		}
+		if entries[3] != entries[0] && entries[3] != entries[4] {
+			return nil, fmt.Errorf("cannot include %s: baseline index holds distinct staged content; preserve or resolve it before proceeding", path)
+		}
+		if entries[1] != entries[0] && entries[1] != entries[2] && entries[1] != entries[5] && entries[1] != entries[3] {
+			return nil, fmt.Errorf("cannot include %s: current index holds distinct staged content; preserve or resolve it before proceeding", path)
+		}
+		owned[path] = true
+		if v.partial {
+			partial = append(partial, path)
+		}
+	}
+	sort.Strings(partial)
 
 	paths := make([]string, 0, len(currentPaths))
 	excluded := 0
@@ -581,7 +649,14 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		explicitSet[path] = true
 	}
 	for path := range currentPaths {
-		if _, dirtyAtBaseline := b.dirtyPaths[path]; dirtyAtBaseline && !owned[path] {
+		_, dirtyAtBaseline := b.dirtyPaths[path]
+		if lines.decided[path] {
+			if lines.excluded[path] && !dirtyAtBaseline {
+				foreign = append(foreign, path)
+			}
+			continue
+		}
+		if bookkeepingOnly || dirtyAtBaseline && !owned[path] {
 			continue
 		}
 		if attr != nil && !owned[path] && attr.Foreign[path] && !attr.Mine[path] {
@@ -604,6 +679,13 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	if err != nil {
 		return nil, fmt.Errorf("build scoped changeset: %w", err)
 	}
+	if tree, err = r.overlayLineVersions(tree, lines.include); err != nil {
+		return nil, fmt.Errorf("build scoped changeset: %w", err)
+	}
+	for path := range lines.include {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
 	diff, err := r.diffTrees(head, tree)
 	if err != nil {
 		return nil, fmt.Errorf("render scoped changeset: %w", err)
@@ -622,7 +704,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	return &Changeset{
 		ID: id, BaselineID: b.ID, BaselineOrigin: b.Origin(), BaseCommit: head, Tree: tree, Paths: paths, Diff: diff,
 		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: reported, Deferred: deferred,
-		Unclaimed: unclaimed, MovedFrom: movedFrom, Oversized: oversized,
+		Partial: partial, Unclaimed: unclaimed, MovedFrom: movedFrom, Oversized: oversized,
 		baseline: b, adopted: append([]string(nil), explicit...), attr: attr,
 	}, nil
 }
@@ -775,6 +857,14 @@ func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, 
 	if err := validateRecovery(recovery); err != nil {
 		return "", err
 	}
+	if len(recovery.KeepStaged) == 0 && len(identity.Recovery.KeepStaged) > 0 {
+		keep := *recovery
+		keep.KeepStaged = identity.Recovery.KeepStaged
+		if err := validateRecovery(&keep); err != nil {
+			return "", err
+		}
+		recovery = &keep
+	}
 	if head != recovery.BaseCommit && head != identity.Commit {
 		installedInHistory, err := r.IsAncestor(identity.Commit, head)
 		if err != nil {
@@ -808,14 +898,19 @@ func (r *Repo) RecoverCommit(recovery *CommitRecovery, message string) (string, 
 // rename it into place — so a concurrent `git add` from another session's shell
 // either waits for us or makes us wait, and is never silently overwritten by a
 // stale copy.
+//
+// A partially committed file (KeepStaged) keeps whatever was staged in it: its
+// index entry may hold another session's uncommitted lines.
 func (r *Repo) publishPostCommitIndex(recovery *CommitRecovery) error {
-	return r.publishIndex(recovery, recovery.Tree, "")
+	return r.publishIndex(recovery, recovery.Tree, "", recovery.KeepStaged...)
 }
 
 // publishIndex resets the recovery's selected index paths to source. When
 // onlyUnchangedSince is set, paths whose index entry no longer matches that
-// tree-ish are left alone (someone staged or published them since).
-func (r *Repo) publishIndex(recovery *CommitRecovery, source, onlyUnchangedSince string) error {
+// tree-ish are left alone (someone staged or published them since). Paths in
+// keepStaged are left alone when their index entry differs from the
+// recovery's base commit.
+func (r *Repo) publishIndex(recovery *CommitRecovery, source, onlyUnchangedSince string, keepStaged ...string) error {
 	if err := validateRecovery(recovery); err != nil {
 		return err
 	}
@@ -893,6 +988,23 @@ func (r *Repo) publishIndex(recovery *CommitRecovery, source, onlyUnchangedSince
 			}
 		}
 	}
+	if len(keepStaged) > 0 && len(paths) > 0 {
+		out, err := r.runEnv([]string{"GIT_INDEX_FILE=" + work}, append([]string{"diff-index", "--cached", "--name-only", "-z", "--no-renames", recovery.BaseCommit, "--"}, topLiteralPathspecs(keepStaged)...)...)
+		if err != nil {
+			return fmt.Errorf("inspect staged paths: %w", err)
+		}
+		staged := map[string]bool{}
+		for _, path := range strings.Split(out, "\x00") {
+			staged[path] = path != ""
+		}
+		kept := paths[:0:0]
+		for _, path := range paths {
+			if !staged[path] {
+				kept = append(kept, path)
+			}
+		}
+		paths = kept
+	}
 	if len(paths) > 0 {
 		resetArgs := append([]string{"reset", "-q", source, "--"}, topLiteralPathspecs(paths)...)
 		if _, err := r.runEnv([]string{"GIT_INDEX_FILE=" + work}, resetArgs...); err != nil {
@@ -931,6 +1043,11 @@ func validateRecovery(recovery *CommitRecovery) error {
 		clean := filepath.ToSlash(filepath.Clean(path))
 		if path == "" || clean != path || filepath.IsAbs(path) || path == ".." || strings.HasPrefix(path, "../") {
 			return fmt.Errorf("invalid recovery path %q", path)
+		}
+	}
+	for _, path := range recovery.KeepStaged {
+		if _, found := slices.BinarySearch(recovery.Paths, path); !found {
+			return fmt.Errorf("recovery keeps staged content of %q outside its paths", path)
 		}
 	}
 	return nil

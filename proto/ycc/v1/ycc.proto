@@ -60,6 +60,10 @@ message ProjectInfo {
   // backlog tasks. Optional so older daemons remain distinguishable from an
   // explicit "already onboarded" result.
   optional bool needs_onboarding = 4;
+  // Experimental session coordination ([experimental] session_coordination
+  // in the project's .ycc/config.toml; spec §7.3): list_sessions and
+  // same-file overlap notices. Off by default.
+  bool session_coordination = 5;
 }
 message GitStatus {
   string branch = 1;         // "" when detached
@@ -96,6 +100,46 @@ message RenameProjectRequest {
   string new_name = 2; // desired name; must not collide with another project
 }
 message RenameProjectResponse { ProjectInfo project = 1; }
+// SetProjectSettings changes per-project settings stored in the project's
+// .ycc/config.toml. Unset fields are left unchanged.
+message SetProjectSettingsRequest {
+  string project = 1; // registered project name
+  // Enabling applies to sessions started or reopened afterwards (a running
+  // session's tools are fixed); disabling applies at once.
+  optional bool session_coordination = 2;
+}
+message SetProjectSettingsResponse { ProjectInfo project = 1; }
+
+// Experimental project notice board (spec §7.3), part of session
+// coordination: expiring notices posted by coordinators and the one-line
+// intents of live sessions. Notice and intent text is untrusted peer content.
+message ProjectNotice {
+  string id = 1;
+  string text = 2;
+  string subject = 3;          // free-form resource or topic; may be empty
+  string session_id = 4;       // poster's session; empty when posted by the user
+  string actor = 5;            // poster's actor, e.g. "coordinator"
+  repeated string task_ids = 6; // poster's focused tasks when posting
+  string posted_at = 7;        // RFC 3339
+  string expires_at = 8;       // RFC 3339
+}
+message SessionIntent {
+  string session_id = 1;
+  string text = 2;
+  string set_at = 3; // RFC 3339
+}
+message ListProjectNoticesRequest { string project = 1; }
+// Both lists are empty while the project's session coordination is off.
+message ListProjectNoticesResponse {
+  repeated ProjectNotice notices = 1; // active notices, oldest first
+  repeated SessionIntent intents = 2; // live sessions with an intent line
+}
+message ClearProjectNoticeRequest {
+  string project = 1;
+  string id = 2;
+  string reason = 3; // optional; recorded with the clear
+}
+message ClearProjectNoticeResponse {}
 
 // ListDir — remote directory browsing for the add-project flow.
 // Lists DIRECTORIES ONLY (never files or file contents) so a remote client can
@@ -428,6 +472,40 @@ message ListSessionHistoryResponse {
   // for discovery even when they are older than the page. Copies inside
   // sessions are not repeated.
   repeated SessionSummary pinned = 3;
+}
+
+// SearchSessions full-text searches one project's sessions: user input,
+// coordinator assistant text, and asked questions with their human answers.
+message SearchSessionsRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+  // Whitespace-separated terms, all required, each matched as a word prefix.
+  // An empty query returns no hits but still starts an index refresh.
+  string query = 2;
+  string cursor = 3; // opaque next_cursor from a prior page of the same query
+  int32 limit = 4;   // zero means 20; capped at 100
+}
+message SessionSearchSpan {
+  string text = 1;
+  bool match = 2; // a matched term, rendered highlighted
+}
+message SessionSearchHit {
+  SessionSummary session = 1;
+  // Presentation row id (GetSessionView rows) of the best-ranked match.
+  string row_id = 2;
+  string kind = 3; // user | assistant | question | answer
+  repeated SessionSearchSpan snippet = 4;
+  int32 match_count = 5; // matching messages in the session
+  string timestamp = 6;  // RFC3339 of the matching event
+}
+message SearchSessionsResponse {
+  // One hit per session: best bm25 rank first, then most recent.
+  repeated SessionSearchHit hits = 1;
+  string next_cursor = 2; // empty when there are no more hits
+  // The index refresh this request started is still running, so sessions
+  // not yet indexed (or their newest messages) are missing from hits.
+  bool indexing = 3;
+  int32 indexed_sessions = 4;
+  int32 total_sessions = 5;
 }
 
 // ListHomeSessions replaces a home screen's ListProjects plus per-project
@@ -1750,6 +1828,8 @@ service SessionService {
   // ListSessionHistory enumerates all sessions for a project (live + persisted
   // on-disk logs), most-recent first. ListSessions stays live-only.
   rpc ListSessionHistory(ListSessionHistoryRequest) returns (ListSessionHistoryResponse);
+  // SearchSessions full-text searches one project's session messages.
+  rpc SearchSessions(SearchSessionsRequest) returns (SearchSessionsResponse);
   // ListHomeSessions returns the registered projects plus every distinct
   // project's first history page and work-loop membership in one round trip,
   // for a client's cross-project home list.
@@ -1812,6 +1892,11 @@ service SessionService {
   rpc AddProject(AddProjectRequest) returns (AddProjectResponse);
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
+  rpc SetProjectSettings(SetProjectSettingsRequest) returns (SetProjectSettingsResponse);
+  // ListProjectNotices / ClearProjectNotice read and clear the experimental
+  // project notice board; a clear here is recorded as made by the user.
+  rpc ListProjectNotices(ListProjectNoticesRequest) returns (ListProjectNoticesResponse);
+  rpc ClearProjectNotice(ClearProjectNoticeRequest) returns (ClearProjectNoticeResponse);
   // ListDir lists subdirectories of a daemon-host path (directories only) so
   // remote clients can browse to a workspace for AddProject.
   rpc ListDir(ListDirRequest) returns (ListDirResponse);

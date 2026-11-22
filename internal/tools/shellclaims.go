@@ -5,10 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/credenv"
+	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
 // Shell write attribution. File tools claim the paths they write; shells
@@ -38,6 +40,7 @@ type fileStamp struct {
 type shellSnapshot struct {
 	top     string
 	entries map[string]fileStamp
+	gen     uint64 // claim generation when the snapshot was taken
 }
 
 // snapshotShell captures the worktree's dirty set for shell attribution, or
@@ -68,7 +71,7 @@ func (w *Workspace) snapshotShell() *shellSnapshot {
 	if len(records) > shellSnapshotLimit {
 		return nil
 	}
-	snap := &shellSnapshot{top: top, entries: make(map[string]fileStamp, len(records))}
+	snap := &shellSnapshot{top: top, entries: make(map[string]fileStamp, len(records)), gen: w.Ownership.Generation()}
 	for _, record := range records {
 		if len(record) <= 3 {
 			continue
@@ -84,18 +87,27 @@ func (w *Workspace) snapshotShell() *shellSnapshot {
 }
 
 // claimShellChanges claims, for this workspace's scope, every path that became
-// dirty or changed since before was taken and that no other scope claims.
-func (w *Workspace) claimShellChanges(before *shellSnapshot) {
+// dirty or changed since before was taken and that no other scope claims. A
+// changed path that another scope had claimed before the command started is
+// left to that scope, reported as an overlap and recorded as an overlap claim
+// (workspacelease.Service.RecordOverlaps); the returned text is the overlap
+// notice for the command's result.
+func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 	if before == nil {
-		return
+		return ""
 	}
 	after := w.snapshotShell()
 	if after == nil || after.top != before.top {
-		return
+		return ""
 	}
 	scope := w.MutationToken.Scope()
-	claims := w.Ownership.Claims(after.top)
-	var changed []string
+	key, err := workspacelease.Canonical(after.top)
+	if err != nil {
+		return ""
+	}
+	claims := w.Ownership.ClaimDetails(after.top)
+	var changed, overlapped []string
+	var overlaps []workspacelease.Overlap
 	for rel, stamp := range after.entries {
 		if prior, ok := before.entries[rel]; ok && prior == stamp {
 			continue
@@ -103,16 +115,37 @@ func (w *Workspace) claimShellChanges(before *shellSnapshot) {
 		if w.SharedBookkeeping != nil && w.SharedBookkeeping(filepath.Join(after.top, filepath.FromSlash(rel))) {
 			continue
 		}
-		foreign := false
-		for _, owner := range claims[rel] {
-			if owner != scope {
-				foreign = true
-				break
+		foreign, renewed := false, false
+		var earlier []string
+		for _, claim := range claims[rel] {
+			if claim.Scope == scope {
+				continue
+			}
+			foreign = true
+			// A claim renewed while the command ran may be that scope's own
+			// concurrent write, so only older claims count as an overlap.
+			if claim.Gen <= before.gen {
+				earlier = append(earlier, claim.Scope)
+			} else {
+				renewed = true
 			}
 		}
 		if !foreign {
 			changed = append(changed, rel)
+		} else if len(earlier) > 0 {
+			if !renewed {
+				// With no other write recorded during the command, the change
+				// is most likely this command's.
+				overlapped = append(overlapped, rel)
+			}
+			overlaps = append(overlaps, workspacelease.Overlap{Worktree: key, Path: rel, Writer: scope, Others: earlier})
 		}
 	}
 	w.Ownership.RecordWrites(after.top, changed, w.MutationToken)
+	// The change may still be another writer's, so it is only an overlap
+	// claim: the path stays out of this session's changeset, but the earlier
+	// claimant's commit sees that a live session also changed it.
+	w.Ownership.RecordOverlaps(after.top, overlapped, w.MutationToken)
+	sort.Slice(overlaps, func(i, j int) bool { return overlaps[i].Path < overlaps[j].Path })
+	return w.Ownership.NotifyOverlaps(overlaps)
 }

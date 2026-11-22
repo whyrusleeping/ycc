@@ -228,17 +228,21 @@ children finished. Child statuses alone do not establish parent completion.
 
 The selected task's canonical document is explicitly included in its changeset even when it was
 untracked, unstaged, or staged at session startup. Review sees its full change against HEAD, and
-acceptance commits it with the implementation. Other baseline-dirty files stay excluded while
+acceptance commits it with the implementation. Backlog task files and `memory.md`, the task's own
+document included, are committed line by line where another live session's line changes are recorded
+in them (§7.3): the commit takes HEAD plus only this session's and unattributed lines, and the other
+session's lines stay uncommitted in the worktree. Other baseline-dirty files stay excluded while
 unchanged. Once the session changes one again, it is included whole, earlier uncommitted changes and
 all, and the manifest and commit result list it as preexisting; precise hunk attribution is not
 attempted. The `commit` tool's optional `paths` adopts further whole files the same way, such as
-another task's work that must land together. A commit may therefore carry other uncommitted work in
-shared files: the agent names co-included tasks in its message or outcome rather than splitting or
-abandoning work to avoid it. Files the session neither changed nor named are never committed, and
-whole-tree commits are never made. Inclusion refuses a baseline index version distinct from both
-HEAD and the baseline worktree, or a new staged version distinct from HEAD, the accepted baseline
-index, and the current worktree. Normal bookkeeping can thus update an already-staged task without
-discarding independently staged content.
+another task's work that must land together, and a bookkeeping file named there is taken whole. A
+file another live session also changed is committed only when named there (§7.3). A
+commit may therefore carry other uncommitted work in shared files: the agent names co-included tasks
+in its message or outcome rather than splitting or abandoning work to avoid it. Files the session
+neither changed nor named are never committed, and whole-tree commits are never made. Inclusion
+refuses a baseline index version distinct from both HEAD and the baseline worktree, or a new staged
+version distinct from HEAD, the accepted baseline index, and the current worktree. Normal
+bookkeeping can thus update an already-staged task without discarding independently staged content.
 Worktree snapshots (the session baseline, changesets, and the initial commit of a workspace ycc
 initializes) leave out untracked, non-ignored files over 100 MiB rather than hashing them into the
 object store. Session start shows a warning naming them, and commit results list any still present;
@@ -567,16 +571,58 @@ delegates to) is an attribution scope. Writes record a claim on the path for tha
 - A shell command is bracketed by two snapshots of the worktree's dirty set (git status plus each
   dirty path's size, mtime, and mode). Paths that changed during the command are claimed unless
   another scope already claims them, because a concurrent session's writes can land in the same
-  window. Background shells claim when they exit.
+  window. A changed path whose other claims all predate the command gets an overlap claim instead:
+  it stays out of the shell session's changeset but counts as that session's claim for every other
+  scope, so the earlier claimant's commit sees it (below). Background shells claim when they exit.
 
-Backlog task files and `memory.md` are the exception: they are shared bookkeeping and are never
-claimed. A session's changeset — reviewed, inspected by clients, and committed — then:
+Backlog task files and `memory.md` are the exception: they are shared bookkeeping, never claimed,
+and attributed by line instead. Each scoped write of one, whether a structured docs-store write or a
+file-tool Edit/Write (both under the docs store lock), is recorded as that session's line changes
+against the file's HEAD content, persisted per worktree in its git directory
+(`ycc/bookkeeping-lines.json`). Changes nobody recorded (shell edits, client writes, hand edits) are
+unattributed, as are the lines of a session that is no longer live, so a finished session's
+leftovers ride along with the next commit of that file. Where another live session's line changes
+are recorded in a bookkeeping file, the changeset takes HEAD plus only this session's and
+unattributed lines, listing the file as partial, or leaves the file out when this session changed
+none of it. A session that deletes or replaces another's inserted lines, or edits a file another
+session created, takes that session's change along so the result stays well-formed; a list item,
+indented or blank line it adds under a heading or key line another session added keeps that line,
+and the line of the same heading or key it replaced, but not the rest of that session's change. A
+task file whose line version would still not parse as a task, or a file with a change that could not
+be diffed, is refused, naming the alternatives: commit it whole through `paths`, or wait for the
+other session's commit. Each line view is taken under the docs store lock, so a write is never seen
+apart from its attribution, and compares content with HEAD by the blob it cleans to, so line-ending
+conversion does not count as a change. The versions a session's review and commit inspections hand
+out are recorded by line identity (read-only client inspections do not replace them), so when a
+commit takes one of them (or the whole content), the remaining sessions' lines, and this session's
+later ones, stay attributed on top of the new HEAD; any other HEAD change re-anchors the record with
+the remaining differences unattributed. Publishing a partial commit, or retrying it, leaves the
+file's index entry alone when something other than the old HEAD content was staged there.
+Bookkeeping files with no live session's recorded changes follow the rules below. Watch runs, which
+have no commit tool, commit their own bookkeeping lines when they report, so their notes do not
+linger for a later commit to sweep in; if that commit fails, the report is refused unless it is an
+alert naming the uncommitted edits.
+
+A session's changeset — reviewed, inspected by clients, and committed — then:
 
 - excludes paths that only other scopes claimed;
 - includes paths both claimed, reporting them as shared;
 - adopts baseline-dirty paths that changed since the baseline, whole, reporting the earlier changes
   that ride along;
 - leaves out baseline-dirty paths only another scope has written since.
+
+A commit (the `commit` tool, in work and chat modes) refuses a path in its changeset while another
+scope that claims it, overlap claims included, is a live session, because only whole files are committed and its uncommitted changes
+would ride along. The refusal names the files and the alternatives: wait for the other session to
+commit them (its commit then takes this session's edits along), move further work on them to a
+workstream (§14.1), or take them whole deliberately by naming them in `paths` and naming the other
+session's work in the message or outcome. Files a retried finalization adopts only to rebuild an
+earlier session's scope do not count as named. Hunk-level commits of shared code files are not offered:
+code is edited through shells and generators that leave no line record, and a mix of two sessions'
+hunks may not build. Overlap claims are approximate (the change may have been the claimant's own
+concurrent shell write, or the user's), so naming the file is always available. Claims of sessions
+that are no longer live do not refuse; those files are included whole and reported as shared. Backlog task files and `memory.md` are never claimed, so
+they never cause a refusal.
 
 A baseline-dirty path changed by a writer nobody claimed (typically the user, or this session's own
 shell) is included rather than refused or silently dropped. Other unclaimed changes are attributed
@@ -600,6 +646,67 @@ move because files it left differing from HEAD count as changes. Distinct worktr
 remain the way to isolate builds and tests completely.
 `docs/design/async-jobs.md` explains the single-delivery and concurrent-mutation
 rationale.
+
+Session coordination is an experimental, per-project awareness layer over those claims, set by
+`[experimental] session_coordination` in the project's `.ycc/config.toml` (default off; there is no
+daemon-wide switch, so enabling it for one project never affects another). Clients read it from
+`ProjectInfo` and change it with `SetProjectSettings`, which edits only that line. A session gets the
+feature when the setting is on as it is built (started or reopened), because its tool set is fixed
+then; turning the setting off applies at once: the tool answers that coordination is off and no
+further notices are delivered. With the setting off nothing is added.
+
+- **`list_sessions`** is a read-only tool for coordinators and mutating subagents (implementers and
+  mutating generic agents), not read-only agents. Without arguments it lists the project's other
+  top-level sessions in the primary tree and its workstreams, as the `list_backlog` footer does
+  (sessions quiet for over an hour are omitted): id,
+  mode, activity state, held or earlier focus, a one-line title (the opening prompt, or the task when
+  the prompt is the mode default), worktree, running jobs, and the paths the session claims with
+  claim age, each bounded and marked when cut. `path=` lists the claimants of a path in the project's
+  primary tree or one of its workstreams, including sessions that have ended, with live or ended
+  state, last activity, and focus. Claims are
+  evidence of uncommitted past writes, not reservations; claim times persist with the claims.
+- **Overlap notices.** A write that touches a path another session's scope already claims tells
+  both sides once per path and session pair: the writer in its Write/Edit result, or in its Bash
+  result when a shell changed a path another scope claimed before the command started (the shell
+  records only an overlap claim), and the other session's live coordinator at its next safe checkpoint.
+  That coordinator is never woken and its `wait` does not end early; the notice simply waits for its
+  next run. Each side is told only if its own session has the feature. Backlog task files and `memory.md`
+  are never claimed, so they never cause one. A notice names the path, the other session, and its
+  focused task or title. Neither output names a session of another project, even one registered in
+  the same repository. Delivered notices enter history as one user-role message recorded as a
+  `coordination_notice` event (actor `system`) where it entered, so replay, reopen and rollover
+  reproduce it; notices still pending are memory-only and are not restored after reopen or restart
+  (`list_sessions` rediscovers the overlap).
+
+- **Notice board.** Coordinators also get `set_intent`, `post_notice` and `clear_notice` (not in
+  integrate mode); subagents read the board through `list_sessions` and report to their
+  coordinator. A session's one-line **intent** (at most 200 characters) is set, replaced or cleared
+  with `set_intent`, lives only in the live session, and ends with it; a declared intent keeps a
+  quiet session in session listings. A **notice** is posted with `post_notice(text, expires_in,
+  subject?)`: one line of at most 300 characters, an optional subject of at most 60 (a service, or
+  "master tests"), and a required expiry from 1 minute to 24 hours. The daemon records the poster's
+  session, actor and focused tasks. A session may hold 3 active notices and post 6 in any hour. Any
+  session (or the user, through `ClearProjectNotice`) may clear an active notice; the board records
+  who cleared it and why. Notice, subject, reason and intent text is sanitized to one printable line.
+  Notices persist per project in the daemon state directory (`<state>/ycc/notices/`, keyed by the
+  primary tree), outside the worktree and git; the poster's log records `notice_posted` /
+  `notice_cleared`.
+  Active notices and intents appear in `list_sessions` and the `list_backlog` footer; watch-run
+  context lists intents with the live sessions. Every coordinator's first checkpoint, a watch run's
+  included, delivers the current board and other sessions' intents as its opening context; later
+  checkpoints deliver a digest of notices posted or cleared by other sessions since the last one,
+  at most 20 changes each, the rest following at the next checkpoint. Expiry is silent; a clear
+  stays reportable for an hour. Nothing wakes a session or ends its `wait` for a notice. A digest enters history
+  as a `coordination_notice` event (actor `system`) where it entered, so it replays identically;
+  nothing pending is kept across a reopen, so a reopened session's first checkpoint delivers the
+  current board again and never an expired notice.
+  Notice and intent text is untrusted peer content, never `user` input. The digest and the
+  coordinator prompt frame a notice as a reason to check, not an authorization: the receiver acts
+  only within its own mandate and says so in its report. A notice cannot answer a pending
+  `ask_user` question, approve a commit or deploy, or promote proposed work.
+  `ListProjectNotices` and `ClearProjectNotice` let clients read and clear the board.
+
+Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations.
 
 ### 7.4 Reasoning settings
 
@@ -1159,7 +1266,8 @@ picker for a new or live session applies to that session (§7.4). Thinking picke
 model's reported levels.
 The web Settings page is ordered for someone setting ycc up: models (subscription logins and the
 model list with each model's health), which model does each job (roles, reasoning, and work
-implementation together), code review tiers, notifications, spending limits, and daemon status.
+implementation together), code review tiers, notifications, spending limits, per-project experimental
+settings (§7.3), and daemon status.
 Roles are labelled by what they do (the coordinator is the "main agent") with the configuration
 name alongside.
 The model editor distinguishes model-list discovery from testing the exact unsaved configuration
@@ -1221,6 +1329,26 @@ the log ends while the coordinator waits on one, reopen restores that exact ques
 (marking `session_reopened` with `question_restored`) instead of handing the model a placeholder
 result, and the answer is recorded as usual before the model continues. Answering such a persisted
 question reopens the session; answer RPCs never resume a transcript with no restorable question.
+
+`SearchSessions` full-text searches one project's sessions. Indexed text is user input,
+coordinator assistant text (model turns and idle reports), asked questions with their options, and
+non-automatic answers. Tool calls and results, thinking, subagent turns, and plan, review and commit
+summaries are not indexed. The index is a rebuildable FTS5 database at
+`<root workspace>/.ycc/session-search.sqlite`, owner-only like the presentation index. It follows
+each log from a durable byte watermark with the same source-change checks: live logs only within
+their post-fsync boundary, and a replaced or rewritten log, a schema change, or a deleted database
+reindexes from JSONL. Each indexed message carries the presentation row id the session view assigns
+to the same event, so a hit names a row that `GetSessionView` serves. Search and presentation reads
+that name a project resolve logs within that project and its in-flight worktrees; a live session of
+the same id elsewhere never stands in. Every request starts a refresh
+pass over the project's history, newest session first, or queues one behind a running pass, and a
+pass drops sessions whose logs are gone. The request waits up to 1.5 s for that pass. If the pass is still
+running, as during a first backfill, the response sets `indexing` with indexed/total session counts
+and answers from what is indexed so far. A query's whitespace-separated terms are all required and
+each matches as a word prefix; FTS5 syntax in the input is literal. Results have one hit per
+session: its best-ranked message (bm25, then newest), the session summary, the row id and message
+kind, a snippet split into highlighted and plain spans, and the session's matching-message count.
+Pages use an opaque cursor. Clients open a hit at its row, paging earlier history in as needed.
 
 Sessions also have a user-owned follow-up bookmark, independent of agent status. The daemon's
 `SetSessionFollowUp` RPC sets or clears a boolean and its original `flagged_at` timestamp;

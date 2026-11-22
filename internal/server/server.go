@@ -47,6 +47,8 @@ type Server struct {
 	subUsage   *subusage.Service
 	viewMu     sync.Mutex
 	viewStores map[string]*sessionview.Store
+	searchMu   sync.Mutex
+	searches   map[string]*projectSearch // by root workspace
 	// viewKeepalive is how long a SubscribeSessionView stream may stay silent
 	// before an empty SessionViewUpdate is sent (see sessionViewKeepalive).
 	viewKeepalive  time.Duration
@@ -142,7 +144,8 @@ func (s *Server) ListProjects(_ context.Context, _ *connect.Request[v1.ListProje
 func (s *Server) projectInfo(name, path string) *v1.ProjectInfo {
 	info := &v1.ProjectInfo{
 		Name: name, Path: path,
-		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(path)),
+		NeedsOnboarding:     proto.Bool(docs.NeedsOnboarding(path)),
+		SessionCoordination: docs.SessionCoordination(path),
 	}
 	if status := s.mgr.ProjectGitStatus(path); status != nil {
 		info.Git = &v1.GitStatus{
@@ -184,8 +187,71 @@ func (s *Server) RenameProject(_ context.Context, req *connect.Request[v1.Rename
 	}
 	return connect.NewResponse(&v1.RenameProjectResponse{Project: &v1.ProjectInfo{
 		Name: p.Name, Path: p.Path,
-		NeedsOnboarding: proto.Bool(docs.NeedsOnboarding(p.Path)),
+		NeedsOnboarding:     proto.Bool(docs.NeedsOnboarding(p.Path)),
+		SessionCoordination: docs.SessionCoordination(p.Path),
 	}}), nil
+}
+
+// SetProjectSettings changes per-project settings in the project's
+// .ycc/config.toml and returns the updated project.
+func (s *Server) SetProjectSettings(_ context.Context, req *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error) {
+	if strings.TrimSpace(req.Msg.Project) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("project is required"))
+	}
+	if req.Msg.SessionCoordination != nil {
+		if err := s.mgr.SetSessionCoordination(req.Msg.Project, req.Msg.GetSessionCoordination()); err != nil {
+			if errors.Is(err, session.ErrUnknownProject) {
+				return nil, connect.NewError(connect.CodeNotFound, err)
+			}
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	for _, p := range s.mgr.Projects() {
+		if p.Name == req.Msg.Project {
+			return connect.NewResponse(&v1.SetProjectSettingsResponse{Project: s.projectInfo(p.Name, p.Path)}), nil
+		}
+	}
+	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("%w %q", session.ErrUnknownProject, req.Msg.Project))
+}
+
+// ListProjectNotices returns a project's notice board: active notices and live
+// sessions' intents (empty while session coordination is off).
+func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
+	notices, intents, err := s.mgr.ProjectNoticeBoard(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	resp := &v1.ListProjectNoticesResponse{}
+	for _, n := range notices {
+		resp.Notices = append(resp.Notices, &v1.ProjectNotice{
+			Id: n.ID, Text: n.Text, Subject: n.Subject, SessionId: n.SessionID, Actor: n.Actor, TaskIds: n.Tasks,
+			PostedAt: n.PostedAt.UTC().Format(time.RFC3339), ExpiresAt: n.ExpiresAt.UTC().Format(time.RFC3339),
+		})
+	}
+	for _, in := range intents {
+		resp.Intents = append(resp.Intents, &v1.SessionIntent{SessionId: in.SessionID, Text: in.Text, SetAt: in.SetAt.UTC().Format(time.RFC3339)})
+	}
+	return connect.NewResponse(resp), nil
+}
+
+// ClearProjectNotice clears an active notice on the user's behalf.
+func (s *Server) ClearProjectNotice(_ context.Context, req *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error) {
+	if strings.TrimSpace(req.Msg.Id) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("id is required"))
+	}
+	if err := s.mgr.ClearProjectNotice(req.Msg.Project, req.Msg.Id, req.Msg.Reason); err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject), errors.Is(err, session.ErrUnknownNotice):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, orchestrator.ErrCoordinationDisabled):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.ClearProjectNoticeResponse{}), nil
 }
 
 // ListSessions returns all live sessions and their current status, optionally

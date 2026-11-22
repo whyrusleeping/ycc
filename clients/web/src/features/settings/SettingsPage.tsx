@@ -5,7 +5,9 @@
 // implementation strategy), code review tiers (ListReviewTiers /
 // UpsertReviewTier / RemoveReviewTier / SetReviewDefault), the daemon-wide
 // quick replies (GetQuickReplies / SetQuickReplies), this browser's
-// notifications, the read-only spend caps, and daemon health. Model and tier
+// notifications, the read-only spend caps, per-project experimental settings
+// (SetProjectSettings, stored in each project's .ycc/config.toml), and daemon
+// health. Model and tier
 // selects require Apply; changes persist to the daemon's ycc.toml; the daemon's
 // error is shown verbatim. Mirrors iOS GlobalSettingsView and ReviewTiersView.
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useLocation, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, useBudget, useHealth, useModels, useQuickReplies, useReviewTiers } from "../../api/queries";
+import { queryKeys, useBudget, useHealth, useModels, useProjects, useQuickReplies, useReviewTiers } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { useIntent } from "../../app/intents";
 import type { ModelInfo } from "../../gen/ycc/v1/ycc_pb";
@@ -128,6 +130,7 @@ export function SettingsPage() {
         <NotificationControls />
       </Section>
       <BudgetSection />
+      <ExperimentalSection />
       <Section id="health" title="Status">
         <HealthPanel />
       </Section>
@@ -658,6 +661,62 @@ function ModelsSection({ data, onEdit }: { data: ModelsData; onEdit: (t: EditorT
             });
         }}
       />
+    </Section>
+  );
+}
+
+/** Per-project experimental settings; each project keeps its own in its .ycc/config.toml. */
+function ExperimentalSection() {
+  const qc = useQueryClient();
+  const projects = useProjects();
+  const { busy, error, run } = useApply("settings.experimental");
+  return (
+    <Section
+      id="experimental"
+      title="Experimental"
+      intro="Per project, unlike the rest of this page: turning a feature on for one project leaves the others unchanged."
+    >
+      {projects.isPending ? (
+        <p className="muted">Loading…</p>
+      ) : projects.isError ? (
+        <p className="error" role="alert">{errorMessage(projects.error, "Couldn’t load projects.")}</p>
+      ) : projects.data.length === 0 ? (
+        <p className="muted">No projects yet.</p>
+      ) : (
+        projects.data.map((p) => (
+          <div key={p.name} className="settings-line">
+            <div>
+              <strong>{p.name}</strong>
+              <div className="muted small">{p.path}</div>
+            </div>
+            <label className="check" title="Applies to sessions started or reopened after you turn it on; turning it off takes effect at once">
+              <input
+                type="checkbox"
+                checked={p.sessionCoordination}
+                disabled={!!busy}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  track.action("settings.session_coordination", "click", { on });
+                  void run(p.name, () => client.setProjectSettings({ project: p.name, sessionCoordination: on }), () =>
+                    qc.invalidateQueries({ queryKey: queryKeys.projects }),
+                  );
+                }}
+              />
+              Session coordination
+            </label>
+          </div>
+        ))
+      )}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="muted small">
+        Session coordination lets agents list the project’s other sessions and the files each has changed but not committed, and tells two
+        sessions when they edit the same file. Turning it on applies to sessions started or reopened afterwards; turning it off takes effect at
+        once.
+      </p>
     </Section>
   );
 }

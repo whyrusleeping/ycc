@@ -2,15 +2,18 @@
 // needs-answer sessions pinned on top, then most recent first.
 import { Link } from "react-router";
 import { useEffect, useState } from "react";
-import { useSessionFeed, useSetFollowUp } from "../../api/queries";
+import { useProjects, useSessionFeed, useSetFollowUp } from "../../api/queries";
 import { errorMessage } from "../../api/client";
 import { paths } from "../../app/paths";
+import { lastViewedProject } from "../../app/memory";
+import { hitKindLabel, hitPath, indexingNote, searchableQuery, searchProject } from "./messageHits";
+import { Snippet, useMessageSearch } from "./messageSearch";
 import { useLoopSessionIds } from "../workloop/hooks";
 import { useReadMarks } from "./unread";
 import { filterSessions, isInboxSession, SESSION_FILTERS, type SessionFilter } from "./attention";
 import { setSidebarFilter, useSidebarFilter } from "./listFilter";
 import { Icon } from "../../ui/icons";
-import type { SessionSummary } from "../../gen/ycc/v1/ycc_pb";
+import type { SessionSearchHit, SessionSummary } from "../../gen/ycc/v1/ycc_pb";
 import {
   compactAge,
   compactState,
@@ -328,6 +331,69 @@ export function SessionFilterSelect({
   );
 }
 
+/**
+ * Full-text message hits for the list's search (SearchSessions over one
+ * project's whole history, beyond the loaded rows the title filter sees).
+ */
+function MessageResults({ scope, query, now }: { scope: string | null; query: string; now: number }) {
+  const projects = useProjects();
+  // The home feed spans projects; it searches the last one viewed (or the sole one).
+  const project = searchProject(scope ?? lastViewedProject.get(), projects.data);
+  const search = useMessageSearch(project, query, 30);
+  if (!searchableQuery(query) || projects.isPending) return null;
+  const resp = search.response;
+  const note = indexingNote(resp);
+  const hits = resp?.hits.filter((h) => h.session) ?? [];
+  return (
+    <section className="session-section message-results" aria-busy={search.pending}>
+      <h3 className="section-title">{project ? `Messages in ${project}` : "Messages"}</h3>
+      {project === null ? (
+        <p className="muted pad small">Open a project to search its messages.</p>
+      ) : (
+        <>
+          {note && (
+            <p className="muted pad small search-indexing" role="status">
+              {note}
+            </p>
+          )}
+          {search.error ? (
+            <p className="error pad small">{errorMessage(search.error, "Couldn’t search messages.")}</p>
+          ) : !resp ? (
+            <p className="muted pad small">Searching messages…</p>
+          ) : hits.length === 0 ? (
+            <p className="muted pad small">{search.pending ? "Searching messages…" : "No messages match."}</p>
+          ) : (
+            hits.map((hit) => <MessageHitRow key={hit.session!.sessionId} project={project} hit={hit} now={now} />)
+          )}
+          {resp?.nextCursor && hits.length > 0 && <p className="muted pad small">Showing the best {hits.length} sessions; refine the search to narrow them.</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
+function MessageHitRow({ project, hit, now }: { project: string; hit: SessionSearchHit; now: number }) {
+  const s = hit.session!;
+  const when = relativeTime(hit.timestamp || s.lastActivity || s.startedAt, now);
+  return (
+    <div className="session-row variant-page message-hit">
+      <div className="session-row-title">
+        <Link to={hitPath(project, hit)} className="session-row-link title-text" title={displayTitle(s)} data-track="sessions.search_hit">
+          {displayTitle(s)}
+        </Link>
+      </div>
+      <div className="message-hit-snippet">
+        <span className="hit-kind">{hitKindLabel(hit.kind)}</span>
+        <Snippet spans={hit.snippet} />
+      </div>
+      <div className="session-row-meta">
+        {hit.matchCount > 1 && <span>{hit.matchCount} matching messages</span>}
+        {when && <span className="when">{when}</span>}
+      </div>
+    </div>
+  );
+}
+
 export function SessionList({
   scope,
   activeSessionId,
@@ -357,7 +423,9 @@ export function SessionList({
   if (feed.error) return <p className="error pad">{feed.error}</p>;
   const flagged = onlyFollowUp(feed.rows);
   const visibleRows = filterSessions(feed.rows, filter, query, isUnread, loopIds, activeSessionId);
-  const groups = sections(visibleRows);
+  // While searching, message hits come first; label the title matches below them.
+  const searching = variant === "page" && searchableQuery(query) !== "";
+  const groups = sections(visibleRows).map((g) => (searching && !g.title ? { ...g, title: "Sessions" } : g));
   const unreadRows = visibleRows.filter(isUnread);
   return (
     <div className={`session-list variant-${variant}`}>
@@ -365,7 +433,7 @@ export function SessionList({
       {variant === "page" && (
         <div className="session-list-toolbar">
           <SessionFilterSelect value={filter} onChange={setFilter} />
-          <input type="search" className="field" aria-label="Search loaded sessions" placeholder="Search sessions…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input type="search" className="field" aria-label="Search sessions and messages" placeholder="Search sessions and messages…" value={query} onChange={(e) => setQuery(e.target.value)} />
           <button
             type="button"
             className="btn ghost small follow-up-filter"
@@ -394,9 +462,10 @@ export function SessionList({
           </button>
         </div>
       )}
+      {variant === "page" && <MessageResults scope={scope} query={query} now={now} />}
       {groups.length === 0 && (
         <div className="pad empty-list">
-          <p className="muted">{followUpOnly ? "No sessions flagged for follow-up." : feed.rows.length === 0 ? "No sessions yet." : "No sessions match this view."}</p>
+          <p className="muted">{followUpOnly ? "No sessions flagged for follow-up." : feed.rows.length === 0 ? "No sessions yet." : query.trim() ? "No loaded sessions in this view match by title." : "No sessions match this view."}</p>
           {feed.rows.length === 0 && !followUpOnly && variant === "page" && (
             <Link to={paths.newSession(scope)} className="btn primary small" data-track="sessions.start_first">
               Start a session
@@ -406,7 +475,17 @@ export function SessionList({
       )}
       {groups.map((g) => (
         <section key={g.kind} className={`session-section ${g.kind}`}>
-          {g.title && <h3 className="section-title">{g.title}</h3>}
+          {g.title && (
+            <h3 className="section-title">
+              {/* Like iOS's section labels: the mark sits in the rows' attention gutter. */}
+              {variant === "sidebar" && (
+                <span className="row-gutter" aria-hidden="true">
+                  {g.kind === "needsAnswer" ? <Icon name="bell" size={12} /> : g.kind === "followUp" ? "⚑" : null}
+                </span>
+              )}
+              {g.title}
+            </h3>
+          )}
           {g.rows.map((row) => (
             <SessionRowView
               key={`${row.project}\u0000${row.session.sessionId}`}

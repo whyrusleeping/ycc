@@ -3,7 +3,8 @@
 // latest), and pages earlier rows when scrolled to the top while keeping the
 // viewport anchored. Transcript search marks matching rows, highlights the
 // matched text (CSS Custom Highlight API, no DOM mutation), and scrolls the
-// current match into view. Long runs of tool/reasoning rows fold into an
+// current match into view; a session-search jump scrolls to and marks its
+// row the same way. Long runs of tool/reasoning rows fold into an
 // activity summary (see blocks.ts) that the reader can expand in place.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SessionController, SessionSnapshot } from "./controller";
@@ -13,6 +14,7 @@ import { RowView } from "./RowView";
 import type { DraftPicture } from "../attachments/attachments";
 import { reportPresentation } from "./report";
 import { SearchBar, type TranscriptSearch } from "./SearchBar";
+import type { RowJump } from "./rowJump";
 import { activitySummary, blockHides, compactDuration, foldedTailStart, transcriptBlocks, type ActivitySummary } from "./blocks";
 
 const NEAR_BOTTOM_PX = 80;
@@ -23,15 +25,19 @@ export function Transcript({
   snap,
   onEditFailed,
   search,
+  rowJump,
 }: {
   controller: SessionController;
   snap: SessionSnapshot;
   onEditFailed: (text: string, pictures: DraftPicture[]) => void;
   search?: TranscriptSearch;
+  /** A row to open at (a session search hit). */
+  rowJump?: RowJump;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const lastSearchToken = useRef(search?.token ?? 0);
+  const lastJumpToken = useRef(0);
   const following = useRef(true);
   const lastHeight = useRef(0);
   const lastScrollTop = useRef(0);
@@ -70,6 +76,12 @@ export function Transcript({
         lastScrollTop.current = el.scrollTop;
       }
     }
+    // Retried each render until the row is in the DOM (it may unfold first).
+    if (rowJump?.rowId && rowJump.token !== lastJumpToken.current && scrollToRow(el, rowJump.rowId)) {
+      lastJumpToken.current = rowJump.token;
+      following.current = false;
+      lastScrollTop.current = el.scrollTop;
+    }
     lastHeight.current = el.scrollHeight;
   });
 
@@ -98,6 +110,9 @@ export function Transcript({
 
   const needle = search?.needle ?? "";
   const currentId = search?.currentRowId ?? null;
+  const jumpId = rowJump?.rowId ?? null;
+  // The row search or a jump lands on stays unfolded.
+  const focusId = currentId ?? jumpId;
   useEffect(() => {
     const root = inner.current;
     if (!root || !needle) {
@@ -151,12 +166,12 @@ export function Transcript({
     setShowPill(false);
   };
 
-  const blocks = useMemo(() => transcriptBlocks(snap.rows, currentId), [snap.rows, currentId]);
+  const blocks = useMemo(() => transcriptBlocks(snap.rows, focusId), [snap.rows, focusId]);
   // A search match on a hidden step opens its block (and leaves it open).
   const revealKey = useMemo(() => {
-    for (const b of blocks) if (b.type === "activity" && blockHides(snap.rows, b, currentId)) return b.key;
+    for (const b of blocks) if (b.type === "activity" && blockHides(snap.rows, b, focusId)) return b.key;
     return null;
-  }, [blocks, snap.rows, currentId]);
+  }, [blocks, snap.rows, focusId]);
   useEffect(() => {
     if (revealKey) setExpanded((prev) => (prev.has(revealKey) ? prev : new Set(prev).add(revealKey)));
   }, [revealKey]);
@@ -198,7 +213,9 @@ export function Transcript({
               : search.matchIds.has(row.id)
                 ? "match"
                 : null
-            : null
+            : row.id === jumpId
+              ? "jump"
+              : null
         }
       />
     );

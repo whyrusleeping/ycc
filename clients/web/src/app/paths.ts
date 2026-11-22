@@ -19,8 +19,9 @@ export type ProjectSection = (typeof PROJECT_SECTIONS)[number]["key"];
 export const paths = {
   home: () => "/",
   project: (project: string) => `/p/${enc(project)}`,
-  session: (project: string, sessionId: string) =>
-    project ? `/p/${enc(project)}/s/${enc(sessionId)}` : `/s/${enc(sessionId)}`,
+  /** A session; `row` opens it scrolled to that presentation row (a search hit). */
+  session: (project: string, sessionId: string, row?: string) =>
+    `${project ? `/p/${enc(project)}/s/${enc(sessionId)}` : `/s/${enc(sessionId)}`}${row ? `?row=${enc(row)}` : ""}`,
   newSession: (project?: string | null) => (project ? `/p/${enc(project)}/new` : "/new"),
   section: (project: string, section: ProjectSection) => `/p/${enc(project)}/${section}`,
   /** The backlog browser; unscoped ("" / null) asks for a project (or uses the sole/default one). */

@@ -689,6 +689,75 @@ final class SessionModelCacheTests: XCTestCase {
         presentation.end()
     }
 
+    func testSeekRowOnACachedReopenWaitsForTheCatchUp() async {
+        let source = CachedSessionSource(view: view(through: 20, rows: [10, 20]))
+        let model = makeModel(source)
+        var presentation = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        presentation.end()
+        await waitUntil { source.activeStreams == 0 }
+
+        // A search hit on a message written while the screen was away.
+        presentation = show(model)
+        XCTAssertTrue(model.isCatchingUpAfterResume)
+        let seek = Task { await model.seekRow("seq-24") }
+        await waitUntil { source.activeStreams == 1 }
+        source.send(update(through: 24, upserting: [24], phase: "idle"))
+        let result = await seek.value
+        XCTAssertEqual(result, .found, "the row arrived with the catch-up")
+        XCTAssertEqual(model.durableRows.last?.id, "seq-24")
+        presentation.end()
+    }
+
+    func testSeekRowResolvesACachedRowAgainstTheRevalidatedTranscript() async {
+        let source = CachedSessionSource(view: view(through: 20, rows: [2, 20]), page: earlierPage())
+        let model = makeModel(source, mode: .persisted)
+        let first = show(model)
+        await waitUntil { model.state == .finished }
+        XCTAssertEqual(model.visibleDurableRows.first?.id, "seq-2")
+        first.end()
+
+        // The session grew while parked: revalidation replaces the cached
+        // rows with a newer first page, evicting the hit's row.
+        source.view = view(through: 50, rows: [40, 50], earlierCursor: "older")
+        let next = show(model)
+        XCTAssertTrue(model.isCatchingUpAfterResume)
+        // The cached row is reported at once: a quiet live session would
+        // send no catch-up to wait for.
+        let cached = await model.seekRow("seq-2")
+        XCTAssertEqual(cached, .found)
+        await waitUntil { model.resumeCatchUpCount == 1 }
+        XCTAssertFalse(model.visibleDurableRows.contains { $0.id == "seq-2" })
+        // The screen re-seeks once the catch-up has replaced the rows.
+        let reseek = await model.seekRow("seq-2")
+        XCTAssertEqual(reseek, .found)
+        XCTAssertEqual(model.visibleDurableRows.map(\.id), ["seq-2", "seq-40", "seq-50"])
+        next.end()
+    }
+
+    func testSeekRowOnAParkedModelPagesOnlyOnceItIsShown() async {
+        let source = CachedSessionSource(
+            view: view(through: 20, rows: [10, 20], earlierCursor: "older"), page: earlierPage())
+        let model = makeModel(source)
+        let first = show(model)
+        await waitUntil { source.activeStreams == 1 }
+        first.end()
+        await waitUntil { source.activeStreams == 0 }
+        XCTAssertTrue(model.isParked)
+
+        // The search hit's screen starts seeking before it presents the model;
+        // a page fetched against the parked stream would be discarded.
+        let seek = Task { await model.seekRow("seq-2") }
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        XCTAssertEqual(source.pageRequests, 0)
+        let next = show(model)
+        let result = await seek.value
+        XCTAssertEqual(result, .found)
+        XCTAssertNil(model.actionError)
+        XCTAssertEqual(model.visibleDurableRows.first?.id, "seq-2")
+        next.end()
+    }
+
     func testKeepaliveEndsCursorResumeCatchUpWithNothingNew() async {
         let source = CachedSessionSource(view: view(through: 20, rows: [10, 20]))
         let model = makeModel(source)

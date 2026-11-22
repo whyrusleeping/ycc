@@ -18,8 +18,10 @@ const pushTimeout = 2 * time.Minute
 // chatFinishGuidance tells a chat agent what to do with finished work under the
 // project's [chat] finished_work policy (spec §9).
 func chatFinishGuidance(policy string) string {
-	const scope = `The commit tool commits only the files this session changed, whole (paths adds more); pass
-task_id and outcome when the work completes a backlog task so it is marked done. Do not commit
+	const scope = `The commit tool commits only the files this session changed, whole (paths adds more), and only
+this session's own lines of backlog task files and memory.md; a file another live session also
+changed is refused unless named in paths. Pass task_id and outcome when the
+work completes a backlog task so it is marked done. Do not commit
 partial, exploratory, or unverified work, or work the user asked you to hold.`
 	switch policy {
 	case docs.ChatAsk:
@@ -44,7 +46,7 @@ reply names what you committed (short sha).
 // finalizes that task like the work-mode commit tool; otherwise it commits the
 // session's attributed changes. Under commit+push it then pushes.
 func chatCommitTool(d *Deps, policy string) *gollama.Tool {
-	desc := "Commit this session's finished, verified work to git: the files this session changed, whole, plus any named paths. " +
+	desc := "Commit this session's finished, verified work to git: the files this session changed, whole, plus any named paths; a file another live session also changed is refused unless named in paths; backlog task files and memory.md take only this session's own lines. " +
 		"Pass task_id and outcome when the work completes a backlog task; that task is compacted and marked done in the same commit (do not mark it done first)."
 	if policy == docs.ChatCommitPush {
 		desc += " The project's policy then pushes the current branch to its upstream."
@@ -56,7 +58,7 @@ func chatCommitTool(d *Deps, policy string) *gollama.Tool {
 			"message": tools.StrProp("concise commit message"),
 			"task_id": tools.StrProp("optional backlog task this work completes"),
 			"outcome": tools.StrProp("with task_id: concise accepted outcome retained with the completed task"),
-			"paths":   tools.StrArrProp("optional extra files to commit whole (workspace-relative)"),
+			"paths":   tools.StrArrProp("optional extra files to commit whole (workspace-relative), including a file another live session also changed"),
 		}, "message"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			msg, _ := tools.GetString(params, "message")
@@ -106,7 +108,8 @@ func commitSessionChanges(ctx context.Context, d *Deps, message string, paths []
 	if err != nil {
 		return "", nil, err
 	}
-	changes, err := d.sessionChangeset(normalizePaths(paths)...)
+	paths = normalizePaths(paths)
+	changes, err := d.sessionChangeset(paths...)
 	if err != nil {
 		release()
 		return "", nil, fmt.Errorf("unsafe changeset: %w", err)
@@ -114,6 +117,10 @@ func commitSessionChanges(ctx context.Context, d *Deps, message string, paths []
 	if strings.TrimSpace(changes.Diff) == "" {
 		release()
 		return "", nil, fmt.Errorf("nothing to commit: this session has no uncommitted changes")
+	}
+	if err := d.refuseLiveShared(changes, paths); err != nil {
+		release()
+		return "", nil, err
 	}
 	sha, err := d.Repo.Commit(changes, message)
 	if err == nil {
@@ -135,6 +142,41 @@ func commitSessionChanges(ctx context.Context, d *Deps, message string, paths []
 		notes = append(notes, "the commit succeeded but recording it in the session log failed: "+err.Error())
 	}
 	return sha, notes, nil
+}
+
+// commitBookkeeping commits only this session's own line changes to backlog
+// task files and memory.md, so sessions without a commit tool (watch runs) do
+// not leave them for a later commit to sweep in. It returns "" when there was
+// nothing to commit.
+func commitBookkeeping(ctx context.Context, d *Deps, message string) (string, error) {
+	if d.Repo == nil || d.Ownership == nil || d.CoordinatorToken.Scope() == "" {
+		return "", nil
+	}
+	if err := finalizationCanProceed(ctx, d); err != nil {
+		return "", err
+	}
+	release, err := d.gitSection(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	changes, err := d.bookkeepingChangeset()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(changes.Diff) == "" {
+		return "", nil
+	}
+	sha, err := d.Repo.Commit(changes, message)
+	if err != nil {
+		return "", err
+	}
+	if err := emitDurable(ctx, d.Emitter, event.CommitMade, map[string]any{
+		"sha": sha, "message": message, "finalization_id": changes.ID,
+	}); err != nil {
+		return sha, fmt.Errorf("commit %s succeeded but recording it in the session log failed: %w", sha, err)
+	}
+	return sha, nil
 }
 
 // pushCurrentBranch pushes only the current branch to its upstream and returns

@@ -7,7 +7,7 @@ created: "2026-08-06"
 updated: "2026-08-06"
 depends_on: []
 spec_refs:
-    - 6.2 Backlog — structured items, markdown-rendered
+    - spec.md#6.2 Backlog
 ---
 
 ## Description
@@ -30,3 +30,4 @@ remain out of scope — those are exactly what the healing pass is for.
 - [ ] Existing in-process concurrency test still passes; no lock is held across model calls.
 
 ## Work log
+- 2026-11-21 groom: repointed spec_refs to the current heading, spec §6.2 "Backlog". Still open: internal/docs/docs.go still serializes `createLocked` only through the per-process `lockFor` mutex. Still proposed.

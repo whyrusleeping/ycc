@@ -9,7 +9,9 @@ enum HomeDestination: Hashable {
     /// A session transcript. `live` selects `Subscribe` over
     /// `GetSessionTranscript`; `title` is the already-derived display name so
     /// the pushed screen is identifiable before its first event arrives.
-    case session(id: String, project: String, live: Bool, title: String)
+    /// A non-empty `focusRow` opens the transcript at that row (a session
+    /// search hit) instead of the latest one.
+    case session(id: String, project: String, live: Bool, title: String, focusRow: String = "")
     /// A backlog task's detail screen. `title` is the already-loaded summary
     /// title so the pushed screen is identifiable before its detail arrives.
     case taskDetail(project: String, taskID: String, title: String)

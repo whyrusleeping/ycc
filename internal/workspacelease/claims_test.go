@@ -46,6 +46,17 @@ func TestClaimsAttributeWritesPerScopeThroughAliases(t *testing.T) {
 		t.Fatal("unscoped split should be nil")
 	}
 
+	if notice := s.RecordWrite(filepath.Join(root, "shared.go"), root, b); notice != "" {
+		t.Fatalf("notice without a notifier: %q", notice)
+	}
+	var overlaps []Overlap
+	s.SetOverlapNotifier(func(o Overlap) string { overlaps = append(overlaps, o); return "n" })
+	s.RecordWrite(filepath.Join(root, "b.go"), root, b) // only b claims it
+	if notice := s.RecordWrite(filepath.Join(root, "shared.go"), root, b); notice != "n" ||
+		len(overlaps) != 1 || overlaps[0].Path != "shared.go" || overlaps[0].Writer != "s_b" || !reflect.DeepEqual(overlaps[0].Others, []string{"s_a"}) {
+		t.Fatalf("overlap notice=%q overlaps=%+v", notice, overlaps)
+	}
+
 	s.ReleaseClaims(root, "s_a", []string{"shared.go"})
 	if got := s.Claims(root)["shared.go"]; !reflect.DeepEqual(got, []string{"s_b"}) {
 		t.Fatalf("after release shared.go = %v", got)
@@ -97,6 +108,9 @@ func TestClaimsPersistAcrossRestartAndGenerationGuardsRelease(t *testing.T) {
 	if got := restarted.Claims(root); !reflect.DeepEqual(got, want) {
 		t.Fatalf("claims after restart = %v, want %v", got, want)
 	}
+	if details := restarted.ClaimDetails(root)["a.go"]; len(details) != 1 || details[0].Since.IsZero() {
+		t.Fatalf("claim time lost across restart: %+v", details)
+	}
 
 	// A claim recorded after the caller sampled the generation survives a
 	// release of that path.
@@ -110,5 +124,34 @@ func TestClaimsPersistAcrossRestartAndGenerationGuardsRelease(t *testing.T) {
 	again.PersistClaims()
 	if got := again.Claims(root); !reflect.DeepEqual(got, map[string][]string{"a.go": {"s_c"}}) {
 		t.Fatalf("persisted claims after release = %v", got)
+	}
+}
+
+// An overlap claim is not the claiming scope's own path, persists as such, and
+// becomes an ordinary claim once that scope writes the path itself.
+func TestOverlapClaimsPersistAndUpgrade(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	first := NewService()
+	first.PersistClaims()
+	first.RecordWrite(filepath.Join(root, "a.go"), root, first.NewScopedToken("s_a", "a"))
+	first.RecordOverlaps(root, []string{"a.go"}, first.NewScopedToken("s_b", "b"))
+	first.RecordOverlaps(root, []string{"a.go"}, first.NewScopedToken("s_a", "a")) // keeps s_a's claim
+
+	restarted := NewService()
+	restarted.PersistClaims()
+	if mine, foreign := restarted.Split(root, "s_b"); mine["a.go"] || !foreign["a.go"] {
+		t.Fatalf("s_b after restart: mine=%v foreign=%v", mine, foreign)
+	}
+	if mine, foreign := restarted.Split(root, "s_a"); !mine["a.go"] || !foreign["a.go"] {
+		t.Fatalf("s_a after restart: mine=%v foreign=%v", mine, foreign)
+	}
+	restarted.RecordWrite(filepath.Join(root, "a.go"), root, restarted.NewScopedToken("s_b", "b"))
+	again := NewService()
+	again.PersistClaims()
+	if mine, _ := again.Split(root, "s_b"); !mine["a.go"] {
+		t.Fatalf("s_b's own write did not upgrade its overlap claim: %v", mine)
 	}
 }

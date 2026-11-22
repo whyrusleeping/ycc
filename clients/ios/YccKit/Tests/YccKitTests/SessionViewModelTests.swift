@@ -49,6 +49,8 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     let detail: Ycc_V1_SessionPresentationRow
     private let lock = NSLock()
     private var _detailRequests: [String] = []
+    /// Detail requests that fail before one succeeds.
+    var detailFailures = 0
     var detailRequests: [String] { lock.lock(); defer { lock.unlock() }; return _detailRequests }
 
     init(view: Ycc_V1_GetSessionViewResponse, detail: Ycc_V1_SessionPresentationRow) {
@@ -62,12 +64,46 @@ private final class IndexedPendingSource: SessionTranscriptSource, @unchecked Se
     }
     func getSessionViewDetail(project: String, sessionId: String, rowId: String) async throws -> Ycc_V1_SessionPresentationRow {
         recordDetailRequest(rowId)
+        let fail: Bool = lock.withLock {
+            guard detailFailures > 0 else { return false }
+            detailFailures -= 1
+            return true
+        }
+        if fail { throw YccError.rpc(message: "deadline exceeded") }
         return detail
     }
     private func recordDetailRequest(_ rowID: String) {
         lock.lock()
         _detailRequests.append(rowID)
         lock.unlock()
+    }
+    func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
+    func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
+        throw YccError.notFound(message: "attachment not found")
+    }
+    func subscribe(sessionId: String, fromSeq: Int64) -> AsyncThrowingStream<Ycc_V1_Event, Error> {
+        AsyncThrowingStream { $0.finish() }
+    }
+}
+
+/// Earlier pages keyed by cursor; an unknown cursor fails.
+private final class CursorPageSource: SessionTranscriptSource, @unchecked Sendable {
+    let view: Ycc_V1_GetSessionViewResponse
+    let pages: [String: Ycc_V1_GetSessionViewPageResponse]
+    private let lock = NSLock()
+    private var _cursors: [String] = []
+    var cursors: [String] { lock.withLock { _cursors } }
+
+    init(view: Ycc_V1_GetSessionViewResponse, pages: [String: Ycc_V1_GetSessionViewPageResponse]) {
+        self.view = view
+        self.pages = pages
+    }
+    var supportsIndexedSessionView: Bool { true }
+    func getSessionView(project: String, sessionId: String) async throws -> Ycc_V1_GetSessionViewResponse { view }
+    func getSessionViewPage(project: String, sessionId: String, cursor: String) async throws -> Ycc_V1_GetSessionViewPageResponse {
+        lock.withLock { _cursors.append(cursor) }
+        guard let page = pages[cursor] else { throw YccError.rpc(message: "deadline exceeded") }
+        return page
     }
     func getSessionTranscript(project: String, sessionId: String) async throws -> [Ycc_V1_Event] { [] }
     func getSessionAttachment(project: String, sessionId: String, attachmentId: String) async throws -> MessageImage {
@@ -467,6 +503,35 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertTrue(vm.durableRows.isEmpty, "state-only detail must not inject an out-of-page row")
     }
 
+    func testIndexedPendingDetailRetriesAFailedFetch() async {
+        var state = Ycc_V1_SessionViewState()
+        state.indexedThroughSeq = 20
+        state.phase = "running"
+        state.pendingRowID = "seq-4"
+        state.pendingQuestionsTruncated = true
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state = state
+        var detail = Ycc_V1_SessionPresentationRow()
+        detail.id = "seq-4"
+        detail.positionSeq = 4
+        detail.updatedSeq = 4
+        detail.events = [event(4, "question_asked", #"{"question":"long?","options":["a","b"]}"#)]
+        let source = IndexedPendingSource(view: view, detail: detail)
+        source.detailFailures = 2
+        let vm = SessionViewModel(
+            source: source, sessionID: "indexed", mode: .persisted,
+            backoff: .init(initial: 1_000_000, maximum: 2_000_000))
+
+        vm.start()
+        await waitUntil { vm.pendingQuestion != nil }
+
+        // A fetch that fails (e.g. one in flight while the app was suspended)
+        // must not leave the question without answer controls.
+        XCTAssertEqual(source.detailRequests, ["seq-4", "seq-4", "seq-4"])
+        XCTAssertEqual(vm.pendingQuestion?.prompt, "long?")
+        XCTAssertNil(vm.actionError, "a retried pending detail is not an action failure")
+    }
+
     private func indexedPageFixture() -> (Ycc_V1_GetSessionViewResponse, Ycc_V1_GetSessionViewPageResponse) {
         var view = Ycc_V1_GetSessionViewResponse()
         view.state.indexedThroughSeq = 20
@@ -526,6 +591,55 @@ final class SessionViewModelTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(vm.durableRows.map(\.id), ["seq-10"])
         XCTAssertEqual(vm.projection.lastPersistedSeq, 20)
+    }
+
+    func testSeekRowLoadsEarlierPagesUntilTheRowIsInstalled() async {
+        func row(_ seq: Int64) -> Ycc_V1_SessionPresentationRow {
+            var r = Ycc_V1_SessionPresentationRow()
+            r.id = "seq-\(seq)"
+            r.positionSeq = seq
+            r.updatedSeq = seq
+            r.events = [event(seq, "user_input", #"{"text":"m\#(seq)"}"#, actor: "user")]
+            return r
+        }
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 30
+        view.earlierCursor = "c20"
+        view.rows = [row(30)]
+        var page20 = Ycc_V1_GetSessionViewPageResponse()
+        page20.indexedThroughSeq = 30
+        page20.rows = [row(20)]
+        page20.earlierCursor = "c10"
+        var page10 = Ycc_V1_GetSessionViewPageResponse()
+        page10.indexedThroughSeq = 30
+        page10.rows = [row(10)]
+        let source = CursorPageSource(view: view, pages: ["c20": page20, "c10": page10])
+        let vm = SessionViewModel(source: source, sessionID: "seek", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+
+        let found = await vm.seekRow("seq-10")
+        XCTAssertEqual(found, .found)
+        XCTAssertEqual(vm.visibleDurableRows.map(\.id), ["seq-10", "seq-20", "seq-30"])
+        XCTAssertEqual(source.cursors, ["c20", "c10"])
+
+        let missing = await vm.seekRow("seq-99")
+        XCTAssertEqual(missing, .missing, "the whole history is loaded")
+        XCTAssertEqual(source.cursors.count, 2)
+    }
+
+    func testSeekRowStopsWhenAnEarlierPageFails() async {
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 30
+        view.earlierCursor = "c20"
+        let source = CursorPageSource(view: view, pages: [:])
+        let vm = SessionViewModel(source: source, sessionID: "seek", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        let result = await vm.seekRow("seq-10")
+        XCTAssertEqual(result, .failed)
+        XCTAssertNotNil(vm.actionError)
+        XCTAssertEqual(source.cursors, ["c20"])
     }
 
     func testInitialReplayReadinessWaitsForInstalledHistory() async {

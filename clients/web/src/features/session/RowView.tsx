@@ -140,7 +140,8 @@ function QuestionBody({ prompt, options, answer }: { prompt: string; options: st
   );
 }
 
-export type SearchMark = "match" | "current" | null;
+/** "jump": the row a session search hit opened at. */
+export type SearchMark = "match" | "current" | "jump" | null;
 
 interface RowViewProps {
   row: TranscriptRow;
@@ -176,7 +177,7 @@ export const RowView = memo(function RowView({
   // Folded rows open when search lands on them (and stay open after).
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (search === "current") setOpen(true);
+    if (search === "current" || search === "jump") setOpen(true);
   }, [search]);
 
   switch (k.type) {

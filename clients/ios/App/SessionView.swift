@@ -113,6 +113,18 @@ struct SessionView: View {
     /// swipe-dismiss can hide it while the pending gate persists — reopen via the
     /// banner).
     @State private var showQuestionSheet = false
+    /// Whether the answer sheet's content is actually in a window (reported by
+    /// ``WindowPresenceProbe``). `showQuestionSheet` alone can stay true for a
+    /// presentation UIKit never put on screen — one requested as the app woke
+    /// from the background — which hid both the sheet and the banner.
+    @State private var questionSheetOnScreen = false
+    /// Bumped by every answer-sheet request, so a newer one (or a closed gate)
+    /// supersedes a request still waiting to present.
+    @State private var questionSheetRequest = 0
+    /// A question whose presentation was skipped while the scene was inactive.
+    @State private var questionSheetOnActive: String?
+    /// Uptime when the scene last became active; presentation waits it out.
+    @State private var activeSince: TimeInterval = 0
     /// The question the sheet last showed. Answering closes the gate
     /// optimistically while the sheet is still animating away; keep rendering
     /// the question until it is gone instead of flashing an empty sheet.
@@ -149,6 +161,15 @@ struct SessionView: View {
     /// leaves. Created on first appearance, never in `init` (which SwiftUI
     /// may run and discard many times).
     @State private var presentation: SessionPresentation?
+    /// Earlier pages are loading to reach ``focusRowID``.
+    @State private var isSeekingRow = false
+    /// Why the transcript could not open at ``focusRowID``, shown briefly.
+    @State private var rowSeekNotice: String?
+    /// The row a search hit opened at, marked briefly once scrolled to.
+    @State private var flashRowID: String?
+    /// The transcript was opened at ``focusRowID`` and the reader has not
+    /// moved since (no drag, no Jump to latest).
+    @State private var holdsFocusRow = false
 
     private let client: YccClient
     private let sessionList: SessionListModel?
@@ -163,6 +184,8 @@ struct SessionView: View {
     /// The display name carried in from the list, so the pushed screen is
     /// identifiable before (or without) any event arriving.
     private let title: String
+    /// A row to open at instead of the latest one (a session search hit).
+    private let focusRowID: String?
     private static let bottomAnchor = "transcript-bottom"
     private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let dragQuietPeriod: TimeInterval = 0.35
@@ -174,9 +197,11 @@ struct SessionView: View {
     private static let autoLoadEarlierReach: CGFloat = 80
     init(
         client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "",
+        focusRowID: String? = nil,
         models: SessionModelCache? = nil, sessionList: SessionListModel? = nil
     ) {
         self.client = client
+        self.focusRowID = focusRowID
         self.sessionList = sessionList
         self.project = project
         self.sessionID = sessionID
@@ -225,6 +250,7 @@ struct SessionView: View {
                         await pinInitialTranscript(proxy: proxy)
                     }
                     .onChange(of: model.resumeCatchUpCount) { _, count in
+                        reseekFocusRowAfterCatchUp(proxy: proxy)
                         guard let baseline = unreadRecheckAfterCatchUp, count > baseline else { return }
                         unreadRecheckAfterCatchUp = nil
                         Task { await pinUnreadReplyAfterCatchUp(proxy: proxy) }
@@ -358,6 +384,8 @@ struct SessionView: View {
                     // out-of-range index.
                     .id(pending.rowID)
                     .trackedView("question")
+                    .background(WindowPresenceProbe { questionSheetOnScreen = $0 })
+                    .onDisappear { questionSheetOnScreen = false }
                 }
             }
             // Present/dismiss the sheet as the pending gate opens and clears — the
@@ -372,16 +400,13 @@ struct SessionView: View {
                 if let question = model.pendingQuestion { sheetQuestion = question }
                 // A question restored after a failed answer waits behind the banner
                 // rather than re-presenting the sheet over the error alert.
-                let show = rowID != nil && rowID != model.rolledBackQuestionRowID
-                guard show, oldRowID == rowID else {
-                    showQuestionSheet = show
+                guard let rowID, rowID != model.rolledBackQuestionRowID else {
+                    questionSheetRequest &+= 1
+                    questionSheetOnActive = nil
+                    showQuestionSheet = false
                     return
                 }
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 450_000_000)
-                    guard model.pendingQuestion?.rowID == rowID, !showQuestionSheet else { return }
-                    showQuestionSheet = true
-                }
+                requestQuestionSheet(rowID: rowID, delay: oldRowID == rowID ? 0.45 : 0)
             }
             .onChange(of: model.unauthorized) { _, isUnauthorized in
                 if isUnauthorized { app.handleUnauthorized() }
@@ -438,7 +463,14 @@ struct SessionView: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
+                    activeSince = ProcessInfo.processInfo.systemUptime
                     model.reconnect()
+                    // Retry a presentation skipped while inactive, or one the
+                    // flag claims but no window shows.
+                    if let rowID = model.pendingQuestion?.rowID, !questionSheetOnScreen,
+                       questionSheetOnActive == rowID || showQuestionSheet {
+                        requestQuestionSheet(rowID: rowID, delay: 0)
+                    }
                 } else {
                     // Backgrounding may be the last thing that happens to this view;
                     // don't leave what is on screen counted as unread.
@@ -469,6 +501,7 @@ struct SessionView: View {
                 quickReplyUndoBar(pending)
             }
             streamFailureBanner
+            rowSeekBanner
             if model.mode == .live {
                 pendingQuestionBanner
                 phaseBanner
@@ -500,19 +533,72 @@ struct SessionView: View {
         }
     }
 
-    /// When a question is pending but the sheet was swipe-dismissed, offer a way
-    /// back in (the transcript row also still shows it as waiting).
+    /// Opening at a search hit far back pages earlier history in first; a
+    /// row no longer in the session says so for a moment.
+    @ViewBuilder
+    private var rowSeekBanner: some View {
+        if isSeekingRow {
+            banner(
+                "Loading earlier history to reach the matching message…",
+                systemImage: "clock.arrow.circlepath", tint: .secondary)
+        } else if let rowSeekNotice {
+            banner(rowSeekNotice, systemImage: "info.circle", tint: .secondary)
+        }
+    }
+
+    /// When a question is pending but the sheet is not on screen (swipe-dismissed,
+    /// or a presentation that never appeared), offer a way back in (the
+    /// transcript row also still shows it as waiting).
     @ViewBuilder
     private var pendingQuestionBanner: some View {
-        if model.pendingQuestion != nil, !showQuestionSheet {
+        if let pending = model.pendingQuestion, !questionSheetOnScreen {
             banner(
                 "A question is waiting",
                 systemImage: "questionmark.bubble.fill",
                 tint: Theme.attention,
-                action: ("Answer", { showQuestionSheet = true })
+                action: ("Answer", {
+                    requestQuestionSheet(rowID: pending.rowID, delay: 0, userInitiated: true)
+                })
             )
         }
     }
+
+    /// Present the answer sheet for pending question `rowID` after `delay`,
+    /// and no sooner than ``questionSheetWakeSettle`` after the scene became
+    /// active: a sheet requested while the app is still waking can be marked
+    /// presented without ever reaching the screen. A flag already stuck on such
+    /// a presentation is reset first, and one that still does not appear is
+    /// cleared so the banner offers Answer again.
+    /// `userInitiated` (Answer, a tap on the row) also opens a question whose
+    /// failed answer was rolled back, which otherwise waits behind the banner.
+    private func requestQuestionSheet(rowID: String, delay: TimeInterval, userInitiated: Bool = false) {
+        questionSheetRequest &+= 1
+        let request = questionSheetRequest
+        let wait = max(delay, activeSince + Self.questionSheetWakeSettle - ProcessInfo.processInfo.systemUptime)
+        Task { @MainActor in
+            @MainActor func current() -> Bool {
+                request == questionSheetRequest && model.pendingQuestion?.rowID == rowID
+                    && (userInitiated || rowID != model.rolledBackQuestionRowID) && !questionSheetOnScreen
+            }
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+            guard current() else { return }
+            guard scenePhase == .active else {
+                questionSheetOnActive = rowID
+                return
+            }
+            questionSheetOnActive = nil
+            if showQuestionSheet {
+                showQuestionSheet = false
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard current() else { return }
+            }
+            showQuestionSheet = true
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if current(), showQuestionSheet { showQuestionSheet = false }
+        }
+    }
+
+    private static let questionSheetWakeSettle: TimeInterval = 0.8
 
     /// Chrome follows the view model's *display* state: the durable phase,
     /// overridden while a control the user just triggered awaits its echo, so
@@ -572,6 +658,11 @@ struct SessionView: View {
         }
     }
 
+    /// A status strip above the composer. Icon and text share one font so the
+    /// symbol sits on the text's line. Quiet states (`.secondary`: idle,
+    /// stopped) blend into the bar in secondary text; coloured states read in
+    /// primary text on a light wash of their colour, and their action button
+    /// takes the same colour rather than the accent.
     private func banner(
         _ text: String,
         systemImage: String,
@@ -579,22 +670,32 @@ struct SessionView: View {
         action: (title: String, run: () -> Void)? = nil,
         actionDisabled: Bool = false
     ) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage).foregroundStyle(tint)
-            Text(text).font(.caption).foregroundStyle(.secondary)
-            Spacer()
+        let quiet = tint == .secondary
+        return HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: systemImage).foregroundStyle(tint)
+                Text(text)
+                    .foregroundStyle(quiet ? Color.secondary : Color.primary)
+                    .lineLimit(3)
+            }
+            .font(.footnote)
+            Spacer(minLength: 0)
             if let action {
                 Button(action.title, action: action.run)
-                    .font(.caption.weight(.semibold))
+                    .font(.footnote.weight(.semibold))
                     .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
                     .controlSize(.small)
+                    .tint(tint)
                     .disabled(actionDisabled)
             }
         }
+        // Same height with or without a button, so switching states (idle →
+        // paused) doesn't make the composer jump.
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.08))
+        .background(quiet ? Color.clear : tint.opacity(0.12))
     }
 
     private var inputBar: some View {
@@ -748,7 +849,7 @@ struct SessionView: View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text("Sending “\(pending.choice.reply.label)”…")
-                .font(.caption)
+                .font(.footnote)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
@@ -758,13 +859,14 @@ struct SessionView: View {
                 ])
                 withAnimation(.easeOut(duration: 0.2)) { pendingQuickReply = nil }
             }
-            .font(.caption.weight(.semibold))
+            .font(.footnote.weight(.semibold))
             .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
             .controlSize(.small)
         }
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.accentFill.opacity(0.12))
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
@@ -812,6 +914,7 @@ struct SessionView: View {
                 DurableTranscriptRows(
                     model: model,
                     expandedRuns: expandedActivityRuns,
+                    flashRowID: flashRowID,
                     onToggleRun: { run in toggleActivityRun(run) },
                     onLoadEarlier: {
                         Analytics.action("transcript.load_earlier")
@@ -822,6 +925,10 @@ struct SessionView: View {
                     },
                     onOpenReview: { task, snapshot in
                         workingChangesTarget = WorkingChangesTarget(task: task, snapshot: snapshot)
+                    },
+                    onOpenQuestion: { rowID in
+                        Analytics.action("question.open_from_row")
+                        requestQuestionSheet(rowID: rowID, delay: 0, userInitiated: true)
                     },
                     loadPicture: { [client, project, sessionID] attachmentID in
                         guard !attachmentID.isEmpty,
@@ -939,6 +1046,7 @@ struct SessionView: View {
             DragGesture(minimumDistance: 4)
                 .onChanged { value in
                     guard model.hasCompletedInitialReplay else { return }
+                    if holdsFocusRow { holdsFocusRow = false }
                     if isBrowsingEarlier {
                         isBrowsingEarlier = false
                         historyAnchor = nil
@@ -1119,6 +1227,10 @@ struct SessionView: View {
     @MainActor
     private func pinInitialTranscript(proxy: ScrollViewProxy) async {
         guard !Task.isCancelled, model.hasCompletedInitialReplay, !didRunInitialPin else { return }
+        if let focusRowID {
+            await openAtRow(focusRowID, proxy: proxy)
+            return
+        }
         // An unread session opens at the top of the agent's newest reply so it
         // reads from its start. A running session keeps following the live
         // edge, matching the list, which never badges a running session unread.
@@ -1161,6 +1273,57 @@ struct SessionView: View {
                 model.noteFirstDisplay()
             }
         }
+    }
+
+    /// Open at a session search hit's row, paging earlier history in until it
+    /// is loaded. Like opening at an unread reply this is scrollback: follow
+    /// mode stays off until a drag or Jump to latest. A drag while pages load
+    /// hands the transcript back to the reader and stops the paging.
+    @MainActor
+    private func openAtRow(_ rowID: String, proxy: ScrollViewProxy) async {
+        didRunInitialPin = true
+        stopFollowingLatest()
+        isBrowsingEarlier = true
+        dragActivity.sawLiveEdge = false
+        if !model.visibleDurableRows.contains(where: { $0.id == rowID }) {
+            // Hold the mounted rows still while earlier pages prepend.
+            historyAnchor = model.visibleDurableRows.first?.id
+            isSeekingRow = true
+        }
+        let result = await model.seekRow(rowID, while: { isBrowsingEarlier })
+        isSeekingRow = false
+        switch result {
+        case .found:
+            holdsFocusRow = true
+            await pinUnreadReply(rowID, proxy: proxy)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.2)) { flashRowID = rowID }
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            withAnimation(.easeOut(duration: 0.6)) { flashRowID = nil }
+        case .missing, .failed:
+            // A failed page already raised its own error.
+            if result == .missing {
+                rowSeekNotice = "The matching message is no longer in this session."
+            }
+            historyAnchor = nil
+            isBrowsingEarlier = false
+            isFollowingLatest = true
+            requestScrollToLatest(proxy: proxy)
+            guard result == .missing else { return }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            rowSeekNotice = nil
+        case .cancelled:
+            break
+        }
+    }
+
+    /// A cached transcript's revalidating snapshot can replace the rows the
+    /// search hit was opened at: page back to it, unless the reader has
+    /// moved on (a drag or Jump to latest).
+    private func reseekFocusRowAfterCatchUp(proxy: ScrollViewProxy) {
+        guard let rowID = focusRowID, holdsFocusRow, !isSeekingRow,
+              !model.visibleDurableRows.contains(where: { $0.id == rowID }) else { return }
+        Task { await openAtRow(rowID, proxy: proxy) }
     }
 
     /// The resume catch-up of a cached transcript has landed after the
@@ -1241,6 +1404,7 @@ struct SessionView: View {
     private func jumpToLatestPill(proxy: ScrollViewProxy) -> some View {
         Button {
             Analytics.action("transcript.jump_latest")
+            holdsFocusRow = false
             historyAnchor = nil
             isBrowsingEarlier = false
             isFollowingLatest = true
@@ -1560,10 +1724,13 @@ private struct DurableTranscriptRows: View {
     let model: SessionViewModel
     /// Keys of activity runs the reader has expanded.
     let expandedRuns: Set<String>
+    /// The row a search hit opened at, while it is marked.
+    let flashRowID: String?
     let onToggleRun: (TranscriptBlocks.Run) -> Void
     let onLoadEarlier: () -> Void
     let onOpenCommit: (String) -> Void
     let onOpenReview: (String, String) -> Void
+    let onOpenQuestion: (String) -> Void
     let loadPicture: @Sendable (String) async -> Data?
     let onEditFailedMessage: (String) -> Void
 
@@ -1600,11 +1767,20 @@ private struct DurableTranscriptRows: View {
                     showsActorHeading: showsActorHeading,
                     onOpenCommit: onOpenCommit,
                     onOpenReview: onOpenReview,
+                    onOpenQuestion: onOpenQuestion,
                     loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
                     loadPicture: loadPicture
                 )
                 .equatable()
                 .modifier(ActivityRunRail(isInRun: inRun))
+                .background {
+                    if item.id == flashRowID {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.15))
+                            .padding(-6)
+                            .transition(.opacity)
+                    }
+                }
                 .id(item.id)
             case .runHeader(let run):
                 ActivityRunHeader(run: run) { onToggleRun(run) }
@@ -1834,6 +2010,9 @@ struct TranscriptRowView: View, Equatable {
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
     var onOpenReview: (String, String) -> Void = { _, _ in }
+    /// Opens the answer sheet from a waiting question row; nil where the row
+    /// cannot answer (the Activity sheet).
+    var onOpenQuestion: ((String) -> Void)?
     /// Fetches a large abbreviated row only when its disclosure is opened.
     var loadDetail: @MainActor (String) async -> Void = { _ in }
     /// Lazily retrieves a retained user picture. Returning nil renders the
@@ -1899,7 +2078,9 @@ struct TranscriptRowView: View, Equatable {
                 name: name, status: status, args: args, output: output,
                 loadDetail: detailLoader)
         case .question(let prompt, let options, let answer):
-            QuestionRowView(prompt: prompt, options: options, answer: answer)
+            QuestionRowView(
+                prompt: prompt, options: options, answer: answer,
+                onAnswer: answer == nil ? onOpenQuestion.map { open in { open(row.id) } } : nil)
         case .assumption(let questions, let response):
             VStack(alignment: .leading, spacing: 4) {
                 AssumptionRowView(questions: questions, response: response)
@@ -2523,17 +2704,60 @@ private struct ToolRowView: View {
     }
 }
 
+/// Reports, after the fact, whether the view it backs is in a window: proof
+/// that a presented sheet's content reached the screen, which `onAppear` is
+/// not.
+private struct WindowPresenceProbe: UIViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeUIView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.isUserInteractionEnabled = false
+        view.onChange = onChange
+        return view
+    }
+
+    func updateUIView(_ view: ProbeView, context: Context) {
+        view.onChange = onChange
+    }
+
+    final class ProbeView: UIView {
+        var onChange: ((Bool) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            let inWindow = window != nil
+            // Not during UIKit's hierarchy update: state writes belong to the
+            // next run-loop turn (delivered even if this view is gone by then).
+            let report = onChange
+            DispatchQueue.main.async { report?(inWindow) }
+        }
+    }
+}
+
 /// A pending or resolved `ask_user` question row.
 private struct QuestionRowView: View {
     let prompt: String
     let options: [String]
     let answer: String?
+    /// Opens the answer sheet; set only while the question waits.
+    var onAnswer: (() -> Void)?
 
     var body: some View {
+        if let onAnswer {
+            Button(action: onAnswer) { card }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the answer sheet")
+        } else {
+            card
+        }
+    }
+
+    private var card: some View {
         // Attention is "needs you"; once answered the card goes neutral so an
         // old question doesn't keep reading as an open gate.
         let tint: Color = answer == nil ? Theme.attention : .secondary
-        VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: answer == nil ? "questionmark.bubble" : "checkmark.bubble")
                     .foregroundStyle(answer == nil ? Theme.attention : Theme.live)
@@ -2552,7 +2776,7 @@ private struct QuestionRowView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.live)
             } else {
-                Text("waiting for an answer")
+                Text(onAnswer == nil ? "waiting for an answer" : "waiting for an answer · tap to answer")
                     .font(.caption2.monospaced())
                     .foregroundStyle(Theme.attention)
             }

@@ -315,6 +315,7 @@ func (s *Store) AppendMemoryEntry(in MemoryEntry) (MemoryWrite, error) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return MemoryWrite{}, err
 	}
+	s.observe(path, existing, body)
 	if len(note) > memoryEntryHint {
 		notes = append(notes, fmt.Sprintf("that entry was long (%d chars) — memory entries are cheapest when terse (aim for ≤%d chars)", len(note), memoryEntryHint))
 	}
@@ -387,6 +388,7 @@ func (s *Store) RetireMemory(ids []string, reason string, prov MemoryProvenance)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return MemoryRetire{}, err
 	}
+	s.observe(path, existing, body)
 	return MemoryRetire{
 		ID: id, Retired: retired, AlreadyInactive: inactive,
 		ActiveBefore: len(RenderMemoryForPrompt(string(existing))),

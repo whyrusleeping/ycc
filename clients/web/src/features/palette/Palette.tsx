@@ -1,5 +1,6 @@
 // The command palette (Ctrl/Cmd-K): fuzzy-jump to any session, task,
-// project, page, or file path, and run every registered action.
+// project, page, or file path, find messages by full-text search, and run
+// every registered action.
 import { useQueries } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router";
@@ -10,6 +11,8 @@ import { track, useTrackedView } from "../../app/analytics";
 import { useScope } from "../../app/scope";
 import { lastViewedProject } from "../../app/memory";
 import { historyTargets, relativeTime } from "../sessions/feed";
+import { indexingNote, searchProject } from "../sessions/messageHits";
+import { Snippet, useMessageSearch } from "../sessions/messageSearch";
 import { useReadMarks } from "../sessions/unread";
 import { useLoopSessionIds } from "../workloop/hooks";
 import { paletteResults, PALETTE_PREFIXES, parseQuery, type PaletteItem, type PaletteKind } from "./items";
@@ -17,6 +20,7 @@ import { closePalette, useOverlays } from "./state";
 
 const KIND_LABEL: Record<PaletteKind, string> = {
   session: "Session",
+  message: "Message",
   task: "Task",
   project: "Project",
   page: "Go to",
@@ -89,7 +93,15 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
   const actions = useActions();
   const marks = useReadMarks();
   const loopSessionIds = useLoopSessionIds();
-  const mode = parseQuery(query).mode;
+  const parsed = parseQuery(query);
+  const mode = parsed.mode;
+  // Full-text message search over the current project, for plain and @ queries.
+  const messageProject = searchProject(target, projects.data);
+  const messageSearch = useMessageSearch(messageProject, mode === "all" || mode === "sessions" ? parsed.text : "", 8);
+  const messages = useMemo(
+    () => (messageProject && messageSearch.response ? { project: messageProject, hits: messageSearch.response.hits } : undefined),
+    [messageProject, messageSearch.response],
+  );
   // Tasks of every project (ListBacklog per workspace), loaded while the palette is open.
   const targets = useMemo(() => (projects.data ? historyTargets(projects.data) : []), [projects.data]);
   const backlogs = useQueries({
@@ -119,12 +131,13 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
           target: target || null,
           shortcutLabel: (a) => (a.shortcut ? shortcutLabel(a.shortcut) : undefined),
           loopSessionIds,
+          messages,
         },
         query,
       ),
     // `now` only refreshes relative times; recomputing per render is not needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [feed, sessionId, marks.revision, tasks, projects.data, actions, target, query, loopSessionIds],
+    [feed, sessionId, marks.revision, tasks, projects.data, actions, target, query, loopSessionIds, messages],
   );
   const sel = Math.min(selected, Math.max(0, results.length - 1));
   useEffect(() => {
@@ -145,6 +158,7 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
     }, 0);
   };
   const loadingTasks = (mode === "tasks" || query.trim() !== "") && backlogs.some((b) => b.isPending);
+  const messageNote = messageSearch.query ? indexingNote(messageSearch.response) : null;
 
   return (
     <div className="palette-body">
@@ -204,15 +218,22 @@ function PaletteBody({ initialQuery }: { initialQuery: string }) {
               )}
               {r.item.marker === "unread" && <span className="unread-dot static" aria-label="unread" />}
               <span className="palette-text">
-                <Highlight text={r.item.title} indices={r.match?.indices} />
+                {r.item.snippet ? <Snippet spans={r.item.snippet} /> : <Highlight text={r.item.title} indices={r.match?.indices} />}
               </span>
             </span>
             {r.item.detail && <span className="palette-detail">{r.item.detail}</span>}
             {r.item.shortcut && <kbd className="palette-kbd">{r.item.shortcut}</kbd>}
           </li>
         ))}
-        {results.length === 0 && <li className="palette-empty muted">{loadingTasks ? "Loading tasks…" : "No matches"}</li>}
+        {results.length === 0 && (
+          <li className="palette-empty muted">{loadingTasks ? "Loading tasks…" : messageSearch.pending ? "Searching messages…" : "No matches"}</li>
+        )}
       </ul>
+      {messageNote && (
+        <p className="palette-note muted small" role="status">
+          {messageNote}
+        </p>
+      )}
       <div className="palette-foot muted small">
         <span>
           <kbd>↑</kbd>

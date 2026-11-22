@@ -228,6 +228,25 @@ type Session struct {
 	planOnly     bool
 	planOnlyTold bool
 
+	// Experimental session coordination (coordination.go). coordination is
+	// fixed when the session is built; coordinationOn reads the live project
+	// setting. Overlap notices from other sessions wait in notices (memory
+	// only) for the next checkpoint.
+	coordination   bool
+	coordinationOn func() bool
+	noticeMu       sync.Mutex
+	notices        []overlapNotice
+	// Notice board (noticeboard.go): board is set when coordination is.
+	// boardSeen holds the active notices this session has been told of;
+	// boardOpened is set once its first digest (the current board) is out.
+	// The intent line lives only as long as the live session. All under
+	// noticeMu.
+	board       *sessionBoard
+	boardOpened bool
+	boardSeen   map[string]bool
+	intentText  string
+	intentAt    time.Time
+
 	// contextSummary is a test seam; nil uses the deterministic durable-evidence
 	// summary builder.
 	contextSummary contextSummaryBuilder
@@ -750,6 +769,16 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 			return nil, err
 		}
 		msgs = append(msgs, textMessages(notes)...)
+		notices, err := s.drainCoordinationNotices()
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, textMessages(notices)...)
+		digest, err := s.drainBoardDigest(time.Now())
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, textMessages(digest)...)
 		plan, err := s.planOnlyNote()
 		if err != nil {
 			return nil, err
@@ -817,6 +846,16 @@ func (s *Session) CheckpointMessages(ctx context.Context) ([]engine.UserMessage,
 		return nil, err
 	}
 	msgs = append(msgs, textMessages(notes)...)
+	notices, err := s.drainCoordinationNotices()
+	if err != nil {
+		return nil, err
+	}
+	msgs = append(msgs, textMessages(notices)...)
+	digest, err := s.drainBoardDigest(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	msgs = append(msgs, textMessages(digest)...)
 	plan, err := s.planOnlyNote()
 	if err != nil {
 		return nil, err
@@ -2148,6 +2187,15 @@ type Manager struct {
 	// (projectrecency.go).
 	recency projectRecency
 
+	// overlapSeen records each (worktree, path, session pair) already told of
+	// a same-file overlap (coordination.go), so a pair hears of a path once.
+	overlapMu   sync.Mutex
+	overlapSeen map[string]bool
+	// boards caches each project's notice board (noticeboard.go), keyed by
+	// canonical primary tree.
+	boardMu sync.Mutex
+	boards  map[string]boardState
+
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
 	// scheduler can start a session (which takes mu) while holding it.
@@ -2235,6 +2283,13 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		groomCancel:       groomCancel,
 	}
 	m.integrateAgent = m.runIntegrateSession
+	m.ownership.SetOverlapNotifier(m.claimOverlap)
+	// Bookkeeping lines of sessions that are no longer live ride along with
+	// the next commit of that file rather than staying stranded.
+	m.ownership.SetLiveScopes(func(scope string) bool {
+		_, live := m.Get(scope)
+		return live
+	})
 	m.gitSyncWG.Add(1)
 	go m.runGitSyncPoller()
 	return m
@@ -2397,6 +2452,16 @@ func (m *Manager) resolveProjectWorkspace(name string) (string, error) {
 		return "", fmt.Errorf("%w: no projects are registered", ErrUnknownProject)
 	}
 	return "", fmt.Errorf("%w: project is required when %d projects are registered", ErrUnknownProject, len(projects))
+}
+
+// ProjectWorkspace resolves a project (see resolveProjectWorkspace) to its
+// absolute root workspace.
+func (m *Manager) ProjectWorkspace(name string) (string, error) {
+	ws, err := m.resolveProjectWorkspace(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(ws)
 }
 
 // AddProject registers a workspace under an optional name.
@@ -3058,12 +3123,17 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	// The session id is the attribution scope shared by the coordinator and every
 	// agent it delegates to (see workspacelease claims).
 	deps.CoordinatorToken = m.ownership.NewScopedToken(id, fmt.Sprintf("session %s coordinator", id))
+	deps.Docs.SetWriteObserver(deps.RecordBookkeeping)
 	deps.MemorySource = func(kind docs.MemoryKind) docs.MemoryProvenance {
 		return memorySourceFromEvents(id, log.Snapshot(), kind)
 	}
 	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
 	deps.HeldTasks = func() map[string]string { return m.heldTasks(absWS, id) }
 	deps.OtherSessions = func() string { return m.otherSessionsNote(absWS, id, time.Now()) }
+	coordination := m.coordinationEnabled(absWS)
+	if coordination {
+		deps.ListSessions = func(path string) (string, error) { return m.listSessionsFor(absWS, id, path, time.Now()) }
+	}
 	if mode == watchMode {
 		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
 	} else if !unattended && m.watchSchedulerRunning() {
@@ -3094,6 +3164,12 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		implementer:    implName,
 		reviewers:      reviewerNames,
 		thinkLevels:    map[string]string{},
+		coordination:   coordination,
+		coordinationOn: func() bool { return m.coordinationEnabled(absWS) },
+	}
+	if coordination {
+		s.board = &sessionBoard{m: m, s: s, primary: m.primaryTreeFor(absWS)}
+		deps.Board = s.board
 	}
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log
@@ -3491,8 +3567,16 @@ func (m *Manager) workstreamSessionWorktree(absWS, id string) (string, bool) {
 // indexing upper bound. A live log's sequence and byte offset are read through
 // Log's durability lock and exclude a write that has not completed fsync. A -1
 // boundary means a closed persisted log may be indexed through its complete newline-terminated
-// file snapshot.
+// file snapshot. A named project confines resolution to that project
+// (ProjectSessionLog).
 func (m *Manager) SessionViewLogPath(project, id string) (workspace, logPath string, durableSeq, durableOffset int64, err error) {
+	if project != "" {
+		root, err := m.ProjectWorkspace(project)
+		if err != nil {
+			return "", "", 0, 0, err
+		}
+		return m.ProjectSessionLog(root, id)
+	}
 	workspace, logPath, err = m.SessionLogPath(project, id)
 	if err != nil {
 		return "", "", 0, 0, err
@@ -3500,6 +3584,43 @@ func (m *Manager) SessionViewLogPath(project, id string) (workspace, logPath str
 	if live, ok := m.Get(id); ok {
 		seq, offset := live.Log().DurableBoundary()
 		return workspace, logPath, int64(seq), offset, nil
+	}
+	return workspace, logPath, -1, -1, nil
+}
+
+// ProjectSessionLog is SessionViewLogPath confined to the project at the
+// absolute root workspace absWS. A live session with this id counts only when
+// it runs in absWS or one of the project's in-flight worktrees; otherwise the
+// project's own persisted log is used, never another project's.
+func (m *Manager) ProjectSessionLog(absWS, id string) (workspace, logPath string, durableSeq, durableOffset int64, err error) {
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return "", "", 0, 0, fmt.Errorf("%w %q", ErrUnknownSession, id)
+	}
+	if s, ok := m.Get(id); ok {
+		live, err := filepath.Abs(s.Workspace)
+		if err != nil {
+			return "", "", 0, 0, fmt.Errorf("resolve workspace: %w", err)
+		}
+		inProject := live == absWS
+		if !inProject {
+			_, worktrees := m.workstreamSessionOwners(absWS)
+			_, inProject = worktrees[live]
+		}
+		if inProject {
+			logPath = filepath.Join(live, ".ycc", "sessions", id, "events.jsonl")
+			if _, err := os.Stat(logPath); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return "", "", 0, 0, fmt.Errorf("%w %q", ErrUnknownSession, id)
+				}
+				return "", "", 0, 0, err
+			}
+			seq, offset := s.Log().DurableBoundary()
+			return live, logPath, int64(seq), offset, nil
+		}
+	}
+	workspace, logPath, err = m.locateSessionLog(absWS, id)
+	if err != nil {
+		return "", "", 0, 0, err
 	}
 	return workspace, logPath, -1, -1, nil
 }
