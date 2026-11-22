@@ -1,7 +1,7 @@
 ---
 id: "0578"
 title: 'Calibrate review-loop prompts: fix the class, complete first pass, unrunnable checks'
-status: todo
+status: done
 priority: 2
 created: "2026-11-21"
 updated: "2026-11-22"
@@ -10,6 +10,7 @@ spec_refs: []
 ---
 
 ## Description
+
 Found by 0576 (review-cycle investigation, `docs/reports/review-cycles-2026-11.md` causes 2–4).
 
 Mean review rounds per session/task pair rose from about 1.1 (July) to 2.1 (November) in ycc, and to 2.14 in Wheeler (another project run with ycc), with 13% of Wheeler pairs taking four or more rounds. The `sol` reviewer revises most often, but in the long cycles read its majors were real acceptance-criterion failures that the accepting reviewer missed or graded minor (0443 session coordination setting, 0388 reviewer sandbox scratch, 0566 line-attributed bookkeeping commits). On 2026-11-22 the user chose to keep `gpt-6.2-sol` as the `sol` reviewer, calling it the better model, and asked for a light touch (session s_70ed48449817e056, event 974: "6.2 sol is definitely a better model, so lets keep it. Maybe we can prompt the coordinator better? … i don't want to be too heavy handed"). So this task changes how findings are fixed rather than lowering the reviewer's bar.
@@ -22,12 +23,15 @@ Gaps the prompts leave:
 Out of scope: a definition of major severity, round caps, and instructions to push back on reviewers. A second opinion from `astra` (the configured logical model `gpt-6.2-astra`, 2026-11-22) agreed with this scope and supplied the wording below.
 
 ## Acceptance criteria
+
 - The coordinator and implementer prompts each add, in substance: "When fixing a finding, check affected paths for the same defect and fix any in scope."
 - The coordinator prompt adds, beside re_review: "If successive revisions expose related defects, reconsider the approach before patching another case."
 - The reviewer prompt adds: "On the first pass, report all substantive findings you can substantiate; group instances of the same defect."
 - The reviewer prompt adds, after the verification-classification guidance: "For a check you cannot run, judge whether the supplied evidence verifies the assigned snapshot."
 - `reReviewPrompt` is unchanged; a complete first pass does not forbid later findings.
 
-## Work log
-- 2026-11-22: Rescoped after the user kept `gpt-6.2-sol` and asked for a light touch: dropped the severity definition, moved the review-timing line to 0579 (ready-to-deploy verdict), adopted astra's wording.
-- 2026-11-22 groom: cited the user's decision (s_70ed48449817e056, event 974), glossed Wheeler and `astra`. Checked that none of the four prompt lines is in internal/orchestrator/prompts.go yet.
+## Outcome
+
+prompts.go: workSystem (both coordinator modes) and implementerSystem tell agents to check affected paths for the same defect when fixing a finding; workSystem adds reconsidering the approach when successive revisions expose related defects; reviewerSystem asks for all substantiated findings on the first pass (grouped by defect) and, for checks the reviewer cannot run, to judge whether supplied evidence verifies the assigned snapshot. reReviewPrompt unchanged. go vet + orchestrator tests pass; sol accepted round 1 after a source-bound rerun.
+
+Commit: Calibrate review-loop prompts: fix the class, complete first pass, unrunnable checks (0578)
