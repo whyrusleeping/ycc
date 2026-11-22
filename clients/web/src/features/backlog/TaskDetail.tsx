@@ -43,6 +43,7 @@ import {
   type TaskDraft,
 } from "./draft";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
+import { HeldBadge, useHeldTasks } from "../coordination/parts";
 
 function handleAuth(err: unknown): boolean {
   if (isUnauthorized(err)) {
@@ -94,6 +95,7 @@ export function TaskDetailView({
   const [deleting, setDeleting] = useState(false);
 
   const summary = backlog.data?.find((t) => t.id === id);
+  const holders = useHeldTasks(project).get(id);
   const task = q.data;
   const inInspector = variant === "inspector";
 
@@ -288,6 +290,7 @@ export function TaskDetailView({
       <div className="task-status-row">
         <StatusPill status={header.status} />
         <PriorityBadge priority={header.priority} />
+        <HeldBadge project={project} holders={holders} />
         {actionable && (
           <span className="tag ok" title="Accepted work whose dependencies are done: the work loop may pick it">
             actionable

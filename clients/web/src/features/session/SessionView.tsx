@@ -10,6 +10,7 @@ import { openQuickReplies } from "../projects/ProjectDialogs";
 import { useInspector } from "../inspector/inspector";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { AnswerPanel } from "./AnswerPanel";
+import { QuestionNotices } from "../coordination/parts";
 import { Composer, type ComposerHandle } from "./Composer";
 import type { SessionController, SessionSnapshot } from "./controller";
 import { Transcript } from "./Transcript";
@@ -482,13 +483,18 @@ export function SessionView({
       {snap.mode === "live" && snap.pendingQuestion ? (
         // The panel takes the composer's place: text sent now could only
         // answer the question anyway (the composer keeps its draft).
-        <AnswerPanel
-          key={snap.pendingQuestion.rowId}
-          controller={controller}
-          question={snap.pendingQuestion}
-          inFlight={snap.answerInFlight}
-          submitted={snap.answeredRowId === snap.pendingQuestion.rowId}
-        />
+        // Active project notices sit above it: they may hold the context
+        // the question asks about.
+        <>
+          <QuestionNotices project={project} />
+          <AnswerPanel
+            key={snap.pendingQuestion.rowId}
+            controller={controller}
+            question={snap.pendingQuestion}
+            inFlight={snap.answerInFlight}
+            submitted={snap.answeredRowId === snap.pendingQuestion.rowId}
+          />
+        </>
       ) : (
         canCompose && (
           <Composer

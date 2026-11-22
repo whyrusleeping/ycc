@@ -3,10 +3,11 @@
 // keyboard (h/j/k/l or arrows move, Shift+←/→ moves the card, Enter opens).
 import { useState, type DragEvent } from "react";
 import { Link } from "react-router";
-import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
+import type { BacklogTaskSummary, ProjectLiveSession } from "../../gen/ycc/v1/ycc_pb";
 import { paths } from "../../app/paths";
 import { PriorityBadge, TaskLink } from "./parts";
 import { blockedLabel, normalizeTaskId, readiness, statusLabel, type BoardColumn } from "./model";
+import { HeldBadge } from "../coordination/parts";
 
 const DRAG_TYPE = "application/x-ycc-task";
 
@@ -17,6 +18,7 @@ export function BacklogBoard({
   cursor,
   moving,
   promoting,
+  held,
   onOpen,
   onMove,
   onPromote,
@@ -28,6 +30,8 @@ export function BacklogBoard({
   cursor: string | null;
   moving: ReadonlySet<string>;
   promoting: string | null;
+  /** Live sessions holding each task (session coordination). */
+  held: ReadonlyMap<string, ProjectLiveSession[]>;
   onOpen: (id: string) => void;
   onMove: (task: BacklogTaskSummary, status: string) => void;
   onPromote: (task: BacklogTaskSummary) => void;
@@ -101,6 +105,7 @@ export function BacklogBoard({
                   cursor={t.id === cursor}
                   moving={moving.has(t.id)}
                   promoting={promoting === t.id}
+                  holders={held.get(t.id)}
                   onOpen={() => onOpen(t.id)}
                   onPromote={() => onPromote(t)}
                   onDragStart={(e) => {
@@ -131,6 +136,7 @@ function BoardCard({
   cursor,
   moving,
   promoting,
+  holders,
   onOpen,
   onPromote,
   onDragStart,
@@ -142,6 +148,7 @@ function BoardCard({
   cursor: boolean;
   moving: boolean;
   promoting: boolean;
+  holders: ProjectLiveSession[] | undefined;
   onOpen: () => void;
   onPromote: () => void;
   onDragStart: (e: DragEvent) => void;
@@ -170,6 +177,7 @@ function BoardCard({
         <Link to={paths.task(project, t.id)} className="task-id-link" draggable={false} aria-current={selected ? "page" : undefined}>
           {t.id}
         </Link>
+        <HeldBadge project={project} holders={holders} />
         <PriorityBadge priority={t.priority} />
       </div>
       <div className="board-card-title">{t.title}</div>

@@ -23,6 +23,7 @@ export type IconName =
   | "chevron"
   | "activity"
   | "bell"
+  | "sessions"
   | "plan";
 
 const PATHS: Record<IconName, ReactNode> = {
@@ -134,6 +135,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
       <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+    </>
+  ),
+  /** Live sessions and the notice board. */
+  sessions: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20v-1a5 5 0 0 1 5-5h3a5 5 0 0 1 5 5v1M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14a5 5 0 0 1 3 4.6V20" />
     </>
   ),
   more: (

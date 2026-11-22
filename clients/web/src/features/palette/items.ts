@@ -140,6 +140,9 @@ export function projectItems(src: PaletteSources): PaletteItem[] {
       if (to) out.push({ id: `project:${p.name}:${s.key}`, kind: "page", title: `${p.name} › ${s.label}`, secondary: "project page", to, boost: -1 });
     }
     out.push({ id: `project:${p.name}:plans`, kind: "page", title: `${p.name} › Plans`, secondary: "plan library", to: paths.plans(p.name), boost: -1 });
+    if (p.sessionCoordination) {
+      out.push({ id: `project:${p.name}:live`, kind: "page", title: `${p.name} › Live sessions`, secondary: "notices notice board coordination", to: paths.coordination(p.name), boost: -1 });
+    }
   }
   return out;
 }

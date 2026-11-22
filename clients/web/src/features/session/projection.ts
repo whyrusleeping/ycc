@@ -30,6 +30,8 @@ export type RowKind =
   | { type: "assumption"; questions: Question[]; response: string | null }
   | { type: "system"; text: string; activity?: boolean; sessionError?: boolean }
   | { type: "commit"; text: string; sha: string }
+  /** A session-coordination message the daemon delivered: an overlap notice or a notice-board digest. */
+  | { type: "coordination"; text: string }
   | { type: "review"; text: string; verdict: string; summary: string; task: string; reviewedSnapshot: string }
   | { type: "liveTail"; text: string };
 
@@ -204,6 +206,11 @@ export class SessionProjection {
       case "commit_made": {
         const text = systemSummary("commit_made", data);
         if (text !== null) this.appendDurable(event, { type: "commit", text, sha: str(data.sha) });
+        break;
+      }
+      case "coordination_notice": {
+        const text = str(data.text).trim();
+        if (text) this.appendDurable(event, { type: "coordination", text });
         break;
       }
       default: {

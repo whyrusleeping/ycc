@@ -14,6 +14,8 @@ import { FileRef } from "../files/FileRef";
 import type { ReportPresentation } from "./report";
 import { useSmoothText } from "./useSmoothText";
 import { clickVia, track } from "../../app/analytics";
+import { coordinationHeadline, coordinationVariant } from "../coordination/model";
+import { SessionLinkedText } from "../coordination/parts";
 
 function actorLabel(actor: string): string {
   if (!actor || actor === "coordinator") return "";
@@ -44,6 +46,8 @@ export function rowTitle(row: TranscriptRow, report: ReportPresentation = "finis
       return k.text;
     case "review":
       return k.text;
+    case "coordination":
+      return coordinationVariant(k.text) === "board" ? "Notice board" : "Coordination notice";
   }
 }
 
@@ -85,6 +89,12 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
     case "system":
     case "commit":
       return <div className="text">{k.text}</div>;
+    case "coordination":
+      return (
+        <div className="text coordination-text">
+          <SessionLinkedText project={session.project} text={k.text} />
+        </div>
+      );
   }
 }
 
@@ -258,6 +268,37 @@ export const RowView = memo(function RowView({
           )}
         </div>
       );
+    case "coordination": {
+      // Delivered to the agent as a user-role message: what other sessions
+      // are doing. Distinct from lifecycle notes, folded to its first line.
+      const board = coordinationVariant(k.text) === "board";
+      return (
+        <details
+          className={`row coordination ${board ? "coord-board" : "coord-overlap"}${searchCls}`}
+          data-row-id={row.id}
+          open={open}
+          onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary
+            onClick={(e) => {
+              if ((e.target as Element).closest("a, button")) return;
+              track.action(open ? "transcript.collapse_row" : "transcript.expand_row", clickVia(e), { row: k.type });
+            }}
+          >
+            <span className="coord-glyph" aria-hidden>
+              {board ? "⚑" : "⇄"}
+            </span>
+            <span className="sum-title">{board ? "Notice board" : "Coordination notice"}</span>
+            {!open && (
+              <span className="sum-text">
+                <SessionLinkedText project={controller.project} text={coordinationHeadline(k.text)} />
+              </span>
+            )}
+          </summary>
+          {open && <RowBody row={row} session={controller} />}
+        </details>
+      );
+    }
     case "commit":
       return (
         <div className={`row system commit${searchCls}`} data-row-id={row.id}>

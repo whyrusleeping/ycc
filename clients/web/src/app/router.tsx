@@ -2,6 +2,7 @@
 import { createBrowserRouter } from "react-router";
 import {
   BacklogRoutePage,
+  CoordinationRoutePage,
   FilesRoutePage,
   HistoryRoutePage,
   HomePage,
@@ -48,6 +49,7 @@ export function makeRouter() {
         { path: "memory", element: <MemoryRoutePage /> },
         { path: "p/:project/memory", element: <MemoryRoutePage /> },
         { path: "p/:project/plans/:name?", element: <PlansRoutePage /> },
+        { path: "p/:project/live", element: <CoordinationRoutePage /> },
         { path: "projects", element: <ProjectsRoutePage /> },
         { path: "usage", element: <UsageRoutePage /> },
         { path: "p/:project/usage", element: <UsageRoutePage /> },

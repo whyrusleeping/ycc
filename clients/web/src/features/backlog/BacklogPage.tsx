@@ -8,7 +8,7 @@ import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
+import type { BacklogTaskSummary, ProjectLiveSession } from "../../gen/ycc/v1/ycc_pb";
 import { errorMessage } from "../../api/client";
 import { queryKeys, useBacklog } from "../../api/queries";
 import { paths } from "../../app/paths";
@@ -20,6 +20,7 @@ import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
 import { track } from "../../app/analytics";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
 import { BacklogBoard } from "./Board";
+import { HeldBadge, useHeldTasks } from "../coordination/parts";
 import { GroomBanner } from "./GroomBanner";
 import { LoopBanner } from "../workloop/WorkLoopPage";
 import { PLACEMENT } from "../newSession/model";
@@ -122,6 +123,7 @@ export function backlogIntentKey(project: string) {
 
 export function BacklogPage({ project, taskId }: { project: string; taskId: string | null }) {
   const backlog = useBacklog(project);
+  const held = useHeldTasks(project);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const remembered = viewMemory.get(project);
@@ -451,6 +453,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               cursor={cursor}
               moving={moving}
               promoting={promoting}
+              held={held}
               onOpen={(id) => {
                 track.action("backlog.open_task", "click", { layout: "board" });
                 setCursor(id);
@@ -522,6 +525,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                     selected={t.id === openId}
                     cursor={t.id === cursor}
                     promoting={promoting === t.id}
+                    holders={held.get(t.id)}
                     onOpen={() => {
                       track.action("backlog.open_task", "click", { layout: "table" });
                       setCursor(t.id);
@@ -555,6 +559,7 @@ function BacklogRow({
   selected,
   cursor,
   promoting,
+  holders,
   onOpen,
   onPromote,
 }: {
@@ -563,6 +568,7 @@ function BacklogRow({
   selected: boolean;
   cursor: boolean;
   promoting: boolean;
+  holders: ProjectLiveSession[] | undefined;
   onOpen: () => void;
   onPromote: () => void;
 }) {
@@ -592,6 +598,7 @@ function BacklogRow({
       </td>
       <td className="col-title">
         <span className="task-row-title">{t.title}</span>
+        <HeldBadge project={project} holders={holders} />
         {blocked && <span className="blocked-note">{blocked}</span>}
       </td>
       <td className="col-status">

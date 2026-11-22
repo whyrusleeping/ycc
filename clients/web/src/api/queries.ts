@@ -86,6 +86,8 @@ export const queryKeys = {
   watch: (project: string, name: string, limit: number) => ["watches", "one", project, name, limit] as const,
   /** Every watch query (a mutation revalidates them all). */
   watchesAll: ["watches"] as const,
+  /** ListProjectNotices: the project's notice board and live sessions (session coordination). */
+  projectNotices: (project: string) => ["projectNotices", project] as const,
   /** SearchSessions: one project's full-text message search. */
   sessionSearch: (project: string, query: string, limit: number) => ["sessionSearch", project, query, limit] as const,
 };
@@ -487,6 +489,29 @@ export function useHealth() {
 export async function refreshHealth(qc: QueryClient) {
   const resp = await client.getHealth({ refresh: true });
   qc.setQueryData(queryKeys.health, resp.checks);
+}
+
+/** Whether a registered project has session coordination on (false while projects load). */
+export function useCoordinationOn(project: string): boolean {
+  const projects = useProjects();
+  return !!project && !!projects.data?.some((p) => p.name === project && p.sessionCoordination);
+}
+
+/**
+ * ListProjectNotices while the project's session coordination is on: active
+ * notices and live sessions (held tasks, claims, intents), polled. Off, the
+ * query stays idle, `on` is false and `data` is undefined.
+ */
+export function useProjectNotices(project: string, enabled = true) {
+  const on = useCoordinationOn(project);
+  const query = useQuery({
+    queryKey: queryKeys.projectNotices(project),
+    enabled: on && enabled,
+    refetchInterval: 20_000,
+    queryFn: ({ signal }) => client.listProjectNotices({ project }, { signal }),
+  });
+  // A disabled query keeps its last response: never surface it once coordination is off.
+  return { on, ...query, data: on ? query.data : undefined };
 }
 
 /** GetPlan: one plan's markdown. */

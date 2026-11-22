@@ -16,6 +16,7 @@ export function rowSearchText(row: TranscriptRow): string {
     case "liveTail":
     case "system":
     case "commit":
+    case "coordination":
       return k.text;
     case "tool":
       return [k.name, k.args, k.output].join("\n");

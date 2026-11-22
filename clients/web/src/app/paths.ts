@@ -63,6 +63,8 @@ export const paths = {
   /** The plan library, or one plan. */
   plans: (project: string, name?: string) =>
     `/p/${enc(project)}/plans${name ? `/${enc(name)}` : ""}`,
+  /** Live sessions and the notice board (shown while session coordination is on). */
+  coordination: (project: string) => `/p/${enc(project)}/live`,
   /** Registered projects: add, rename, remove. */
   projects: () => "/projects",
   /**

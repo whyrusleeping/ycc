@@ -4,6 +4,7 @@ import { useEffect, useMemo, type ReactNode } from "react";
 import { useProjects, useSessionFeed, useWorkLoops, useWorkstreams } from "../api/queries";
 import { errorMessage } from "../api/client";
 import { BacklogPage } from "../features/backlog/BacklogPage";
+import { CoordinationPage } from "../features/coordination/CoordinationPage";
 import { PLACEMENT, projectChoices } from "../features/newSession/model";
 import { PresetButtons } from "../features/newSession/PresetActions";
 import { SessionList } from "../features/sessions/SessionList";
@@ -384,6 +385,16 @@ export function PlansRoutePage() {
   useEffect(() => lastViewedProject.set(project), [project]);
   useDocumentTitle(name ? `Plan ${name} · ${project}` : `Plans · ${project}`);
   return <PlansPage key={project} project={project} name={name} />;
+}
+
+/** `/p/:project/live`: live sessions and the notice board. */
+export function CoordinationRoutePage() {
+  const { project = "" } = useParams();
+  const { setScope } = useScope();
+  useEffect(() => setScope(project), [project, setScope]);
+  useEffect(() => lastViewedProject.set(project), [project]);
+  useDocumentTitle(`Live sessions · ${project}`);
+  return <CoordinationPage key={project} project={project} />;
 }
 
 /** `/projects`: add, rename, and remove registered projects. */

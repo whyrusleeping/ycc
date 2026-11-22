@@ -21,7 +21,7 @@ export function reportPresentation(rows: readonly TranscriptRow[], index: number
     // without changing what produced the report.
     if (isSubagentActor(prev.actor)) continue;
     const k = prev.kind;
-    if (k.type === "thinking" || k.type === "system" || k.type === "commit") continue;
+    if (k.type === "thinking" || k.type === "system" || k.type === "commit" || k.type === "coordination") continue;
     if (k.type === "tool") {
       if (BLOCKED_TOOLS.has(k.name)) return "blocked";
       if (FINISH_TOOLS.has(k.name)) return "finished";

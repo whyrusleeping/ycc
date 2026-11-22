@@ -25,6 +25,7 @@ import { loopIntentKey } from "../features/workloop/WorkLoopPage";
 import { workstreamIndicator } from "../features/workstreams/model";
 import { workstreamsIntentKey } from "../features/workstreams/WorkstreamsPage";
 import { WorkstreamsSidebarLine } from "../features/workstreams/SidebarLine";
+import { CoordinationSidebarLine } from "../features/coordination/SidebarLine";
 import { requestIntent } from "./intents";
 import { MenuButton } from "../ui/Menu";
 import { Icon, type IconName } from "../ui/icons";
@@ -213,6 +214,7 @@ function Sidebar() {
       <ProjectSwitcher />
       <LoopStatus scope={scope} />
       <WorkstreamsSidebarLine scope={scope} />
+      <CoordinationSidebarLine scope={scope} />
       <div className="sidebar-heading">
         <SessionFilterSelect value={sidebarFilter} onChange={setSidebarFilter} className="sidebar-filter" />
         <span className="sidebar-heading-actions">
