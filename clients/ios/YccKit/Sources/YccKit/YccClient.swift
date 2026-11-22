@@ -806,6 +806,26 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Branch a session just before its user turn `atSeq` (a `user_input` seq)
+    /// with `ForkSession`. Returns the new persisted fork's id and the cut
+    /// turn's text, which the caller puts in the fork's composer to edit and
+    /// resend. The parent session is unchanged.
+    public func forkSession(
+        project: String, sessionId: String, atSeq: Int64
+    ) async throws -> (sessionID: String, text: String) {
+        var request = Ycc_V1_ForkSessionRequest()
+        request.project = project
+        request.sessionID = sessionId
+        request.atSeq = atSeq
+        let response = await generatedBulk.forkSession(request: request)
+        switch response.result {
+        case .success(let message):
+            return (message.sessionID, message.text)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// ``SessionActionSource`` form of `ResumeSession`; the stable session id is
     /// intentionally discarded because an existing transcript view already owns
     /// that identity.

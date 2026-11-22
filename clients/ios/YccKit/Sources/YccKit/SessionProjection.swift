@@ -102,6 +102,10 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         /// a same-file overlap notice or a project notice board digest
         /// (``CoordinationFormat/variant(_:)``). Untrusted peer content.
         case coordination(text: String)
+        /// The `session_forked` marker that ends a fork's copied prefix:
+        /// `parent` is the session it was forked from (empty when the marker
+        /// names none), which the view opens on tap.
+        case forked(parent: String)
         /// Verdict and exact reviewed snapshot, with a read-only inspection action.
         case review(Review)
         /// The transient live tail: the in-progress model turn text streamed via
@@ -157,6 +161,22 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         self.liveAppendBaseUTF8 = liveAppendBaseUTF8
         self.detailAvailable = detailAvailable
         self.isRoutineActivity = isRoutineActivity
+    }
+
+    /// Whether this is an unanswered question that a later `session_forked`
+    /// marker dropped: the fork no longer waits on it, so it must not offer
+    /// an answer. `lastFork` is the index of the last ``Kind/forked(parent:)``
+    /// row in the same collection (``lastForkIndex(_:)``), `index` this row's.
+    public func isQuestionDroppedByFork(at index: Int, lastFork: Int?) -> Bool {
+        guard let lastFork, index < lastFork,
+              case .question(_, _, .none) = kind else { return false }
+        return true
+    }
+
+    /// The index of the last fork marker row in `rows`, if any.
+    public static func lastForkIndex<C: RandomAccessCollection>(_ rows: C) -> Int?
+    where C.Element == TranscriptRow, C.Index == Int {
+        rows.lastIndex { if case .forked = $0.kind { return true } else { return false } }
     }
 
     /// Whether this row opens a run of consecutive rows from one subagent and
@@ -481,6 +501,16 @@ public struct SessionProjection: Sendable, Equatable {
                 appendDurable(event, .commit(text: text, sha: sha))
             }
 
+        case "session_forked":
+            // A fork waits for input, whatever the parent was doing (see
+            // foldPhase); a question still open in the copied prefix is dropped.
+            clearLiveTails()
+            pendingQuestion = nil
+            openQuestionRowID = nil
+            openQuestions = []
+            indexedPendingDetailRowID = nil
+            appendDurable(event, .forked(parent: Self.stringField(data, "parent")))
+
         case "coordination_notice":
             // What other sessions are doing, folded to its first line.
             let text = Self.stringField(data, "text").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -724,6 +754,9 @@ public struct SessionProjection: Sendable, Equatable {
             phase = .stopped
         case "pause_cancelled", "session_reopened":
             pauseRequested = false
+        case "session_forked":
+            pauseRequested = false
+            phase = .idle
         case "role_config_changed":
             let nextCoordinator = (data["coordinator"] as? String) ?? ""
             if !nextCoordinator.isEmpty && nextCoordinator != coordinatorModel {
@@ -740,7 +773,9 @@ public struct SessionProjection: Sendable, Equatable {
         }
         // Only the idle report that carried it keeps the qualifier; any later
         // coordinator phase change, or a reopen (jobs never survive one), ends it.
-        if phase != .idle || type == "session_reopened" { awaitingJobs = false }
+        if phase != .idle || type == "session_reopened" || type == "session_forked" {
+            awaitingJobs = false
+        }
     }
 
     // MARK: - Coordinator model folding
@@ -1294,6 +1329,8 @@ public struct SessionProjection: Sendable, Equatable {
             return "Session stopped"
         case "session_reopened":
             return "Session reopened"
+        case "session_forked":
+            return s("parent").isEmpty ? "Forked" : "Forked from \(s("parent"))"
         case "pause_requested":
             return "Pause requested"
         case "pause_cancelled":

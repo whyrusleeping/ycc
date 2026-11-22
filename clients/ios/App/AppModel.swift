@@ -37,6 +37,19 @@ final class AppModel {
     /// landing view after it routes to the target.
     var pendingDeepLink: DeepLink?
 
+    /// Composer text a session screen starts with, by session id: a fork's
+    /// cut turn, to edit and resend. Taken (and so cleared) by the screen.
+    @ObservationIgnored private var seededDrafts: [String: String] = [:]
+
+    func seedDraft(_ text: String, sessionID: String) {
+        guard !text.isEmpty, !sessionID.isEmpty else { return }
+        seededDrafts[sessionID] = text
+    }
+
+    func takeSeededDraft(sessionID: String) -> String? {
+        seededDrafts.removeValue(forKey: sessionID)
+    }
+
     /// Sessions whose pending question this client just answered, awaiting
     /// application to the (separately owned) session list.
     ///

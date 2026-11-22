@@ -889,6 +889,49 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertFalse(proj.pauseRequested)
     }
 
+    func testSessionForkedMarkerLeavesForkIdleAndDropsOpenQuestion() {
+        // A fork cut mid-run, while a question in the copied prefix was open.
+        var proj = SessionProjection()
+        proj.apply(makeEvent(seq: 1, type: "session_started"))
+        proj.apply(makeEvent(
+            seq: 2, type: "user_input", actor: "user", dataJson: #"{"text":"first"}"#))
+        proj.apply(makeEvent(
+            seq: 3, type: "question_asked",
+            dataJson: #"{"question":"Which?","options":["a","b"]}"#))
+        proj.apply(makeEvent(seq: 4, type: "pause_requested", actor: "user"))
+        proj.apply(makeEvent(
+            seq: 5, type: "turn_delta", dataJson: #"{"text":"partial"}"#, transient: true))
+        XCTAssertTrue(proj.awaitsAnswer)
+        XCTAssertEqual(proj.phase, .running)
+
+        proj.apply(makeEvent(
+            seq: 6, type: "session_forked", actor: "system",
+            dataJson: #"{"parent":"s_parent","at_seq":7}"#))
+        XCTAssertEqual(proj.phase, .idle)
+        XCTAssertFalse(proj.pauseRequested)
+        XCTAssertNil(proj.pendingQuestion)
+        XCTAssertFalse(proj.awaitsAnswer)
+        XCTAssertTrue(proj.liveTails.isEmpty)
+        XCTAssertEqual(proj.durableRows.last?.kind, .forked(parent: "s_parent"))
+        XCTAssertEqual(
+            SessionProjection.systemSummary(type: "session_forked", data: ["parent": "s_parent"]),
+            "Forked from s_parent")
+
+        // The copied question reads as dropped; one asked in the fork waits.
+        proj.apply(makeEvent(
+            seq: 7, type: "user_input", actor: "user", dataJson: #"{"text":"again"}"#))
+        proj.apply(makeEvent(
+            seq: 8, type: "question_asked", dataJson: #"{"question":"Now which?","options":["c"]}"#))
+        let rows = proj.durableRows
+        let lastFork = TranscriptRow.lastForkIndex(rows)
+        let copied = rows.firstIndex { $0.seq == 3 }!
+        let asked = rows.firstIndex { $0.seq == 8 }!
+        XCTAssertTrue(rows[copied].isQuestionDroppedByFork(at: copied, lastFork: lastFork))
+        XCTAssertFalse(rows[asked].isQuestionDroppedByFork(at: asked, lastFork: lastFork))
+        XCTAssertEqual(proj.pendingQuestion?.rowID, rows[asked].id)
+        XCTAssertNil(TranscriptRow.lastForkIndex(rows[..<lastFork!]))
+    }
+
     func testRepeatedContextOverflowDisablesRolloverUntilCoordinatorIdentityChanges() {
         var proj = SessionProjection()
         proj.apply(makeEvent(

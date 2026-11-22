@@ -770,8 +770,10 @@ func TestSessionForkedMarkerIdlesAndDropsQuestion(t *testing.T) {
 	logPath := filepath.Join(dir, "events.jsonl")
 	writeLog(t, logPath, []event.Event{
 		ev(1, event.SessionStarted, nil),
-		ev(2, event.QuestionAsked, map[string]any{"question": "Which?"}),
-		{Seq: 3, TS: time.Unix(3, 0).UTC(), Actor: "coordinator", Type: event.SessionForked, Data: map[string]any{"parent": "s_p", "at_seq": 4}},
+		ev(2, event.SessionIdle, map[string]any{"awaiting_jobs": true}),
+		ev(3, event.QuestionAsked, map[string]any{"question": "Which?"}),
+		ev(4, event.SessionIdle, map[string]any{"awaiting_jobs": true}),
+		{Seq: 5, TS: time.Unix(5, 0).UTC(), Actor: "coordinator", Type: event.SessionForked, Data: map[string]any{"parent": "s_p", "at_seq": 6}},
 	})
 	store, err := Open(filepath.Join(dir, "view.sqlite"))
 	if err != nil {
@@ -782,11 +784,12 @@ func TestSessionForkedMarkerIdlesAndDropsQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Phase != "idle" || len(state.Pending) != 0 || state.PendingRowID != "" {
+	// A fork's copied jobs are settled (job_claimed), so it waits only for input.
+	if state.Phase != "idle" || state.AwaitingJobs || len(state.Pending) != 0 || state.PendingRowID != "" {
 		t.Fatalf("state = %+v", state)
 	}
 	last := rows[len(rows)-1].Events[0]
-	if last.Type != event.SessionForked || last.Data["parent"] != "s_p" || last.Data["at_seq"] != float64(4) {
+	if last.Type != event.SessionForked || last.Data["parent"] != "s_p" || last.Data["at_seq"] != float64(6) {
 		t.Fatalf("marker row = %+v", last)
 	}
 }

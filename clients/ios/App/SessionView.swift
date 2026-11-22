@@ -181,6 +181,8 @@ struct SessionView: View {
     private let client: YccClient
     private let sessionList: SessionListModel?
     @State private var fallbackFollowUp = false
+    /// A `ForkSession` call is in flight (one fork per tap).
+    @State private var isForking = false
     @State private var isUpdatingFollowUp = false
     /// The app's session-model cache (nil: never cached).
     private let models: SessionModelCache?
@@ -461,6 +463,10 @@ struct SessionView: View {
                 presentation?.begin()
                 if !didRunInitialPin, openReadMark == nil {
                     openReadMark = app.readMarks.mark(for: sessionID) ?? ""
+                }
+                // A fork opens with its cut turn in the composer.
+                if let seeded = app.takeSeededDraft(sessionID: sessionID) {
+                    draft = seeded
                 }
             }
             // `present` resumes a cached model from its cursor and is a no-op when
@@ -986,6 +992,7 @@ struct SessionView: View {
                         Analytics.action("question.open_from_row")
                         requestQuestionSheet(rowID: rowID, delay: 0, userInitiated: true)
                     },
+                    onFork: { seq in fork(at: seq) },
                     loadPicture: { [client, project, sessionID] attachmentID in
                         guard !attachmentID.isEmpty,
                               let image = try? await client.getSessionAttachment(
@@ -1597,6 +1604,28 @@ struct SessionView: View {
         sessionList?.session(sessionID: sessionID)?.followUp ?? fallbackFollowUp
     }
 
+    /// Fork this session just before the user turn `seq` (`ForkSession`) and
+    /// open the fork with that turn's text in its composer, to edit and
+    /// resend. This session is unchanged.
+    private func fork(at seq: Int64) {
+        guard !isForking else { return }
+        Analytics.action("transcript.fork", via: .contextMenu)
+        isForking = true
+        Task {
+            defer { isForking = false }
+            do {
+                let fork = try await client.forkSession(
+                    project: project, sessionId: sessionID, atSeq: seq)
+                app.seedDraft(fork.text, sessionID: fork.sessionID)
+                router.open(.session(id: fork.sessionID, project: project, live: false, title: title))
+            } catch YccError.unauthorized {
+                app.handleUnauthorized()
+            } catch {
+                model.actionError = (error as? YccError)?.displayMessage ?? error.localizedDescription
+            }
+        }
+    }
+
     private func toggleFollowUp() {
         let flagged = !isFlaggedForFollowUp
         Analytics.action(flagged ? "session.follow_up" : "session.unflag", via: .menu)
@@ -1787,6 +1816,7 @@ private struct DurableTranscriptRows: View {
     let onOpenCommit: (String) -> Void
     let onOpenReview: (String, String) -> Void
     let onOpenQuestion: (String) -> Void
+    let onFork: (Int64) -> Void
     let loadPicture: @Sendable (String) async -> Data?
     let onEditFailedMessage: (String) -> Void
 
@@ -1813,6 +1843,8 @@ private struct DurableTranscriptRows: View {
             }
         }
         let rows = model.visibleDurableRows
+        // A fork's copied questions that were still open no longer wait.
+        let lastFork = TranscriptRow.lastForkIndex(rows)
         // One flat list of rows and run headers, so a row keeps its identity
         // (and disclosure state) when its run grows long enough to fold.
         ForEach(TranscriptBlocks.items(rows, expanded: expandedRuns)) { item in
@@ -1821,9 +1853,11 @@ private struct DurableTranscriptRows: View {
                 TranscriptRowView(
                     row: rows[index],
                     showsActorHeading: showsActorHeading,
+                    questionDropped: rows[index].isQuestionDroppedByFork(at: index, lastFork: lastFork),
                     onOpenCommit: onOpenCommit,
                     onOpenReview: onOpenReview,
                     onOpenQuestion: onOpenQuestion,
+                    onFork: onFork,
                     loadDetail: { rowID in await model.loadDetail(rowID: rowID) },
                     loadPicture: loadPicture
                 )
@@ -2063,12 +2097,18 @@ struct TranscriptRowView: View, Equatable {
     /// of a consecutive same-actor run does (``TranscriptRow/startsActorRun``),
     /// so a burst of tool calls is not interleaved with repeated name lines.
     var showsActorHeading = true
+    /// An unanswered question row that a later fork marker dropped: it no
+    /// longer waits, so it reads as closed and offers no answer.
+    var questionDropped = false
     /// Called with the commit sha when a `commit_made` row is tapped.
     var onOpenCommit: (String) -> Void = { _ in }
     var onOpenReview: (String, String) -> Void = { _, _ in }
     /// Opens the answer sheet from a waiting question row; nil where the row
     /// cannot answer (the Activity sheet).
     var onOpenQuestion: ((String) -> Void)?
+    /// Forks the session just before a user turn (by its `user_input` seq);
+    /// nil where the transcript offers no fork (the Activity sheet).
+    var onFork: ((Int64) -> Void)?
     /// Fetches a large abbreviated row only when its disclosure is opened.
     var loadDetail: @MainActor (String) async -> Void = { _ in }
     /// Lazily retrieves a retained user picture. Returning nil renders the
@@ -2082,6 +2122,7 @@ struct TranscriptRowView: View, Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.row == rhs.row && lhs.model == rhs.model
             && lhs.showsActorHeading == rhs.showsActorHeading
+            && lhs.questionDropped == rhs.questionDropped
     }
 
     var body: some View {
@@ -2135,8 +2176,9 @@ struct TranscriptRowView: View, Equatable {
                 loadDetail: detailLoader)
         case .question(let prompt, let options, let answer):
             QuestionRowView(
-                prompt: prompt, options: options, answer: answer,
-                onAnswer: answer == nil ? onOpenQuestion.map { open in { open(row.id) } } : nil)
+                prompt: prompt, options: options, answer: answer, dropped: questionDropped,
+                onAnswer: answer == nil && !questionDropped
+                    ? onOpenQuestion.map { open in { open(row.id) } } : nil)
         case .assumption(let questions, let response):
             VStack(alignment: .leading, spacing: 4) {
                 AssumptionRowView(questions: questions, response: response)
@@ -2152,6 +2194,8 @@ struct TranscriptRowView: View, Equatable {
             commitRow(text, sha: sha)
         case .coordination(let text):
             CoordinationRowView(text: text, loadDetail: detailLoader)
+        case .forked(let parent):
+            ForkedRowView(parent: parent)
         case .liveTail(let text):
             liveTail(
                 text,
@@ -2180,6 +2224,17 @@ struct TranscriptRowView: View, Equatable {
             .buttonStyle(.borderless)
     }
 
+    /// "Fork from here" for a user turn: a new session holding everything
+    /// before this message, with the message in its composer to edit and
+    /// resend. Only durable turns (a `user_input` seq) can be forked.
+    private var forkAction: MessageMenuAction? {
+        guard let onFork, row.seq > 0 else { return nil }
+        let seq = row.seq
+        return MessageMenuAction(
+            title: "Fork from here", systemImage: "arrow.triangle.branch"
+        ) { onFork(seq) }
+    }
+
     private func userBubble(
         text: String,
         pictures: [TranscriptRow.Picture],
@@ -2200,14 +2255,19 @@ struct TranscriptRowView: View, Equatable {
                         }
                     }
                     .frame(maxWidth: pictures.count == 1 ? 260 : 300)
+                    // A picture-only message offers its fork on the pictures.
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14))
+                    .selectableMessage(nil, title: "Message", extra: text.isEmpty ? forkAction : nil)
                 }
                 if !text.isEmpty {
+                    // Copy and Select Text come from the long-press menu below.
                     Text(text)
-                        .textSelection(.enabled)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Theme.userBubble, in: RoundedRectangle(cornerRadius: 14))
                         .foregroundStyle(Color.primary)
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14))
+                        .selectableMessage(text, title: "Message", extra: forkAction)
                 }
                 if let status {
                     Label(
@@ -2600,6 +2660,49 @@ private struct ReviewRowView: View {
     }
 }
 
+/// The `session_forked` marker ending a fork's copied history: "Forked from
+/// <session>", opening that session on tap.
+private struct ForkedRowView: View {
+    @Environment(AppModel.self) private var app
+    let parent: String
+
+    var body: some View {
+        if parent.isEmpty {
+            label(chevron: false)
+        } else {
+            Button {
+                Analytics.action("transcript.open_fork_parent")
+                if let url = URL(string: "ycc://session/\(parent)") { app.handleDeepLink(url) }
+            } label: {
+                label(chevron: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the session this one was forked from")
+        }
+    }
+
+    private func label(chevron: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: RowGutter.spacing) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: RowGutter.iconWidth)
+            Text(parent.isEmpty ? "Forked" : "Forked from \(parent)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+}
+
 /// A `coordination_notice` row: what other sessions are doing, as the daemon
 /// told the coordinator (an overlap notice or a notice board digest). Distinct
 /// from lifecycle notes, folded to its first line; expanded, session ids link
@@ -2854,6 +2957,8 @@ private struct QuestionRowView: View {
     let prompt: String
     let options: [String]
     let answer: String?
+    /// Unanswered when the session was forked after it: closed, not waiting.
+    var dropped = false
     /// Opens the answer sheet; set only while the question waits.
     var onAnswer: (() -> Void)?
 
@@ -2870,11 +2975,12 @@ private struct QuestionRowView: View {
     private var card: some View {
         // Attention is "needs you"; once answered the card goes neutral so an
         // old question doesn't keep reading as an open gate.
-        let tint: Color = answer == nil ? Theme.attention : .secondary
+        let waiting = answer == nil && !dropped
+        let tint: Color = waiting ? Theme.attention : .secondary
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: answer == nil ? "questionmark.bubble" : "checkmark.bubble")
-                    .foregroundStyle(answer == nil ? Theme.attention : Theme.live)
+                Image(systemName: answer != nil ? "checkmark.bubble" : waiting ? "questionmark.bubble" : "bubble")
+                    .foregroundStyle(answer != nil ? Theme.live : waiting ? Theme.attention : .secondary)
                 Text(prompt).font(.callout.weight(.medium))
             }
             if !options.isEmpty {
@@ -2889,6 +2995,10 @@ private struct QuestionRowView: View {
                 Text(answer.isEmpty ? "Answered" : "Answered: \(answer)")
                     .font(.caption)
                     .foregroundStyle(Theme.live)
+            } else if dropped {
+                Text("not answered before the fork")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
             } else {
                 Text(onAnswer == nil ? "waiting for an answer" : "waiting for an answer · tap to answer")
                     .font(.caption2.monospaced())

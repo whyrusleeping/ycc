@@ -38,37 +38,55 @@ struct SelectableTextSheet: View {
 
 extension View {
     /// Long-press menu for a transcript message: Copy (the markdown source)
-    /// and Select Text (``SelectableTextSheet``). `nil` leaves the view as is.
-    func selectableMessage(_ markdown: String?, title: String) -> some View {
-        modifier(SelectableMessageMenu(markdown: markdown, title: title))
+    /// and Select Text (``SelectableTextSheet``), then `extra` when given.
+    /// With neither text nor `extra` the view is left as is.
+    func selectableMessage(
+        _ markdown: String?, title: String, extra: MessageMenuAction? = nil
+    ) -> some View {
+        modifier(SelectableMessageMenu(markdown: markdown, title: title, extra: extra))
     }
+}
+
+/// One more action in a message's long-press menu (``View/selectableMessage``).
+struct MessageMenuAction {
+    let title: String
+    let systemImage: String
+    let perform: () -> Void
 }
 
 private struct SelectableMessageMenu: ViewModifier {
     let markdown: String?
     let title: String
+    let extra: MessageMenuAction?
 
     @State private var selecting = false
 
     func body(content: Content) -> some View {
-        if let markdown {
+        if markdown != nil || extra != nil {
             content
                 .contextMenu {
-                    Button {
-                        UIPasteboard.general.string = markdown
-                        Analytics.action("message.copy", via: .contextMenu)
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
+                    if let markdown {
+                        Button {
+                            UIPasteboard.general.string = markdown
+                            Analytics.action("message.copy", via: .contextMenu)
+                        } label: {
+                            Label("Copy", systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            selecting = true
+                            Analytics.action("message.select_text", via: .contextMenu)
+                        } label: {
+                            Label("Select Text", systemImage: "selection.pin.in.out")
+                        }
                     }
-                    Button {
-                        selecting = true
-                        Analytics.action("message.select_text", via: .contextMenu)
-                    } label: {
-                        Label("Select Text", systemImage: "selection.pin.in.out")
+                    if let extra {
+                        Button(action: extra.perform) {
+                            Label(extra.title, systemImage: extra.systemImage)
+                        }
                     }
                 }
                 .sheet(isPresented: $selecting) {
-                    SelectableTextSheet(title: title, markdown: markdown)
+                    SelectableTextSheet(title: title, markdown: markdown ?? "")
                 }
         } else {
             content

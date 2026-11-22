@@ -68,6 +68,7 @@ enum Analytics {
         "transcript.load_earlier", "transcript.load_detail", "transcript.jump_latest",
         "transcript.expand_activity", "transcript.fold_activity",
         "transcript.expand_row", "transcript.collapse_row",
+        "transcript.fork", "transcript.open_fork_parent",
         "message.retry", "message.edit", "message.copy", "message.select_text",
         "sessions.mark_read", "sessions.mark_all_read",
         "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter", "sessions.open_workstreams",

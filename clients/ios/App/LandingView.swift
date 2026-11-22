@@ -1389,7 +1389,7 @@ private struct SessionRow: View {
                     Text(items.joined(separator: " · "))
                         .lineLimit(1)
                         .accessibilityLabel(items
-                            .map { $0 == "via loop" ? "via work loop" : $0 }
+                            .map { $0 == "via loop" ? "via work loop" : $0 == "fork" ? "forked session" : $0 }
                             .joined(separator: ", "))
                 }
             }

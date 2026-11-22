@@ -515,6 +515,9 @@ final class SessionListModelTests: XCTestCase {
         )
         XCTAssertEqual(
             SessionListModel.metadataItems(for: session(id: "b", mode: ""), isLoopOwned: false), [])
+        var fork = session(id: "f", mode: "")
+        fork.forkedFrom = "s_parent"
+        XCTAssertEqual(SessionListModel.metadataItems(for: fork, isLoopOwned: false), ["fork"])
     }
 
     func testCompactAgeBuckets() {

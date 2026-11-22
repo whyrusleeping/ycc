@@ -33,7 +33,8 @@ import (
 // 6: review_submitted summaries keep verdict, reviewer, and reviewed snapshot.
 // 7: activity lifecycle and subagent progress rows are indexed for the activity graph.
 // 9: activity progress rows keep each model turn's context estimate.
-const schemaVersion = 9
+// 10: a session_forked marker ends the awaiting_jobs qualifier.
+const schemaVersion = 10
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -500,8 +501,8 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 		}
 		// Only the idle report that carried it keeps the awaiting qualifier: any
 		// later coordinator phase change (the wake's turn, input, pause, stop,
-		// error) or a reopen (jobs do not survive one) ends it.
-		if st.Phase != "idle" || ev.Type == event.SessionReopened {
+		// error) or a reopen or fork (jobs do not survive one) ends it.
+		if st.Phase != "idle" || ev.Type == event.SessionReopened || ev.Type == event.SessionForked {
 			st.AwaitingJobs = false
 		}
 	}
