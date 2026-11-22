@@ -18,6 +18,8 @@ enum HomeDestination: Hashable {
     case backlog(project: String)
     case workLoop(project: String)
     case workstreams(project: String)
+    /// A project's live sessions and notice board (session coordination).
+    case liveSessions(project: String)
     /// A project's watches (recurring daemon checks), and one watch's detail.
     case watches(project: String)
     case watch(project: String, name: String)

@@ -15,10 +15,18 @@ struct GlobalSettingsView: View {
     private let client: YccClient
     /// The home screen's shared health model; nil hides the Health row.
     private let health: HealthModel?
+    private let cache: AppDataCache?
+    /// Called after a project's session coordination changed.
+    private let onProjectSettingsChange: () -> Void
 
-    init(client: YccClient, cache: AppDataCache? = nil, health: HealthModel? = nil) {
+    init(
+        client: YccClient, cache: AppDataCache? = nil, health: HealthModel? = nil,
+        onProjectSettingsChange: @escaping () -> Void = {}
+    ) {
         self.client = client
         self.health = health
+        self.cache = cache
+        self.onProjectSettingsChange = onProjectSettingsChange
         // A revisit renders the cached registry at once and revalidates.
         _model = State(initialValue: GlobalSettingsModel(source: client, cache: cache))
     }
@@ -47,6 +55,7 @@ struct GlobalSettingsView: View {
             reviewTiersSection
             quickRepliesSection
             modelsSection
+            coordinationSection
         }
         .navigationTitle("Settings")
         .overlay {
@@ -232,6 +241,21 @@ struct GlobalSettingsView: View {
             }
         } footer: {
             Text("Canned messages for the session swipe-in menu, for every session or one project’s.")
+        }
+    }
+
+    private var coordinationSection: some View {
+        Section {
+            NavigationLink {
+                CoordinationSettingsView(client: client, cache: cache, onChange: onProjectSettingsChange)
+                    .trackedView("session_coordination")
+            } label: {
+                Label("Session coordination", systemImage: "person.2.wave.2")
+            }
+        } header: {
+            Text("Experimental")
+        } footer: {
+            Text("Per project: lets agents see the project’s other live sessions and their uncommitted files, and post notices to each other.")
         }
     }
 

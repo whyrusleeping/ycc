@@ -148,6 +148,9 @@ struct SessionView: View {
     /// The daemon-wide and this project's quick replies (empty: the swipe
     /// menu is off, e.g. against a daemon without them).
     @State private var quickReplies: [QuickReplyChoice] = []
+    /// The project's notice board while a question is pending (session
+    /// coordination): its active notices show in the answer sheet.
+    @State private var coordination: CoordinationModel?
     /// A picked quick reply waiting out its undo window before it is sent.
     @State private var pendingQuickReply: PendingQuickReply?
     private struct PendingQuickReply: Equatable {
@@ -359,6 +362,7 @@ struct SessionView: View {
                 if let pending = model.pendingQuestion ?? sheetQuestion {
                     QuestionSheet(
                         pending: pending,
+                        notices: coordination?.notices ?? [],
                         onAnswerSingle: { optionIndex, text in
                             // The view model closes the gate before the round trip
                             // and restores it (with an alert) if the answer fails.
@@ -444,6 +448,7 @@ struct SessionView: View {
             .task(id: project) {
                 quickReplies = (try? await client.getQuickReplies(project: project)) ?? []
             }
+            .task(id: model.pendingQuestion?.rowID) { await pollQuestionNotices() }
             .onDisappear {
                 // Leaving inside the undo window means "send it", not "drop it".
                 sendPendingQuickReply()
@@ -477,6 +482,17 @@ struct SessionView: View {
                     markRead()
                 }
             }
+    }
+
+    /// Follow the project's notices while a question waits; none otherwise.
+    private func pollQuestionNotices() async {
+        guard model.mode == .live, model.pendingQuestion != nil, !project.isEmpty else {
+            coordination = nil
+            return
+        }
+        let board = coordination ?? CoordinationModel(source: client, project: project, cache: app.dataCache)
+        coordination = board
+        await pollCoordination(board)
     }
 
     private var actionErrorPresented: Binding<Bool> {
@@ -2094,6 +2110,8 @@ struct TranscriptRowView: View, Equatable {
             }
         case .commit(let text, let sha):
             commitRow(text, sha: sha)
+        case .coordination(let text):
+            CoordinationRowView(text: text, loadDetail: detailLoader)
         case .liveTail(let text):
             liveTail(
                 text,
@@ -2542,6 +2560,62 @@ private struct ReviewRowView: View {
     }
 }
 
+/// A `coordination_notice` row: what other sessions are doing, as the daemon
+/// told the coordinator (an overlap notice or a notice board digest). Distinct
+/// from lifecycle notes, folded to its first line; expanded, session ids link
+/// to their session.
+private struct CoordinationRowView: View {
+    let text: String
+    /// Fetches the full text of an abbreviated (indexed) row on expansion.
+    var loadDetail: (@MainActor () async -> Void)?
+
+    @State private var expanded = false
+
+    var body: some View {
+        let variant = CoordinationFormat.variant(text)
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                Analytics.action(expanded ? "transcript.collapse_row" : "transcript.expand_row",
+                                 attrs: ["row": "coordination"])
+                let opening = !expanded
+                withAnimation(.snappy) { expanded.toggle() }
+                if opening, let loadDetail { Task { await loadDetail() } }
+            } label: {
+                HStack(spacing: RowGutter.spacing) {
+                    Image(systemName: variant == .board ? "flag" : "arrow.left.arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(Theme.info)
+                        .frame(width: RowGutter.iconWidth)
+                    Text(variant.title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Theme.info)
+                    if !expanded {
+                        Text(CoordinationFormat.headline(text))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(variant.title): \(CoordinationFormat.headline(text))")
+
+            if expanded {
+                SessionLinkedText(text: text)
+                    .font(.footnote)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(Theme.info.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+}
+
 /// A collapsed one-liner that expands to reveal detail text on tap.
 private struct ExpandableRow: View {
     let title: String
@@ -2824,6 +2898,8 @@ private struct AssumptionRowView: View {
 /// clears (answered here or from another client) via the parent's `onChange`.
 private struct QuestionSheet: View {
     let pending: SessionProjection.PendingQuestion
+    /// The project's active notices (session coordination); may be empty.
+    var notices: [Ycc_V1_ProjectNotice] = []
     /// (optionIndex, text): optionIndex >= 0 selects an option, -1 sends text.
     /// `@MainActor` because these callbacks touch the session/app view models.
     let onAnswerSingle: @MainActor (Int, String) async -> Void
@@ -2840,10 +2916,12 @@ private struct QuestionSheet: View {
 
     init(
         pending: SessionProjection.PendingQuestion,
+        notices: [Ycc_V1_ProjectNotice] = [],
         onAnswerSingle: @escaping @MainActor (Int, String) async -> Void,
         onAnswerBatch: @escaping @MainActor ([(text: String, optionIndex: Int)]) async -> Void
     ) {
         self.pending = pending
+        self.notices = notices
         self.onAnswerSingle = onAnswerSingle
         self.onAnswerBatch = onAnswerBatch
         _answers = State(initialValue: QuestionAnswers(for: pending))
@@ -2917,6 +2995,11 @@ private struct QuestionSheet: View {
                         .listRowBackground(canSubmitBatch ? Theme.accentFill : Color(.tertiarySystemFill))
                         .foregroundStyle(canSubmitBatch ? Theme.onAccentFill : Color.secondary)
                     }
+
+                    // After the answers, so the question stays on top: what
+                    // the project's sessions were told, which may hold the
+                    // context the question asks about.
+                    QuestionNoticesSection(notices: notices)
                 }
             }
             // The sheet's `.id(rowID)` rebuilds it for a new gate; this keeps

@@ -98,6 +98,10 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         /// the view can drill into `GetCommitDiff` on tap. `sha` may be empty
         /// when the event carried none (then it renders as a plain system row).
         case commit(text: String, sha: String)
+        /// A `coordination_notice` the daemon delivered to the coordinator:
+        /// a same-file overlap notice or a project notice board digest
+        /// (``CoordinationFormat/variant(_:)``). Untrusted peer content.
+        case coordination(text: String)
         /// Verdict and exact reviewed snapshot, with a read-only inspection action.
         case review(Review)
         /// The transient live tail: the in-progress model turn text streamed via
@@ -475,6 +479,13 @@ public struct SessionProjection: Sendable, Equatable {
             if let text = Self.systemSummary(type: "commit_made", data: data) {
                 let sha = (data["sha"] as? String) ?? ""
                 appendDurable(event, .commit(text: text, sha: sha))
+            }
+
+        case "coordination_notice":
+            // What other sessions are doing, folded to its first line.
+            let text = Self.stringField(data, "text").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                appendDurable(event, .coordination(text: text))
             }
 
         default:

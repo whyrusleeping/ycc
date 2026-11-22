@@ -39,6 +39,8 @@ struct BacklogView: View {
     @State private var showGroomSheet = false
     @State private var isStartingGroom = false
     @State private var groomError: String?
+    /// Live sessions holding tasks (session coordination) for the selected project.
+    @State private var coordination: CoordinationModel?
     /// Board vs list, remembered across launches.
     @AppStorage("backlog.presentation") private var presentation: Presentation = .board
     /// Card/row ordering, shared by both presentations and remembered across launches.
@@ -98,10 +100,14 @@ struct BacklogView: View {
         .presetActionAlerts(presetActions, app: app)
         .task(id: workLoopTaskID) { await loadAndPollWorkLoop() }
         .task(id: groomTaskID) { await loadAndPollGroomStatus() }
+        .task(id: groomTaskID) { await pollHeldTasks() }
         .onChange(of: model?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
         .onChange(of: loopModel?.unauthorized ?? false) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+        .onChange(of: coordination?.unauthorized ?? false) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
         .onChange(of: backlogSort) { _, sort in
@@ -239,7 +245,7 @@ struct BacklogView: View {
                 Button("Capture task") { showCapture = true }
             }
         } else if presentation == .board {
-            BacklogBoard(model: model)
+            BacklogBoard(model: model, held: heldTasks)
                 .alert(
                     "Couldn’t update task",
                     isPresented: updateErrorBinding(model),
@@ -478,6 +484,23 @@ struct BacklogView: View {
         }
     }
 
+    /// Held tasks of the selected project; empty while coordination is off.
+    private var heldTasks: [String: [Ycc_V1_ProjectLiveSession]] {
+        guard let coordination, coordination.project == model?.selectedProject else { return [:] }
+        return coordination.heldTasks
+    }
+
+    /// Follow the selected project's live sessions while the backlog is shown.
+    private func pollHeldTasks() async {
+        guard let project = model?.selectedProject, !project.isEmpty, let client = app.client else {
+            coordination = nil
+            return
+        }
+        let held = CoordinationModel(source: client, project: project, cache: app.dataCache)
+        coordination = held
+        await pollCoordination(held)
+    }
+
     private var groomTaskID: String {
         "\(model?.selectedProject ?? "")|\(app.client != nil)"
     }
@@ -513,6 +536,11 @@ struct BacklogView: View {
             // failed read, just hides the banner.
             if groomProject != project { groomStatus = nil }
         }
+    }
+
+    private func openHolder(_ session: Ycc_V1_ProjectLiveSession, project: String) {
+        Analytics.action("coordination.open_session", attrs: ["from": "backlog"])
+        router.open(.session(id: session.sessionID, project: project, live: true, title: session.title))
     }
 
     private func openGroomSession(_ id: String, project: String, live: Bool) {
@@ -554,7 +582,10 @@ struct BacklogView: View {
                             taskID: task.id,
                             title: task.title)
                         ) {
-                            BacklogRow(task: task, isUpdating: model.isUpdating(task.id))
+                            BacklogRow(
+                                task: task, isUpdating: model.isUpdating(task.id),
+                                holders: heldTasks[task.id] ?? [],
+                                openHolder: { openHolder($0, project: model.selectedProject) })
                         }
                         .contextMenu {
                             statusMenu(model, task: task)
@@ -756,6 +787,8 @@ func statusMenu(_ model: BacklogModel, task: Ycc_V1_BacklogTaskSummary) -> some 
 /// edge peeks in on the left as a hint that the user can swipe back.
 private struct BacklogBoard: View {
     let model: BacklogModel
+    /// Live sessions holding each task (session coordination).
+    var held: [String: [Ycc_V1_ProjectLiveSession]] = [:]
 
     @State private var containerWidth: CGFloat = 375
     @State private var focusedLane: String? = TaskStatus.todo.rawValue
@@ -766,7 +799,7 @@ private struct BacklogBoard: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 12) {
                 ForEach(model.board) { lane in
-                    BacklogLane(model: model, lane: lane)
+                    BacklogLane(model: model, lane: lane, held: held)
                         .frame(width: laneWidth)
                 }
             }
@@ -794,8 +827,10 @@ private struct BacklogBoard: View {
 /// One lane: a sticky header with its status and count, over a scrolling column
 /// of cards.
 private struct BacklogLane: View {
+    @Environment(HomeRouter.self) private var router
     let model: BacklogModel
     let lane: BacklogSection
+    var held: [String: [Ycc_V1_ProjectLiveSession]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -841,10 +876,18 @@ private struct BacklogLane: View {
             BacklogCard(
                 model: model,
                 task: task,
-                isUpdating: model.isUpdating(task.id))
+                isUpdating: model.isUpdating(task.id),
+                holders: held[task.id] ?? [],
+                openHolder: openHolder)
         }
         .buttonStyle(.plain)
         .contextMenu { statusMenu(model, task: task) }
+    }
+
+    private func openHolder(_ session: Ycc_V1_ProjectLiveSession) {
+        Analytics.action("coordination.open_session", attrs: ["from": "backlog"])
+        router.open(.session(
+            id: session.sessionID, project: model.selectedProject, live: true, title: session.title))
     }
 
     private var emptyLane: some View {
@@ -867,6 +910,8 @@ private struct BacklogCard: View {
     let model: BacklogModel
     let task: Ycc_V1_BacklogTaskSummary
     var isUpdating = false
+    var holders: [Ycc_V1_ProjectLiveSession] = []
+    var openHolder: (Ycc_V1_ProjectLiveSession) -> Void = { _ in }
 
     private var status: TaskStatus { TaskStatus(status: task.status) }
 
@@ -903,6 +948,7 @@ private struct BacklogCard: View {
                         .font(.caption2)
                         .foregroundStyle(Theme.live)
                 }
+                HeldBadge(holders: holders, open: openHolder)
                 Spacer(minLength: 4)
                 moveMenu
             }
@@ -957,6 +1003,8 @@ private struct BacklogCard: View {
 private struct BacklogRow: View {
     let task: Ycc_V1_BacklogTaskSummary
     var isUpdating = false
+    var holders: [Ycc_V1_ProjectLiveSession] = []
+    var openHolder: (Ycc_V1_ProjectLiveSession) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -972,6 +1020,7 @@ private struct BacklogRow: View {
                     ProgressView()
                         .controlSize(.small)
                 }
+                HeldBadge(holders: holders, open: openHolder)
                 PriorityBadge(priority: task.priority)
             }
             if let annotation = BacklogModel.blockedAnnotation(for: task) {

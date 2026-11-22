@@ -53,6 +53,7 @@ enum Analytics {
         "session_settings", "session_usage", "question", "files", "diff", "anthropic_login",
         "model_editor", "tier_editor", "health", "watches", "watch", "activity",
         "quick_replies", "review_tiers", "history", "select_text",
+        "live", "session_coordination",
     ]
 
     static let actions: [String] = [
@@ -65,6 +66,7 @@ enum Analytics {
         "question.answer",
         "transcript.load_earlier", "transcript.load_detail", "transcript.jump_latest",
         "transcript.expand_activity", "transcript.fold_activity",
+        "transcript.expand_row", "transcript.collapse_row",
         "message.retry", "message.edit", "message.copy", "message.select_text",
         "sessions.mark_read", "sessions.mark_all_read",
         "sessions.follow_up", "sessions.unflag", "sessions.follow_up_filter", "sessions.open_workstreams",
@@ -83,6 +85,8 @@ enum Analytics {
         "history.branch", "history.open_commit", "history.open_session", "history.open_task",
         "history.load_more", "history.show_head",
         "refresh", "health.check_now",
+        "coordination.post_notice", "coordination.clear_notice", "coordination.open_session",
+        "settings.session_coordination",
     ] + [
         "new_session", "quick_capture", "add_project", "task_edit", "start_work",
         "watch_create", "watch_edit",

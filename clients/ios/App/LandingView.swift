@@ -489,6 +489,12 @@ struct LandingView: View {
                     NavigationLink(value: HomeDestination.workstreams(project: project)) {
                         Label("Workstreams", systemImage: "arrow.triangle.branch")
                     }
+                    // Session coordination is per project and off by default.
+                    if model?.projects.first(where: { $0.name == project })?.sessionCoordination == true {
+                        NavigationLink(value: HomeDestination.liveSessions(project: project)) {
+                            Label("Live sessions", systemImage: "person.2.wave.2")
+                        }
+                    }
                     NavigationLink(value: HomeDestination.watches(project: project)) {
                         Label("Watches", systemImage: "eye")
                     }
@@ -550,6 +556,11 @@ struct LandingView: View {
                     live: live, title: title,
                     focusRowID: focusRow.isEmpty ? nil : focusRow,
                     models: app.dataCache.sessionModels, sessionList: model)
+                    // A lateral session → session move (a session id linked
+                    // in a coordination notice) swaps this screen in place:
+                    // without a per-session identity SwiftUI keeps the old
+                    // session's @State model under the new title.
+                    .id(id)
             case let .taskDetail(project, taskID, title):
                 TaskDetailView(
                     client: client, project: project,
@@ -561,6 +572,8 @@ struct LandingView: View {
                 WorkLoopView(project: project)
             case let .workstreams(project):
                 WorkstreamsView(initialProject: project)
+            case let .liveSessions(project):
+                LiveSessionsView(client: client, project: project, cache: app.dataCache)
             case let .watches(project):
                 WatchesView(client: client, project: project)
             case let .watch(project, name):
@@ -576,7 +589,11 @@ struct LandingView: View {
             case let .commitDiff(project, sha):
                 DiffView(title: "Commit \(CommitFormat.shortSha(sha))", content: .commit(project: project, sha: sha))
             case .settings:
-                GlobalSettingsView(client: client, cache: app.dataCache, health: health)
+                GlobalSettingsView(client: client, cache: app.dataCache, health: health) {
+                    // A project's session coordination changed: the More
+                    // menu's Live sessions entry follows the project list.
+                    Task { await model?.refreshProjects() }
+                }
             }
         }
     }

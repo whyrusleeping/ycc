@@ -1036,6 +1036,22 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(sha, "")
     }
 
+    // MARK: - Coordination rows (task 0584)
+
+    func testCoordinationNoticeRendersItsOwnRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "coordination_notice", actor: "system",
+            dataJson: #"{"text":"[coordination notice] s_0123456789abcdef also changed docs/a.md\n"}"#))
+        guard case .coordination(let text)? = proj.durableRows.last?.kind else {
+            return XCTFail("coordination_notice should render a coordination row")
+        }
+        XCTAssertEqual(text, "[coordination notice] s_0123456789abcdef also changed docs/a.md")
+        // An empty notice adds nothing.
+        proj.apply(makeEvent(seq: 2, type: "coordination_notice", actor: "system", dataJson: #"{"text":"  "}"#))
+        XCTAssertEqual(proj.durableRows.count, 1)
+    }
+
     // MARK: - Indexed presentation races
 
     private func indexedRow(

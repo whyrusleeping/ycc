@@ -18,6 +18,8 @@ struct TaskDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var model: TaskDetailModel
+    /// Live sessions holding this task (session coordination).
+    @State private var coordination: CoordinationModel
     /// A start-work failure message to surface as an alert.
     @State private var startError: String?
     @State private var isStarting = false
@@ -44,6 +46,8 @@ struct TaskDetailView: View {
     ) {
         _model = State(initialValue: TaskDetailModel(
             source: client, project: project, taskID: taskID, cache: cache))
+        _coordination = State(initialValue: CoordinationModel(
+            source: client, project: project, cache: cache))
         self.taskID = taskID
         self.taskTitle = taskTitle
         self.project = project
@@ -134,7 +138,11 @@ struct TaskDetailView: View {
             }
         }
         .task { await model.load() }
+        .task { await pollCoordination(coordination) }
         .onChange(of: model.unauthorized) { _, isUnauthorized in
+            if isUnauthorized { app.handleUnauthorized() }
+        }
+        .onChange(of: coordination.unauthorized) { _, isUnauthorized in
             if isUnauthorized { app.handleUnauthorized() }
         }
     }
@@ -207,6 +215,11 @@ struct TaskDetailView: View {
             }
             .disabled(model.isUpdating)
             PriorityBadge(priority: task.priority)
+            HeldBadge(holders: coordination.holders(of: task.id)) { session in
+                Analytics.action("coordination.open_session", attrs: ["from": "task"])
+                router.open(.session(
+                    id: session.sessionID, project: project, live: true, title: session.title))
+            }
             // Plain HStack, not a Label: a list row turns a Label's icon into
             // a wide leading column and starts the row separator at its text.
             // Reserved for todo — `ready` alone only means deps are done.
