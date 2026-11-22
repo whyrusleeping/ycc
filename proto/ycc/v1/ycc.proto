@@ -128,12 +128,45 @@ message SessionIntent {
   string text = 2;
   string set_at = 3; // RFC 3339
 }
+// One repository-relative path a session claims (an uncommitted write, not a
+// reservation) and when it first claimed it.
+message ClaimedPath {
+  string path = 1;
+  string since = 2; // RFC 3339; empty when unknown
+}
+// A live session of the project as list_sessions reports it.
+message ProjectLiveSession {
+  string session_id = 1;
+  string mode = 2;
+  // question (waiting on a user question) | jobs (waiting on its background
+  // work) | running | paused | idle | error | stopped
+  string activity = 3;
+  string last_activity = 4; // RFC 3339
+  repeated string focus_tasks = 5;
+  bool held = 6;      // still working on focus_tasks; false: earlier focus
+  string title = 7;   // derived from the opening prompt
+  string worktree = 8; // set when the session works outside the primary tree
+  string intent = 9;
+  string intent_set_at = 10; // RFC 3339; empty without an intent
+  repeated ClaimedPath claims = 11; // newest first
+  int32 running_jobs = 12;
+}
 message ListProjectNoticesRequest { string project = 1; }
-// Both lists are empty while the project's session coordination is off.
+// All lists are empty while the project's session coordination is off.
 message ListProjectNoticesResponse {
   repeated ProjectNotice notices = 1; // active notices, oldest first
   repeated SessionIntent intents = 2; // live sessions with an intent line
+  // Live sessions ordered by id; sessions idle for over an hour without an
+  // intent are omitted, as in list_sessions.
+  repeated ProjectLiveSession sessions = 3;
 }
+message PostProjectNoticeRequest {
+  string project = 1;
+  string text = 2;           // one line, at most 300 characters after sanitizing
+  string subject = 3;        // optional, at most 60 characters
+  int64 expires_in_seconds = 4; // 60 to 86400
+}
+message PostProjectNoticeResponse { ProjectNotice notice = 1; }
 message ClearProjectNoticeRequest {
   string project = 1;
   string id = 2;
@@ -1893,9 +1926,12 @@ service SessionService {
   rpc RemoveProject(RemoveProjectRequest) returns (RemoveProjectResponse);
   rpc RenameProject(RenameProjectRequest) returns (RenameProjectResponse);
   rpc SetProjectSettings(SetProjectSettingsRequest) returns (SetProjectSettingsResponse);
-  // ListProjectNotices / ClearProjectNotice read and clear the experimental
-  // project notice board; a clear here is recorded as made by the user.
+  // ListProjectNotices / PostProjectNotice / ClearProjectNotice read, post to
+  // and clear the experimental project notice board; ListProjectNotices also
+  // lists the project's live sessions. A post or clear here is recorded as
+  // made by the user.
   rpc ListProjectNotices(ListProjectNoticesRequest) returns (ListProjectNoticesResponse);
+  rpc PostProjectNotice(PostProjectNoticeRequest) returns (PostProjectNoticeResponse);
   rpc ClearProjectNotice(ClearProjectNoticeRequest) returns (ClearProjectNoticeResponse);
   // ListDir lists subdirectories of a daemon-host path (directories only) so
   // remote clients can browse to a workspace for AddProject.

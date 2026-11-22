@@ -220,6 +220,21 @@ func TestNoticeBoardIntentsNoticesAndDigests(t *testing.T) {
 	if texts, _ := ra.drainBoardDigest(time.Now()); len(texts) != 1 || !strings.Contains(texts[0], "cleared: n4 \"Build 43 is next\", by the user: superseded") {
 		t.Fatalf("user clear digest = %q", texts)
 	}
+	// The user posts through the RPC path, outside the per-session caps.
+	if _, err := m.PostProjectNotice("proj", "x", "", 30*time.Second); err == nil {
+		t.Fatal("user notice with a too-short expiry was accepted")
+	}
+	for i := 0; i < noticeMaxActive+1; i++ {
+		if _, err := m.PostProjectNotice("proj", fmt.Sprintf("Deploy freeze %d", i), "cubey", time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := m.activeNotices(ws, time.Now()); got[len(got)-1].SessionID != "" || got[len(got)-1].Actor != "user" {
+		t.Fatalf("user notice recorded as %+v", got[len(got)-1])
+	}
+	if texts, _ := ra.drainBoardDigest(time.Now()); len(texts) != 1 || !strings.Contains(texts[0], "\"Deploy freeze 0\", posted by the user") {
+		t.Fatalf("user post digest = %q", texts)
+	}
 
 	// Off again: tools report disabled, nothing is delivered or listed.
 	if err := m.SetSessionCoordination("proj", false); err != nil {
@@ -230,6 +245,9 @@ func TestNoticeBoardIntentsNoticesAndDigests(t *testing.T) {
 	}
 	if _, err := b.board.SetIntent("x"); !errors.Is(err, orchestrator.ErrCoordinationDisabled) {
 		t.Fatalf("set_intent with the setting off: %v", err)
+	}
+	if _, err := m.PostProjectNotice("proj", "x", "", time.Hour); !errors.Is(err, orchestrator.ErrCoordinationDisabled) {
+		t.Fatalf("user post with the setting off: %v", err)
 	}
 	fresh := &Session{ID: "s_new", board: ra.board, coordinationOn: func() bool { return m.coordinationEnabled(ws) }}
 	if texts, _ := fresh.drainBoardDigest(time.Now()); texts != nil {

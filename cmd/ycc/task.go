@@ -169,6 +169,7 @@ type taskRow struct {
 	Priority  int
 	DependsOn []string
 	BlockedBy []string // ids of not-yet-done deps; empty => ready
+	HeldBy    []string // live sessions still working on the task (session coordination)
 }
 
 // taskDetailRow is a full task shared by both backends for `ycc task show`.
@@ -274,6 +275,21 @@ func (r rpcBackend) list(ctx context.Context) ([]taskRow, error) {
 			DependsOn: t.DependsOn, BlockedBy: t.BlockedBy,
 		})
 	}
+	// Held badges are best effort: the board is empty while session
+	// coordination is off, and an older daemon lacks the sessions list.
+	if board, err := r.client.ListProjectNotices(ctx, connect.NewRequest(&v1.ListProjectNoticesRequest{Project: r.project})); err == nil {
+		held := map[string][]string{}
+		for _, s := range board.Msg.GetSessions() {
+			if s.GetHeld() {
+				for _, id := range s.GetFocusTasks() {
+					held[id] = append(held[id], s.GetSessionId())
+				}
+			}
+		}
+		for i := range rows {
+			rows[i].HeldBy = held[rows[i].ID]
+		}
+	}
 	return rows, nil
 }
 
@@ -367,7 +383,10 @@ func renderTaskList(out io.Writer, rows []taskRow, includeDone bool) {
 		}
 		// Readiness only applies to not-yet-started tasks; in_progress/in_review/done are past the gate.
 		mark := ""
-		if t.Status == string(docs.StatusTodo) || t.Status == string(docs.StatusBlocked) {
+		if len(t.HeldBy) > 0 {
+			// Work already underway is not offered as ready.
+			mark = "  [held by " + strings.Join(t.HeldBy, ",") + "]"
+		} else if t.Status == string(docs.StatusTodo) || t.Status == string(docs.StatusBlocked) {
 			if len(t.BlockedBy) > 0 {
 				mark = "  [blocked by " + strings.Join(t.BlockedBy, ",") + "]"
 			} else {

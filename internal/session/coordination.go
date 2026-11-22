@@ -75,34 +75,35 @@ func (m *Manager) listSessionsFor(absWS, self, path string, now time.Time) (stri
 	return out + board, nil
 }
 
-// pathClaim is one path a session claims and when it first claimed it.
-type pathClaim struct {
-	path  string
-	since time.Time
+// PathClaim is one repository-relative path a session claims and when it
+// first claimed it.
+type PathClaim struct {
+	Path  string
+	Since time.Time
 }
 
 // sessionClaims returns scope's claimed paths from a worktree's claims, newest
 // claim first.
-func sessionClaims(claims map[string][]workspacelease.Claim, scope string) []pathClaim {
-	var out []pathClaim
+func sessionClaims(claims map[string][]workspacelease.Claim, scope string) []PathClaim {
+	var out []PathClaim
 	for path, list := range claims {
 		for _, c := range list {
 			if c.Scope == scope {
-				out = append(out, pathClaim{path: path, since: c.Since})
+				out = append(out, PathClaim{Path: path, Since: c.Since})
 			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if !out[i].since.Equal(out[j].since) {
-			return out[i].since.After(out[j].since)
+		if !out[i].Since.Equal(out[j].Since) {
+			return out[i].Since.After(out[j].Since)
 		}
-		return out[i].path < out[j].path
+		return out[i].Path < out[j].Path
 	})
 	return out
 }
 
 // claimLines formats a session's claimed paths with their age, bounded.
-func claimLines(claims []pathClaim, now time.Time) string {
+func claimLines(claims []PathClaim, now time.Time) string {
 	if len(claims) == 0 {
 		return ""
 	}
@@ -112,7 +113,7 @@ func claimLines(claims []pathClaim, now time.Time) string {
 			parts = append(parts, fmt.Sprintf("… %d more", len(claims)-i))
 			break
 		}
-		parts = append(parts, c.path+" ("+claimAge(c.since, now)+")")
+		parts = append(parts, c.Path+" ("+claimAge(c.Since, now)+")")
 	}
 	return fmt.Sprintf("    claims %d path(s): %s\n", len(claims), strings.Join(parts, ", "))
 }

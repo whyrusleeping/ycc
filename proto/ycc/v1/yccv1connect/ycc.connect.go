@@ -143,6 +143,9 @@ const (
 	// SessionServiceListProjectNoticesProcedure is the fully-qualified name of the SessionService's
 	// ListProjectNotices RPC.
 	SessionServiceListProjectNoticesProcedure = "/ycc.v1.SessionService/ListProjectNotices"
+	// SessionServicePostProjectNoticeProcedure is the fully-qualified name of the SessionService's
+	// PostProjectNotice RPC.
+	SessionServicePostProjectNoticeProcedure = "/ycc.v1.SessionService/PostProjectNotice"
 	// SessionServiceClearProjectNoticeProcedure is the fully-qualified name of the SessionService's
 	// ClearProjectNotice RPC.
 	SessionServiceClearProjectNoticeProcedure = "/ycc.v1.SessionService/ClearProjectNotice"
@@ -384,9 +387,12 @@ type SessionServiceClient interface {
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error)
-	// ListProjectNotices / ClearProjectNotice read and clear the experimental
-	// project notice board; a clear here is recorded as made by the user.
+	// ListProjectNotices / PostProjectNotice / ClearProjectNotice read, post to
+	// and clear the experimental project notice board; ListProjectNotices also
+	// lists the project's live sessions. A post or clear here is recorded as
+	// made by the user.
 	ListProjectNotices(context.Context, *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error)
+	PostProjectNotice(context.Context, *connect.Request[v1.PostProjectNoticeRequest]) (*connect.Response[v1.PostProjectNoticeResponse], error)
 	ClearProjectNotice(context.Context, *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
@@ -736,6 +742,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceListProjectNoticesProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ListProjectNotices")),
+			connect.WithClientOptions(opts...),
+		),
+		postProjectNotice: connect.NewClient[v1.PostProjectNoticeRequest, v1.PostProjectNoticeResponse](
+			httpClient,
+			baseURL+SessionServicePostProjectNoticeProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("PostProjectNotice")),
 			connect.WithClientOptions(opts...),
 		),
 		clearProjectNotice: connect.NewClient[v1.ClearProjectNoticeRequest, v1.ClearProjectNoticeResponse](
@@ -1134,6 +1146,7 @@ type sessionServiceClient struct {
 	renameProject          *connect.Client[v1.RenameProjectRequest, v1.RenameProjectResponse]
 	setProjectSettings     *connect.Client[v1.SetProjectSettingsRequest, v1.SetProjectSettingsResponse]
 	listProjectNotices     *connect.Client[v1.ListProjectNoticesRequest, v1.ListProjectNoticesResponse]
+	postProjectNotice      *connect.Client[v1.PostProjectNoticeRequest, v1.PostProjectNoticeResponse]
 	clearProjectNotice     *connect.Client[v1.ClearProjectNoticeRequest, v1.ClearProjectNoticeResponse]
 	listDir                *connect.Client[v1.ListDirRequest, v1.ListDirResponse]
 	listFiles              *connect.Client[v1.ListFilesRequest, v1.ListFilesResponse]
@@ -1378,6 +1391,11 @@ func (c *sessionServiceClient) SetProjectSettings(ctx context.Context, req *conn
 // ListProjectNotices calls ycc.v1.SessionService.ListProjectNotices.
 func (c *sessionServiceClient) ListProjectNotices(ctx context.Context, req *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
 	return c.listProjectNotices.CallUnary(ctx, req)
+}
+
+// PostProjectNotice calls ycc.v1.SessionService.PostProjectNotice.
+func (c *sessionServiceClient) PostProjectNotice(ctx context.Context, req *connect.Request[v1.PostProjectNoticeRequest]) (*connect.Response[v1.PostProjectNoticeResponse], error) {
+	return c.postProjectNotice.CallUnary(ctx, req)
 }
 
 // ClearProjectNotice calls ycc.v1.SessionService.ClearProjectNotice.
@@ -1744,9 +1762,12 @@ type SessionServiceHandler interface {
 	RemoveProject(context.Context, *connect.Request[v1.RemoveProjectRequest]) (*connect.Response[v1.RemoveProjectResponse], error)
 	RenameProject(context.Context, *connect.Request[v1.RenameProjectRequest]) (*connect.Response[v1.RenameProjectResponse], error)
 	SetProjectSettings(context.Context, *connect.Request[v1.SetProjectSettingsRequest]) (*connect.Response[v1.SetProjectSettingsResponse], error)
-	// ListProjectNotices / ClearProjectNotice read and clear the experimental
-	// project notice board; a clear here is recorded as made by the user.
+	// ListProjectNotices / PostProjectNotice / ClearProjectNotice read, post to
+	// and clear the experimental project notice board; ListProjectNotices also
+	// lists the project's live sessions. A post or clear here is recorded as
+	// made by the user.
 	ListProjectNotices(context.Context, *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error)
+	PostProjectNotice(context.Context, *connect.Request[v1.PostProjectNoticeRequest]) (*connect.Response[v1.PostProjectNoticeResponse], error)
 	ClearProjectNotice(context.Context, *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error)
 	// ListDir lists subdirectories of a daemon-host path (directories only) so
 	// remote clients can browse to a workspace for AddProject.
@@ -2092,6 +2113,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceListProjectNoticesProcedure,
 		svc.ListProjectNotices,
 		connect.WithSchema(sessionServiceMethods.ByName("ListProjectNotices")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServicePostProjectNoticeHandler := connect.NewUnaryHandler(
+		SessionServicePostProjectNoticeProcedure,
+		svc.PostProjectNotice,
+		connect.WithSchema(sessionServiceMethods.ByName("PostProjectNotice")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceClearProjectNoticeHandler := connect.NewUnaryHandler(
@@ -2524,6 +2551,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceSetProjectSettingsHandler.ServeHTTP(w, r)
 		case SessionServiceListProjectNoticesProcedure:
 			sessionServiceListProjectNoticesHandler.ServeHTTP(w, r)
+		case SessionServicePostProjectNoticeProcedure:
+			sessionServicePostProjectNoticeHandler.ServeHTTP(w, r)
 		case SessionServiceClearProjectNoticeProcedure:
 			sessionServiceClearProjectNoticeHandler.ServeHTTP(w, r)
 		case SessionServiceListDirProcedure:
@@ -2797,6 +2826,10 @@ func (UnimplementedSessionServiceHandler) SetProjectSettings(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) ListProjectNotices(context.Context, *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ListProjectNotices is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) PostProjectNotice(context.Context, *connect.Request[v1.PostProjectNoticeRequest]) (*connect.Response[v1.PostProjectNoticeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.PostProjectNotice is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ClearProjectNotice(context.Context, *connect.Request[v1.ClearProjectNoticeRequest]) (*connect.Response[v1.ClearProjectNoticeResponse], error) {

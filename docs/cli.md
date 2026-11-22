@@ -198,6 +198,8 @@ duplicated).
 `ycc task list` — one row per task (`id [status] pN  title  (deps: …)` with a
 `[READY]` / `[blocked by …]` mark for open todo/blocked tasks) plus a trailing
 ready-to-start summary. Completed (done) tasks are hidden unless `--all`/`-a`.
+Through a daemon whose project has session coordination on, a task that a live
+session is still working on also gets a `[held by <session>]` mark.
 
 `ycc task show <id>` — print the task's fields (id, title, status, priority,
 deps, spec refs, created/updated, readiness) followed by its markdown body.
@@ -223,6 +225,22 @@ ycc task list --all
 ycc task show 0007
 ycc task compact                 # dry run
 ycc task compact --write         # migrate eligible legacy done tasks
+```
+
+### `ycc notices [list|post|clear]` — live sessions and the project notice board
+
+Experimental session coordination (spec §7.3). `ycc notices` (or `ycc notices list`) prints the
+project's live sessions (state, held or earlier-focus tasks, worktree, running jobs, intent, title,
+claimed paths) and its active notices (subject, text, poster, expiry). Both are empty while the
+project's session coordination setting is off. `ycc notices post "text" --expires 2h [--subject S]`
+posts a notice as the user (expiry 1m to 24h); `ycc notices clear <id> [--reason R]` clears one.
+Every form takes `--project NAME` and needs a daemon, so live sessions show only through a running
+one.
+
+```sh
+ycc notices --project ycc
+ycc notices post "Deploying to staging; avoid restarts" -e 90m -s staging
+ycc notices clear n3 -r "deploy finished"
 ```
 
 ### `ycc spec-check` — deterministic spec/code drift check

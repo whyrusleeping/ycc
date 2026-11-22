@@ -214,10 +214,15 @@ func (s *Server) SetProjectSettings(_ context.Context, req *connect.Request[v1.S
 	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("%w %q", session.ErrUnknownProject, req.Msg.Project))
 }
 
-// ListProjectNotices returns a project's notice board: active notices and live
-// sessions' intents (empty while session coordination is off).
+// ListProjectNotices returns a project's notice board: active notices, live
+// sessions' intents and the live sessions themselves (empty while session
+// coordination is off).
 func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
 	notices, intents, err := s.mgr.ProjectNoticeBoard(req.Msg.Project)
+	var sessions []session.LiveSession
+	if err == nil {
+		sessions, err = s.mgr.ProjectLiveSessions(req.Msg.Project)
+	}
 	if err != nil {
 		if errors.Is(err, session.ErrUnknownProject) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
@@ -226,15 +231,63 @@ func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.L
 	}
 	resp := &v1.ListProjectNoticesResponse{}
 	for _, n := range notices {
-		resp.Notices = append(resp.Notices, &v1.ProjectNotice{
-			Id: n.ID, Text: n.Text, Subject: n.Subject, SessionId: n.SessionID, Actor: n.Actor, TaskIds: n.Tasks,
-			PostedAt: n.PostedAt.UTC().Format(time.RFC3339), ExpiresAt: n.ExpiresAt.UTC().Format(time.RFC3339),
-		})
+		resp.Notices = append(resp.Notices, projectNoticeProto(n))
 	}
 	for _, in := range intents {
 		resp.Intents = append(resp.Intents, &v1.SessionIntent{SessionId: in.SessionID, Text: in.Text, SetAt: in.SetAt.UTC().Format(time.RFC3339)})
 	}
+	for _, ls := range sessions {
+		p := &v1.ProjectLiveSession{
+			SessionId: ls.ID, Mode: ls.Mode, Activity: ls.Activity, LastActivity: rfc3339OrEmpty(ls.LastActivity),
+			FocusTasks: ls.Focus, Held: ls.Held, Title: ls.Title, Intent: ls.Intent, RunningJobs: int32(len(ls.Jobs)),
+		}
+		if ls.Intent != "" {
+			p.IntentSetAt = rfc3339OrEmpty(ls.IntentAt)
+		}
+		if !ls.InPrimary {
+			p.Worktree = ls.Workspace
+		}
+		for _, c := range ls.Claims {
+			p.Claims = append(p.Claims, &v1.ClaimedPath{Path: c.Path, Since: rfc3339OrEmpty(c.Since)})
+		}
+		resp.Sessions = append(resp.Sessions, p)
+	}
 	return connect.NewResponse(resp), nil
+}
+
+func projectNoticeProto(n session.Notice) *v1.ProjectNotice {
+	return &v1.ProjectNotice{
+		Id: n.ID, Text: n.Text, Subject: n.Subject, SessionId: n.SessionID, Actor: n.Actor, TaskIds: n.Tasks,
+		PostedAt: n.PostedAt.UTC().Format(time.RFC3339), ExpiresAt: n.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func rfc3339OrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// PostProjectNotice posts a notice to the project's board as the user.
+func (s *Server) PostProjectNotice(_ context.Context, req *connect.Request[v1.PostProjectNoticeRequest]) (*connect.Response[v1.PostProjectNoticeResponse], error) {
+	// Bound the seconds before converting, so a huge value cannot wrap into
+	// an accepted duration; the board checks the exact bounds.
+	secs := req.Msg.ExpiresInSeconds
+	if secs < 0 || secs > int64(24*time.Hour/time.Second) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("expires_in_seconds %d is outside 60 to 86400", secs))
+	}
+	n, err := s.mgr.PostProjectNotice(req.Msg.Project, req.Msg.Text, req.Msg.Subject, time.Duration(secs)*time.Second)
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, orchestrator.ErrCoordinationDisabled):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewResponse(&v1.PostProjectNoticeResponse{Notice: projectNoticeProto(n)}), nil
 }
 
 // ClearProjectNotice clears an active notice on the user's behalf.

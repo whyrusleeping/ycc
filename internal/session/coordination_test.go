@@ -186,6 +186,25 @@ func TestSessionCoordinationOverlapNoticesAndListSessions(t *testing.T) {
 		!strings.Contains(overview, "shared.go (just now)") || !strings.Contains(overview, "title: write shared.go") {
 		t.Fatalf("overview err=%v:\n%s", err, overview)
 	}
+	// Clients get the same listing, structured; focus ids are canonical, so
+	// an unpadded focus matches its backlog row.
+	b.emitter.Emit(event.TaskFocus, map[string]any{"task": "7"})
+	b.emitter.Emit(event.TaskFocus, map[string]any{"task": "0007"})
+	live, err := m.ProjectLiveSessions("proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bLive *LiveSession
+	for i := range live {
+		if live[i].ID == b.ID {
+			bLive = &live[i]
+		}
+	}
+	if bLive == nil || !bLive.InPrimary || bLive.Activity != "idle" || bLive.Title != "write shared.go" ||
+		len(bLive.Claims) != 1 || bLive.Claims[0].Path != "shared.go" || bLive.Claims[0].Since.IsZero() ||
+		len(bLive.Focus) != 1 || bLive.Focus[0] != "0007" {
+		t.Fatalf("structured listing = %+v", live)
+	}
 
 	// A's next run receives the notice once, at its checkpoint; A writing the
 	// same file again does not notify B again.
@@ -277,6 +296,9 @@ func TestSessionCoordinationOverlapNoticesAndListSessions(t *testing.T) {
 	}
 	if _, err := m.listSessionsFor(ws, a.ID, "", time.Now()); !errors.Is(err, orchestrator.ErrCoordinationDisabled) {
 		t.Fatalf("list_sessions with the setting off: %v", err)
+	}
+	if live, err := m.ProjectLiveSessions("proj"); err != nil || live != nil {
+		t.Fatalf("structured listing with the setting off: %+v %v", live, err)
 	}
 	if texts, err := a.drainCoordinationNotices(); err != nil || texts != nil {
 		t.Fatalf("notice delivered after the setting was turned off: %q %v", texts, err)

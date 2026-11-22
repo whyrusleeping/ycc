@@ -1346,66 +1346,124 @@ func (m *Manager) liveSessionLines(primary, exclude string, now time.Time) strin
 	return m.liveSessionLinesWith(primary, exclude, now, false)
 }
 
-// liveSessionLinesWith is liveSessionLines; detail adds each session's title
-// and the paths it claims in its worktree (list_sessions).
-func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, detail bool) string {
+// LiveSession is one live session of a project as session listings report it.
+type LiveSession struct {
+	ID    string
+	Mode  string
+	State string // sessionActivityState: what the session is doing, as prose
+	// Activity is State as a client code: question | jobs (waiting on its
+	// background work) | running | paused | idle | error | stopped.
+	Activity     string
+	LastActivity time.Time
+	Focus        []string // focused backlog tasks
+	Held         bool     // still working on Focus; otherwise Focus is earlier focus
+	Workspace    string   // the session's tree
+	InPrimary    bool     // Workspace is the project's primary tree
+	Intent       string   // only while session coordination is on
+	IntentAt     time.Time
+	Title        string      // detail only
+	Claims       []PathClaim // detail only: claimed paths, newest first
+	Jobs         []jobs.Info // running jobs
+}
+
+// liveSessions lists the live sessions of project primary except exclude,
+// ordered by id. Only a session that is still working holds its focused
+// tasks; one quiet for over quietSessionAge without a declared intent is
+// omitted. detail adds each session's title and the paths it claims in its
+// worktree.
+func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bool) []LiveSession {
 	// Intent lines are part of experimental session coordination.
 	intents := m.coordinationEnabled(primary)
 	primary = canonicalPath(primary)
 	claimsByTree := map[string]map[string][]workspacelease.Claim{}
 	sessions := m.List()
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
-	var b strings.Builder
+	var out []LiveSession
 	for _, s := range sessions {
 		if s.ID == exclude || canonicalPath(m.primaryTreeFor(s.Workspace)) != primary {
 			continue
 		}
 		evs := s.Log().Snapshot()
-		working := s.activelyWorking()
-		intent := ""
+		ls := LiveSession{ID: s.ID, Mode: s.Mode, Held: s.activelyWorking(), Workspace: s.Workspace,
+			InPrimary: canonicalPath(s.Workspace) == primary}
 		if intents {
-			intent, _ = s.intent()
+			ls.Intent, ls.IntentAt = s.intent()
+		}
+		if len(evs) > 0 {
+			ls.LastActivity = evs[len(evs)-1].TS
 		}
 		// A declared intent keeps a quiet session listed.
-		if !working && intent == "" && len(evs) > 0 && now.Sub(evs[len(evs)-1].TS) > quietSessionAge {
+		if !ls.Held && ls.Intent == "" && len(evs) > 0 && now.Sub(ls.LastActivity) > quietSessionAge {
 			continue
 		}
-		kind := s.Mode
-		if s.Mode == watchMode {
-			kind = "watch run"
-		}
-		fmt.Fprintf(&b, "- %s (%s, %s)", s.ID, kind, sessionActivityState(s, evs))
-		if tasks := focusTasks(evs); len(tasks) > 0 {
-			if working {
-				b.WriteString(" working on " + strings.Join(tasks, ", "))
-			} else {
-				b.WriteString(" earlier focus " + strings.Join(tasks, ", ") + " (not held)")
-			}
-		}
-		if canonicalPath(s.Workspace) != primary {
-			b.WriteString(" in worktree " + s.Workspace)
-		}
-		b.WriteString("\n")
-		if intent != "" {
-			fmt.Fprintf(&b, "    intent: %q\n", intent)
-		}
+		ls.Activity = sessionActivity(s)
+		ls.State = activityProse(ls.Activity, evs)
+		ls.Focus = canonicalTasks(focusTasks(evs))
 		if detail {
-			if title := deriveTitle(evs); title != "" {
-				b.WriteString("    title: " + title + "\n")
-			}
+			ls.Title = deriveTitle(evs)
 			claims, ok := claimsByTree[s.Workspace]
 			if !ok {
 				claims = m.ownership.ClaimDetails(s.Workspace)
 				claimsByTree[s.Workspace] = claims
 			}
-			b.WriteString(claimLines(sessionClaims(claims, s.ID), now))
+			ls.Claims = sessionClaims(claims, s.ID)
 		}
-		jn := 0
 		for _, j := range s.JobInfos() {
-			if j.Status != jobs.Running {
-				continue
+			if j.Status == jobs.Running {
+				ls.Jobs = append(ls.Jobs, j)
 			}
-			if jn++; jn > 10 {
+		}
+		out = append(out, ls)
+	}
+	return out
+}
+
+// canonicalTasks normalizes task ids ("2" -> "0002"), so they match backlog
+// rows, and drops the duplicates that normalizing creates.
+func canonicalTasks(ids []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id = docs.NormalizeID(id); !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// liveSessionLinesWith is liveSessionLines; detail adds each session's title
+// and the paths it claims in its worktree (list_sessions).
+func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, detail bool) string {
+	var b strings.Builder
+	for _, s := range m.liveSessions(primary, exclude, now, detail) {
+		kind := s.Mode
+		if s.Mode == watchMode {
+			kind = "watch run"
+		}
+		fmt.Fprintf(&b, "- %s (%s, %s)", s.ID, kind, s.State)
+		if len(s.Focus) > 0 {
+			if s.Held {
+				b.WriteString(" working on " + strings.Join(s.Focus, ", "))
+			} else {
+				b.WriteString(" earlier focus " + strings.Join(s.Focus, ", ") + " (not held)")
+			}
+		}
+		if !s.InPrimary {
+			b.WriteString(" in worktree " + s.Workspace)
+		}
+		b.WriteString("\n")
+		if s.Intent != "" {
+			fmt.Fprintf(&b, "    intent: %q\n", s.Intent)
+		}
+		if detail {
+			if s.Title != "" {
+				b.WriteString("    title: " + s.Title + "\n")
+			}
+			b.WriteString(claimLines(s.Claims, now))
+		}
+		for jn, j := range s.Jobs {
+			if jn == 10 {
 				b.WriteString("    … more running jobs\n")
 				break
 			}
@@ -1415,19 +1473,37 @@ func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, d
 	return b.String()
 }
 
-// sessionActivityState describes what a live session is doing now; an idle
-// session reports when its log last changed.
-func sessionActivityState(s *Session, evs []event.Event) string {
+// sessionActivity classifies what a live session is doing now (see
+// LiveSession.Activity).
+func sessionActivity(s *Session) string {
 	status, awaiting := s.StatusWithJobContinuation()
 	switch {
 	case s.PendingQuestion():
-		return "waiting on a user question"
+		return "question"
 	case awaiting || (status == event.StatusIdle && s.hasLiveJobs()):
-		return "waiting on its background work"
-	case status == event.StatusIdle && len(evs) > 0:
-		return "idle since " + evs[len(evs)-1].TS.UTC().Format("2006-01-02 15:04 UTC")
+		return "jobs"
 	}
 	return string(status)
+}
+
+// activityProse describes an activity code for agents; an idle session reports
+// when its log last changed.
+func activityProse(activity string, evs []event.Event) string {
+	switch {
+	case activity == "question":
+		return "waiting on a user question"
+	case activity == "jobs":
+		return "waiting on its background work"
+	case activity == string(event.StatusIdle) && len(evs) > 0:
+		return "idle since " + evs[len(evs)-1].TS.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	return activity
+}
+
+// sessionActivityState describes what a live session is doing now; an idle
+// session reports when its log last changed.
+func sessionActivityState(s *Session, evs []event.Event) string {
+	return activityProse(sessionActivity(s), evs)
 }
 
 // otherSessionsNote is the work-selection view of the project's other live

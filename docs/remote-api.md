@@ -294,7 +294,7 @@ JSON="Content-Type: application/json"
 | [`AddProject`](#addproject--listdir) / [`ListDir`](#addproject--listdir) | register a workspace / browse daemon-host directories |
 | [`RemoveProject` / `RenameProject`](#addproject--listdir) | deregister / rename a registered project |
 | [`SetProjectSettings`](#setprojectsettings) | change per-project settings in the project's `.ycc/config.toml` |
-| [`ListProjectNotices` / `ClearProjectNotice`](#listprojectnotices--clearprojectnotice) | read / clear the experimental project notice board |
+| [`ListProjectNotices` / `PostProjectNotice` / `ClearProjectNotice`](#listprojectnotices--postprojectnotice--clearprojectnotice) | read, post to and clear the experimental project notice board; list the project's live sessions |
 | [`ListFiles` / `ReadFile`](#listfiles--readfile) | read-only, project-confined file browsing |
 | [`GetPublications` / `PublishFile` / `UnpublishFile`](#getpublications--publishfile--unpublishfile) | share a project file as a secret public link |
 | [`DiscoverModels` / `TestModel`](#discovermodels--testmodel) | list provider models / run a small inference probe against an unsaved draft |
@@ -432,19 +432,28 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","sessionCoordination":true}'
   $B/ycc.v1.SessionService/SetProjectSettings
 ```
 
-### ListProjectNotices / ClearProjectNotice
+### ListProjectNotices / PostProjectNotice / ClearProjectNotice
 
-Read and clear a project's experimental notice board (spec §7.3). `ListProjectNotices` returns the
+Read, post to and clear a project's experimental notice board (spec §7.3). `ListProjectNotices` returns the
 active `notices` (oldest first: `id`, `text`, `subject`, poster `sessionId` and `actor`, `taskIds`,
-RFC 3339 `postedAt` / `expiresAt`) and the `intents` of live sessions (`sessionId`, `text`,
-`setAt`); both are empty while the project's `sessionCoordination` is off. Notice and intent text is
-untrusted peer content. `ClearProjectNotice` clears an active notice as the user, with an optional
-`reason`. Unknown project, or a notice that is not active → `not_found`; missing `id` →
-`invalid_argument`; coordination off → `failed_precondition`.
+RFC 3339 `postedAt` / `expiresAt`), the `intents` of live sessions (`sessionId`, `text`,
+`setAt`), and the live `sessions` as `list_sessions` lists them, ordered by id (`sessionId`, `mode`,
+`activity` = `question` | `jobs` | `running` | `paused` | `idle` | `error` | `stopped`,
+`lastActivity`, `focusTasks`, `held` (still working on them; otherwise earlier focus), `title`,
+`worktree` when outside the primary tree, `intent` / `intentSetAt`, `claims` (`path`, `since`;
+newest first) and `runningJobs`). All three are empty while the project's `sessionCoordination` is
+off. Notice and intent text is untrusted peer content. `PostProjectNotice` posts as the user
+(`text`, optional `subject`, `expiresInSeconds` 60–86400) and returns the `notice`; a user notice has
+an empty `sessionId` and `actor` `user`, and the per-session caps do not apply. Invalid text,
+subject or expiry → `invalid_argument`. `ClearProjectNotice` clears an active notice as the user,
+with an optional `reason`. Unknown project, or a notice that is not active → `not_found`; missing
+`id` → `invalid_argument`; coordination off → `failed_precondition` (post and clear).
 
 ```
 curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc"}' \
   $B/ycc.v1.SessionService/ListProjectNotices
+curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","text":"Deploying to staging","subject":"staging","expiresInSeconds":3600}' \
+  $B/ycc.v1.SessionService/PostProjectNotice
 curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"ycc","id":"n3","reason":"tests are green"}' \
   $B/ycc.v1.SessionService/ClearProjectNotice
 ```

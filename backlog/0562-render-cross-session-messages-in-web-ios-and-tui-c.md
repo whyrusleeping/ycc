@@ -8,17 +8,22 @@ updated: "2026-11-22"
 depends_on:
     - "0443"
     - "0564"
+    - "0582"
+    - "0583"
+    - "0584"
 spec_refs:
     - spec.md#7.3
     - spec.md#18.5
 ---
 
 ## Description
-Current state: proposed follow-up to 0443 (experimental session awareness: `list_sessions`, path
-ownership lookup, overlap notices) and 0564 (experimental project notice board). Both are done
-(`4096a81`, `41c611e`), and they ship
-only the web per-project toggle and the generic event fallback. This task is separate because it
-touches three clients and needs the iOS build and screenshot check on the Mac.
+Current state: accepted parent, split on 2026-11-22 into 0582 (daemon API and CLI for the project
+sessions view and user-posted notices), 0583 (web surfaces) and 0584 (iOS surfaces and the Settings
+toggle). It closes once all three are done and the acceptance below holds across them. It follows 0443
+(experimental session awareness: `list_sessions`, path ownership lookup, overlap notices) and 0564
+(experimental project notice board), both done (`4096a81`, `41c611e`); they ship only the web
+per-project toggle and the generic event fallback. ycc has no separate TUI; the terminal client is
+the `ycc` CLI, covered by 0582.
 
 Reviews of the wheeler project's logs on 2026-11-20 put ownership surfaces ahead of transcript
 styling. The user asked for those reviews in session s_18f059896f075e5a at event 152. On 2026-11-18 the user opened a fresh session just to ask why a service was down. On
@@ -45,3 +50,5 @@ to other sessions.
 
 ## Work log
 - 2026-11-21 groom: noted that dependencies 0443 and 0564 are done, with their commits, and cited the session that requested the wheeler log reviews. Still proposed.
+- 2026-11-22: split into 0582 (daemon API and CLI), 0583 (web) and 0584 (iOS) along the shared RPC contract and the per-client build and screenshot checks.
+- 2026-11-22: 0582 done (ListProjectNotices `sessions`, PostProjectNotice, `ycc notices`, CLI held badges); the terminal-client criterion holds. Web (0583) and iOS (0584) remain.

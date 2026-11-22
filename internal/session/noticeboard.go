@@ -376,6 +376,33 @@ func (m *Manager) ProjectNoticeBoard(project string) ([]Notice, []SessionIntent,
 	return m.activeNotices(primary, time.Now()), m.sessionIntents(primary, ""), nil
 }
 
+// ProjectLiveSessions returns a registered project's live sessions as
+// list_sessions reports them, with claimed paths; empty while the setting is
+// off.
+func (m *Manager) ProjectLiveSessions(project string) ([]LiveSession, error) {
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return nil, err
+	}
+	if !m.coordinationEnabled(ws) {
+		return nil, nil
+	}
+	return m.liveSessions(m.primaryTreeFor(ws), "", time.Now(), true), nil
+}
+
+// PostProjectNotice posts a notice to a registered project's board on the
+// user's behalf. The per-session caps do not apply to the user.
+func (m *Manager) PostProjectNotice(project, text, subject string, expiresIn time.Duration) (Notice, error) {
+	ws, err := m.resolveProjectWorkspace(project)
+	if err != nil {
+		return Notice{}, err
+	}
+	if !m.coordinationEnabled(ws) {
+		return Notice{}, orchestrator.ErrCoordinationDisabled
+	}
+	return m.postNotice(m.primaryTreeFor(ws), Notice{Text: text, Subject: subject, Actor: "user"}, expiresIn, time.Now())
+}
+
 // ClearProjectNotice clears a registered project's notice on the user's behalf.
 func (m *Manager) ClearProjectNotice(project, id, reason string) error {
 	ws, err := m.resolveProjectWorkspace(project)

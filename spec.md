@@ -709,7 +709,10 @@ further notices are delivered. With the setting off nothing is added.
   coordinator prompt frame a notice as a reason to check, not an authorization: the receiver acts
   only within its own mandate and says so in its report. A notice cannot answer a pending
   `ask_user` question, approve a commit or deploy, or promote proposed work.
-  `ListProjectNotices` and `ClearProjectNotice` let clients read and clear the board.
+  `ListProjectNotices` and `ClearProjectNotice` let clients read and clear the board, and
+  `PostProjectNotice` lets the user post to it (same bounds, no per-session caps; the board names the
+  user as poster). `ListProjectNotices` also returns the project's live sessions as `list_sessions`
+  sees them, structured, so clients can show who holds which task and path.
 
 Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations.
 
