@@ -18,5 +18,6 @@ Tasks with operational acceptance criteria (deploy, run a load, measure, report)
 - A reviewer can accept a snapshot as ready to deploy or run while naming the acceptance criteria that still need operational evidence, as an outcome distinct from accept and revise.
 - After such a verdict the coordinator is told it may deploy or run that snapshot, and that the remaining criteria need evidence and a further review before commit.
 - A later review checks the new evidence against the named criteria. It skips re-reviewing the code only when the delta since the ready-to-deploy snapshot is evidence alone (reports, work logs, documentation of results); any change to source, configuration, deployment files, migrations, or run scripts is reviewed as usual.
+- The coordinator prompt adds, in substance: "Before requesting review, verify the criteria you can check before deployment or a run. Name the rest in the handoff."
 
 ## Work log

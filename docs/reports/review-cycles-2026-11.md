@@ -166,25 +166,23 @@ said so: "the evidence the first review missed is now in the scope".
 - Deliver coordinator verification evidence to reviewers: post the `re_review` handoff and the latest implementer
   report in retain mode, and give `spawn_reviewers` an optional handoff for a direct-mode coordinator's verification.
   This is cause 1. It is a harness defect and the change with the most direct effect.
-- Calibrate the review-loop prompts:
-  - Reviewer: define blocker and major as a demonstrated acceptance-criterion failure, data loss or corruption, or a
-    security exposure within the task's scope, whether or not it fails closed. Hardening beyond the task's criteria is
-    a minor finding or a proposed follow-up.
-  - Reviewer: in the first round, report every substantive finding, including other instances of the same problem.
-  - Reviewer: for a gate the sandbox cannot execute, judge the supplied evidence and do not revise only because the
-    reviewer could not reproduce it.
-  - Coordinator and implementer: fix a finding's class, not just the reproduced instance. When successive rounds keep
-    finding defects in the same area, change the approach (a real parser, a narrower scope, failing closed) instead
-    of patching another case.
+- Calibrate the review-loop prompts lightly, on the fixing side first (0578):
+  - Coordinator and implementer: when fixing a finding, check affected paths for the same defect and fix any in
+    scope. Coordinator: if successive revisions expose related defects, reconsider the approach before patching
+    another case.
+  - Reviewer: on the first pass, report all substantive findings that can be substantiated, grouping instances of the
+    same defect; for a check the sandbox cannot run, judge whether the supplied evidence verifies the snapshot.
+  - No severity definition: the split rounds read here were real defects the accepting reviewer missed, which does
+    not justify narrowing what counts as major. In 0443 most later findings were in code the previous fix had added,
+    so a different approach would have helped more than a more complete first review.
 - Add a ready-to-deploy verdict for tasks with operational criteria: the snapshot is accepted for deployment or a run,
   the remaining criteria are named, and the next review skips the code only when the delta is evidence alone; changes
-  to source, configuration, deployment files, migrations, or run scripts are reviewed as usual (cause 5).
+  to source, configuration, deployment files, migrations, or run scripts are reviewed as usual. The coordinator
+  verifies the criteria it can check before deployment, then requests review and names the rest (cause 5).
 - Warn the coordinator before reviewers start when the snapshot includes code files with changes the session did not
   make (shared with another session, or already dirty before it), naming the files and the alternatives (cause 6).
-- Reviewer model: whether to keep `gpt-6.2-sol` as the `sol` reviewer is a configuration choice for the user. A
-  paired comparison of `gpt-6.1-sol` and `gpt-6.2-sol` on the same snapshots would settle how much of the November
-  rise is the model.
+- Reviewer model: on 2026-11-22 the user chose to keep `gpt-6.2-sol` as the `sol` reviewer.
 
-0577 (deliver coordinator verification evidence) and 0578 (calibrate review-loop prompts) are accepted todo tasks;
-0579 (ready-to-deploy verdict) and 0580 (warn before reviewing changes the session did not make) are proposed. The measurements above can
-be rerun on later sessions to check the effect.
+0577 (deliver coordinator verification evidence), 0578 (calibrate review-loop prompts), 0579 (ready-to-deploy
+verdict), and 0580 (warn before reviewing changes the session did not make) are accepted todo tasks. The
+measurements above can be rerun on later sessions to check the effect.
