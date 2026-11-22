@@ -853,22 +853,55 @@ final class AppDataCacheTests: XCTestCase {
 
 // MARK: - Backlog
 
+/// Gated updates resume concurrently off the main actor, so every piece of
+/// shared state is read and written under `lock`.
 private final class GatedBacklogSource: BacklogSource, @unchecked Sendable {
-    var tasks: [Ycc_V1_BacklogTaskSummary] = []
-    var projects: [Ycc_V1_ProjectInfo] = []
-    var updateGate: AsyncGate?
-    var updateError: Error?
-    private(set) var listCount = 0
-    private(set) var listProjectsCount = 0
-    private(set) var updateCount = 0
+    private let lock = NSLock()
+    private var _tasks: [Ycc_V1_BacklogTaskSummary] = []
+    private var _projects: [Ycc_V1_ProjectInfo] = []
+    private var _updateGate: AsyncGate?
+    private var _updateError: Error?
+    private var _listCount = 0
+    private var _listProjectsCount = 0
+    private var _updateCount = 0
+
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    var tasks: [Ycc_V1_BacklogTaskSummary] {
+        get { locked { _tasks } }
+        set { locked { _tasks = newValue } }
+    }
+    var projects: [Ycc_V1_ProjectInfo] {
+        get { locked { _projects } }
+        set { locked { _projects = newValue } }
+    }
+    var updateGate: AsyncGate? {
+        get { locked { _updateGate } }
+        set { locked { _updateGate = newValue } }
+    }
+    var updateError: Error? {
+        get { locked { _updateError } }
+        set { locked { _updateError = newValue } }
+    }
+    var listCount: Int { locked { _listCount } }
+    var listProjectsCount: Int { locked { _listProjectsCount } }
+    var updateCount: Int { locked { _updateCount } }
 
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
-        listCount += 1
-        return tasks
+        locked {
+            _listCount += 1
+            return _tasks
+        }
     }
     func listProjects() async throws -> [Ycc_V1_ProjectInfo] {
-        listProjectsCount += 1
-        return projects
+        locked {
+            _listProjectsCount += 1
+            return _projects
+        }
     }
     func createTask(project: String, title: String, body: String, priority: Int) async throws -> Ycc_V1_TaskDetail {
         var detail = Ycc_V1_TaskDetail()
@@ -879,13 +912,18 @@ private final class GatedBacklogSource: BacklogSource, @unchecked Sendable {
         return detail
     }
     func updateTaskStatus(project: String, id: String, status: String) async throws -> Ycc_V1_TaskDetail {
-        updateCount += 1
-        if let updateGate { await updateGate.wait() }
-        if let updateError { throw updateError }
+        let gate = locked {
+            _updateCount += 1
+            return _updateGate
+        }
+        if let gate { await gate.wait() }
+        if let error = updateError { throw error }
         // Reflect the change in the list, as the daemon would on the next load.
-        if let index = tasks.firstIndex(where: { $0.id == id }) {
-            tasks[index].status = status
-            tasks[index].priority = 2
+        locked {
+            if let index = _tasks.firstIndex(where: { $0.id == id }) {
+                _tasks[index].status = status
+                _tasks[index].priority = 2
+            }
         }
         var detail = Ycc_V1_TaskDetail()
         detail.id = id
