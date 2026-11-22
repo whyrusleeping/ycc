@@ -58,7 +58,8 @@ enum Analytics {
 
     static let actions: [String] = [
         "composer.send", "composer.attach_image",
-        "composer.quick_reply", "composer.quick_reply_undo", "settings.quick_replies.save",
+        "composer.quick_reply", "composer.quick_reply_undo", "composer.menu_action",
+        "settings.quick_replies.save",
         "session.interrupt", "session.resume", "session.retry", "session.rollover", "session.settings",
         "session.activity", "session.stream_retry", "preset.start",
         "session.stop_open", "session.stop.confirm", "session.stop.cancel",

@@ -146,8 +146,12 @@ struct SessionView: View {
     /// Presents the file browser rooted at this session's workspace.
     @State private var showFiles = false
     /// The daemon-wide and this project's quick replies (empty: the swipe
-    /// menu is off, e.g. against a daemon without them).
+    /// menu offers only its actions, e.g. against a daemon without them).
     @State private var quickReplies: [QuickReplyChoice] = []
+    /// The composer's Photos picker is up (its button, or the swipe menu).
+    @State private var showPicturePicker = false
+    /// The new-session composer, opened from the swipe menu.
+    @State private var showNewSession = false
     /// The project's notice board while a question is pending (session
     /// coordination): its active notices show in the answer sheet.
     @State private var coordination: CoordinationModel?
@@ -236,7 +240,8 @@ struct SessionView: View {
         // lifecycle.
         withLifecycle(withPresentations(withNavigation(transcriptStage)))
             .modifier(QuickReplyMenuModifier(
-                replies: quickReplies, isAvailable: quickRepliesAvailable, onPick: queueQuickReply))
+                replies: quickReplies, actions: quickMenuActions,
+                isAvailable: quickRepliesAvailable, onPick: queueQuickReply))
     }
 
     /// The scrolling transcript with follow-mode pill and anchor restoration.
@@ -342,6 +347,23 @@ struct SessionView: View {
     /// Sheets, alerts and dialogs, plus the gates that present them.
     private func withPresentations(_ content: some View) -> some View {
         content
+            .sheet(isPresented: $showNewSession) {
+                NewSessionView(
+                    client: client, initialProject: project.isEmpty ? nil : project,
+                    cache: app.dataCache
+                ) { sessionID, project, title in
+                    // As from the home screen's New chat: NewSessionView
+                    // records the submit, and a workstream the daemon reported
+                    // without a session opens where it can be followed.
+                    showNewSession = false
+                    if sessionID.isEmpty {
+                        router.open(.workstreams(project: project))
+                    } else {
+                        router.open(.session(id: sessionID, project: project, live: true, title: title))
+                    }
+                }
+                .trackedFlow("new_session")
+            }
             .sheet(isPresented: $showSettings) {
                 SessionSettingsView(client: client, sessionID: sessionID)
                     .trackedView("session_settings")
@@ -718,7 +740,9 @@ struct SessionView: View {
         VStack(alignment: .leading, spacing: 6) {
             PictureStrip(pictures: $pictures)
             HStack(spacing: 8) {
-                PicturePickerButton(pictures: $pictures, isLoading: $loadingPictures) { message in
+                PicturePickerButton(
+                    pictures: $pictures, isLoading: $loadingPictures, isPresented: $showPicturePicker
+                ) { message in
                     model.actionError = message
                 }
                 ComposerTextField(
@@ -838,6 +862,22 @@ struct SessionView: View {
         if model.mode == .live, model.displayPhase == .running { return false }
         return model.pendingQuestion == nil && !model.isStopPending && pendingQuickReply == nil
             && pictures.isEmpty && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The swipe menu's non-message actions, below the replies. Each opens
+    /// the same flow as its button: the composer's Photos picker, and the
+    /// home screen's New chat composer (in this session's project).
+    private var quickMenuActions: [QuickReplyMenuAction] {
+        var actions: [QuickReplyMenuAction] = []
+        if !loadingPictures && !PictureAttachments.isFull(current: pictures.count) {
+            actions.append(QuickReplyMenuAction(
+                id: "picture", label: "Add pictures", symbol: "photo.on.rectangle"
+            ) { showPicturePicker = true })
+        }
+        actions.append(QuickReplyMenuAction(
+            id: "new_session", label: "New chat", symbol: "square.and.pencil"
+        ) { showNewSession = true })
+        return actions
     }
 
     /// Hold a picked reply for the undo window, then send it.

@@ -182,17 +182,21 @@ struct PictureStrip: View {
 struct PicturePickerButton: View {
     @Binding var pictures: [DraftPicture]
     @Binding var isLoading: Bool
+    /// Whether the picker is up, for a host that also opens it without the
+    /// button (the session view's swipe menu). Left nil, the button keeps it.
+    var isPresented: Binding<Bool>?
     /// Surfaces a load failure the way the host screen reports errors.
     let onError: (String) -> Void
 
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var ownPresented = false
+
+    private var presented: Binding<Bool> { isPresented ?? $ownPresented }
 
     var body: some View {
-        PhotosPicker(
-            selection: $photoItems,
-            maxSelectionCount: max(1, PictureComposer.maxPictures - pictures.count),
-            matching: .images
-        ) {
+        Button {
+            presented.wrappedValue = true
+        } label: {
             // The badge is the one honest signal that a pick actually landed;
             // the thumbnail strip is easy to miss above the keyboard on a small
             // screen.
@@ -208,6 +212,11 @@ struct PicturePickerButton: View {
                     }
                 }
         }
+        .photosPicker(
+            isPresented: presented,
+            selection: $photoItems,
+            maxSelectionCount: max(1, PictureComposer.maxPictures - pictures.count),
+            matching: .images)
         .disabled(isLoading || PictureAttachments.isFull(current: pictures.count))
         .accessibilityLabel(pictures.isEmpty
             ? "Add pictures"

@@ -1458,8 +1458,12 @@ around the finger. The rows spring out of the edge at the finger, nearest first,
 place with a little overshoot, and they tuck back in when the menu closes. A row is picked only once the finger reaches it, and a release over a row picks
 it. A flick leaves the menu open for tapping, and a release at the edge or away from the rows
 cancels. A pick waits out a 2-second Undo bar before it is sent, and leaving the session sends it
-immediately. A faint handle on the trailing edge marks the gesture, and VoiceOver gets the replies
-as actions on the handle.
+immediately. Below the replies, after a gap, the menu offers actions that send nothing: Add
+pictures opens the composer's Photos picker and New chat opens the new-session composer in the
+session's project. Their rows have an accent icon and a dashed accent outline, and a pick runs at
+once and records `composer.menu_action` with the action's name. A crowded column tightens and shrinks
+its rows to fit, so every row stays on screen. A faint handle on the trailing edge
+marks the gesture, and VoiceOver gets the replies and actions as actions on the handle.
 
 ### 18.7 Interrupt and steer
 

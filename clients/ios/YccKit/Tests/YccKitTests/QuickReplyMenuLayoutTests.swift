@@ -37,6 +37,49 @@ final class QuickReplyMenuLayoutTests: XCTestCase {
         XCTAssertTrue(crowded.frames.allSatisfy { $0.minX >= screen.minX })
     }
 
+    func testActionsSitApartBelowTheReplies() {
+        let layout = QuickReplyMenuLayout(count: 5, anchorY: 400, bounds: screen, sectionStart: 3)
+        let plain = layout.frames[2].minY - layout.frames[1].maxY
+        let split = layout.frames[3].minY - layout.frames[2].maxY
+        XCTAssertEqual(split - plain, QuickReplyMenuLayout.sectionGap, accuracy: 0.5)
+        XCTAssertEqual(layout.frames[4].minY - layout.frames[3].maxY, plain, accuracy: 0.5)
+        // The gap picks nothing, so sliding between the groups never sends.
+        XCTAssertNil(layout.selection(at: CGPoint(
+            x: layout.frames[2].midX, y: (layout.frames[2].maxY + layout.frames[3].minY) / 2)))
+        XCTAssertEqual(layout.selection(at: CGPoint(x: layout.frames[3].midX, y: layout.frames[3].midY)), 3)
+        // A crowded split column still fits the screen.
+        let crowded = QuickReplyMenuLayout(count: 16, anchorY: 400, bounds: screen, sectionStart: 14)
+        XCTAssertLessThanOrEqual(crowded.frames.last!.maxY, screen.maxY)
+        // A section at either end is no section: no gap.
+        for start in [0, 5, 9] {
+            XCTAssertEqual(
+                QuickReplyMenuLayout(count: 5, anchorY: 400, bounds: screen, sectionStart: start),
+                QuickReplyMenuLayout(count: 5, anchorY: 400, bounds: screen))
+        }
+    }
+
+    func testCrowdedColumnsKeepEveryRowReachable() {
+        // A compact phone: 3 defaults + 12 project extras + 2 actions.
+        let compact = CGRect(x: 0, y: 50, width: 375, height: 610)
+        let full = QuickReplyMenuLayout(count: 17, anchorY: 400, bounds: compact, sectionStart: 15)
+        XCTAssertGreaterThanOrEqual(full.frames.first!.minY, compact.minY)
+        XCTAssertLessThanOrEqual(full.frames.last!.maxY, compact.maxY + 0.001)
+        // Every row is still picked at its own centre.
+        for (index, frame) in full.frames.enumerated() {
+            XCTAssertEqual(full.selection(at: CGPoint(x: frame.midX, y: frame.midY)), index)
+        }
+        // Both lists full (24 replies) plus the actions: every row on screen
+        // and pickable, on a compact phone and a larger one.
+        for bounds in [compact, CGRect(x: 0, y: 50, width: 390, height: 750)] {
+            let overfull = QuickReplyMenuLayout(count: 26, anchorY: 400, bounds: bounds, sectionStart: 24)
+            XCTAssertGreaterThanOrEqual(overfull.frames.first!.minY, bounds.minY)
+            XCTAssertLessThanOrEqual(overfull.frames.last!.maxY, bounds.maxY + 0.001)
+            for (index, frame) in overfull.frames.enumerated() {
+                XCTAssertEqual(overfull.selection(at: CGPoint(x: frame.midX, y: frame.midY)), index)
+            }
+        }
+    }
+
     func testReleaseOutcomes() {
         XCTAssertEqual(QuickReplyMenuLayout.release(selection: 2, duration: 0.6), .pick(2))
         XCTAssertEqual(QuickReplyMenuLayout.release(selection: nil, duration: 0.6), .cancel)

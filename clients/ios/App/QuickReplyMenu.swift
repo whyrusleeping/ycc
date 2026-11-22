@@ -9,14 +9,21 @@ import YccProto
 /// tapping, and sliding back to the edge (or away from every row) cancels.
 /// The rows spring out of the edge from the finger, nearest first, and tuck
 /// back in when the menu closes.
-/// The pick goes to `onPick`, which owns the undo window before sending.
+/// A reply pick goes to `onPick`, which owns the undo window before sending.
+/// The actions sit below the replies, set apart by a gap and a dashed accent
+/// outline, and run at once: they send nothing.
 struct QuickReplyMenuModifier: ViewModifier {
     let replies: [QuickReplyChoice]
+    let actions: [QuickReplyMenuAction]
     /// The session can take a quick reply now (idle, no question, empty draft).
     let isAvailable: Bool
     let onPick: (QuickReplyChoice, UsageAnalytics.Via) -> Void
 
     private struct Menu {
+        /// The rows as the swipe began: the layout was fitted to them, so a
+        /// reply list arriving mid-swipe can't shift what an index picks.
+        let replies: [QuickReplyChoice]
+        let actions: [QuickReplyMenuAction]
         var layout: QuickReplyMenuLayout
         /// Where the finger entered, in window coordinates: rows fan out
         /// from (and tuck back into) the edge here.
@@ -40,7 +47,8 @@ struct QuickReplyMenuModifier: ViewModifier {
     @State private var bounds: CGRect = .zero
     @State private var isVisible = false
 
-    private var enabled: Bool { isAvailable && !replies.isEmpty }
+    private var enabled: Bool { isAvailable && rowCount > 0 }
+    private var rowCount: Int { replies.count + actions.count }
 
     func body(content: Content) -> some View {
         content
@@ -83,8 +91,10 @@ struct QuickReplyMenuModifier: ViewModifier {
                 #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             menu = Menu(
+                replies: replies, actions: actions,
                 layout: QuickReplyMenuLayout(
-                    count: replies.count, anchorY: point.y, bounds: bounds.insetBy(dx: 0, dy: 8)),
+                    count: rowCount, anchorY: point.y, bounds: bounds.insetBy(dx: 0, dy: 8),
+                    sectionStart: replies.count),
                 anchorY: point.y)
         case .changed:
             guard var current = menu, !current.closing else { return }
@@ -101,7 +111,7 @@ struct QuickReplyMenuModifier: ViewModifier {
                 duration: Date().timeIntervalSince(current.startedAt))
             switch outcome {
             case .pick(let index):
-                pick(index, via: .swipe)
+                pick(index, replies: current.replies, actions: current.actions, via: .swipe)
             case .stayOpen:
                 menu?.selection = nil
                 menu?.tapMode = true
@@ -124,18 +134,26 @@ struct QuickReplyMenuModifier: ViewModifier {
         }
     }
 
-    private func pick(_ index: Int, via: UsageAnalytics.Via) {
+    private func pick(
+        _ index: Int, replies: [QuickReplyChoice], actions: [QuickReplyMenuAction], via: UsageAnalytics.Via
+    ) {
         close()
-        guard replies.indices.contains(index) else { return }
+        guard index >= 0, index < replies.count + actions.count else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        onPick(replies[index], via)
+        if index < replies.count {
+            onPick(replies[index], via)
+        } else {
+            let action = actions[index - replies.count]
+            Analytics.action("composer.menu_action", via: via, attrs: ["action": action.id])
+            action.run()
+        }
     }
 
     // MARK: Views
 
     /// A faint grip on the trailing edge saying the gesture is there. It takes
-    /// no touches (the edge recognizer does); VoiceOver gets the replies as
-    /// actions on it instead.
+    /// no touches (the edge recognizer does); VoiceOver gets the replies and
+    /// the menu's actions as actions on it instead.
     private var handle: some View {
         Capsule()
             .fill(Theme.accentFill.opacity(0.85))
@@ -151,7 +169,12 @@ struct QuickReplyMenuModifier: ViewModifier {
             .accessibilityHint("Swipe in from the right edge, or use the actions to send a reply.")
             .accessibilityActions {
                 ForEach(Array(replies.enumerated()), id: \.offset) { index, choice in
-                    Button(choice.reply.label) { pick(index, via: .menu) }
+                    Button(choice.reply.label) { pick(index, replies: replies, actions: actions, via: .menu) }
+                }
+                ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
+                    Button(action.label) {
+                        pick(replies.count + index, replies: replies, actions: actions, via: .menu)
+                    }
                 }
             }
     }
@@ -184,11 +207,9 @@ struct QuickReplyMenuModifier: ViewModifier {
                         delayOut: Double(count - 1 - order) * 0.012
                     ) {
                         Button {
-                            pick(index, via: .tap)
+                            pick(index, replies: menu.replies, actions: menu.actions, via: .tap)
                         } label: {
-                            QuickReplyRow(
-                                reply: replies[index].reply, selected: menu.selection == index,
-                                compact: frame.height < 48)
+                            row(at: index, in: menu, selected: menu.selection == index, height: frame.height)
                         }
                         .buttonStyle(.plain)
                         // While the finger is still down the edge recognizer owns the
@@ -204,6 +225,22 @@ struct QuickReplyMenuModifier: ViewModifier {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func row(at index: Int, in menu: Menu, selected: Bool, height: CGFloat) -> some View {
+        if index < menu.replies.count {
+            let reply = menu.replies[index].reply
+            MenuRow(
+                symbol: QuickReplyIcons.resolved(reply).symbol, label: reply.label,
+                detail: reply.text != reply.label ? reply.text : nil,
+                isAction: false, selected: selected, height: height)
+        } else {
+            let action = menu.actions[index - menu.replies.count]
+            MenuRow(
+                symbol: action.symbol, label: action.label, detail: nil,
+                isAction: true, selected: selected, height: height)
         }
     }
 
@@ -267,25 +304,35 @@ private struct BubbleEmergence: ViewModifier, Animatable {
     }
 }
 
-/// One reply in the menu: an icon disc, the label and a preview of the text.
-private struct QuickReplyRow: View {
-    let reply: Ycc_V1_QuickReply
+/// One row in the menu: an icon disc, the label and, for a reply, a preview of
+/// the text. Actions get an accent icon and a dashed accent outline, so they
+/// never read as messages. Rows shrink with a crowded column, down to a
+/// small icon and caption-sized label.
+private struct MenuRow: View {
+    let symbol: String
+    let label: String
+    let detail: String?
+    let isAction: Bool
     let selected: Bool
-    let compact: Bool
+    let height: CGFloat
+
+    private var compact: Bool { height < 48 }
+    /// The icon disc: 34 points, smaller as the row shrinks.
+    private var disc: CGFloat { compact ? min(26, max(14, height - 4)) : 34 }
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: QuickReplyIcons.resolved(reply).symbol)
-                .font(.system(size: compact ? 13 : 15, weight: .semibold))
-                .foregroundStyle(selected ? Theme.onAccentFill : Color.primary)
-                .frame(width: compact ? 26 : 34, height: compact ? 26 : 34)
+            Image(systemName: symbol)
+                .font(.system(size: compact ? disc / 2 : 15, weight: .semibold))
+                .foregroundStyle(selected ? Theme.onAccentFill : isAction ? Color.accentColor : Color.primary)
+                .frame(width: disc, height: disc)
                 .background(selected ? Theme.accentFill : Color(.tertiarySystemFill), in: Circle())
             VStack(alignment: .leading, spacing: 1) {
-                Text(reply.label)
-                    .font(.subheadline.weight(.semibold))
+                Text(label)
+                    .font((height < 30 ? Font.caption : Font.subheadline).weight(.semibold))
                     .foregroundStyle(.primary)
-                if !compact, reply.text != reply.label {
-                    Text(reply.text)
+                if !compact, let detail {
+                    Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -297,9 +344,14 @@ private struct QuickReplyRow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.secondarySystemBackground), in: Capsule())
         .overlay {
-            Capsule().strokeBorder(
-                selected ? Theme.accentFill : Color(.separator),
-                lineWidth: selected ? 2 : 1)
+            if selected {
+                Capsule().strokeBorder(Theme.accentFill, lineWidth: 2)
+            } else if isAction {
+                Capsule().strokeBorder(
+                    Color.accentColor.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            } else {
+                Capsule().strokeBorder(Color(.separator), lineWidth: 1)
+            }
         }
         // Colors fade without the menu's bouncy spring: overshooting would
         // swing a deselected icon back towards the accent and flicker.
@@ -310,6 +362,16 @@ private struct QuickReplyRow: View {
         .offset(x: selected ? -8 : 0)
         .accessibilityElement(children: .combine)
     }
+}
+
+/// A swipe-menu entry that is not a message (attach pictures, start a
+/// session). It runs the same flow as its button elsewhere, straight away.
+struct QuickReplyMenuAction {
+    /// What analytics records for a pick.
+    let id: String
+    let label: String
+    let symbol: String
+    let run: () -> Void
 }
 
 /// A leftward pan that starts at the trailing screen edge, installed on the
