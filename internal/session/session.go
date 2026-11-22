@@ -2284,6 +2284,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	}
 	m.integrateAgent = m.runIntegrateSession
 	m.ownership.SetOverlapNotifier(m.claimOverlap)
+	m.ownership.SetSharedHeadPeers(m.sharedHeadPeers)
 	// Bookkeeping lines of sessions that are no longer live ride along with
 	// the next commit of that file rather than staying stranded.
 	m.ownership.SetLiveScopes(func(scope string) bool {

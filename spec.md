@@ -650,6 +650,26 @@ abandoned and redone on the new HEAD at the next attempt. A HEAD move outside th
 stale: the work is still in the worktree, so it stays committable, and the commit result reports the
 move because files it left differing from HEAD count as changes. Distinct worktrees (workstreams, §14.1)
 remain the way to isolate builds and tests completely.
+Sessions in one worktree share its HEAD, index and stash, so a shell command that rewrites or
+switches HEAD there (an amend, reset or rebase that leaves HEAD off its old commit's descendants, a
+branch switch, a detach) or stashes there while other live sessions work in that worktree is
+surfaced rather than silently allowed. The shell's bracketing snapshots also record HEAD's branch
+and commit and `refs/stash`, for the shell's worktree and for worktrees the command text targets
+with `cd` or `git -C`. A `git stash` subcommand other than `list` or `show` at a command position
+of the text counts too, since a push and pop in one command leave the stash unchanged; quoted text
+and here-documents are data, not commands. The text scan does not follow control flow, so a `cd`
+adds a place later commands may run in rather than replacing the shell's directory (the scan keeps
+bounded sets, with the shell's own directory and directories named by absolute paths kept apart
+from, and ahead of, those composed from relative ones), and a stash
+whose location is not certain is reported as possible in each candidate worktree. The command
+has already run, so its result (a background shell's when it exits) carries a warning per affected
+worktree. It says what changed while the command ran (a
+snapshot cannot tell whether this command or a concurrent process did it), names the other live
+sessions of the project in that worktree (sessions of another project are only counted), and asks
+the agent, if it made the change, to check that their work is still in the tree, to commit through
+the commit tool, and to use a workstream for history of its own. Fast-forwards of a branch or a
+detached HEAD and a session alone in its worktree get no warning. This is independent of session
+coordination below.
 `docs/design/async-jobs.md` explains the single-delivery and concurrent-mutation
 rationale.
 

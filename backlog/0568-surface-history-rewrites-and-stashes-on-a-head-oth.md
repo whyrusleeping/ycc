@@ -1,26 +1,28 @@
 ---
 id: "0568"
 title: Surface history rewrites and stashes on a HEAD other live sessions share
-status: todo
+status: done
 priority: 2
 created: "2026-11-20"
-updated: "2026-11-20"
+updated: "2026-11-22"
 depends_on: []
 spec_refs:
     - spec.md#7.3
 ---
 
 ## Description
+
 Current state: split from 0565 (stop commits sweeping in other sessions' uncommitted changes) on 2026-11-20; not started.
 
 This delivers 0565's shared-HEAD outcome. It is separate because it is Bash-tool detection, independent of how commits are scoped.
 
-## Why
-In the wheeler project, where many parallel sessions shared one tree (2026-11-15 to 2026-11-20), 12 sessions rewrote the shared HEAD (28 amends, 17 resets), 21 ran `git stash` push or pop, and 28 built commits with plumbing (`hash-object`, `update-index`, `commit-tree`) in a tree other live sessions shared. Rewriting HEAD or stashing there risks losing their work and bypasses change attribution.
-
 ## Acceptance criteria
+
 - History-rewriting or stash operations on a shared HEAD while other live sessions exist are surfaced to the agent in the tool result, not silently allowed.
 - spec §7.3 describes the behaviour.
 
-## Work log
-- 2026-11-21 groom: glossed "wheeler" as the user's project whose shared-tree session logs supplied the evidence. Otherwise reviewed, no change; nothing is implemented yet.
+## Outcome
+
+Bash (foreground and background) now brackets commands with HEAD branch/commit and refs/stash snapshots of the shell's worktree and of cd / git -C targets (bounded, absolute targets prioritized), plus a quote/here-doc-aware scan for git stash. Non-fast-forward rewrites, branch switches/detaches, stash changes, or stash text in a worktree other live sessions share append a [shared HEAD] warning naming them (other projects' sessions only counted), worded as observed-while-running or tentative when the location is uncertain. Peers come from a new workspacelease SetSharedHeadPeers hook installed by session.Manager; not gated on coordination. Spec §7.3 documents it. Tests: TestSharedHeadRewritesAreSurfaced, TestGitTargets, TestSharedHeadPeersNameOtherSessionsInTheWorktree; full go test ./... green.
+
+Commit: Warn in Bash results when a shell rewrites, switches or stashes a HEAD other live sessions share (0568)

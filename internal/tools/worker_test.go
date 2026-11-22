@@ -992,3 +992,111 @@ func TestOverlappingWritesReportNotices(t *testing.T) {
 		t.Fatalf("overlaps = %+v, want %+v", got, want)
 	}
 }
+
+// A shell that rewrites, switches or stashes a HEAD that other live sessions
+// share is told so in its result, naming them; fast-forward commits, read-only
+// stash commands, quoted text, and a tree nobody else works in pass without a
+// warning.
+func TestSharedHeadRewritesAreSurfaced(t *testing.T) {
+	env := []string{"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid"}
+	sh := func(t *testing.T, dir, script string) {
+		t.Helper()
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir, cmd.Env = dir, append(os.Environ(), env...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v: %s", script, err, out)
+		}
+	}
+	repo := func(t *testing.T) (string, string) {
+		root := t.TempDir()
+		sh(t, root, "git init -q -b main && echo a > a.txt && git add a.txt && git commit -qm one && echo b > a.txt && git commit -qam two")
+		key, err := workspacelease.Canonical(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return root, key
+	}
+	root, rootKey := repo(t)
+	ownership := workspacelease.NewService()
+	peers := map[string][]string{}
+	ownership.SetSharedHeadPeers(func(worktree, scope string) []string {
+		if scope != "s_me" {
+			t.Errorf("peers asked for scope %q", scope)
+		}
+		return peers[worktree]
+	})
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: root, Env: env, Ownership: ownership,
+		MutationToken: ownership.NewScopedToken("s_me", "my session")})...)
+	run := func(command string) string {
+		t.Helper()
+		res := dispatch(t, reg, "Bash", fmt.Sprintf(`{"command":%q}`, command))
+		if res.IsError || strings.Contains(res.Content, "[exit:") {
+			t.Fatalf("Bash %q: %s", command, res.Content)
+		}
+		return res.Content
+	}
+	// Nobody else works here: even an amend passes silently.
+	if out := run("git commit -q --amend -m two-again"); strings.Contains(out, "[shared HEAD]") {
+		t.Fatalf("warned with no other session: %s", out)
+	}
+	peers[rootKey] = []string{"s_other (working on 0001)"}
+	other, otherKey := repo(t)
+	check := func(command string, want ...string) {
+		t.Helper()
+		out := run(command)
+		if testing.Verbose() {
+			t.Logf("%q:\n%s", command, out)
+		}
+		if len(want) == 0 {
+			if strings.Contains(out, "[shared HEAD]") {
+				t.Errorf("%q warned: %s", command, out)
+			}
+			return
+		}
+		if !strings.Contains(out, "[shared HEAD]") {
+			t.Errorf("%q did not warn: %s", command, out)
+		}
+		for _, w := range want {
+			if !strings.Contains(out, w) {
+				t.Errorf("%q result lacks %q: %s", command, w, out)
+			}
+		}
+	}
+	mine := "this worktree: s_other (working on 0001)"
+	check("echo c > a.txt && git commit -qam three")
+	check("git commit -q --amend -m three-again", "While this command ran, branch main was rewritten (", mine)
+	check("git reset -q --hard HEAD~1", "branch main was rewritten (", mine)
+	check("echo d > a.txt && git stash -q && git stash pop -q", "This command runs git stash.", mine)
+	check("git stash list && git -C . stash show || true")
+	check("printf '%s\\n' 'git stash pop' \"git reset --hard\"")
+	check("git stash -q", "the stash changed", mine)
+	check("git stash pop -q", "the stash changed", mine)
+	check("git checkout -q -b side", "HEAD moved from branch main (", mine)
+	check("git checkout -q --detach", "to detached ", mine)
+	check("git commit -q --allow-empty -m detached-tip")
+	check("git checkout -q --detach HEAD~1", "detached HEAD moved from ", mine)
+	check("git checkout -q -- a.txt && git switch -q --orphan fresh", "to branch fresh (no commits)", mine)
+	check("git checkout -q main", "HEAD moved from branch fresh (no commits) to branch main (", mine)
+	// Commands aimed at another worktree are watched there, and blame only it.
+	peers[otherKey] = []string{"s_there"}
+	delete(peers, rootKey)
+	there := "share the HEAD, index and stash of "
+	check("git -C '"+other+"' reset -q --hard HEAD~1", "branch main was rewritten (", there, "s_there")
+	// Speculative directories from relative cds do not crowd out a named target.
+	check("cd x; cd y; cd z; git status; git -C '"+other+"' commit -q --amend -m amended", "branch main was rewritten (", there, "s_there")
+	check("cd "+other+" && echo e > a.txt && git stash -q && git stash pop -q", "This command may run git stash here", "s_there")
+	peers[rootKey], peers[otherKey] = []string{"s_other"}, nil
+	check("(cd "+other+"); echo g > a.txt && git stash -q && git stash pop -q", "This command may run git stash here", "s_other")
+	// From outside any git worktree, targeted worktrees are still watched.
+	plain := t.TempDir()
+	outside := New()
+	outside.Add(Worker(&Workspace{Root: plain, Env: env, Ownership: ownership,
+		MutationToken: ownership.NewScopedToken("s_me", "my session")})...)
+	res := dispatch(t, outside, "Bash", fmt.Sprintf(`{"command":%q}`, "git -C "+root+" reset -q --hard HEAD~1"))
+	if res.IsError || !strings.Contains(res.Content, "branch main was rewritten (") || !strings.Contains(res.Content, "of "+root+": s_other") {
+		t.Errorf("reset from outside a worktree: %s", res.Content)
+	}
+	check("echo f > " + other + "/a.txt && git -C " + other + " stash -q && git -C " + other + " stash pop -q")
+}

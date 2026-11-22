@@ -40,15 +40,34 @@ type fileStamp struct {
 type shellSnapshot struct {
 	top     string
 	entries map[string]fileStamp
+	dirty   bool   // entries hold the dirty set (false when git status failed or it is oversized)
 	gen     uint64 // claim generation when the snapshot was taken
+	heads   []treeHead
 }
 
-// snapshotShell captures the worktree's dirty set for shell attribution, or
-// nil when attribution is unavailable (no scoped ownership, not a git worktree,
-// an oversized dirty set, or git failure).
-func (w *Workspace) snapshotShell() *shellSnapshot {
+// snapshotShell captures, before command runs, the worktree's dirty set and
+// the HEAD state of the worktrees command may rewrite (sharedhead.go), or nil
+// without scoped ownership. Outside a git worktree, after a git failure, or
+// for an oversized dirty set, the dirty set is left out (dirty false), but
+// HEAD state is still captured.
+func (w *Workspace) snapshotShell(command string) *shellSnapshot {
 	if w.Ownership == nil || w.MutationToken.Scope() == "" {
 		return nil
+	}
+	snap, gitDir := w.snapshotDirty()
+	if snap == nil {
+		// Outside a git worktree only the worktrees command targets are watched.
+		snap = &shellSnapshot{}
+	}
+	snap.heads = w.watchHeads(snap.top, gitDir, command)
+	return snap
+}
+
+// snapshotDirty captures the worktree's dirty set and returns its git
+// directory, or nil when attribution is unavailable.
+func (w *Workspace) snapshotDirty() (*shellSnapshot, string) {
+	if w.Ownership == nil || w.MutationToken.Scope() == "" {
+		return nil, ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), shellSnapshotTimeout)
 	defer cancel()
@@ -58,53 +77,68 @@ func (w *Workspace) snapshotShell() *shellSnapshot {
 		out, err := cmd.Output()
 		return string(out), err
 	}
-	top, err := git("rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil
+	out, err := git("rev-parse", "--show-toplevel", "--absolute-git-dir")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if err != nil || len(lines) != 2 {
+		return nil, ""
 	}
-	top = strings.TrimSpace(top)
-	out, err := git("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
+	snap := &shellSnapshot{top: lines[0], gen: w.Ownership.Generation()}
+	gitDir := lines[1]
+	out, err = git("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
 	if err != nil {
-		return nil
+		return snap, gitDir
 	}
 	records := strings.Split(out, "\x00")
 	if len(records) > shellSnapshotLimit {
-		return nil
+		return snap, gitDir
 	}
-	snap := &shellSnapshot{top: top, entries: make(map[string]fileStamp, len(records)), gen: w.Ownership.Generation()}
+	snap.dirty = true
+	snap.entries = make(map[string]fileStamp, len(records))
 	for _, record := range records {
 		if len(record) <= 3 {
 			continue
 		}
 		rel := record[3:]
 		var stamp fileStamp
-		if info, err := os.Lstat(filepath.Join(top, filepath.FromSlash(rel))); err == nil {
+		if info, err := os.Lstat(filepath.Join(snap.top, filepath.FromSlash(rel))); err == nil {
 			stamp = fileStamp{exists: true, size: info.Size(), mtime: info.ModTime().UnixNano(), mode: info.Mode()}
 		}
 		snap.entries[rel] = stamp
 	}
-	return snap
+	return snap, gitDir
 }
 
 // claimShellChanges claims, for this workspace's scope, every path that became
 // dirty or changed since before was taken and that no other scope claims. A
 // changed path that another scope had claimed before the command started is
 // left to that scope, reported as an overlap and recorded as an overlap claim
-// (workspacelease.Service.RecordOverlaps); the returned text is the overlap
-// notice for the command's result.
+// (workspacelease.Service.RecordOverlaps). The returned text is the notice for
+// the command's result: those overlaps, and a rewrite or stash of a HEAD
+// other live sessions share (sharedHeadNotices).
 func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 	if before == nil {
 		return ""
 	}
-	after := w.snapshotShell()
-	if after == nil || after.top != before.top {
-		return ""
-	}
 	scope := w.MutationToken.Scope()
-	key, err := workspacelease.Canonical(after.top)
-	if err != nil {
-		return ""
+	var notices []string
+	if before.dirty {
+		after, _ := w.snapshotDirty()
+		if after != nil && after.top == before.top && after.dirty {
+			if key, err := workspacelease.Canonical(after.top); err == nil {
+				if notice := w.claimDirtyChanges(before, after, key, scope); notice != "" {
+					notices = append(notices, notice)
+				}
+			}
+		}
 	}
+	if notice := w.sharedHeadNotices(before, scope); notice != "" {
+		notices = append(notices, notice)
+	}
+	return strings.Join(notices, "\n")
+}
+
+// claimDirtyChanges is claimShellChanges' attribution of the dirty set.
+func (w *Workspace) claimDirtyChanges(before, after *shellSnapshot, key, scope string) string {
 	claims := w.Ownership.ClaimDetails(after.top)
 	var changed, overlapped []string
 	var overlaps []workspacelease.Overlap

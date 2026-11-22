@@ -1417,7 +1417,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 		// sessions and agents costs far more than the rare clobber it prevents.
 		// Their writes are attributed afterwards instead (see shellclaims.go).
 		if !sandboxed {
-			before := ws.snapshotShell()
+			before := ws.snapshotShell(cmdStr)
 			defer func() { toolRes = withNotice(toolRes, ws.claimShellChanges(before)) }()
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
@@ -1599,7 +1599,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	cmd.WaitDelay = 10 * time.Second
 
 	// Bracket the job for shell write attribution; claims land when it exits.
-	before := ws.snapshotShell()
+	before := ws.snapshotShell(cmdStr)
 	if err := cmd.Start(); err != nil {
 		cancelTimeout()
 		result := "exit: failed to start: " + err.Error()

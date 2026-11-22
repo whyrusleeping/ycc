@@ -81,6 +81,33 @@ func (s *Service) NotifyOverlaps(overlaps []Overlap) string {
 	return strings.Join(notes, "\n")
 }
 
+// SetSharedHeadPeers installs fn to name the live sessions, other than scope,
+// whose work shares canonical worktree's HEAD, index and stash. fn runs
+// outside the service lock.
+func (s *Service) SetSharedHeadPeers(fn func(worktree, scope string) []string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sharedHead = fn
+}
+
+// SharedHeadPeers names the other live sessions working in canonical
+// worktree (SetSharedHeadPeers), or nil without that hook.
+func (s *Service) SharedHeadPeers(worktree, scope string) []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	fn := s.sharedHead
+	s.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(worktree, scope)
+}
+
 // PersistClaims makes claims durable: each worktree's claims are loaded from,
 // and saved to, <git-dir>/ycc/claims.json. Call once before use.
 func (s *Service) PersistClaims() {

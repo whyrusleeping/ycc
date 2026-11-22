@@ -31,6 +31,9 @@ type Service struct {
 	gen       uint64
 	persist   bool
 	onOverlap func(Overlap) string
+	// sharedHead names the other live sessions working in a worktree
+	// (SetSharedHeadPeers).
+	sharedHead func(worktree, scope string) []string
 
 	// linesMu guards the line attribution of bookkeeping files (lines.go):
 	// canonical worktree -> repository-relative path -> record.
