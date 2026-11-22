@@ -1,7 +1,7 @@
 ---
 id: "0580"
 title: Warn before reviewing a snapshot that includes changes this session did not make
-status: proposed
+status: todo
 priority: 3
 created: "2026-11-22"
 updated: "2026-11-22"

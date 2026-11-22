@@ -1,7 +1,7 @@
 ---
 id: "0579"
 title: Ready-to-deploy review verdict for tasks with operational acceptance criteria
-status: proposed
+status: todo
 priority: 2
 created: "2026-11-22"
 updated: "2026-11-22"
