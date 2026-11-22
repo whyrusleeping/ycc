@@ -1,7 +1,7 @@
 ---
 id: "0580"
 title: Warn before reviewing a snapshot that includes changes this session did not make
-status: todo
+status: done
 priority: 3
 created: "2026-11-22"
 updated: "2026-11-22"
@@ -21,3 +21,4 @@ Other sessions' backlog or memory edits in the snapshot (at least 8 Wheeler roun
 - A snapshot without such files is reviewed as before.
 
 ## Work log
+- 2026-11-22: Done. `spawn_reviewers` and `re_review` refuse before any reviewer starts when the snapshot holds code files another session also changed or that were dirty before the session. The refusal names the files and the alternatives; `take_other_changes: true` on each call proceeds, and a self-review result carries the note. Tests are in `internal/orchestrator/reviewgate_test.go`. Review (sol) accepted the gate fixes. Its remaining findings were only about other sessions' work in the shared snapshot (0461 `workloop*.go`, `spec.md` hunks), so the user chose a manual scoped commit; that scope was verified to build and test on a clean HEAD worktree.

@@ -1329,9 +1329,10 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			"background:true returns a job_id at once; verdicts arrive automatically or via wait. Reviewers are " +
 			"read-only, so they may run alongside other work.",
 		Params: tools.Obj(map[string]any{
-			"task_id":     tools.StrProp("task id"),
-			"review_tier": tools.StrProp("review tier (" + tierNames + "); omit for the configured default"),
-			"background":  tools.BoolProp("run the reviewers as a background job instead of blocking (always allowed)"),
+			"task_id":            tools.StrProp("task id"),
+			"review_tier":        tools.StrProp("review tier (" + tierNames + "); omit for the configured default"),
+			"background":         tools.BoolProp("run the reviewers as a background job instead of blocking (always allowed)"),
+			"take_other_changes": takeOtherChangesProp(),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -1356,6 +1357,12 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			if plan.Err != nil {
 				return tools.ErrResult("spawn_reviewers: %v", plan.Err), nil
 			}
+			take := tools.GetBool(params, "take_other_changes", false)
+			if !plan.SelfReview {
+				if note := reviewGate("spawn_reviewers", preloadedDiff, take); note != "" {
+					return tools.ErrResult("spawn_reviewers: reviewers not started. %s", note), nil
+				}
+			}
 
 			// Surface the tier selection in events. A reviewer's label may differ
 			// from its model (a tier can task two focuses at the same model), so
@@ -1375,10 +1382,14 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				d.mu.Lock()
 				d.reviewers = nil
 				d.mu.Unlock()
+				selfNote := ""
+				if len(preloadedDiff.Shared)+len(preloadedDiff.Preexisting) > 0 {
+					selfNote = "\n\n" + reviewGateNote("spawn_reviewers", preloadedDiff.Shared, preloadedDiff.Preexisting, "")
+				}
 				return tools.OkResult(fmt.Sprintf("Review tier %q is a coordinator self-review: no reviewer agent was "+
 					"spawned — you (the coordinator) must review this change yourself. Check the identified scoped snapshot "+
-					"against the task's acceptance criteria, then decide whether to commit or send revisions to the implementer.\n\n%s",
-					plan.Tier, compactReviewDiffEvidence(preloadedDiff))), nil
+					"against the task's acceptance criteria, then decide whether to commit or send revisions to the implementer.%s\n\n%s",
+					plan.Tier, selfNote, compactReviewDiffEvidence(preloadedDiff))), nil
 			}
 
 			specs := plan.Specs
@@ -1459,9 +1470,10 @@ func reReview(d *Deps) *gollama.Tool {
 			"history or choose fresh for broad revisions; near-limit contexts refresh automatically. Fresh gets " +
 			"the current diff, prior substantive findings, and your handoff.",
 		Params: tools.Obj(map[string]any{
-			"task_id":      tools.StrProp("task id"),
-			"context_mode": map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional review context strategy: 'retain' (default) or 'fresh'"},
-			"handoff":      tools.StrProp("for fresh mode, concise self-contained context: what changed, prior blockers to verify, and any changed approach; bounded to 32 KiB"),
+			"task_id":            tools.StrProp("task id"),
+			"context_mode":       map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional review context strategy: 'retain' (default) or 'fresh'"},
+			"handoff":            tools.StrProp("for fresh mode, concise self-contained context: what changed, prior blockers to verify, and any changed approach; bounded to 32 KiB"),
+			"take_other_changes": takeOtherChangesProp(),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -1489,6 +1501,9 @@ func reReview(d *Deps) *gollama.Tool {
 			currentDiff := d.reviewDiff(id)
 			if currentDiff.Err != nil {
 				return tools.ErrResult("re_review: changeset evidence failed: %v", currentDiff.Err), nil
+			}
+			if note := reviewGate("re_review", currentDiff, tools.GetBool(params, "take_other_changes", false)); note != "" {
+				return tools.ErrResult("re_review: reviewers not started. %s", note), nil
 			}
 			currentEvidence := compactReviewDiffEvidence(currentDiff)
 			for _, h := range handles {

@@ -14,6 +14,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
 const (
@@ -35,7 +36,13 @@ type reviewDiffBuild struct {
 	Tree       string
 	DiffBytes  int
 	DiffSHA256 string
-	Err        error
+	// Shared and Preexisting are the code files (never backlog or memory
+	// files) the snapshot takes whole although they hold changes this session
+	// did not make: also written by another session, or already dirty before
+	// this session (see reviewGate).
+	Shared      []string
+	Preexisting []string
+	Err         error
 }
 
 // buildReviewDiffHistory captures a non-mutating, explicitly scoped snapshot
@@ -63,7 +70,62 @@ func (d *Deps) reviewDiff(taskID string) reviewDiffBuild {
 	if err != nil {
 		return reviewDiffBuild{Err: err}
 	}
-	return buildReviewDiffFromChanges(changes, time.Since(start).Milliseconds())
+	built := buildReviewDiffFromChanges(changes, time.Since(start).Milliseconds())
+	bookkeeping := BookkeepingPaths(d.Workspace, d.Docs)
+	inSnapshot := make(map[string]bool, len(changes.Paths))
+	for _, path := range changes.Paths {
+		inSnapshot[path] = true
+	}
+	code := func(paths []string) []string {
+		var out []string
+		for _, path := range paths {
+			if inSnapshot[path] && (bookkeeping == nil || !bookkeeping(path)) {
+				out = append(out, path)
+			}
+		}
+		return out
+	}
+	built.Shared, built.Preexisting = code(changes.Shared), code(changes.Preexisting)
+	return built
+}
+
+// reviewGate tells the coordinator, before any reviewer starts, which code
+// files the snapshot takes whole although they hold changes this session did
+// not make, and what to do instead. It returns "" when there are none or when
+// take (take_other_changes) is set; the choice is per call, since the other
+// work in those files can change between rounds. Reviewers judging another
+// task's partial edits is a common cause of repeated review rounds.
+func reviewGate(tool string, built reviewDiffBuild, take bool) string {
+	if take || len(built.Shared)+len(built.Preexisting) == 0 {
+		return ""
+	}
+	return reviewGateNote(tool, built.Shared, built.Preexisting, "call "+tool+" with take_other_changes: true (on each call), and")
+}
+
+// takeOtherChangesProp is the spawn_reviewers/re_review opt-in past reviewGate.
+func takeOtherChangesProp() map[string]any {
+	return tools.BoolProp("review although the snapshot takes whole files with changes this session did not make " +
+		"(named by an earlier refusal; needed on each call); you then name the other work in the commit")
+}
+
+// reviewGateNote names the files and the alternatives; take is how to take
+// them whole (empty when the review already proceeds).
+func reviewGateNote(tool string, shared, preexisting []string, take string) string {
+	var b strings.Builder
+	b.WriteString("The scoped snapshot takes whole files that hold changes this session did not make; reviewers would judge those changes too, and another task's partial edits may not even build.\n")
+	if len(shared) > 0 {
+		fmt.Fprintf(&b, "Also written by another session (%d): %s\n", len(shared), boundedPathList(shared, 1024))
+	}
+	if len(preexisting) > 0 {
+		fmt.Fprintf(&b, "Already dirty before this session (%d): %s\n", len(preexisting), boundedPathList(preexisting, 1024))
+	}
+	if take != "" {
+		take = " " + take
+	}
+	b.WriteString("Only whole files can be reviewed and committed, not hunks. Either wait for the other work to be committed " +
+		"(then call " + tool + " again), move this work to a separate workstream, or take the files whole deliberately:" +
+		take + " name the other work in the commit message or outcome.")
+	return b.String()
 }
 
 func buildReviewDiffFromChanges(changes *git.Changeset, duration int64) reviewDiffBuild {
