@@ -237,11 +237,11 @@ all, and the manifest and commit result list it as preexisting; precise hunk att
 attempted. The `commit` tool's optional `paths` adopts further whole files the same way, such as
 another task's work that must land together, and a bookkeeping file named there is taken whole. A
 file another live session also changed is committed only when named there (§7.3). Review likewise
-takes such files whole: before any reviewer starts, `spawn_reviewers` and `re_review` refuse a
-snapshot holding code files another session also changed or that were already dirty before this
-session, naming them and the alternatives (wait for the other commit, use a workstream, or take them
-whole deliberately with `take_other_changes`, given per call, and name the other work at commit);
-a self-review result carries the same note. A
+takes such files whole, and never waits on them: when the snapshot holds code files another session
+also changed or that were already dirty before this session, every reviewer round is told which
+files hold that other work and to judge only this task's changes, so another task's partial edits
+or the build failures they cause do not block this one; the review result names the same files for
+the coordinator, who names the other work at commit. A
 commit may therefore carry other uncommitted work in shared files: the agent names co-included tasks
 in its message or outcome rather than splitting or abandoning work to avoid it. Files the session
 neither changed nor named are never committed, and whole-tree commits are never made. Inclusion

@@ -14,7 +14,6 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
-	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
 const (
@@ -39,7 +38,7 @@ type reviewDiffBuild struct {
 	// Shared and Preexisting are the code files (never backlog or memory
 	// files) the snapshot takes whole although they hold changes this session
 	// did not make: also written by another session, or already dirty before
-	// this session (see reviewGate).
+	// this session (see otherChangesReviewNote).
 	Shared      []string
 	Preexisting []string
 	Err         error
@@ -89,43 +88,58 @@ func (d *Deps) reviewDiff(taskID string) reviewDiffBuild {
 	return built
 }
 
-// reviewGate tells the coordinator, before any reviewer starts, which code
-// files the snapshot takes whole although they hold changes this session did
-// not make, and what to do instead. It returns "" when there are none or when
-// take (take_other_changes) is set; the choice is per call, since the other
-// work in those files can change between rounds. Reviewers judging another
-// task's partial edits is a common cause of repeated review rounds.
-func reviewGate(tool string, built reviewDiffBuild, take bool) string {
-	if take || len(built.Shared)+len(built.Preexisting) == 0 {
+// otherChangesFiles lists the snapshot's files that hold changes this session
+// did not make, by kind.
+func otherChangesFiles(built reviewDiffBuild) string {
+	var b strings.Builder
+	if len(built.Shared) > 0 {
+		fmt.Fprintf(&b, "\nAlso written by another session (%d): %s", len(built.Shared), boundedPathList(built.Shared, 1024))
+	}
+	if len(built.Preexisting) > 0 {
+		fmt.Fprintf(&b, "\nAlready dirty before this session (%d): %s", len(built.Preexisting), boundedPathList(built.Preexisting, 1024))
+	}
+	return b.String()
+}
+
+// otherChangesReviewNote tells a reviewer which files also hold other work, so
+// another task's partial edits do not block this one. It never stops a review:
+// parallel sessions in one worktree must not wait on each other to be reviewed.
+func otherChangesReviewNote(built reviewDiffBuild) string {
+	files := otherChangesFiles(built)
+	if files == "" {
 		return ""
 	}
-	return reviewGateNote(tool, built.Shared, built.Preexisting, "call "+tool+" with take_other_changes: true (on each call), and")
+	return "\n\nOTHER WORK IN THIS SNAPSHOT: these files are included whole and also hold uncommitted changes this session " +
+		"did not make:" + files + "\nJudge only this task's changes. A defect or a build/test failure caused by the other " +
+		"work is not a finding against this task: mention it in your summary as attributable to that work, and verify " +
+		"this task's changes as far as you can."
 }
 
-// takeOtherChangesProp is the spawn_reviewers/re_review opt-in past reviewGate.
-func takeOtherChangesProp() map[string]any {
-	return tools.BoolProp("review although the snapshot takes whole files with changes this session did not make " +
-		"(named by an earlier refusal; needed on each call); you then name the other work in the commit")
+// reviewedOtherChangesNote is otherChangesCommitNote for the snapshots the
+// reviewers actually inspected: a context-error retry may have taken a newer
+// one than the round started with.
+func reviewedOtherChangesNote(handles []*reviewerHandle) string {
+	var merged reviewDiffBuild
+	for _, h := range handles {
+		merged.Shared = append(merged.Shared, h.evidence.Shared...)
+		merged.Preexisting = append(merged.Preexisting, h.evidence.Preexisting...)
+	}
+	sort.Strings(merged.Shared)
+	sort.Strings(merged.Preexisting)
+	merged.Shared, merged.Preexisting = uniqueStrings(merged.Shared), uniqueStrings(merged.Preexisting)
+	return otherChangesCommitNote(merged)
 }
 
-// reviewGateNote names the files and the alternatives; take is how to take
-// them whole (empty when the review already proceeds).
-func reviewGateNote(tool string, shared, preexisting []string, take string) string {
-	var b strings.Builder
-	b.WriteString("The scoped snapshot takes whole files that hold changes this session did not make; reviewers would judge those changes too, and another task's partial edits may not even build.\n")
-	if len(shared) > 0 {
-		fmt.Fprintf(&b, "Also written by another session (%d): %s\n", len(shared), boundedPathList(shared, 1024))
+// otherChangesCommitNote tells the coordinator, beside the verdicts, what those
+// files mean at commit.
+func otherChangesCommitNote(built reviewDiffBuild) string {
+	files := otherChangesFiles(built)
+	if files == "" {
+		return ""
 	}
-	if len(preexisting) > 0 {
-		fmt.Fprintf(&b, "Already dirty before this session (%d): %s\n", len(preexisting), boundedPathList(preexisting, 1024))
-	}
-	if take != "" {
-		take = " " + take
-	}
-	b.WriteString("Only whole files can be reviewed and committed, not hunks. Either wait for the other work to be committed " +
-		"(then call " + tool + " again), move this work to a separate workstream, or take the files whole deliberately:" +
-		take + " name the other work in the commit message or outcome.")
-	return b.String()
+	return "\n\nOther work rides along in files of this snapshot; reviewers were told to judge only this task's changes:" +
+		files + "\nCommit takes these files whole: name the other work in the message or outcome (a file another live " +
+		"session holds is committed only when named in paths)."
 }
 
 func buildReviewDiffFromChanges(changes *git.Changeset, duration int64) reviewDiffBuild {
@@ -173,7 +187,8 @@ func buildReviewDiffFromChanges(changes *git.Changeset, duration int64) reviewDi
 
 func compactReviewDiffEvidence(built reviewDiffBuild) string {
 	return fmt.Sprintf("CURRENT SCOPED CHANGESET %s (baseline %s)\nManifest: %d paths: %s\nDiff: %d bytes, sha256 %s\nExact retrieval: %s",
-		built.SnapshotID, built.BaselineID, len(built.Paths), boundedPathList(built.Paths, 4096), built.DiffBytes, built.DiffSHA256, built.Command)
+		built.SnapshotID, built.BaselineID, len(built.Paths), boundedPathList(built.Paths, 4096), built.DiffBytes, built.DiffSHA256, built.Command) +
+		otherChangesReviewNote(built)
 }
 
 func boundedPathList(paths []string, budget int) string {
