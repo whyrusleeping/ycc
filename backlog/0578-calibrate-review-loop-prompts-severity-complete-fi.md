@@ -1,10 +1,10 @@
 ---
 id: "0578"
 title: 'Calibrate review-loop prompts: severity, complete first pass, fix the class'
-status: proposed
+status: todo
 priority: 2
 created: "2026-11-21"
-updated: "2026-11-21"
+updated: "2026-11-22"
 depends_on: []
 spec_refs: []
 ---
@@ -18,6 +18,8 @@ Mean review rounds (review-tool calls) per reviewed session rose from 1.1 (July)
 - The reviewer prompt does not say whether supplied evidence can satisfy a gate the sandbox cannot execute, such as the Mac build in 0573 (iOS session search UI).
 
 Demonstrated criterion failures must still block, whether or not they fail closed.
+
+Wheeler's logs show the same rise (2.14 mean rounds per session/task pair in November, 13% of pairs with four or more). From November 17, `gpt-6.2-sol` revised 77% of accept-or-revise verdicts there and 90% in ycc, against 58% for `gpt-6.1-sol` in Wheeler over the same days, so prompt calibration should be checked against `gpt-6.2-sol`.
 
 ## Acceptance criteria
 - The reviewer prompt defines blocker/major as a demonstrated acceptance-criterion failure, data loss or corruption, or a security exposure within the task's scope, whether or not it fails closed; hardening beyond the task's criteria is a minor finding or a proposed follow-up.
