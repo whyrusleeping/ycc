@@ -134,6 +134,15 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `resumeSession`(request: Ycc_V1_ResumeSessionRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ResumeSessionResponse>
 
+    /// ForkSession copies a session's log up to (not including) one of its user
+    /// turns into a new persisted session ending in a session_forked marker. The
+    /// parent is unchanged; the fork's first input reopens it and takes the cut
+    /// turn's place (a queued steer is cut where the model received it).
+    /// InvalidArgument when at_seq is not a user_input; FailedPrecondition for an
+    /// in-flight workstream session.
+    @available(iOS 13, *)
+    func `forkSession`(request: Ycc_V1_ForkSessionRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ForkSessionResponse>
+
     /// Projects — persistent multi-project daemon.
     @available(iOS 13, *)
     func `listProjects`(request: Ycc_V1_ListProjectsRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ListProjectsResponse>
@@ -562,6 +571,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `forkSession`(request: Ycc_V1_ForkSessionRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ForkSessionResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ForkSession", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `listProjects`(request: Ycc_V1_ListProjectsRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ListProjectsResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/ListProjects", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -929,6 +943,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let setPlanOnly = Connect.MethodSpec(name: "SetPlanOnly", service: "ycc.v1.SessionService", type: .unary)
             public static let stopSession = Connect.MethodSpec(name: "StopSession", service: "ycc.v1.SessionService", type: .unary)
             public static let resumeSession = Connect.MethodSpec(name: "ResumeSession", service: "ycc.v1.SessionService", type: .unary)
+            public static let forkSession = Connect.MethodSpec(name: "ForkSession", service: "ycc.v1.SessionService", type: .unary)
             public static let listProjects = Connect.MethodSpec(name: "ListProjects", service: "ycc.v1.SessionService", type: .unary)
             public static let addProject = Connect.MethodSpec(name: "AddProject", service: "ycc.v1.SessionService", type: .unary)
             public static let removeProject = Connect.MethodSpec(name: "RemoveProject", service: "ycc.v1.SessionService", type: .unary)

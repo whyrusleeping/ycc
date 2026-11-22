@@ -11,7 +11,7 @@ import { useInspector } from "../inspector/inspector";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
 import { AnswerPanel } from "./AnswerPanel";
 import { QuestionNotices } from "../coordination/parts";
-import { Composer, type ComposerHandle } from "./Composer";
+import { Composer, composerKey, type ComposerHandle } from "./Composer";
 import type { SessionController, SessionSnapshot } from "./controller";
 import { Transcript } from "./Transcript";
 import { useSessionController, useSessionSnapshot } from "./useSession";
@@ -499,7 +499,7 @@ export function SessionView({
         canCompose && (
           <Composer
             ref={composer}
-            sessionKey={`${project}\u0000${sessionId}`}
+            sessionKey={composerKey(project, sessionId)}
             placeholder={placeholder}
             picturesBlocked={livePhase && snap.awaitsAnswer ? "Answer the pending question before sending pictures." : undefined}
             sendAttrs={{ phase: snap.awaitsAnswer ? "question" : snap.pauseRequested ? "pausing" : snap.phase.kind }}

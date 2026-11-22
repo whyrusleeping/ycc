@@ -131,6 +131,12 @@ type Session struct {
 	// persisted log ended on; run() waits for its answer before anything else.
 	resumeQuestion *resumableQuestion
 
+	// forkAwaitsInput, set by Reopen for a fork no input has reached yet, makes
+	// run() wait for that input even when the copied conversation ends on tool
+	// results: a fork cut at a steer resumes with the edited steer, as the
+	// parent's model received the original.
+	forkAwaitsInput bool
+
 	// messageCh is the single ordered queue of idle user input (text and any
 	// native attachments). One queue is what keeps serially accepted inputs in
 	// their accepted order when the run owner drains them.
@@ -1706,7 +1712,7 @@ func (s *Session) run() {
 			if !s.awaitNextRun(false) {
 				return
 			}
-		} else if !s.currentLoop().PendingResponse() {
+		} else if !s.currentLoop().PendingResponse() || s.forkAwaitsInput {
 			s.setStatus(event.StatusIdle)
 			if !s.awaitNextRun(false) {
 				return
@@ -3440,6 +3446,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	// question as a live gate (armed before registration, so an answer RPC can
 	// never race the run goroutine's start).
 	s.restoreQuestion(findResumableQuestion(events), loop.History())
+	s.forkAwaitsInput = forkAwaitingInput(events)
 	// Seed the spend-guard flags from the replayed log so a session that already
 	// crossed the warning/breach line does not re-fire or re-ask on reopen.
 	s.seedBudgetFromLog(events)

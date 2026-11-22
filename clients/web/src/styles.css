@@ -1627,6 +1627,19 @@ a.row-task:hover {
   text-transform: lowercase;
 }
 
+/* "Fork from here" stays out of the way until the turn is hovered or focused. */
+.turn-head .row-fork {
+  margin-left: auto;
+  font-family: var(--font);
+  opacity: 0;
+}
+
+.turn.user:hover .row-fork,
+.turn.user:focus-within .row-fork,
+.turn-head .row-fork:disabled {
+  opacity: 1;
+}
+
 .row.question {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -8909,5 +8922,11 @@ a.held-task {
   .tl-bar.open,
   .job-output-cursor {
     animation: none;
+  }
+}
+
+@media (hover: none) {
+  .turn-head .row-fork {
+    opacity: 1;
   }
 }

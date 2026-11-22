@@ -459,7 +459,7 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 		switch ev.Type {
 		case event.PauseRequested:
 			st.PauseRequested = true
-		case event.Interrupted, event.Resumed, event.PauseCancelled, event.SessionStopped, event.Type("session_ended"), event.SessionReopened:
+		case event.Interrupted, event.Resumed, event.PauseCancelled, event.SessionStopped, event.Type("session_ended"), event.SessionReopened, event.SessionForked:
 			st.PauseRequested = false
 		}
 		switch ev.Type {
@@ -477,6 +477,13 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 			}
 		case event.SessionStopped, event.Type("session_ended"):
 			st.Phase = "stopped"
+		case event.SessionForked:
+			// A fork waits for input, whatever the parent was doing; a question
+			// still open in the copied prefix is dropped.
+			st.Phase = "idle"
+			st.Pending = nil
+			st.PendingRowID = ""
+			st.OpenQuestionRowID = ""
 		case event.RoleConfigChanged:
 			if c := str("coordinator"); c != "" {
 				if c != st.Coordinator {
@@ -703,6 +710,8 @@ var presentationKeys = map[string]bool{
 	"findings": true, "findings_by_severity": true, "reviewed_snapshot_id": true,
 	// plan_only_changed: clients label the row on or off.
 	"plan_only": true,
+	// session_forked: clients link the parent session.
+	"parent": true, "at_seq": true,
 }
 
 func compactPresentationData(in map[string]any) map[string]any {

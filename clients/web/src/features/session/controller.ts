@@ -82,6 +82,7 @@ export type SessionApi = Pick<
   | "resume"
   | "stopSession"
   | "resumeSession"
+  | "forkSession"
   | "setPlanOnly"
 >;
 
@@ -754,6 +755,20 @@ export class SessionController {
     } finally {
       this.reopening = false;
       this.publish();
+    }
+  }
+
+  /**
+   * Fork this session before the user turn at `atSeq` (ForkSession). Resolves
+   * the new session's id and the turn's text, or null after reporting the error.
+   */
+  async fork(atSeq: number): Promise<{ sessionId: string; text: string } | null> {
+    try {
+      const r = await this.api.forkSession({ project: this.project, sessionId: this.sessionId, atSeq: BigInt(atSeq) });
+      return { sessionId: r.sessionId, text: r.text };
+    } catch (err) {
+      this.reportActionError("fork", err);
+      return null;
     }
   }
 

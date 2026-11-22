@@ -125,6 +125,9 @@ const (
 	// SessionServiceResumeSessionProcedure is the fully-qualified name of the SessionService's
 	// ResumeSession RPC.
 	SessionServiceResumeSessionProcedure = "/ycc.v1.SessionService/ResumeSession"
+	// SessionServiceForkSessionProcedure is the fully-qualified name of the SessionService's
+	// ForkSession RPC.
+	SessionServiceForkSessionProcedure = "/ycc.v1.SessionService/ForkSession"
 	// SessionServiceListProjectsProcedure is the fully-qualified name of the SessionService's
 	// ListProjects RPC.
 	SessionServiceListProjectsProcedure = "/ycc.v1.SessionService/ListProjects"
@@ -384,6 +387,13 @@ type SessionServiceClient interface {
 	// (reconstructs loop history; "resume = replay"). Idempotent
 	// if the session is already live.
 	ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error)
+	// ForkSession copies a session's log up to (not including) one of its user
+	// turns into a new persisted session ending in a session_forked marker. The
+	// parent is unchanged; the fork's first input reopens it and takes the cut
+	// turn's place (a queued steer is cut where the model received it).
+	// InvalidArgument when at_seq is not a user_input; FailedPrecondition for an
+	// in-flight workstream session.
+	ForkSession(context.Context, *connect.Request[v1.ForkSessionRequest]) (*connect.Response[v1.ForkSessionResponse], error)
 	// Projects — persistent multi-project daemon.
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -710,6 +720,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+SessionServiceResumeSessionProcedure,
 			connect.WithSchema(sessionServiceMethods.ByName("ResumeSession")),
+			connect.WithClientOptions(opts...),
+		),
+		forkSession: connect.NewClient[v1.ForkSessionRequest, v1.ForkSessionResponse](
+			httpClient,
+			baseURL+SessionServiceForkSessionProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ForkSession")),
 			connect.WithClientOptions(opts...),
 		),
 		listProjects: connect.NewClient[v1.ListProjectsRequest, v1.ListProjectsResponse](
@@ -1150,6 +1166,7 @@ type sessionServiceClient struct {
 	setPlanOnly            *connect.Client[v1.SetPlanOnlyRequest, v1.SetPlanOnlyResponse]
 	stopSession            *connect.Client[v1.StopSessionRequest, v1.StopSessionResponse]
 	resumeSession          *connect.Client[v1.ResumeSessionRequest, v1.ResumeSessionResponse]
+	forkSession            *connect.Client[v1.ForkSessionRequest, v1.ForkSessionResponse]
 	listProjects           *connect.Client[v1.ListProjectsRequest, v1.ListProjectsResponse]
 	addProject             *connect.Client[v1.AddProjectRequest, v1.AddProjectResponse]
 	removeProject          *connect.Client[v1.RemoveProjectRequest, v1.RemoveProjectResponse]
@@ -1372,6 +1389,11 @@ func (c *sessionServiceClient) StopSession(ctx context.Context, req *connect.Req
 // ResumeSession calls ycc.v1.SessionService.ResumeSession.
 func (c *sessionServiceClient) ResumeSession(ctx context.Context, req *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
 	return c.resumeSession.CallUnary(ctx, req)
+}
+
+// ForkSession calls ycc.v1.SessionService.ForkSession.
+func (c *sessionServiceClient) ForkSession(ctx context.Context, req *connect.Request[v1.ForkSessionRequest]) (*connect.Response[v1.ForkSessionResponse], error) {
+	return c.forkSession.CallUnary(ctx, req)
 }
 
 // ListProjects calls ycc.v1.SessionService.ListProjects.
@@ -1772,6 +1794,13 @@ type SessionServiceHandler interface {
 	// (reconstructs loop history; "resume = replay"). Idempotent
 	// if the session is already live.
 	ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error)
+	// ForkSession copies a session's log up to (not including) one of its user
+	// turns into a new persisted session ending in a session_forked marker. The
+	// parent is unchanged; the fork's first input reopens it and takes the cut
+	// turn's place (a queued steer is cut where the model received it).
+	// InvalidArgument when at_seq is not a user_input; FailedPrecondition for an
+	// in-flight workstream session.
+	ForkSession(context.Context, *connect.Request[v1.ForkSessionRequest]) (*connect.Response[v1.ForkSessionResponse], error)
 	// Projects — persistent multi-project daemon.
 	ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error)
 	AddProject(context.Context, *connect.Request[v1.AddProjectRequest]) (*connect.Response[v1.AddProjectResponse], error)
@@ -2094,6 +2123,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		SessionServiceResumeSessionProcedure,
 		svc.ResumeSession,
 		connect.WithSchema(sessionServiceMethods.ByName("ResumeSession")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceForkSessionHandler := connect.NewUnaryHandler(
+		SessionServiceForkSessionProcedure,
+		svc.ForkSession,
+		connect.WithSchema(sessionServiceMethods.ByName("ForkSession")),
 		connect.WithHandlerOptions(opts...),
 	)
 	sessionServiceListProjectsHandler := connect.NewUnaryHandler(
@@ -2562,6 +2597,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceStopSessionHandler.ServeHTTP(w, r)
 		case SessionServiceResumeSessionProcedure:
 			sessionServiceResumeSessionHandler.ServeHTTP(w, r)
+		case SessionServiceForkSessionProcedure:
+			sessionServiceForkSessionHandler.ServeHTTP(w, r)
 		case SessionServiceListProjectsProcedure:
 			sessionServiceListProjectsHandler.ServeHTTP(w, r)
 		case SessionServiceAddProjectProcedure:
@@ -2827,6 +2864,10 @@ func (UnimplementedSessionServiceHandler) StopSession(context.Context, *connect.
 
 func (UnimplementedSessionServiceHandler) ResumeSession(context.Context, *connect.Request[v1.ResumeSessionRequest]) (*connect.Response[v1.ResumeSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ResumeSession is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ForkSession(context.Context, *connect.Request[v1.ForkSessionRequest]) (*connect.Response[v1.ForkSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ForkSession is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListProjects(context.Context, *connect.Request[v1.ListProjectsRequest]) (*connect.Response[v1.ListProjectsResponse], error) {

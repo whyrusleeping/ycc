@@ -384,6 +384,17 @@ message ResumeSessionResponse {
   string workspace = 4;
 }
 
+// ForkSessionRequest names a user turn of a session by its user_input seq.
+message ForkSessionRequest {
+  string project = 1; // registered project; empty allowed only when exactly one exists
+  string session_id = 2;
+  int64 at_seq = 3;
+}
+message ForkSessionResponse {
+  string session_id = 1; // the new, persisted (not yet live) fork
+  string text = 2;       // the text of the turn the fork was cut before
+}
+
 message ListModesRequest {}
 message Mode {
   string name = 1;
@@ -493,6 +504,8 @@ message SessionSummary {
   // recovery session); empty for sessions in the project's own tree. In-flight
   // workstream sessions are listed with their project's history.
   string workstream_id = 22;
+  // The session this one was forked from (ForkSession); empty if not a fork.
+  string forked_from = 23;
 }
 // Sessions are ordered by the serialized millisecond-precision last_activity
 // descending, started_at descending, then id ascending. The keyset cursor
@@ -1933,6 +1946,13 @@ service SessionService {
   // (reconstructs loop history; "resume = replay"). Idempotent
   // if the session is already live.
   rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
+  // ForkSession copies a session's log up to (not including) one of its user
+  // turns into a new persisted session ending in a session_forked marker. The
+  // parent is unchanged; the fork's first input reopens it and takes the cut
+  // turn's place (a queued steer is cut where the model received it).
+  // InvalidArgument when at_seq is not a user_input; FailedPrecondition for an
+  // in-flight workstream session.
+  rpc ForkSession(ForkSessionRequest) returns (ForkSessionResponse);
 
   // Projects — persistent multi-project daemon.
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);

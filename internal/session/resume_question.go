@@ -85,7 +85,7 @@ func findResumableQuestion(events []event.Event) *resumableQuestion {
 			if ev.Actor == "coordinator" {
 				q = nil
 			}
-		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice:
+		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.SessionForked:
 			q = nil
 		}
 	}

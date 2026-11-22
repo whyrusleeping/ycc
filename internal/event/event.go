@@ -126,6 +126,12 @@ const (
 	// the log, and new activity appends to the same continuous stream. It does not
 	// change status (see Reduce).
 	SessionReopened Type = "session_reopened"
+	// SessionForked ends the copied prefix of a forked session's log
+	// (data: { parent, at_seq }): every earlier event was copied from session
+	// parent, up to the user turn at_seq, which was not. The fork is idle,
+	// awaiting input; a question still open before the marker is dropped.
+	// Usage and commits before the marker are the parent's.
+	SessionForked Type = "session_forked"
 	// Parallel workstreams lifecycle.
 	// These are recorded on the workstream's own session stream so the merge flow
 	// is auditable in the log and projectable by the reducer.

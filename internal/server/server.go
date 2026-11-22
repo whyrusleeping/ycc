@@ -456,6 +456,7 @@ func sessionSummaryProto(su session.SessionSummary) *v1.SessionSummary {
 		FollowUpAt:        rfc3339(su.FollowUpAt),
 		ReadThrough:       rfc3339(su.ReadThrough),
 		WorkstreamId:      su.WorkstreamID,
+		ForkedFrom:        su.ForkedFrom,
 	}
 }
 
@@ -1166,6 +1167,23 @@ func (s *Server) ResumeSession(_ context.Context, req *connect.Request[v1.Resume
 		Status:    string(sess.Status()),
 		Workspace: sess.Workspace,
 	}), nil
+}
+
+func (s *Server) ForkSession(_ context.Context, req *connect.Request[v1.ForkSessionRequest]) (*connect.Response[v1.ForkSessionResponse], error) {
+	fork, err := s.mgr.ForkSession(req.Msg.Project, req.Msg.SessionId, int(req.Msg.AtSeq))
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject), errors.Is(err, session.ErrInvalidForkPoint):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrUnknownSession):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, session.ErrForkUnsupported):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	return connect.NewResponse(&v1.ForkSessionResponse{SessionId: fork.SessionID, Text: fork.Text}), nil
 }
 
 // sessionForAnswer resolves the session an answer RPC targets. A session that

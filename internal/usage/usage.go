@@ -185,6 +185,11 @@ func (r *reducer) observe(typ event.Type, actor string, ts time.Time, task, mode
 	switch typ {
 	case event.TaskFocus:
 		r.focus, _ = task.(string)
+	case event.SessionForked:
+		// Turns before a fork marker were copied from the parent, which already
+		// accounts for them. The focus carries over to the fork's own turns.
+		r.buckets = map[entryKey]*Entry{}
+		r.order = nil
 	case event.ModelTurn:
 		u := usageFromData(usage)
 		model, _ := modelName.(string)
@@ -399,7 +404,8 @@ type usageRecord struct {
 // event, so tool output (the bulk of a log) is not decoded. It is a superset
 // filter: the reducer still switches on the decoded type.
 func mayAffectUsage(line []byte) bool {
-	return bytes.Contains(line, []byte(`"model_turn"`)) || bytes.Contains(line, []byte(`"task_focus"`))
+	return bytes.Contains(line, []byte(`"model_turn"`)) || bytes.Contains(line, []byte(`"task_focus"`)) ||
+		bytes.Contains(line, []byte(`"session_forked"`))
 }
 
 // Aggregate groups entries by the selected dimensions (default: task), filters

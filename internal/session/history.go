@@ -62,6 +62,9 @@ type SessionSummary struct {
 	WorkstreamID string
 	// Commits are the session's commit_made records, in log order.
 	Commits []SessionCommit
+	// ForkedFrom is the session this one was forked from (its last
+	// session_forked marker); empty for sessions that are not forks.
+	ForkedFrom string
 }
 
 // SessionCommit is one commit a session recorded (commit_made): its sha, the
@@ -134,12 +137,32 @@ func reduceSessionSummary(workspace, path string, evs []event.Event) SessionSumm
 		ToolCalls:         proj.ToolCalls,
 		Waiting:           sessionWaitingInput(evs),
 		Commits:           sessionCommits(evs),
+		ForkedFrom:        forkedFrom(evs),
 	}
+}
+
+// forkedFrom names the direct parent of a fork: a fork of a fork copies its
+// parent's marker too, so the last marker wins.
+func forkedFrom(evs []event.Event) string {
+	parent := ""
+	for _, ev := range evs {
+		if ev.Type == event.SessionForked {
+			if p, _ := ev.Data["parent"].(string); p != "" {
+				parent = p
+			}
+		}
+	}
+	return parent
 }
 
 func sessionCommits(evs []event.Event) []SessionCommit {
 	var out []SessionCommit
 	for _, ev := range evs {
+		if ev.Type == event.SessionForked {
+			// Commits before a fork marker were made by the parent.
+			out = nil
+			continue
+		}
 		if ev.Type != event.CommitMade {
 			continue
 		}
@@ -166,7 +189,7 @@ func sessionWaitingInput(evs []event.Event) bool {
 	waiting := false
 	for _, ev := range evs {
 		switch ev.Type {
-		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice:
+		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.SessionForked:
 			waiting = false
 		default:
 			// Subagents may keep working while the coordinator waits for a human.
@@ -372,6 +395,12 @@ func sessionModelUsage(evs []event.Event) ([]ModelUsage, int64) {
 	byModel := make(map[string]int64)
 	var total int64
 	for _, ev := range evs {
+		if ev.Type == event.SessionForked {
+			// The parent accounts for the turns copied before a fork marker.
+			byModel = make(map[string]int64)
+			total = 0
+			continue
+		}
 		if ev.Type != event.ModelTurn {
 			continue
 		}

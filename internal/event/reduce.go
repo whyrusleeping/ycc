@@ -128,6 +128,9 @@ func Reduce(events []Event) Projection {
 			// its existing log. It does NOT change status — the reopened session's
 			// status is whatever its prior events established (it resumes idle,
 			// awaiting the first new input).
+		case SessionForked:
+			// A fork waits for its first input, whatever the parent was doing.
+			p.Status = StatusIdle
 		case WorkstreamCreated:
 			p.WorkstreamID = str(ev.Data, "workstream")
 			p.WorkstreamState = "created"

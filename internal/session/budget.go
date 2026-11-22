@@ -209,6 +209,9 @@ func (s *Session) seedBudgetFromLog(events []event.Event) {
 		case event.BudgetExceeded:
 			breached = true
 			warned = true
+		case event.SessionForked:
+			// The parent's spend stays the parent's (usage drops it too).
+			warned, breached = false, false
 		}
 	}
 

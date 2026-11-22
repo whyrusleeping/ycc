@@ -233,7 +233,7 @@ function SidebarRow({
   const state = compactState(s);
   const age = compactAge(s.lastActivity || s.startedAt, now);
   const asks = needsAnswer(s);
-  const hasLead = !!project || chips.length > 0 || loopOwned || !!s.workstreamId;
+  const hasLead = !!project || chips.length > 0 || loopOwned || !!s.workstreamId || !!s.forkedFrom;
   const trail = (
     <span className="row-trail">
       <FollowUpFlag s={s} pending={followUpPending} onToggle={onToggleFollowUp} />
@@ -287,6 +287,11 @@ function SidebarRow({
                 ),
               )}
               {loopOwned && <span className="row-loop" title="Started by the work loop">loop</span>}
+              {s.forkedFrom && (
+                <span className="row-loop" title={`Forked from ${s.forkedFrom}`}>
+                  fork
+                </span>
+              )}
             </span>
             {trail}
           </div>

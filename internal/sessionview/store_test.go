@@ -761,3 +761,32 @@ func TestPlanOnlyStateAndRows(t *testing.T) {
 		t.Fatalf("after off: state = %+v, %v", state, err)
 	}
 }
+
+// A fork's marker leaves it idle with no gate, whatever its copied prefix was
+// doing, and keeps the parent link for its row.
+func TestSessionForkedMarkerIdlesAndDropsQuestion(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+	writeLog(t, logPath, []event.Event{
+		ev(1, event.SessionStarted, nil),
+		ev(2, event.QuestionAsked, map[string]any{"question": "Which?"}),
+		{Seq: 3, TS: time.Unix(3, 0).UTC(), Actor: "coordinator", Type: event.SessionForked, Data: map[string]any{"parent": "s_p", "at_seq": 4}},
+	})
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state, rows, _, err := store.View(ctx, "s", logPath, -1, -1, 10, DefaultBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Phase != "idle" || len(state.Pending) != 0 || state.PendingRowID != "" {
+		t.Fatalf("state = %+v", state)
+	}
+	last := rows[len(rows)-1].Events[0]
+	if last.Type != event.SessionForked || last.Data["parent"] != "s_p" || last.Data["at_seq"] != float64(4) {
+		t.Fatalf("marker row = %+v", last)
+	}
+}

@@ -11,6 +11,16 @@ import { Icon } from "../../ui/icons";
 const drafts = new Map<string, string>();
 const pictureDrafts = new Map<string, DraftPicture[]>();
 
+/** The composer key of a session's draft. */
+export function composerKey(project: string, sessionId: string): string {
+  return `${project}\u0000${sessionId}`;
+}
+
+/** Start a session's draft before its composer mounts (a fork's edited turn). */
+export function seedDraft(sessionKey: string, text: string) {
+  drafts.set(sessionKey, text);
+}
+
 /** A quick reply as offered; `kind` (a default's id, `global` or `project`) is all analytics records. */
 export interface QuickReplyChip {
   label: string;

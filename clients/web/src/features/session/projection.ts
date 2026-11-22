@@ -375,6 +375,15 @@ export class SessionProjection {
       case "session_reopened":
         this.pauseRequested = false;
         break;
+      case "session_forked":
+        // A fork waits for input, whatever the parent was doing; a question
+        // still open in the copied prefix is dropped.
+        this.pauseRequested = false;
+        this.phase = { kind: "idle" };
+        this.pendingQuestion = null;
+        this.openQuestionRowId = null;
+        this.openQuestions = [];
+        break;
       case "role_config_changed": {
         const next = str(data.coordinator);
         if (next && next !== this.coordinatorModel) this.rolloverAvailable = true;
@@ -868,6 +877,8 @@ export function systemSummary(type: string, data: Data): string | null {
       return "Session stopped";
     case "session_reopened":
       return "Session reopened";
+    case "session_forked":
+      return s("parent") ? `Forked from ${s("parent")}` : "Forked";
     case "pause_requested":
       return "Pause requested";
     case "pause_cancelled":

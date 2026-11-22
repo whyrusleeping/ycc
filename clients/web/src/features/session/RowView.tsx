@@ -16,6 +16,11 @@ import { useSmoothText } from "./useSmoothText";
 import { clickVia, track } from "../../app/analytics";
 import { coordinationHeadline, coordinationVariant } from "../coordination/model";
 import { SessionLinkedText } from "../coordination/parts";
+import { useNavigate } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "../../api/queries";
+import { paths } from "../../app/paths";
+import { composerKey, seedDraft } from "./Composer";
 
 function actorLabel(actor: string): string {
   if (!actor || actor === "coordinator") return "";
@@ -197,6 +202,7 @@ export const RowView = memo(function RowView({
           <div className="turn-head">
             <span className="who">You</span>
             {row.userInputStatus === "queued" && <span className="tag">queued</span>}
+            {row.seq > 0 && <ForkButton seq={row.seq} controller={controller} />}
           </div>
           <RowBody row={row} session={controller} />
           <DetailNote row={row} controller={controller} loading={loadingDetail} />
@@ -255,7 +261,9 @@ export const RowView = memo(function RowView({
       return (
         <div className={`row system${searchCls}`} data-row-id={row.id}>
           {actor && <span className="actor">{actor}</span>}
-          <span className="text">{k.text}</span>
+          <span className="text">
+            <SessionLinkedText project={controller.project} text={k.text} />
+          </span>
           {repeat > 1 && (
             <span className="repeat" title={`${repeat} identical notices in a row`}>
               ×{repeat}
@@ -429,6 +437,37 @@ export const RowView = memo(function RowView({
     }
   }
 });
+
+/**
+ * Fork the session just before this user turn and open the fork with the
+ * turn's text in its composer, to edit and resend. The session itself is
+ * unchanged.
+ */
+function ForkButton({ seq, controller }: { seq: number; controller: SessionController }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className="link row-fork"
+      disabled={busy}
+      title="Start a new session from just before this message, with the message in its composer to edit and resend. This session stays as it is."
+      data-track="transcript.fork"
+      onClick={async () => {
+        setBusy(true);
+        const fork = await controller.fork(seq);
+        setBusy(false);
+        if (!fork) return;
+        seedDraft(composerKey(controller.project, fork.sessionId), fork.text);
+        void qc.invalidateQueries({ queryKey: queryKeys.sessionFeedAll });
+        navigate(paths.session(controller.project, fork.sessionId));
+      }}
+    >
+      {busy ? "Forking…" : "Fork from here"}
+    </button>
+  );
+}
 
 function DetailNote({
   row,

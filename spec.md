@@ -171,7 +171,7 @@ on-disk logs; retention is disabled unless configured.
 A durable event has a monotonically increasing per-session `seq`, timestamp, session id, actor,
 type, and type-specific data. Important event families are:
 
-- lifecycle: `session_started`, `session_idle`, `session_error`, interruption/resume, reopen;
+- lifecycle: `session_started`, `session_idle`, `session_error`, interruption/resume, reopen, fork;
 - conversation: user input, model turns, reasoning summaries, questions and answers;
 - execution: tool calls/results, jobs, subagent lifecycle, decisions, reviews, commits;
 - durable project effects: document updates, task focus, workstream lifecycle, budget state.
@@ -1383,6 +1383,33 @@ the log ends while the coordinator waits on one, reopen restores that exact ques
 (marking `session_reopened` with `question_restored`) instead of handing the model a placeholder
 result, and the answer is recorded as usual before the model continues. Answering such a persisted
 question reopens the session; answer RPCs never resume a transcript with no restorable question.
+
+`ForkSession(project, session, at_seq)` branches a session at one of its user turns (a
+`user_input` seq). It writes a new persisted session in the same workspace whose log is a copy of
+the parent's records before that turn, followed by a `session_forked { parent, at_seq }` marker,
+copies the picture attachments those records reference, and persists a git baseline of the
+shared tree for the fork; a fork that cannot capture one is not created. The log appears by
+rename once complete. The parent's log is only read. A steer (a turn queued while the agent
+worked) is cut where the model received it: at its delivery, or after the rest of the tool-call
+batch (or where the batch ended early) when it was delivered mid-batch, leaving out the messages
+delivered after it in that batch, which the model received after it; one never delivered is cut
+at its echo. Any other queued
+echo with no delivery before the cut is left out. A background job whose report had not reached
+the conversation by the cut gets a `job_claimed` in the fork, keeping a finished job's result and
+marking a still-running one, which belongs to the parent, lost; the fork then neither replays a
+lost-job note nor delivers or wakes for those reports. The fork is not live; like any persisted session, its first
+input reopens it, so replay rebuilds the copied conversation, and the marker leaves it idle and
+drops an `ask_user` question still unanswered in the copied prefix. Until
+input reaches it, a reopened fork waits for that input even when the copied conversation ends on
+tool results, so the model's next request carries the fork's first input where the cut turn
+was. Task focus, mode, and model
+settings carry over because they are replayed from the copied events, while usage, budget flags,
+and commit attribution count only events after the last marker. Only conversation state is
+forked: the working tree is shared, and an in-flight workstream session cannot be forked because
+its log lives in a worktree that merge or discard removes. The response carries the cut turn's
+text; clients open the fork with that text in the composer, so the same action serves as fork
+and as rewind (edit and resend). History summaries report `forked_from`, the direct parent named
+by the last marker.
 
 `SearchSessions` full-text searches one project's sessions. Indexed text is user input,
 coordinator assistant text (model turns and idle reports), asked questions with their options, and

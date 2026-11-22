@@ -108,6 +108,8 @@ func (d *summaryEventData) wants(key string) bool {
 		return key == "model_name" || key == "usage" || key == "context_tokens_est"
 	case event.CommitMade:
 		return key == "sha" || key == "task" || key == "message"
+	case event.SessionForked:
+		return key == "parent"
 	}
 	return false
 }

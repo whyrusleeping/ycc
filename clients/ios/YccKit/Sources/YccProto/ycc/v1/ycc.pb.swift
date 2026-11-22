@@ -1225,6 +1225,40 @@ public nonisolated struct Ycc_V1_ResumeSessionResponse: Sendable {
   public init() {}
 }
 
+/// ForkSessionRequest names a user turn of a session by its user_input seq.
+public nonisolated struct Ycc_V1_ForkSessionRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty allowed only when exactly one exists
+  public var project: String = String()
+
+  public var sessionID: String = String()
+
+  public var atSeq: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ForkSessionResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// the new, persisted (not yet live) fork
+  public var sessionID: String = String()
+
+  /// the text of the turn the fork was cut before
+  public var text: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Ycc_V1_ListModesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1522,6 +1556,12 @@ public nonisolated struct Ycc_V1_SessionSummary: @unchecked Sendable {
   public var workstreamID: String {
     get {_storage._workstreamID}
     set {_uniqueStorage()._workstreamID = newValue}
+  }
+
+  /// The session this one was forked from (ForkSession); empty if not a fork.
+  public var forkedFrom: String {
+    get {_storage._forkedFrom}
+    set {_uniqueStorage()._forkedFrom = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -8267,6 +8307,81 @@ nonisolated extension Ycc_V1_ResumeSessionResponse: SwiftProtobuf.Message, Swift
   }
 }
 
+nonisolated extension Ycc_V1_ForkSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ForkSessionRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}session_id\0\u{3}at_seq\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.atSeq) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if self.atSeq != 0 {
+      try visitor.visitSingularInt64Field(value: self.atSeq, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ForkSessionRequest, rhs: Ycc_V1_ForkSessionRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.atSeq != rhs.atSeq {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ForkSessionResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ForkSessionResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}text\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ForkSessionResponse, rhs: Ycc_V1_ForkSessionResponse) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Ycc_V1_ListModesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListModesRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
@@ -8573,7 +8688,7 @@ nonisolated extension Ycc_V1_ListSessionHistoryRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0\u{3}read_through\0\u{3}workstream_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}status\0\u{1}workspace\0\u{1}title\0\u{3}started_at\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}turns\0\u{3}tool_calls\0\u{1}live\0\u{3}waiting_input\0\u{3}model_usage\0\u{3}total_tokens\0\u{3}context_tokens\0\u{3}awaiting_jobs\0\u{3}follow_up\0\u{3}follow_up_at\0\u{1}origin\0\u{3}human_participated\0\u{3}read_through\0\u{3}workstream_id\0\u{3}forked_from\0")
 
   fileprivate class _StorageClass {
     var _sessionID: String = String()
@@ -8598,6 +8713,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
     var _humanParticipated: Bool = false
     var _readThrough: String = String()
     var _workstreamID: String = String()
+    var _forkedFrom: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -8630,6 +8746,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       _humanParticipated = source._humanParticipated
       _readThrough = source._readThrough
       _workstreamID = source._workstreamID
+      _forkedFrom = source._forkedFrom
     }
   }
 
@@ -8670,6 +8787,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         case 20: try { try decoder.decodeSingularBoolField(value: &_storage._humanParticipated) }()
         case 21: try { try decoder.decodeSingularStringField(value: &_storage._readThrough) }()
         case 22: try { try decoder.decodeSingularStringField(value: &_storage._workstreamID) }()
+        case 23: try { try decoder.decodeSingularStringField(value: &_storage._forkedFrom) }()
         default: break
         }
       }
@@ -8744,6 +8862,9 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
       if !_storage._workstreamID.isEmpty {
         try visitor.visitSingularStringField(value: _storage._workstreamID, fieldNumber: 22)
       }
+      if !_storage._forkedFrom.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._forkedFrom, fieldNumber: 23)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -8775,6 +8896,7 @@ nonisolated extension Ycc_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobu
         if _storage._humanParticipated != rhs_storage._humanParticipated {return false}
         if _storage._readThrough != rhs_storage._readThrough {return false}
         if _storage._workstreamID != rhs_storage._workstreamID {return false}
+        if _storage._forkedFrom != rhs_storage._forkedFrom {return false}
         return true
       }
       if !storagesAreEqual {return false}
