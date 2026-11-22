@@ -17,12 +17,14 @@ private final class MockSearchSource: SessionSearchSource, @unchecked Sendable {
     var calls: [Call] { lock.withLock { _calls } }
 
     func searchSessions(project: String, query: String, limit: Int32) async throws -> Ycc_V1_SearchSessionsResponse {
-        let (error, response) = lock.withLock { () -> (Error?, Ycc_V1_SearchSessionsResponse) in
+        // Not `(error, response)`: the closure would capture the tuple binding
+        // being declared instead of the stored `error`.
+        let (failure, response) = lock.withLock { () -> (Error?, Ycc_V1_SearchSessionsResponse) in
             _calls.append(Call(project: project, query: query))
             let response = responses.count > 1 ? responses.removeFirst() : (responses.first ?? .init())
-            return (error, response)
+            return (self.error, response)
         }
-        if let error { throw error }
+        if let failure { throw failure }
         return response
     }
 }

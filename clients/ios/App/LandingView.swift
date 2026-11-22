@@ -252,8 +252,14 @@ struct LandingView: View {
         .presetActionAlerts(presetActions, app: app)
     }
 
-    /// The lifecycle and change observers hung off the shell.
+    /// The lifecycle and change observers hung off the shell. Two groups: as
+    /// one modifier chain the type checker no longer finishes in time.
     private func observers(_ content: some View) -> some View {
+        modelObservers(lifecycleObservers(content))
+    }
+
+    /// Load, polling, scene and navigation triggers.
+    private func lifecycleObservers(_ content: some View) -> some View {
         content
         .task {
             await ensureLoaded()
@@ -302,6 +308,11 @@ struct LandingView: View {
                 Task { await health?.refresh() }
             }
         }
+    }
+
+    /// Analytics, auth, search and scope observers.
+    private func modelObservers(_ content: some View) -> some View {
+        content
         // Usage analytics: the stack's top screen, with the drawer as an
         // overlay while it is open.
         .onChange(of: router.path, initial: true) { _, path in

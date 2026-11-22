@@ -707,6 +707,14 @@ public final class SessionViewModel {
     /// Pause for `nanoseconds`, through the injected sleep when a test supplied
     /// one. Every sleep in this model goes through here.
     private func pause(_ nanoseconds: UInt64) async throws {
+        try await Self.pause(nanoseconds, using: sleep)
+    }
+
+    /// `pause` for a task that must not hold `self` across the wait: capture
+    /// `sleep` into a local first and pass it here.
+    private nonisolated static func pause(
+        _ nanoseconds: UInt64, using sleep: (@Sendable (UInt64) async throws -> Void)?
+    ) async throws {
         if let sleep {
             try await sleep(nanoseconds)
         } else {
@@ -1219,7 +1227,7 @@ public final class SessionViewModel {
         pendingDetailRetryDelay = delay
         let sleep = self.sleep
         Task { [weak self] in
-            do { try await sleep(delay) } catch { return }
+            do { try await Self.pause(delay, using: sleep) } catch { return }
             // A parked model retries when it is shown again (resumeParked).
             guard let self, self.parkedAt == nil else { return }
             await self.loadDetail(rowID: rowID)
