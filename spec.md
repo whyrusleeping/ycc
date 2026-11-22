@@ -236,6 +236,7 @@ unchanged. Once the session changes one again, it is included whole, earlier unc
 all, and the manifest and commit result list it as preexisting; precise hunk attribution is not
 attempted. The `commit` tool's optional `paths` adopts further whole files the same way, such as
 another task's work that must land together, and a bookkeeping file named there is taken whole. A
+file another live session also changed is committed only when named there (§7.3). A
 commit may therefore carry other uncommitted work in shared files: the agent names co-included tasks
 in its message or outcome rather than splitting or abandoning work to avoid it. Files the session
 neither changed nor named are never committed, and whole-tree commits are never made. Inclusion
@@ -570,7 +571,9 @@ delegates to) is an attribution scope. Writes record a claim on the path for tha
 - A shell command is bracketed by two snapshots of the worktree's dirty set (git status plus each
   dirty path's size, mtime, and mode). Paths that changed during the command are claimed unless
   another scope already claims them, because a concurrent session's writes can land in the same
-  window. Background shells claim when they exit.
+  window. A changed path whose other claims all predate the command gets an overlap claim instead:
+  it stays out of the shell session's changeset but counts as that session's claim for every other
+  scope, so the earlier claimant's commit sees it (below). Background shells claim when they exit.
 
 Backlog task files and `memory.md` are the exception: they are shared bookkeeping, never claimed,
 and attributed by line instead. Each scoped write of one, whether a structured docs-store write or a
@@ -607,6 +610,19 @@ A session's changeset — reviewed, inspected by clients, and committed — then
 - adopts baseline-dirty paths that changed since the baseline, whole, reporting the earlier changes
   that ride along;
 - leaves out baseline-dirty paths only another scope has written since.
+
+A commit (the `commit` tool, in work and chat modes) refuses a path in its changeset while another
+scope that claims it, overlap claims included, is a live session, because only whole files are committed and its uncommitted changes
+would ride along. The refusal names the files and the alternatives: wait for the other session to
+commit them (its commit then takes this session's edits along), move further work on them to a
+workstream (§14.1), or take them whole deliberately by naming them in `paths` and naming the other
+session's work in the message or outcome. Files a retried finalization adopts only to rebuild an
+earlier session's scope do not count as named. Hunk-level commits of shared code files are not offered:
+code is edited through shells and generators that leave no line record, and a mix of two sessions'
+hunks may not build. Overlap claims are approximate (the change may have been the claimant's own
+concurrent shell write, or the user's), so naming the file is always available. Claims of sessions
+that are no longer live do not refuse; those files are included whole and reported as shared. Backlog task files and `memory.md` are never claimed, so
+they never cause a refusal.
 
 A baseline-dirty path changed by a writer nobody claimed (typically the user, or this session's own
 shell) is included rather than refused or silently dropped. Other unclaimed changes are attributed
@@ -652,7 +668,7 @@ further notices are delivered. With the setting off nothing is added.
 - **Overlap notices.** A write that touches a path another session's scope already claims tells
   both sides once per path and session pair: the writer in its Write/Edit result, or in its Bash
   result when a shell changed a path another scope claimed before the command started (the shell
-  still does not claim it), and the other session's live coordinator at its next safe checkpoint.
+  records only an overlap claim), and the other session's live coordinator at its next safe checkpoint.
   That coordinator is never woken and its `wait` does not end early; the notice simply waits for its
   next run. Each side is told only if its own session has the feature. Backlog task files and `memory.md`
   are never claimed, so they never cause one. A notice names the path, the other session, and its

@@ -420,6 +420,12 @@ func (r *Repo) InspectChangesFor(b *Baseline, attr *Attribution, paths ...string
 	return r.inspectIncluding(b, adopted, attr, false)
 }
 
+// RepoPaths maps files, absolute or relative to Repo.Dir, to the sorted,
+// deduplicated repository-relative slash paths a Changeset lists.
+func (r *Repo) RepoPaths(paths []string) ([]string, error) {
+	return r.canonicalAdoptedPaths(paths)
+}
+
 func (r *Repo) canonicalAdoptedPaths(paths []string) ([]string, error) {
 	root, err := r.run("rev-parse", "--show-toplevel")
 	if err != nil {

@@ -86,6 +86,18 @@ func (s *Service) SetLiveScopes(fn func(scope string) bool) {
 	s.live = fn
 }
 
+// Live reports whether scope is still live (SetLiveScopes); every scope is
+// live without that test.
+func (s *Service) Live(scope string) bool {
+	if s == nil {
+		return false
+	}
+	s.linesMu.Lock()
+	fn := s.live
+	s.linesMu.Unlock()
+	return fn == nil || fn(scope)
+}
+
 // RecordLines attributes a write of the bookkeeping file at path, from before
 // to after, to token's scope. Any difference between the recorded content and
 // before (a write nobody recorded) is attributed as unattributed first. The

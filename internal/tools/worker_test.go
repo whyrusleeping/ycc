@@ -920,7 +920,8 @@ func TestFileWritesWaitForSectionAndClaimForScope(t *testing.T) {
 
 // Shell commands cannot be intercepted, so their writes are attributed by
 // bracketing snapshots: a file a command creates or changes is claimed for the
-// command's scope, while a path another scope already claims is left to it.
+// command's scope, while a path another scope already claims is left to it
+// (with an overlap claim).
 func TestShellWritesAreClaimedForTheirScope(t *testing.T) {
 	root := t.TempDir()
 	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
@@ -939,8 +940,14 @@ func TestShellWritesAreClaimedForTheirScope(t *testing.T) {
 	if got := claims["generated.txt"]; len(got) != 1 || got[0] != "s_shell" {
 		t.Fatalf("generated.txt claims = %v", claims)
 	}
-	if got := claims["theirs.txt"]; len(got) != 1 || got[0] != "s_other" {
-		t.Fatalf("theirs.txt claims = %v", claims)
+	// theirs.txt stays s_other's; the shell session records only an overlap
+	// claim, which keeps it out of its own changeset but shows s_other that
+	// another session changed it.
+	if mine, foreign := ownership.Split(root, "s_shell"); mine["theirs.txt"] || !foreign["theirs.txt"] {
+		t.Fatalf("theirs.txt for s_shell: mine=%v foreign=%v", mine, foreign)
+	}
+	if mine, foreign := ownership.Split(root, "s_other"); !mine["theirs.txt"] || !foreign["theirs.txt"] {
+		t.Fatalf("theirs.txt for s_other: mine=%v foreign=%v", mine, foreign)
 	}
 }
 

@@ -24,10 +24,12 @@ import (
 type claimSet map[string]claimEntry
 
 // claimEntry is one scope's claim: the generation of its latest write and when
-// it first claimed the path.
+// it first claimed the path. overlap marks a claim recorded only because the
+// scope's shell changed a path another scope already claimed (RecordOverlaps).
 type claimEntry struct {
-	gen   uint64
-	since time.Time
+	gen     uint64
+	since   time.Time
+	overlap bool
 }
 
 // Claim is one scope's claim on a path, for display. Gen is the claim
@@ -156,12 +158,54 @@ func (s *Service) recordLocked(key string, paths []string, scope string) {
 			byPath[rel] = set
 		}
 		entry, ok := set[scope]
-		if !ok {
+		if !ok || entry.overlap {
 			added = true
+		}
+		if !ok {
 			entry.since = now
 		}
-		entry.gen = s.gen
+		entry.gen, entry.overlap = s.gen, false
 		set[scope] = entry
+	}
+	if added {
+		s.saveLocked(key)
+	}
+}
+
+// RecordOverlaps records that token's scope's shell changed repository-relative
+// paths that other scopes already claimed, in the worktree containing root. An
+// overlap claim leaves the path out of the scope's own changeset (Split does not
+// count it as the scope's) but counts as another scope's claim for everyone
+// else, so their commits see that a live session also changed it. A scope that
+// already claims a path keeps its claim.
+func (s *Service) RecordOverlaps(root string, paths []string, token *Token) {
+	if s == nil || token == nil || token.scope == "" || len(paths) == 0 {
+		return
+	}
+	key, err := Canonical(root)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byPath := s.claimsLocked(key)
+	s.gen++
+	added := false
+	for _, rel := range paths {
+		set := byPath[rel]
+		if set == nil {
+			set = make(claimSet)
+			byPath[rel] = set
+		}
+		if entry, ok := set[token.scope]; ok {
+			if entry.overlap {
+				entry.gen = s.gen
+				set[token.scope] = entry
+			}
+			continue
+		}
+		set[token.scope] = claimEntry{gen: s.gen, since: time.Now(), overlap: true}
+		added = true
 	}
 	if added {
 		s.saveLocked(key)
@@ -234,18 +278,26 @@ func (s *Service) PathClaims(path, fallback string) (worktree, rel string, claim
 
 // Split partitions the claims in the worktree containing root into paths scope
 // wrote (mine) and paths any other scope wrote (foreign); a path both wrote is
-// in both. It returns nils for an unscoped caller.
+// in both. scope's overlap claims are in neither. It returns nils for an
+// unscoped caller.
 func (s *Service) Split(root, scope string) (mine, foreign map[string]bool) {
 	if s == nil || scope == "" {
 		return nil, nil
 	}
 	mine, foreign = map[string]bool{}, map[string]bool{}
-	for path, scopes := range s.Claims(root) {
-		for _, owner := range scopes {
-			if owner == scope {
-				mine[path] = true
-			} else {
+	key, err := Canonical(root)
+	if err != nil {
+		return mine, foreign
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for path, set := range s.claimsLocked(key) {
+		for owner, entry := range set {
+			switch {
+			case owner != scope:
 				foreign[path] = true
+			case !entry.overlap:
+				mine[path] = true
 			}
 		}
 	}
@@ -378,17 +430,27 @@ func (s *Service) claimsLocked(key string) map[string]claimSet {
 		}
 		byPath[rel] = set
 	}
+	for rel, scopes := range record.Overlap {
+		for _, scope := range scopes {
+			if entry, ok := byPath[rel][scope]; ok {
+				entry.overlap = true
+				byPath[rel][scope] = entry
+			}
+		}
+	}
 	return byPath
 }
 
 const claimsRecordVersion = 1
 
 // claimsRecord is the persisted form. Since (path -> scope -> unix seconds of
-// the first claim) is optional so older records and daemons stay compatible.
+// the first claim) and Overlap (path -> scopes whose claim is an overlap claim)
+// are optional so older records and daemons stay compatible.
 type claimsRecord struct {
 	Version int                         `json:"version"`
 	Claims  map[string][]string         `json:"claims"`
 	Since   map[string]map[string]int64 `json:"since,omitempty"`
+	Overlap map[string][]string         `json:"overlap,omitempty"`
 }
 
 // saveLocked persists key's claims (best effort: attribution degrades to
@@ -401,11 +463,15 @@ func (s *Service) saveLocked(key string) {
 	if path == "" {
 		return
 	}
-	record := claimsRecord{Version: claimsRecordVersion, Claims: map[string][]string{}, Since: map[string]map[string]int64{}}
+	record := claimsRecord{Version: claimsRecordVersion, Claims: map[string][]string{}, Since: map[string]map[string]int64{}, Overlap: map[string][]string{}}
 	for rel, set := range s.claims[key] {
 		scopes := make([]string, 0, len(set))
 		for scope, entry := range set {
 			scopes = append(scopes, scope)
+			if entry.overlap {
+				record.Overlap[rel] = append(record.Overlap[rel], scope)
+				sort.Strings(record.Overlap[rel])
+			}
 			if !entry.since.IsZero() {
 				if record.Since[rel] == nil {
 					record.Since[rel] = map[string]int64{}

@@ -1686,12 +1686,12 @@ func FormatAskManyAnswers(qs []Question, ans []string) string {
 func commitTool(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "commit",
-		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Files the session changed are committed whole, including other uncommitted work already in them (the result lists those); backlog task files and memory.md take only this session's own lines. Detailed execution remains in session events and git history.",
+		Description: "Finalize an accepted active task: compact it, mark it done, and commit the scoped changes to git. Do not mark the task done first. Files the session changed are committed whole, including other uncommitted work already in them (the result lists those); a file another live session also changed is refused unless named in paths; backlog task files and memory.md take only this session's own lines. Detailed execution remains in session events and git history.",
 		Params: tools.Obj(map[string]any{
 			"task_id": tools.StrProp("task id being committed"),
 			"message": tools.StrProp("concise commit message"),
 			"outcome": tools.StrProp("concise accepted outcome retained with the completed task"),
-			"paths":   tools.StrArrProp("optional extra files to commit whole (workspace-relative), e.g. another task's work that must land together"),
+			"paths":   tools.StrArrProp("optional extra files to commit whole (workspace-relative), e.g. another task's work that must land together, or a file another live session also changed"),
 		}, "task_id", "message", "outcome"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -1934,7 +1934,7 @@ func attributionNote(changes *git.Changeset) string {
 			fmt.Fprintf(&b, "%s (%d): %s\n", label, len(paths), boundedPathList(paths, 1024))
 		}
 	}
-	line("SHARED WORKTREE — also written by another session (included; their edits to these files ride along)", changes.Shared)
+	line("SHARED WORKTREE — also written by another session (included; their edits to these files ride along; commit refuses them while that session is live unless named in paths)", changes.Shared)
 	line("Excluded — written only by another session", changes.Foreign)
 	line("Included line by line — only this session's lines; other sessions' uncommitted lines stay in the worktree", changes.Partial)
 	line("Included — already dirty before this session; earlier changes ride along", changes.Preexisting)

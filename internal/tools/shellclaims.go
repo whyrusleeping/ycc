@@ -89,8 +89,9 @@ func (w *Workspace) snapshotShell() *shellSnapshot {
 // claimShellChanges claims, for this workspace's scope, every path that became
 // dirty or changed since before was taken and that no other scope claims. A
 // changed path that another scope had claimed before the command started is
-// left to that scope but reported as an overlap; the returned text is the
-// overlap notice for the command's result.
+// left to that scope, reported as an overlap and recorded as an overlap claim
+// (workspacelease.Service.RecordOverlaps); the returned text is the overlap
+// notice for the command's result.
 func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 	if before == nil {
 		return ""
@@ -105,7 +106,7 @@ func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 		return ""
 	}
 	claims := w.Ownership.ClaimDetails(after.top)
-	var changed []string
+	var changed, overlapped []string
 	var overlaps []workspacelease.Overlap
 	for rel, stamp := range after.entries {
 		if prior, ok := before.entries[rel]; ok && prior == stamp {
@@ -114,7 +115,7 @@ func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 		if w.SharedBookkeeping != nil && w.SharedBookkeeping(filepath.Join(after.top, filepath.FromSlash(rel))) {
 			continue
 		}
-		foreign := false
+		foreign, renewed := false, false
 		var earlier []string
 		for _, claim := range claims[rel] {
 			if claim.Scope == scope {
@@ -125,15 +126,26 @@ func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 			// concurrent write, so only older claims count as an overlap.
 			if claim.Gen <= before.gen {
 				earlier = append(earlier, claim.Scope)
+			} else {
+				renewed = true
 			}
 		}
 		if !foreign {
 			changed = append(changed, rel)
 		} else if len(earlier) > 0 {
+			if !renewed {
+				// With no other write recorded during the command, the change
+				// is most likely this command's.
+				overlapped = append(overlapped, rel)
+			}
 			overlaps = append(overlaps, workspacelease.Overlap{Worktree: key, Path: rel, Writer: scope, Others: earlier})
 		}
 	}
 	w.Ownership.RecordWrites(after.top, changed, w.MutationToken)
+	// The change may still be another writer's, so it is only an overlap
+	// claim: the path stays out of this session's changeset, but the earlier
+	// claimant's commit sees that a live session also changed it.
+	w.Ownership.RecordOverlaps(after.top, overlapped, w.MutationToken)
 	sort.Slice(overlaps, func(i, j int) bool { return overlaps[i].Path < overlaps[j].Path })
 	return w.Ownership.NotifyOverlaps(overlaps)
 }
