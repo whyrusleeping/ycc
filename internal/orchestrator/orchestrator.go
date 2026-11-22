@@ -214,7 +214,8 @@ type Deps struct {
 	implRunning  bool   // Loop.Run has not returned, even if kill_job made implJob terminal
 	implReport   string // latest compact implementation/verification report for fresh continuation
 	reviewers    []*reviewerHandle
-	reviewJob    *jobs.Job // live/last background reviewers job
+	reviewJob    *jobs.Job        // live/last background reviewers job
+	deployReady  *deployReadiness // latest ready-to-deploy review round, if any
 	genericSeq   int
 	genericAgent map[string]*genericAgentHandle // stable agent id -> retained loop
 	focus        string                         // backlog task currently in focus; guarded by mu
@@ -1327,7 +1328,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 		Name: "spawn_reviewers",
 		Description: "Get independent, concurrent reviews of the changes. " +
 			reviewTierBlurb(d) + " " +
-			"Returns each verdict (accept/revise) and findings; the tier is recorded in session events. " +
+			"Returns each verdict (accept, ready_to_deploy, or revise) and findings; the tier is recorded in session events. " +
 			"background:true returns a job_id at once; verdicts arrive automatically or via wait. Reviewers are " +
 			"read-only, so they may run alongside other work.",
 		Params: tools.Obj(map[string]any{
@@ -1401,6 +1402,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			implementationEvidence := reviewerImplementationEvidence(d)
 			if handoff != "" {
 				implementationEvidence = coordinatorReviewEvidence(d, handoff)
+			}
+			if note := d.deployFollowUpNote(t.ID, preloadedDiff); note != "" {
+				implementationEvidence += "\n\n" + note
 			}
 			d.mu.Lock()
 			d.reviewers = nil
@@ -1525,6 +1529,9 @@ func reReview(d *Deps) *gollama.Tool {
 						h.workspace.SetReviewIdentity(currentDiff.SnapshotID, currentDiff.Tree)
 					}
 					deltaEvidence := changedSinceReviewEvidence(d.Repo, h.evidence, currentDiff)
+					if note := d.deployFollowUpNote(t.ID, currentDiff); note != "" {
+						deltaEvidence += "\n\n" + note
+					}
 					h.loop.Post(retainedPrompt + "\n\n" + deltaEvidence + "\n\n" + currentEvidence)
 					h.contextMode = "retain"
 				}
@@ -1637,7 +1644,11 @@ func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, pr
 		loop.SetHistory(append([]gollama.Message(nil), preloadedDiff.History...))
 		emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 	}
-	loop.Seed(freshReReviewPrompt(t, spec.Focus, freshReviewerHandoff(d, handoff), hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff))
+	seed := freshReReviewPrompt(t, spec.Focus, freshReviewerHandoff(d, handoff), hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff)
+	if note := d.deployFollowUpNote(t.ID, preloadedDiff); note != "" {
+		seed += "\n\n" + note
+	}
+	loop.Seed(seed)
 	return loop, ws
 }
 
@@ -1824,7 +1835,12 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 			if err != nil {
 				rv.Summary = "reviewer error: " + err.Error()
 			} else {
-				rv = parseReview(res.Report)
+				submitted := ""
+				if h.workspace != nil {
+					submitted = h.workspace.TakeSubmittedReview()
+				}
+				fromTool := submitted != "" && submitted == res.Report
+				rv = checkSubmission(parseReview(res.Report), h.evidence.SnapshotID, fromTool)
 			}
 			if err == nil && rv.Verdict != "unknown" {
 				h.lastReview = rv
@@ -1863,6 +1879,9 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 				"reviewed_baseline_id": h.evidence.BaselineID, "verification": verification,
 				"context_mode": mode, "round": h.round, "context_tokens_est": contextTokens,
 			}
+			if rv.Verdict == verdictReadyToDeploy {
+				reviewData["pending_criteria"] = rv.PendingCriteria
+			}
 			addRolloverFields(reviewData, h.rolloverReason, h.priorContextTokens, h.newContextTokens)
 			d.Emitter.Emit(event.ReviewSubmitted, reviewData)
 			finishData := map[string]any{"role": "reviewer", "model": h.name, "logical_model": h.model,
@@ -1877,6 +1896,7 @@ func runReviewers(ctx context.Context, d *Deps, handles []*reviewerHandle, taskI
 		}(i, h)
 	}
 	wg.Wait()
+	d.recordReviewOutcome(taskID, handles, results)
 	return results
 }
 
@@ -2028,11 +2048,15 @@ type reviewVerification struct {
 }
 
 type review struct {
-	Verdict      string               `json:"verdict"`
-	Summary      string               `json:"summary"`
-	Findings     []finding            `json:"findings"`
-	SnapshotID   string               `json:"snapshot_id"`
-	Verification []reviewVerification `json:"verification"`
+	Verdict         string               `json:"verdict"`
+	Summary         string               `json:"summary"`
+	Findings        []finding            `json:"findings"`
+	PendingCriteria []string             `json:"pending_criteria"`
+	SnapshotID      string               `json:"snapshot_id"`
+	Verification    []reviewVerification `json:"verification"`
+	// bound is set when submit_review produced this review for the reviewer's
+	// assigned snapshot (see checkSubmission); never decoded from a report.
+	bound bool
 }
 
 type reviewResult struct {
@@ -2065,14 +2089,14 @@ func parseReview(report string) review {
 }
 
 func aggregateReviews(results []reviewResult) string {
-	accepts := 0
-	for _, r := range results {
-		if r.rv.Verdict == "accept" {
-			accepts++
-		}
-	}
+	outcome := summarizeReviewRound(results)
+	accepts := outcome.accepts
 	var b strings.Builder
-	fmt.Fprintf(&b, "REVIEW SUMMARY: %d/%d reviewers accept\n\n", accepts, len(results))
+	fmt.Fprintf(&b, "REVIEW SUMMARY: %d/%d reviewers accept", accepts, len(results))
+	if outcome.ready > 0 {
+		fmt.Fprintf(&b, ", %d ready to deploy", outcome.ready)
+	}
+	b.WriteString("\n\n")
 	for _, r := range results {
 		fmt.Fprintf(&b, "--- %s: %s ---\n%s\n", r.label(), r.rv.Verdict, r.rv.Summary)
 		snapshot := r.rv.SnapshotID
@@ -2080,6 +2104,11 @@ func aggregateReviews(results []reviewResult) string {
 			snapshot = "unavailable"
 		}
 		fmt.Fprintf(&b, "  assigned review snapshot: %s\n", snapshot)
+		if r.rv.Verdict == verdictReadyToDeploy {
+			for _, c := range r.rv.PendingCriteria {
+				fmt.Fprintf(&b, "  needs operational evidence: %s\n", c)
+			}
+		}
 		if len(r.rv.Verification) == 0 {
 			fmt.Fprintln(&b, "  verification: unavailable — no provenance reported")
 		}
@@ -2097,6 +2126,8 @@ func aggregateReviews(results []reviewResult) string {
 	}
 	if accepts == len(results) {
 		b.WriteString("\nAll reviewers accept — you may commit.")
+	} else if guidance := readyToDeployGuidance(outcome, len(results)); guidance != "" {
+		b.WriteString(guidance)
 	} else {
 		b.WriteString("\nNot all reviewers accept — consolidate the findings and send_to_implementer, then re_review.")
 	}
@@ -2108,18 +2139,18 @@ func aggregateReviews(results []reviewResult) string {
 // detail), and findings nested beneath, severity-colored. It mirrors the textual
 // aggregateReviews summary the model reads.
 func aggregateReviewsView(results []reviewResult) *tools.ResultView {
-	accepts := 0
-	for _, r := range results {
-		if r.rv.Verdict == "accept" {
-			accepts++
-		}
-	}
+	outcome := summarizeReviewRound(results)
+	accepts := outcome.accepts
 	status := "ok"
 	if accepts < len(results) {
 		status = "warn"
 	}
+	summary := fmt.Sprintf("%d/%d reviewers accept", accepts, len(results))
+	if outcome.ready > 0 {
+		summary += fmt.Sprintf(", %d ready to deploy", outcome.ready)
+	}
 	v := &tools.ResultView{
-		Summary: fmt.Sprintf("%d/%d reviewers accept", accepts, len(results)),
+		Summary: summary,
 		Status:  status,
 	}
 	for _, r := range results {

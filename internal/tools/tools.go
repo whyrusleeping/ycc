@@ -331,8 +331,9 @@ type Workspace struct {
 	Artifacts  *ArtifactStore
 	artifactMu sync.Mutex
 
-	reviewMu       sync.Mutex
-	reviewReceipts map[string]reviewExecutionReceipt
+	reviewMu        sync.Mutex
+	reviewReceipts  map[string]reviewExecutionReceipt
+	submittedReview string // latest submit_review report not yet taken
 }
 
 type reviewExecutionReceipt struct {

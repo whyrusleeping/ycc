@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/whyrusleeping/gollama"
 )
@@ -83,12 +84,18 @@ func submitReview(workspaces ...*Workspace) *gollama.Tool {
 	}
 	return &gollama.Tool{
 		Name: "submit_review",
-		Description: "Submit one verdict per review: accept when correct/complete, revise for substantive defects. " +
+		Description: "Submit one verdict per review: accept when correct/complete, revise for substantive defects, " +
+			"ready_to_deploy when the code is correct but criteria needing operational evidence (deploy, run, measure, report) remain; name them in pending_criteria. " +
 			"Independent execution requires the receipt_id from that exact source-bound Bash call, including failed checks. " +
 			"Classify prior logs as inspected_prior_evidence and checks that could not run as unavailable.",
 		Params: obj(map[string]any{
-			"verdict": map[string]any{"type": "string", "enum": []string{"accept", "revise"}, "description": "accept or revise"},
+			"verdict": map[string]any{"type": "string", "enum": []string{"accept", "ready_to_deploy", "revise"}, "description": "accept, ready_to_deploy, or revise"},
 			"summary": strProp("one-paragraph overall assessment"),
+			"pending_criteria": map[string]any{
+				"type":        "array",
+				"description": "ready_to_deploy only: the acceptance criteria that still need operational evidence after deployment or a run",
+				"items":       map[string]any{"type": "string"},
+			},
 			"findings": map[string]any{
 				"type":        "array",
 				"description": "specific issues found (empty if none)",
@@ -120,6 +127,9 @@ func submitReview(workspaces ...*Workspace) *gollama.Tool {
 			if !ok {
 				return errResult("submit_review: invalid arguments"), nil
 			}
+			if report["verdict"] == "ready_to_deploy" && !hasPendingCriterion(report["pending_criteria"]) {
+				return errResult("submit_review: ready_to_deploy needs pending_criteria naming the acceptance criteria that still need operational evidence; otherwise submit accept or revise"), nil
+			}
 			copy := make(map[string]any, len(report)+1)
 			for key, value := range report {
 				copy[key] = value
@@ -137,7 +147,33 @@ func submitReview(workspaces ...*Workspace) *gollama.Tool {
 			if err != nil {
 				return errResult("submit_review: %v", err), nil
 			}
+			ws.reviewMu.Lock()
+			ws.submittedReview = string(raw)
+			ws.reviewMu.Unlock()
 			return &gollama.ToolResult{Content: "review submitted", Structured: &Control{Stop: true, Report: string(raw)}}, nil
 		},
 	}
+}
+
+// TakeSubmittedReview returns and clears the report of the latest successful
+// submit_review call. A reviewer's run report that equals it came from the
+// tool, with its validation and trusted snapshot and receipt binding, rather
+// than from a plain-text reply.
+func (w *Workspace) TakeSubmittedReview() string {
+	w.reviewMu.Lock()
+	defer w.reviewMu.Unlock()
+	report := w.submittedReview
+	w.submittedReview = ""
+	return report
+}
+
+// hasPendingCriterion reports whether value is a list with a non-blank string.
+func hasPendingCriterion(value any) bool {
+	items, _ := value.([]any)
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			return true
+		}
+	}
+	return false
 }

@@ -120,6 +120,9 @@ and re_review. When fixing a finding, check affected paths for the same defect a
 scope. If successive revisions expose related defects, reconsider the approach before patching
 another case. Retain useful context for local revisions; use fresh context with a self-contained
 handoff for changed approaches, obsolete history, or context-length failures.
+Before requesting review, verify the criteria you can check before deployment or a run. Name the
+rest in the handoff. A ready_to_deploy result lets you deploy or run that snapshot; the named
+criteria then need evidence and another review before commit.
 When closing a parent task, check its original criteria and integration seams against existing
 valid evidence. Repeat verification only for a concrete gap, relevant change, or regression risk;
 do not infer parent completion solely from child statuses.
@@ -167,7 +170,10 @@ Use source_bound=true for independent builds/tests of the assigned snapshot; ord
 inspects the live tree. Prior binaries or implementer logs are inspected evidence, not a rebuild.
 
 Call submit_review once per review: accept if correct and complete; revise only for blocker/major
-findings, not nits. On the first pass, report all substantive findings you can substantiate; group
+findings, not nits. If the code is correct but criteria need evidence that exists only after a
+deployment or run (deploy, run a load, measure, report), submit ready_to_deploy naming them in
+pending_criteria rather than revising for the missing evidence. On the first pass, report all
+substantive findings you can substantiate; group
 instances of the same defect. Give a concise summary, actionable file/function findings, and
 verification classified as independently_rebuilt_and_executed, inspected_prior_evidence, or
 unavailable. Independent execution requires the receipt_id from that exact source-bound Bash call,

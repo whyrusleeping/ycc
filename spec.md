@@ -486,6 +486,20 @@ the latest implementer report, and a bounded name-status delta manifest from its
 snapshot plus exact current/delta retrieval commands, not another historical full patch. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
 advisory context estimates. Reviewer fan-out runs concurrently.
 
+A review verdict is `accept`, `revise`, or `ready_to_deploy`. The third is for tasks with
+operational acceptance criteria (deploy, run a load, measure, report): the code is correct, and the
+reviewer names the criteria that still need evidence. Before it existed, reviewers revised every
+round while that evidence was missing, even with no code defect (cause 5 of
+`docs/reports/review-cycles-2026-11.md`). A round with no revise and at least one ready verdict on
+one snapshot tells the coordinator it may deploy or run that snapshot, and that the named criteria
+need evidence and another review before commit. Every later review of the task is told the
+criteria and the paths changed since that snapshot, submodule commits included. When all of them
+look like evidence (Markdown and similar documents, logs, CSV, backlog and memory files) and no
+other snapshot file names a changed document as an input, the reviewer confirms they are records of
+results and need not re-review the code; any other change is reviewed as usual. A ready verdict
+that did not come through `submit_review`, names no criteria, or covers another snapshot counts as
+unknown.
+
 Background shell commands and subagents share stable session-owned job ids and four controls:
 `list_jobs` discovers, `job_output` peeks, `wait` synchronizes/acknowledges completion, and `kill_job`
 cancels. `job_output` with only an id returns live output/activity or the terminal final report;
