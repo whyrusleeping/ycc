@@ -1,10 +1,10 @@
 ---
 id: "0562"
 title: Client surfaces for session awareness and the notice board (web, iOS, TUI)
-status: proposed
+status: todo
 priority: 4
 created: "2026-11-20"
-updated: "2026-11-20"
+updated: "2026-11-22"
 depends_on:
     - "0443"
     - "0564"
