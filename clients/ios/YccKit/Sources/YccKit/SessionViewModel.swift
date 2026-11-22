@@ -485,7 +485,7 @@ public final class SessionViewModel {
             }
             do {
                 // Let the first page lay out and the stream open first.
-                if delay > 0 { try await sleep(delay) }
+                if delay > 0 { try await pause(delay) }
                 guard let self, cursor == self.earlierCursor, epoch == self.snapshotEpoch,
                       !Task.isCancelled else { return }
                 // First-page sized on open: a glance should not cost a deep
@@ -545,7 +545,12 @@ public final class SessionViewModel {
     private let source: SessionTranscriptSource
     private let actions: SessionActionSource?
     private let backoff: BackoffPolicy
-    private let sleep: @Sendable (UInt64) async throws -> Void
+    /// Injected clock pause for tests; nil pauses with `Task.sleep` directly.
+    /// Optional on purpose: a module-level default for this parameter (closure
+    /// literal or static function reference) is miscompiled by Swift 6.2 debug
+    /// codegen and aborts the stream task after its first backoff sleep with
+    /// "freed pointer was not the last allocation". See `pause`.
+    private let sleep: (@Sendable (UInt64) async throws -> Void)?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var firstDisplaySpan: LatencyDiagnostics.Span?
 
@@ -606,13 +611,14 @@ public final class SessionViewModel {
         }
     }
 
-    /// Default reconnect sleep. A named function rather than a closure literal
-    /// in the parameter default: with Swift 6.2 debug codegen, an `async throws`
-    /// closure written as a default argument (following the `clock` default
-    /// closure) is miscompiled and aborts with "freed pointer was not the last
-    /// allocation" after the first backoff sleep.
-    public nonisolated static func systemSleep(_ nanoseconds: UInt64) async throws {
-        try await Task.sleep(nanoseconds: nanoseconds)
+    /// Pause for `nanoseconds`, through the injected sleep when a test supplied
+    /// one. Every sleep in this model goes through here.
+    private func pause(_ nanoseconds: UInt64) async throws {
+        if let sleep {
+            try await sleep(nanoseconds)
+        } else {
+            try await Task.sleep(nanoseconds: nanoseconds)
+        }
     }
 
     public init(
@@ -630,7 +636,7 @@ public final class SessionViewModel {
         earlierPrefetchDelay: UInt64 = 400_000_000,
         resumeWindow: TimeInterval = SessionViewModel.defaultResumeWindow,
         clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        sleep: @escaping @Sendable (UInt64) async throws -> Void = SessionViewModel.systemSleep
+        sleep: (@Sendable (UInt64) async throws -> Void)? = nil
     ) {
         self.source = source
         self.publishInterval = publishInterval
@@ -1008,7 +1014,7 @@ public final class SessionViewModel {
                         subscribedWithoutSnapshot = false
                         revalidating = false
                         self.state = .reconnecting
-                        do { try await self.sleep(delay) } catch { return }
+                        do { try await self.pause(delay) } catch { return }
                         delay = min(delay * 2, self.backoff.maximum)
                         continue
                     }
@@ -1032,7 +1038,7 @@ public final class SessionViewModel {
                         if subscribedWithoutSnapshot, self.hasCompletedInitialReplay {
                             revalidating = true
                         }
-                        do { try await self.sleep(delay) } catch { return }
+                        do { try await self.pause(delay) } catch { return }
                         delay = min(delay * 2, self.backoff.maximum)
                     case .cancelled: self.clearTransientPresentation(); self.state = .idle; return
                     case .unauthorized: self.failUnauthorized(); return
@@ -1157,7 +1163,7 @@ public final class SessionViewModel {
                     case .transient, .server:
                         self.state = .reconnecting
                         do {
-                            try await self.sleep(delay)
+                            try await self.pause(delay)
                         } catch {
                             return
                         }
@@ -1229,7 +1235,7 @@ public final class SessionViewModel {
                 }
 
                 do {
-                    try await self.sleep(delay)
+                    try await self.pause(delay)
                 } catch {
                     return
                 }
@@ -1445,7 +1451,7 @@ public final class SessionViewModel {
         let timeout = sentEchoTimeout
         let sleep = self.sleep
         Task { @MainActor [weak self] in
-            do { try await sleep(timeout) } catch { return }
+            do { try await pause(timeout) } catch { return }
             guard let self,
                   let current = self.pendingUserMessages.firstIndex(where: { $0.id == id }),
                   self.pendingUserMessages[current].status == .sent else { return }
@@ -1747,7 +1753,7 @@ public final class SessionViewModel {
         let timeout = controlAckTimeout
         let sleep = self.sleep
         Task { @MainActor [weak self] in
-            do { try await sleep(timeout) } catch { return }
+            do { try await pause(timeout) } catch { return }
             guard let self, self.pendingControl?.token == token else { return }
             self.pendingControl = nil
         }
