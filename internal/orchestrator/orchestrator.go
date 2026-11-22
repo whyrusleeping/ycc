@@ -1332,6 +1332,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			"task_id":     tools.StrProp("task id"),
 			"review_tier": tools.StrProp("review tier (" + tierNames + "); omit for the configured default"),
 			"background":  tools.BoolProp("run the reviewers as a background job instead of blocking (always allowed)"),
+			"handoff":     tools.StrProp("optional context every reviewer receives with the diff: your verification evidence (commands run and results, checks a reviewer cannot rerun, such as device or remote builds) and anything the diff does not show; bounded to 32 KiB"),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -1393,7 +1394,12 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				})
 			}
 			hasDiff := len(preloadedDiff.History) > 0
+			handoff, _ := tools.GetString(params, "handoff")
+			handoff = boundedRevisionHandoff(handoff)
 			implementationEvidence := reviewerImplementationEvidence(d)
+			if handoff != "" {
+				implementationEvidence = coordinatorReviewEvidence(d, handoff)
+			}
 			d.mu.Lock()
 			d.reviewers = nil
 			for _, spec := range specs {
@@ -1412,7 +1418,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 					emitSyntheticReviewDiff(d.Emitter, spec, actor, preloadedDiff)
 				}
 				loop.Seed(reviewerPrompt(t, spec.Focus, hasDiff) + "\n\n" + compactReviewDiffEvidence(preloadedDiff) + "\n\n" + implementationEvidence)
-				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, workspace: ws, round: 1, contextMode: "fresh", evidence: preloadedDiff})
+				d.reviewers = append(d.reviewers, &reviewerHandle{name: spec.label(), model: spec.Name, spec: spec, loop: loop, workspace: ws, round: 1, contextMode: "fresh", evidence: preloadedDiff, handoff: handoff})
 			}
 			handles := d.reviewers
 			d.reviewJob = nil // cleared for a foreground run; set below for background
@@ -1456,12 +1462,13 @@ func reReview(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "re_review",
 		Description: "Review the revised scoped snapshot with the same reviewer slots/models/focuses. Retain useful " +
-			"history or choose fresh for broad revisions; near-limit contexts refresh automatically. Fresh gets " +
-			"the current diff, prior substantive findings, and your handoff.",
+			"history or choose fresh for broad revisions; near-limit contexts refresh automatically. Both modes " +
+			"deliver your handoff and the latest implementer report; fresh also gets the current diff preloaded and " +
+			"prior substantive findings.",
 		Params: tools.Obj(map[string]any{
 			"task_id":      tools.StrProp("task id"),
 			"context_mode": map[string]any{"type": "string", "enum": []string{"retain", "fresh"}, "description": "optional review context strategy: 'retain' (default) or 'fresh'"},
-			"handoff":      tools.StrProp("for fresh mode, concise self-contained context: what changed, prior blockers to verify, and any changed approach; bounded to 32 KiB"),
+			"handoff":      tools.StrProp("optional context every reviewer receives in either mode: what changed, verification you ran since the last round (commands and results), prior blockers to verify, and any changed approach; self-contained for fresh mode; bounded to 32 KiB"),
 		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
@@ -1491,6 +1498,10 @@ func reReview(d *Deps) *gollama.Tool {
 				return tools.ErrResult("re_review: changeset evidence failed: %v", currentDiff.Err), nil
 			}
 			currentEvidence := compactReviewDiffEvidence(currentDiff)
+			retainedPrompt := reReviewPrompt
+			if evidence := coordinatorReviewEvidence(d, handoff); evidence != "" {
+				retainedPrompt += "\n\n" + evidence
+			}
 			for _, h := range handles {
 				h.priorContextTokens = h.loop.ContextTokensEstimate()
 				h.newContextTokens = 0
@@ -1499,7 +1510,7 @@ func reReview(d *Deps) *gollama.Tool {
 				rollover := mode == "fresh"
 				if rollover {
 					h.rolloverReason = "coordinator_fresh"
-				} else if exceedsContextBudget(h.spec, h.loop.ContextTokensEstimateWith(reReviewPrompt)) {
+				} else if exceedsContextBudget(h.spec, h.loop.ContextTokensEstimateWith(retainedPrompt)) {
 					rollover = true
 					h.rolloverReason = "automatic_pressure"
 				}
@@ -1512,7 +1523,7 @@ func reReview(d *Deps) *gollama.Tool {
 						h.workspace.SetReviewIdentity(currentDiff.SnapshotID, currentDiff.Tree)
 					}
 					deltaEvidence := changedSinceReviewEvidence(d.Repo, h.evidence, currentDiff)
-					h.loop.Post(reReviewPrompt + "\n\n" + deltaEvidence + "\n\n" + currentEvidence)
+					h.loop.Post(retainedPrompt + "\n\n" + deltaEvidence + "\n\n" + currentEvidence)
 					h.contextMode = "retain"
 				}
 				h.evidence = currentDiff
@@ -1558,20 +1569,42 @@ func reviewerContinuationHandoff(previous review, supplied string) string {
 	return boundedRevisionHandoff(b.String())
 }
 
-func reviewerImplementationEvidence(d *Deps) string {
+const implementerReportHeading = "Latest implementation/verification evidence (implementer report):\n"
+
+// latestImplementerReport returns the bounded latest implementer report, or ""
+// when no implementer has reported.
+func latestImplementerReport(d *Deps) string {
 	d.mu.Lock()
 	report := strings.TrimSpace(d.implReport)
 	d.mu.Unlock()
+	const maxReportBytes = 4096
+	const marker = "\n…[implementation report truncated]"
+	if len(report) > maxReportBytes {
+		report = validUTF8Prefix(report, maxReportBytes-len(marker)) + marker
+	}
+	return report
+}
+
+func reviewerImplementationEvidence(d *Deps) string {
+	report := latestImplementerReport(d)
 	if report == "" {
 		report = "(no implementer report is available; verify against the current tree and diff)"
-	} else {
-		const maxReportBytes = 4096
-		const marker = "\n…[implementation report truncated]"
-		if len(report) > maxReportBytes {
-			report = validUTF8Prefix(report, maxReportBytes-len(marker)) + marker
-		}
 	}
-	return "Latest implementation/verification evidence (implementer report):\n" + report
+	return implementerReportHeading + report
+}
+
+// coordinatorReviewEvidence is the coordinator's handoff followed by the latest
+// implementer report, for an initial reviewer (spawn_reviewers) or a retained
+// one (re_review). It is "" when neither exists. handoff is already bounded.
+func coordinatorReviewEvidence(d *Deps, handoff string) string {
+	var parts []string
+	if handoff = strings.TrimSpace(handoff); handoff != "" {
+		parts = append(parts, "Coordinator handoff / current verification state:\n"+handoff)
+	}
+	if report := latestImplementerReport(d); report != "" {
+		parts = append(parts, implementerReportHeading+report)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func freshReviewerHandoff(d *Deps, handoff string) string {

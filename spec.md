@@ -480,9 +480,10 @@ path/stat/digest manifest, a small head/tail diff excerpt, and an exact Git retr
 than replaying the complete patch into coordinator history. Fresh reviewers preserve the previously
 resolved slots, models, focuses, reasoning settings, and read-only policy; they receive the current
 bounded diff once, current verification handoff, and unresolved blocker/major findings without old
-tool logs or tier re-resolution. A retained re-review receives a bounded name-status delta manifest
-from its prior scoped snapshot plus exact current/delta retrieval commands, not another historical
-full patch. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
+tool logs or tier re-resolution. Initial reviewers receive the coordinator's optional verification
+handoff and the latest implementer report. A retained re-review receives the coordinator's handoff,
+the latest implementer report, and a bounded name-status delta manifest from its prior scoped
+snapshot plus exact current/delta retrieval commands, not another historical full patch. Subagent lifecycle events expose context mode, round, rollover reason, and old/new
 advisory context estimates. Reviewer fan-out runs concurrently.
 
 Background shell commands and subagents share stable session-owned job ids and four controls:

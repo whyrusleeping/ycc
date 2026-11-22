@@ -616,6 +616,52 @@ func TestReviewerContextErrorRecreatesSameSlotAndSubmitsOnce(t *testing.T) {
 	}
 }
 
+func TestReviewersReceiveCoordinatorHandoffInDirectAndRetainedRounds(t *testing.T) {
+	ws := t.TempDir()
+	repo, _ := git.Open(ws)
+	store := docs.NewStore(ws)
+	_, _ = store.Create("review evidence", "## Acceptance\n- verified\n\n## Work log\n", 1, nil, nil)
+	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("finish", `{"report":"implementer ran go test ./internal/x"}`),
+	}}
+	reviewer := &scripted{resp: []*gollama.ResponseMessageGenerate{
+		call("submit_review", `{"verdict":"revise","summary":"Mac build unverified"}`),
+		call("submit_review", `{"verdict":"accept","summary":"verified"}`),
+	}}
+	clients := 0
+	d := &Deps{
+		Workspace: ws, Docs: store, Repo: repo, Emitter: event.NewEmitter(&captureRec{}, "coordinator"), Asker: noopAsker{},
+		Implementer: AgentSpec{Name: "impl", Model: "impl-model", NewClient: func() engine.Turner { return impl }},
+		ReviewTier: func(string) ReviewPlan {
+			return ReviewPlan{Tier: "standard", Specs: []AgentSpec{{Name: "review", Model: "review-model",
+				NewClient: func() engine.Turner { clients++; return reviewer }}}}
+		},
+	}
+	ctx := context.Background()
+	res, _ := spawnReviewers(d).Call(ctx, map[string]any{"task_id": "0001", "handoff": "coordinator ran the Mac build: OK"})
+	if !strings.Contains(res.Content, "0/1") {
+		t.Fatal(res.Content)
+	}
+	seed := reviewer.messages[len(reviewer.messages)-1].Content
+	if !strings.Contains(seed, "coordinator ran the Mac build: OK") || strings.Contains(seed, "no implementer report") {
+		t.Fatalf("initial reviewer seed lacks the coordinator handoff:\n%s", seed)
+	}
+	if res, _ := spawnImplementer(d).Call(ctx, map[string]any{"task_id": "0001", "plan": "verify"}); res.IsError {
+		t.Fatal(res.Content)
+	}
+	res, _ = reReview(d).Call(ctx, map[string]any{"task_id": "0001", "handoff": "simulator screenshot checked"})
+	if !strings.Contains(res.Content, "1/1") || clients != 1 {
+		t.Fatalf("retained re-review failed: clients=%d result=%s", clients, res.Content)
+	}
+	posted := reviewer.messages[len(reviewer.messages)-1].Content
+	for _, want := range []string{"Coordinator handoff / current verification state", "simulator screenshot checked",
+		"Latest implementation/verification evidence", "implementer ran go test ./internal/x"} {
+		if !strings.Contains(posted, want) {
+			t.Fatalf("retained re-review prompt missing %q:\n%s", want, posted)
+		}
+	}
+}
+
 func TestReviewerPressureRolloverIncludesImplementationEvidenceWithoutHandoff(t *testing.T) {
 	ws := t.TempDir()
 	repo, _ := git.Open(ws)
