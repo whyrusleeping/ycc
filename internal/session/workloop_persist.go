@@ -33,6 +33,8 @@ type persistedWorkLoop struct {
 	InReview                 []persistedWorkLoopTask    `json:"in_review,omitempty"`
 	Created                  []persistedWorkLoopTask    `json:"created,omitempty"`
 	Unfinished               []persistedWorkLoopTask    `json:"unfinished,omitempty"`
+	UncommittedInReview      []persistedWorkLoopTask    `json:"uncommitted_in_review,omitempty"`
+	UncommittedPaths         int                        `json:"uncommitted_paths,omitempty"`
 	TotalTokens              int64                      `json:"total_tokens"`
 	TotalCost                float64                    `json:"total_cost"`
 	CostStatus               string                     `json:"cost_status"`
@@ -140,6 +142,8 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 	p.InReview = persistedTasks(snapshot.InReview)
 	p.Created = persistedTasks(snapshot.Created)
 	p.Unfinished = persistedTasks(snapshot.Unfinished)
+	p.UncommittedInReview = persistedTasks(snapshot.UncommittedInReview)
+	p.UncommittedPaths = snapshot.UncommittedPaths
 	return p
 }
 
@@ -236,6 +240,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		inReview:         restoredTasks(p.InReview),
 		created:          restoredTasks(p.Created),
 		unfinished:       restoredTasks(p.Unfinished),
+		preflight:        WorkLoopPreflight{InReview: restoredTasks(p.UncommittedInReview), Paths: p.UncommittedPaths},
 	}
 	if p.FinishedAt != nil {
 		wl.finishedAt = *p.FinishedAt

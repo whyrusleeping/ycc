@@ -278,6 +278,9 @@ const (
 	// SessionServiceGetWorkLoopProcedure is the fully-qualified name of the SessionService's
 	// GetWorkLoop RPC.
 	SessionServiceGetWorkLoopProcedure = "/ycc.v1.SessionService/GetWorkLoop"
+	// SessionServiceGetWorkLoopPreflightProcedure is the fully-qualified name of the SessionService's
+	// GetWorkLoopPreflight RPC.
+	SessionServiceGetWorkLoopPreflightProcedure = "/ycc.v1.SessionService/GetWorkLoopPreflight"
 	// SessionServiceSpawnWorkstreamProcedure is the fully-qualified name of the SessionService's
 	// SpawnWorkstream RPC.
 	SessionServiceSpawnWorkstreamProcedure = "/ycc.v1.SessionService/SpawnWorkstream"
@@ -488,6 +491,7 @@ type SessionServiceClient interface {
 	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
 	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
 	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
+	GetWorkLoopPreflight(context.Context, *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error)
 	// Spawn a parallel workstream:
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -1026,6 +1030,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetWorkLoop")),
 			connect.WithClientOptions(opts...),
 		),
+		getWorkLoopPreflight: connect.NewClient[v1.GetWorkLoopPreflightRequest, v1.GetWorkLoopPreflightResponse](
+			httpClient,
+			baseURL+SessionServiceGetWorkLoopPreflightProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetWorkLoopPreflight")),
+			connect.WithClientOptions(opts...),
+		),
 		spawnWorkstream: connect.NewClient[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse](
 			httpClient,
 			baseURL+SessionServiceSpawnWorkstreamProcedure,
@@ -1193,6 +1203,7 @@ type sessionServiceClient struct {
 	startWorkLoop          *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
 	stopWorkLoop           *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
 	getWorkLoop            *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
+	getWorkLoopPreflight   *connect.Client[v1.GetWorkLoopPreflightRequest, v1.GetWorkLoopPreflightResponse]
 	spawnWorkstream        *connect.Client[v1.SpawnWorkstreamRequest, v1.SpawnWorkstreamResponse]
 	listWorkstreams        *connect.Client[v1.ListWorkstreamsRequest, v1.ListWorkstreamsResponse]
 	previewMerge           *connect.Client[v1.PreviewMergeRequest, v1.PreviewMergeResponse]
@@ -1628,6 +1639,11 @@ func (c *sessionServiceClient) GetWorkLoop(ctx context.Context, req *connect.Req
 	return c.getWorkLoop.CallUnary(ctx, req)
 }
 
+// GetWorkLoopPreflight calls ycc.v1.SessionService.GetWorkLoopPreflight.
+func (c *sessionServiceClient) GetWorkLoopPreflight(ctx context.Context, req *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error) {
+	return c.getWorkLoopPreflight.CallUnary(ctx, req)
+}
+
 // SpawnWorkstream calls ycc.v1.SessionService.SpawnWorkstream.
 func (c *sessionServiceClient) SpawnWorkstream(ctx context.Context, req *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {
 	return c.spawnWorkstream.CallUnary(ctx, req)
@@ -1863,6 +1879,7 @@ type SessionServiceHandler interface {
 	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
 	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
 	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
+	GetWorkLoopPreflight(context.Context, *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error)
 	// Spawn a parallel workstream:
 	// worktree+session, list them, preview/merge a branch back to base with the
 	// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -2397,6 +2414,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetWorkLoop")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetWorkLoopPreflightHandler := connect.NewUnaryHandler(
+		SessionServiceGetWorkLoopPreflightProcedure,
+		svc.GetWorkLoopPreflight,
+		connect.WithSchema(sessionServiceMethods.ByName("GetWorkLoopPreflight")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceSpawnWorkstreamHandler := connect.NewUnaryHandler(
 		SessionServiceSpawnWorkstreamProcedure,
 		svc.SpawnWorkstream,
@@ -2645,6 +2668,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceStopWorkLoopHandler.ServeHTTP(w, r)
 		case SessionServiceGetWorkLoopProcedure:
 			sessionServiceGetWorkLoopHandler.ServeHTTP(w, r)
+		case SessionServiceGetWorkLoopPreflightProcedure:
+			sessionServiceGetWorkLoopPreflightHandler.ServeHTTP(w, r)
 		case SessionServiceSpawnWorkstreamProcedure:
 			sessionServiceSpawnWorkstreamHandler.ServeHTTP(w, r)
 		case SessionServiceListWorkstreamsProcedure:
@@ -3014,6 +3039,10 @@ func (UnimplementedSessionServiceHandler) StopWorkLoop(context.Context, *connect
 
 func (UnimplementedSessionServiceHandler) GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetWorkLoop is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetWorkLoopPreflight(context.Context, *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetWorkLoopPreflight is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) SpawnWorkstream(context.Context, *connect.Request[v1.SpawnWorkstreamRequest]) (*connect.Response[v1.SpawnWorkstreamResponse], error) {

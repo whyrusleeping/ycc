@@ -10,7 +10,14 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
     var refreshError: Error?
     var startErrors: [Error] = []
     var stopError: Error?
+    var preflight: Ycc_V1_GetWorkLoopPreflightResponse?
+    var preflightError: Error?
     private(set) var startCalls = 0
+
+    func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? {
+        if let preflightError { throw preflightError }
+        return preflight
+    }
 
     func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
         if let refreshError { throw refreshError }
@@ -237,6 +244,34 @@ final class WorkLoopModelTests: XCTestCase {
 
         XCTAssertEqual(sections.flatMap(\.rows).map(\.id), ["done", "blocked", "unfinished", "new"])
         XCTAssertEqual(sections[1].rows[0].reason, "dependency missing")
+    }
+
+    func testPreflightWarnsAboutUncommittedInReviewWork() async {
+        let source = MockWorkLoopSource()
+        let model = WorkLoopModel(source: source, project: "demo")
+
+        await model.loadPreflight()
+        XCTAssertNil(model.preflightWarning, "no preflight, no warning")
+
+        var response = Ycc_V1_GetWorkLoopPreflightResponse()
+        response.uncommittedInReview = [task("0366", reason: "uncommitted: a.go"), task("0371")]
+        response.uncommittedPaths = 5
+        source.preflight = response
+        await model.loadPreflight()
+        XCTAssertEqual(model.preflightWarning, "2 in-review tasks have uncommitted changes in 5 files (0366, 0371)")
+
+        source.preflightError = YccError.failedPrecondition(message: "boom")
+        await model.loadPreflight()
+        XCTAssertNil(model.preflightWarning, "a failed preflight never blocks Start")
+
+        var finished = loop(state: "finished")
+        finished.uncommittedInReview = [task("0366", reason: "uncommitted: a.go")]
+        let sections = WorkLoopModel.digestSections(for: finished)
+        XCTAssertEqual(sections.map(\.title), [WorkLoopModel.uncommittedSectionTitle])
+        XCTAssertEqual(sections.first?.rows.first?.reason, "uncommitted: a.go")
+        XCTAssertEqual(
+            WorkLoopModel.uncommittedInReviewLine(tasks: finished.uncommittedInReview, paths: 1),
+            "1 in-review task has uncommitted changes in 1 file (0366)")
     }
 
     func testResourceEnvelopeMakesBoundedAndUnboundedDimensionsExplicit() {

@@ -22,6 +22,14 @@ func TestStartWorkLoopUnknownProject(t *testing.T) {
 	}
 }
 
+func TestGetWorkLoopPreflightUnknownProject(t *testing.T) {
+	srv := New(session.NewManager(testRegistry(), t.TempDir()))
+	_, err := srv.GetWorkLoopPreflight(context.Background(), connect.NewRequest(&v1.GetWorkLoopPreflightRequest{Project: "nope"}))
+	if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v (err %v), want InvalidArgument", got, err)
+	}
+}
+
 func TestStopWorkLoopNoneReturnsEmpty(t *testing.T) {
 	srv := New(session.NewManager(testRegistry(), t.TempDir()))
 	resp, err := srv.StopWorkLoop(context.Background(), connect.NewRequest(&v1.StopWorkLoopRequest{}))

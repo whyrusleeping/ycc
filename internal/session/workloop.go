@@ -76,9 +76,13 @@ type WorkLoop struct {
 	InReview         []WorkLoopDigestTask
 	Created          []WorkLoopDigestTask
 	Unfinished       []WorkLoopDigestTask
-	TotalTokens      int64
-	TotalCost        float64
-	CostStatus       string // priced | unpriced | partial
+	// UncommittedInReview lists in_review tasks whose work was uncommitted in
+	// the workspace when the loop started (see WorkLoopPreflight).
+	UncommittedInReview []WorkLoopDigestTask
+	UncommittedPaths    int
+	TotalTokens         int64
+	TotalCost           float64
+	CostStatus          string // priced | unpriced | partial
 
 	// Resource limits are captured at loop start. When ResourceEnvelopeCaptured
 	// is true, zero means intentionally unbounded. Cost limits count only usage
@@ -180,6 +184,8 @@ type workLoop struct {
 	// baseline is the backlog status per id at loop start so the finished digest
 	// can classify each task by how it changed. Missing id => task created mid-loop.
 	baseline map[string]docs.Status
+	// preflight is captured once at loop start.
+	preflight WorkLoopPreflight
 
 	// run accumulator.
 	sessions   []loopSessRec
@@ -263,6 +269,8 @@ func (wl *workLoop) snapshotLocked() *WorkLoop {
 	out.InReview = append(out.InReview, wl.inReview...)
 	out.Created = append(out.Created, wl.created...)
 	out.Unfinished = append(out.Unfinished, wl.unfinished...)
+	out.UncommittedInReview = append(out.UncommittedInReview, wl.preflight.InReview...)
+	out.UncommittedPaths = wl.preflight.Paths
 	return out
 }
 
@@ -299,6 +307,11 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Best effort before taking the lock: git status may be slow on a big tree.
+	var preflight WorkLoopPreflight
+	if tasks, err := m.backlogStore(absWS).ListMetadata(); err == nil {
+		preflight = m.workLoopPreflight(absWS, tasks)
+	}
 	m.loopMu.Lock()
 	if m.loopStop {
 		m.loopMu.Unlock()
@@ -316,6 +329,7 @@ func (m *Manager) StartWorkLoop(project string) (*WorkLoop, error) {
 	}
 	b := m.Budget()
 	wl := &workLoop{
+		preflight:        preflight,
 		m:                m,
 		loopID:           newLoopID(),
 		project:          label,
@@ -700,6 +714,7 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	wl.waitKind = ""
 	wl.outcome = outcome
 	nComplete, nBlocked, nReview, nUnfinished := len(wl.completed), len(wl.blocked), len(wl.inReview), len(wl.unfinished)
+	nUncommitted := len(wl.preflight.InReview)
 	pushed := len(wl.sessions) > 0
 	label := wl.project
 	wl.persistSnapshot(wl.snapshotLocked())
@@ -709,6 +724,9 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	if pushed {
 		line := fmt.Sprintf("work loop finished: %d completed, %d blocked, %d in review, %d unfinished",
 			nComplete, nBlocked, nReview, nUnfinished)
+		if nUncommitted > 0 {
+			line += fmt.Sprintf("; %d in-review tasks were uncommitted at start", nUncommitted)
+		}
 		wl.m.Notify(notify.KindDigest, label, "", line)
 	}
 }

@@ -2131,6 +2131,22 @@ func (s *Server) GetWorkLoop(_ context.Context, req *connect.Request[v1.GetWorkL
 	return connect.NewResponse(&v1.GetWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
 }
 
+// GetWorkLoopPreflight reports in_review tasks whose work is uncommitted in the
+// project's workspace, for a warning before StartWorkLoop.
+func (s *Server) GetWorkLoopPreflight(_ context.Context, req *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error) {
+	pre, err := s.mgr.WorkLoopPreflight(req.Msg.Project)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&v1.GetWorkLoopPreflightResponse{
+		UncommittedInReview: digestTasksToProto(pre.InReview),
+		UncommittedPaths:    int32(pre.Paths),
+	}), nil
+}
+
 // workLoopToProto marshals a work-loop snapshot to its proto form (nil-safe → nil).
 func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 	if wl == nil {
@@ -2184,6 +2200,8 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 	info.InReview = digestTasksToProto(wl.InReview)
 	info.Created = digestTasksToProto(wl.Created)
 	info.Unfinished = digestTasksToProto(wl.Unfinished)
+	info.UncommittedInReview = digestTasksToProto(wl.UncommittedInReview)
+	info.UncommittedPaths = int32(wl.UncommittedPaths)
 	return info
 }
 

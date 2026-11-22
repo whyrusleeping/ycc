@@ -29,6 +29,7 @@ import {
   resourceEnvelopeLines,
   stateTitle,
   totalsLine,
+  uncommittedInReviewLine,
 } from "../src/features/workloop/model";
 
 const loop = (extra: MessageInitShape<typeof WorkLoopInfoSchema> = {}): WorkLoopInfo =>
@@ -64,6 +65,14 @@ describe("digest and lines", () => {
     const l = loop({ created: [task("9")], completed: [task("1"), task("2")], unfinished: [task("5")], blocked: [task("3")] });
     expect(digestSections(l).map((s) => s.title)).toEqual(["Completed", "Blocked", "Unfinished", "Created"]);
     expect(digestSections(loop())).toEqual([]);
+    const withUncommitted = loop({ completed: [task("1")], uncommittedInReview: [task("7")] });
+    expect(digestSections(withUncommitted).map((s) => s.key)).toEqual(["completed", "uncommittedInReview"]);
+  });
+
+  it("summarizes uncommitted in-review work", () => {
+    expect(uncommittedInReviewLine([], 0)).toBe("");
+    expect(uncommittedInReviewLine([task("7")], 1)).toBe("1 in-review task has uncommitted changes in 1 file");
+    expect(uncommittedInReviewLine([task("7"), task("8")], 5)).toBe("2 in-review tasks have uncommitted changes in 5 files");
   });
 
   it("never presents incomplete pricing as exact", () => {

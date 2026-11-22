@@ -325,7 +325,7 @@ JSON="Content-Type: application/json"
 | [`Notify`](#notify) | route a push notification through the daemon-side notifier |
 | [`GetHealth`](#gethealth) | latest dependency health checks (models, Exa, disk) |
 | [`RecordUiEvents` / `GetUiAnalytics`](#recorduievents--getuianalytics) | report client usage analytics / read the summary |
-| [`StartWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / graceful stop / observe |
+| [`StartWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / graceful stop / observe (plus `GetWorkLoopPreflight`) |
 
 ### ListProjects
 
@@ -1410,6 +1410,12 @@ for that workspace).
 - **`GetWorkLoop`** returns the current snapshot so a reconnecting client can
   observe state and Subscribe. Real-time loop-lifecycle streaming is deferred;
   polling `GetWorkLoop` plus `Subscribe(currentSessionId)` covers observation.
+- **`GetWorkLoopPreflight`** reports what a loop started now would route around:
+  `uncommittedInReview` (`WorkLoopDigestTask[]`, `reason` naming each task's
+  uncommitted files) and `uncommittedPaths` (distinct files). A task is listed
+  when its own backlog file is uncommitted or a session that focused it claims
+  an uncommitted file. Clients show it in the start confirmation; a daemon
+  without the RPC answers `unimplemented`, which clients treat as nothing to warn about.
 
 The completion digest is pushed via the notifier (`digest` kind) when the loop
 finishes with at least one session run — no client `Notify` call needed.
@@ -1440,6 +1446,7 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"myrepo"}' \
 | `sessionTimeLimitSecs` / `loopTimeLimitSecs` | int64 (JSON string) | currently `0`, explicitly unbounded |
 | `costLimitsPricedOnly` | bool | cost caps/totals exclude usage without configured pricing |
 | `resourceEnvelopeCaptured` | bool | false only when reading a pre-envelope persisted snapshot |
+| `uncommittedInReview` / `uncommittedPaths` | `WorkLoopDigestTask[]` / int32 | the `GetWorkLoopPreflight` result captured at start |
 
 `WorkLoopSession`: `sessionId`, `focus`, per-focus `attempt`, bounded `evidence`,
 structured `errorKind` / `errorMessage` / `errorRetryable`, `tokens`, `cost`,
@@ -1448,7 +1455,8 @@ report, `evidence` contains a bounded failure report synthesized from `session_e
 
 `WorkLoopDigestTask`: `id`, `title`, `status`, `sha` (commit recorded for the
 task), `verdictTally` (e.g. `approve×2 reject×1`), `tokens`, `cost`, `priceStatus`,
-`reason` (blocked reason from the task work log; blocked tasks only), `attempts`,
+`reason` (blocked reason from the task work log for blocked tasks; uncommitted files
+for `uncommittedInReview` rows), `attempts`,
 `latestEvidence`, `remainingCriteria`, and `nextStep`.
 
 ---

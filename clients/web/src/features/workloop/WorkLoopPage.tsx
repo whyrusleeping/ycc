@@ -10,7 +10,7 @@ import { Link } from "react-router";
 import type { WorkLoopDigestTask, WorkLoopInfo, WorkLoopSession } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, useBacklog, useBudget, useModels, useWorkLoop } from "../../api/queries";
+import { queryKeys, useBacklog, useBudget, useModels, useWorkLoop, useWorkLoopPreflight } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { useIntent } from "../../app/intents";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
@@ -42,6 +42,7 @@ import {
   stateTitle,
   summaryLine,
   totalsLine,
+  uncommittedInReviewLine,
   waitingLine,
   type LoopState,
 } from "./model";
@@ -243,6 +244,33 @@ function ReadyTasks({ project }: { project: string }) {
   );
 }
 
+/**
+ * The start dialog's preflight: in-review tasks whose work is uncommitted.
+ * Loop sessions leave it to its owner, so starting anyway is a choice. An
+ * older daemon without the RPC shows nothing.
+ */
+function UncommittedReviewWarning({ project, tasks, paths }: { project: string; tasks: WorkLoopDigestTask[]; paths: number }) {
+  const line = uncommittedInReviewLine(tasks, paths);
+  if (!line) return null;
+  return (
+    <div className="banner warn loop-uncommitted" role="alert">
+      <div>
+        <strong>{line}.</strong> Loop sessions leave that work to its owner and route around those files, so they may split
+        tasks instead of finishing them. Commit or settle it first, or start anyway.
+      </div>
+      <ul>
+        {tasks.slice(0, 8).map((t) => (
+          <li key={t.id}>
+            <TaskLink project={project} id={t.id} className="task-chip" /> <span>{t.title}</span>
+            {t.reason && <div className="muted small mono">{t.reason}</div>}
+          </li>
+        ))}
+        {tasks.length > 8 && <li className="muted">… and {tasks.length - 8} more</li>}
+      </ul>
+    </div>
+  );
+}
+
 function EmptyLoop({ project, onStart }: { project: string; onStart: () => void }) {
   return (
     <section className="loop-empty">
@@ -277,6 +305,12 @@ function StartLoopDialog({
 }) {
   const models = useModels("", open);
   const budget = useBudget(open);
+  const preflight = useWorkLoopPreflight(project, open);
+  // Hold Start until this opening's check answers, so the warning can't arrive
+  // after the click. A failed check (e.g. an older daemon without the RPC)
+  // warns about nothing rather than blocking the loop.
+  const checking = open && preflight.isFetching;
+  const uncommitted = preflight.isError ? [] : (preflight.data?.uncommittedInReview ?? []);
   const current = models.data?.workImplementation || "direct";
   const [choice, setChoice] = useState<string | null>(null);
   const implementation = choice ?? current;
@@ -290,6 +324,7 @@ function StartLoopDialog({
         className="task-editor"
         onSubmit={(e) => {
           e.preventDefault();
+          if (checking) return;
           onStart(implementation !== current ? implementation : null);
           setChoice(null);
         }}
@@ -299,6 +334,11 @@ function StartLoopDialog({
           or you stop it. It spends tokens while this tab is closed.
         </p>
         <ReadyTasks project={project} />
+        {checking ? (
+          <p className="muted small">Checking for uncommitted in-review work…</p>
+        ) : (
+          <UncommittedReviewWarning project={project} tasks={uncommitted} paths={preflight.data?.uncommittedPaths ?? 0} />
+        )}
         <fieldset className="loop-options">
           <legend>Work implementation</legend>
           {WORK_IMPLEMENTATIONS.map((o) => (
@@ -341,8 +381,8 @@ function StartLoopDialog({
           <button type="button" className="btn" onClick={close} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={busy}>
-            {busy ? "Starting…" : "Start loop"}
+          <button type="submit" className="btn primary" disabled={busy || checking}>
+            {busy ? "Starting…" : checking ? "Checking…" : uncommitted.length > 0 ? "Start anyway" : "Start loop"}
           </button>
         </div>
       </form>
@@ -382,6 +422,12 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
             <span className="muted small">The loop stopped on an Anthropic login problem. Reconnecting does not restart the loop.</span>
           </div>
         )}
+        {loop.uncommittedInReview.length > 0 && (
+          <div className="warn small loop-uncommitted-note">
+            At start, {uncommittedInReviewLine(loop.uncommittedInReview, loop.uncommittedPaths)}; loop sessions route around
+            that work (listed below).
+          </div>
+        )}
         {refreshError && <div className="warn small">Couldn’t refresh: {refreshError}</div>}
         {current && (
           <div className="loop-current">
@@ -415,7 +461,12 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
           </h2>
           <ul className="digest-list">
             {sec.rows.map((t) => (
-              <DigestRow key={t.id} project={project} task={t} blocked={sec.key === "blocked"} />
+              <DigestRow
+                key={t.id}
+                project={project}
+                task={t}
+                reason={sec.key === "blocked" ? "error" : sec.key === "uncommittedInReview" ? "note" : null}
+              />
             ))}
           </ul>
         </section>
@@ -461,7 +512,16 @@ function LoopSessionRow({ project, session: s, index }: { project: string; sessi
   );
 }
 
-function DigestRow({ project, task: t, blocked }: { project: string; task: WorkLoopDigestTask; blocked: boolean }) {
+function DigestRow({
+  project,
+  task: t,
+  reason,
+}: {
+  project: string;
+  task: WorkLoopDigestTask;
+  /** How to show t.reason: a blocked reason, an uncommitted-files note, or not at all. */
+  reason: "error" | "note" | null;
+}) {
   const inspector = useInspector();
   const details = [
     t.latestEvidence && { label: "Latest evidence", text: t.latestEvidence },
@@ -490,7 +550,7 @@ function DigestRow({ project, task: t, blocked }: { project: string; task: WorkL
         {t.verdictTally && <span>{t.verdictTally}</span>}
         <span className="mono">{totalsLine(t.tokens, t.cost, t.priceStatus)}</span>
       </div>
-      {blocked && t.reason && <div className="loop-error">{t.reason}</div>}
+      {reason && t.reason && <div className={reason === "error" ? "loop-error" : "muted small mono"}>{t.reason}</div>}
       {details.length > 0 && (
         <details className="digest-details">
           <summary>Evidence and next steps</summary>

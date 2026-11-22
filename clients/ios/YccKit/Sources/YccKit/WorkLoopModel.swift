@@ -9,6 +9,12 @@ public protocol WorkLoopSource: Sendable {
     func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo
     func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
+    func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse?
+}
+
+extension WorkLoopSource {
+    /// Sources without a preflight report nothing to warn about.
+    public func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? { nil }
 }
 
 extension YccClient: WorkLoopSource {}
@@ -77,6 +83,9 @@ public final class WorkLoopModel {
     public var actionError: String?
     public var completionMessage: String?
     public private(set) var unauthorized = false
+    /// In-review work a loop started now would route around; nil until loaded
+    /// or when the daemon cannot tell.
+    public private(set) var preflight: Ycc_V1_GetWorkLoopPreflightResponse?
 
     private let source: WorkLoopSource
     private let cache: AppDataCache?
@@ -125,6 +134,20 @@ public final class WorkLoopModel {
         guard let loop else { return false }
         return !loop.completed.isEmpty || !loop.blocked.isEmpty
             || !loop.inReview.isEmpty || !loop.created.isEmpty
+            || !loop.uncommittedInReview.isEmpty
+    }
+
+    /// The start confirmation's warning, or nil when there is nothing to warn about.
+    public var preflightWarning: String? {
+        guard let preflight else { return nil }
+        return Self.uncommittedInReviewLine(
+            tasks: preflight.uncommittedInReview, paths: Int(preflight.uncommittedPaths))
+    }
+
+    /// Load the preflight before confirming a start. A failure (for example an
+    /// older daemon without the RPC) leaves no warning rather than blocking Start.
+    public func loadPreflight() async {
+        preflight = try? await source.getWorkLoopPreflight(project: project)
     }
 
     public var currentSessionID: String {
@@ -225,7 +248,22 @@ public final class WorkLoopModel {
             WorkLoopDigestSection(title: "In review", systemImage: "eye", rows: loop.inReview),
             WorkLoopDigestSection(title: "Unfinished", systemImage: "arrow.clockwise.circle", rows: loop.unfinished),
             WorkLoopDigestSection(title: "Created", systemImage: "plus.circle", rows: loop.created),
+            WorkLoopDigestSection(
+                title: uncommittedSectionTitle, systemImage: "tray.full", rows: loop.uncommittedInReview),
         ].filter { !$0.rows.isEmpty }
+    }
+
+    public static let uncommittedSectionTitle = "Uncommitted in review at start"
+
+    /// "2 in-review tasks have uncommitted changes in 5 files" and the task ids,
+    /// or nil when none: loop sessions leave that work to its owner and route
+    /// around those files.
+    public static func uncommittedInReviewLine(tasks: [Ycc_V1_WorkLoopDigestTask], paths: Int) -> String? {
+        guard !tasks.isEmpty else { return nil }
+        let subject = tasks.count == 1 ? "1 in-review task has" : "\(tasks.count) in-review tasks have"
+        let files = paths == 1 ? "1 file" : "\(paths) files"
+        let ids = tasks.prefix(8).map(\.id).joined(separator: ", ") + (tasks.count > 8 ? ", …" : "")
+        return "\(subject) uncommitted changes in \(files) (\(ids))"
     }
 
     /// A compact status line for the backlog's work-loop banner.

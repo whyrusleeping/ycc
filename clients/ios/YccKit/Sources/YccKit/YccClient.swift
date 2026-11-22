@@ -436,6 +436,22 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// In-review tasks whose work is uncommitted in the project's workspace, for
+    /// a warning before ``startWorkLoop(project:)``. `nil` from a daemon without
+    /// the RPC.
+    public func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? {
+        var request = Ycc_V1_GetWorkLoopPreflightRequest()
+        request.project = project
+        let response = await generated.getWorkLoopPreflight(request: request)
+        switch response.result {
+        case .success(let message):
+            return message
+        case .failure(let error):
+            if error.code == .unimplemented { return nil }
+            throw Self.map(error)
+        }
+    }
+
     public var supportsIndexedSessionView: Bool { true }
 
     /// Rows in the first transcript page of a session open. Every row in it is

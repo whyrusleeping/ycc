@@ -21,10 +21,9 @@ Current state: todo; its dependency 0582 (daemon API and CLI for the project ses
 - The pending-question UI shows active notices.
 - `coordination_notice` events (overlap notices and board digests) render distinctly, with session ids linked to the session.
 
-## Acceptance
+## Acceptance criteria
 - `npm run typecheck` and web tests pass; Playwright screenshots of the sessions view, a held badge, the question notices and a coordination notice row, light and dark.
 - `internal/web/dist` rebuilt.
 
-## Acceptance criteria
-
 ## Work log
+- 2026-11-22 groom: renamed the Acceptance heading to Acceptance criteria and removed the empty duplicate. Checked that `ListProjectNotices`, `PostProjectNotice` and `ClearProjectNotice` exist in proto/ycc/v1/ycc.proto and that no web client code outside generated files calls them yet.

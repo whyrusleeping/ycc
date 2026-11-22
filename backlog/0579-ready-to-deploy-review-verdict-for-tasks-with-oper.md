@@ -10,7 +10,7 @@ spec_refs: []
 ---
 
 ## Description
-Found by 0576 (review-cycle investigation, `docs/reports/review-cycles-2026-11.md` cause 5, from Wheeler's session logs).
+Found by 0576 (review-cycle investigation, `docs/reports/review-cycles-2026-11.md` cause 5, from the session logs of Wheeler, another project run with ycc).
 
 Tasks with operational acceptance criteria (deploy, run a load, measure, report) need their code reviewed before deployment, but a review can only accept or revise. Reviewers revise every round while the operational evidence is missing, even when they find no code defect. Wheeler 0175 (fast load of archived history) went through six rounds within a day, all revised, and never committed; in rounds 4 and 6 neither reviewer reported a major code defect, and only operational acceptance criteria remained (the load and its counts, the operations procedure, measurements, live-lag evidence). A keyword pass found unfinished-criteria or missing-evidence findings in 34 of Wheeler's 185 revise rounds (18%). Some reviewers improvised a staged acceptance ("accepted for the pre-rollout stage"), others did not.
 
@@ -21,3 +21,4 @@ Tasks with operational acceptance criteria (deploy, run a load, measure, report)
 - The coordinator prompt adds, in substance: "Before requesting review, verify the criteria you can check before deployment or a run. Name the rest in the handoff."
 
 ## Work log
+- 2026-11-22 groom: glossed Wheeler. Checked that no ready-to-deploy verdict exists in internal/; no other change.

@@ -1,10 +1,10 @@
 ---
 id: "0570"
 title: Full-text search across session messages (daemon FTS index + search RPC + client UI)
-status: todo
+status: done
 priority: 3
 created: "2026-11-20"
-updated: "2026-11-21"
+updated: "2026-11-22"
 depends_on:
     - "0571"
     - "0572"
@@ -15,7 +15,7 @@ spec_refs:
 ---
 
 ## Description
-**Status:** accepted; split on 2026-11-21 into 0571 (daemon index, RPC and spec), 0572 (web UI) and 0573 (iOS UI, built on the Mac). This parent closes after all three, checked against the criteria below. Scope decided by the user on 2026-11-20 in the session that created this task.
+**Status:** done. Split on 2026-11-21 into 0571 (daemon index, RPC and spec), 0572 (web UI) and 0573 (iOS UI, built on the Mac); all three are done (`2d4ae8c`, `204f627`, `e0a722e`), and their outcomes meet the criteria below. The index shipped as a separate FTS5 database, `.ycc/session-search.sqlite`, rather than a table in `session-view.sqlite` as the proposed design below says (spec §18.6). Scope decided by the user on 2026-11-20 in the session that created this task.
 
 ## Problem
 
@@ -47,10 +47,11 @@ Search exists only inside a single transcript: TUI `/` (0116, 0119) and web Ctrl
 
 ## Acceptance criteria
 
-- [ ] A query matching text from a session that has not been opened since daemon start returns that session after backfill.
-- [ ] Hits include a highlighted snippet and open the transcript scrolled to the matching row, including rows far back in long sessions, on both web and iOS.
-- [ ] The index stays current as live sessions append events, and rebuilds cleanly after a schema bump or a deleted database.
-- [ ] Tool calls, tool results and thinking are not indexed.
-- [ ] Spec §18.6 and the web client design doc describe the search contract.
+- [x] A query matching text from a session that has not been opened since daemon start returns that session after backfill. (0571)
+- [x] Hits include a highlighted snippet and open the transcript scrolled to the matching row, including rows far back in long sessions, on both web and iOS. (0572, 0573)
+- [x] The index stays current as live sessions append events, and rebuilds cleanly after a schema bump or a deleted database. (0571)
+- [x] Tool calls, tool results and thinking are not indexed. (0571)
+- [x] Spec §18.6 and the web client design doc describe the search contract. (0571, 0572)
 
 ## Work log
+- 2026-11-22 groom: closed as done. 0571 (`2d4ae8c`), 0572 (`204f627`) and 0573 (`e0a722e`) are done, and their outcomes cover each criterion; spec.md §18.6, docs/design/web-client.md and docs/design/ios-client.md describe `SearchSessions`. Noted that the index is `.ycc/session-search.sqlite`, not a table in the session-view database.

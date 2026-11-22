@@ -895,7 +895,11 @@ task it left is ordinary continuation work. Work sessions' backlog views mark he
 actionable and end with the project's other live sessions (mode, state such as running or idle
 since a time, focused tasks, running jobs; sessions not working and quiet for over an hour are
 omitted), so agents choose from daemon state rather than
-inferring parallel work from commit times or processes. A loop whose only ready work is held
+inferring parallel work from commit times or processes. Loop sessions leave uncommitted work of
+in-review tasks to its owner, so before a start clients show a preflight naming in-review tasks
+whose own backlog file, or a file claimed by a session that focused them, is uncommitted, and
+confirm "start anyway"; the loop digest and completion notification keep that list.
+A loop whose only ready work is held
 finishes saying which sessions hold it rather
 than starting sessions that would decline to collide. Unchanged task metadata after a session
 is not a stop condition, and there is no fixed retry count for unfinished ready work. A completed

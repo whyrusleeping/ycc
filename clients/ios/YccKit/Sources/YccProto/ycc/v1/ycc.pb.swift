@@ -4864,6 +4864,19 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
     set {_uniqueStorage()._finishedAt = newValue}
   }
 
+  /// In-review tasks whose work was uncommitted in the workspace when the loop
+  /// started; reason names the files. Loop sessions leave that work to its owner.
+  public var uncommittedInReview: [Ycc_V1_WorkLoopDigestTask] {
+    get {_storage._uncommittedInReview}
+    set {_uniqueStorage()._uncommittedInReview = newValue}
+  }
+
+  /// distinct uncommitted paths attributed to uncommitted_in_review
+  public var uncommittedPaths: Int32 {
+    get {_storage._uncommittedPaths}
+    set {_uniqueStorage()._uncommittedPaths = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4976,6 +4989,37 @@ public nonisolated struct Ycc_V1_GetWorkLoopResponse: Sendable {
   public init() {}
 
   fileprivate var _loop: Ycc_V1_WorkLoopInfo? = nil
+}
+
+/// GetWorkLoopPreflight reports what a loop started now would route around:
+/// in_review tasks whose work is uncommitted in the workspace (their own backlog
+/// file, or files claimed by sessions that focused them). Clients show it
+/// before StartWorkLoop; reason names each task's uncommitted files.
+public nonisolated struct Ycc_V1_GetWorkLoopPreflightRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetWorkLoopPreflightResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var uncommittedInReview: [Ycc_V1_WorkLoopDigestTask] = []
+
+  /// distinct uncommitted paths attributed to them
+  public var uncommittedPaths: Int32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// A parallel workstream
@@ -14777,7 +14821,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0\u{3}finished_at\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0\u{3}finished_at\0\u{3}uncommitted_in_review\0\u{3}uncommitted_paths\0")
 
   fileprivate class _StorageClass {
     var _loopID: String = String()
@@ -14807,6 +14851,8 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
     var _unfinished: [Ycc_V1_WorkLoopDigestTask] = []
     var _resourceEnvelopeCaptured: Bool = false
     var _finishedAt: String = String()
+    var _uncommittedInReview: [Ycc_V1_WorkLoopDigestTask] = []
+    var _uncommittedPaths: Int32 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -14844,6 +14890,8 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       _unfinished = source._unfinished
       _resourceEnvelopeCaptured = source._resourceEnvelopeCaptured
       _finishedAt = source._finishedAt
+      _uncommittedInReview = source._uncommittedInReview
+      _uncommittedPaths = source._uncommittedPaths
     }
   }
 
@@ -14889,6 +14937,8 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         case 25: try { try decoder.decodeRepeatedMessageField(value: &_storage._unfinished) }()
         case 26: try { try decoder.decodeSingularBoolField(value: &_storage._resourceEnvelopeCaptured) }()
         case 27: try { try decoder.decodeSingularStringField(value: &_storage._finishedAt) }()
+        case 28: try { try decoder.decodeRepeatedMessageField(value: &_storage._uncommittedInReview) }()
+        case 29: try { try decoder.decodeSingularInt32Field(value: &_storage._uncommittedPaths) }()
         default: break
         }
       }
@@ -14978,6 +15028,12 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       if !_storage._finishedAt.isEmpty {
         try visitor.visitSingularStringField(value: _storage._finishedAt, fieldNumber: 27)
       }
+      if !_storage._uncommittedInReview.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._uncommittedInReview, fieldNumber: 28)
+      }
+      if _storage._uncommittedPaths != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._uncommittedPaths, fieldNumber: 29)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -15014,6 +15070,8 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         if _storage._unfinished != rhs_storage._unfinished {return false}
         if _storage._resourceEnvelopeCaptured != rhs_storage._resourceEnvelopeCaptured {return false}
         if _storage._finishedAt != rhs_storage._finishedAt {return false}
+        if _storage._uncommittedInReview != rhs_storage._uncommittedInReview {return false}
+        if _storage._uncommittedPaths != rhs_storage._uncommittedPaths {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -15210,6 +15268,71 @@ nonisolated extension Ycc_V1_GetWorkLoopResponse: SwiftProtobuf.Message, SwiftPr
 
   public static func ==(lhs: Ycc_V1_GetWorkLoopResponse, rhs: Ycc_V1_GetWorkLoopResponse) -> Bool {
     if lhs._loop != rhs._loop {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetWorkLoopPreflightRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetWorkLoopPreflightRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetWorkLoopPreflightRequest, rhs: Ycc_V1_GetWorkLoopPreflightRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetWorkLoopPreflightResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetWorkLoopPreflightResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}uncommitted_in_review\0\u{3}uncommitted_paths\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.uncommittedInReview) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.uncommittedPaths) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.uncommittedInReview.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.uncommittedInReview, fieldNumber: 1)
+    }
+    if self.uncommittedPaths != 0 {
+      try visitor.visitSingularInt32Field(value: self.uncommittedPaths, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetWorkLoopPreflightResponse, rhs: Ycc_V1_GetWorkLoopPreflightResponse) -> Bool {
+    if lhs.uncommittedInReview != rhs.uncommittedInReview {return false}
+    if lhs.uncommittedPaths != rhs.uncommittedPaths {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

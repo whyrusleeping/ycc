@@ -30,6 +30,15 @@ Unattended backlog grooms record here the questions that evidence could not sett
   - Problem: the two tasks overlap in part. One of 0511's "harden" options is to have tools refuse git operations that rewrite `.ycc` paths. 0568 adds Bash-tool detection of reset, amend, stash and plumbing commits on a shared HEAD. The two would build similar detectors separately.
   - Evidence: the 0511 Description options list, and the 0568 Description and acceptance criteria.
   - Decision needed: should the 0568 detector also cover git operations that would rewrite or roll back `.ycc` session state, with 0511 narrowed to relocating that state? Or should the two tasks stay separate?
+- **0286 (TUI settings: edit review tiers and per-reviewer focus prompts, proposed, p4).**
+  - Problem: the task is superseded. It asks for a tier editor in the TUI, which no longer exists, and the outcome already ships in the other clients.
+  - Evidence: `6ce9e51` (2026-11-10, 0481) retired the TUI. `ListReviewTiers` / `UpsertReviewTier` / `RemoveReviewTier` exist in proto/ycc/v1/ycc.proto. The web `TierEditor.tsx` (`257af00`, 0416) and iOS `ReviewTiersView.swift` (`b38f56d`) edit tiers and slots with model, label, focus prompt and thinking.
+  - Decision needed: close 0286 as done by those commits, or delete it.
+- **0322 (review-loop circuit breaker and accepted-finding ledger, proposed, p1) and 0577, 0578, 0579 (review-cycle follow-ups from 0576, all todo, p2).**
+  - Problem: 0322 overlaps the newer tasks and partly conflicts with their scope. Its re-review handoff criterion overlaps 0577 (deliver coordinator verification evidence to reviewers). Its "persistent external evidence gate" and in_review terminal path overlap 0579 (ready-to-deploy verdict for operational criteria). Its round cap is the item 0578 (calibrate review-loop prompts) puts out of scope.
+  - Evidence: the acceptance criteria of all four tasks. On 2026-11-22 the user kept `gpt-6.2-sol` as reviewer and asked not to be "too heavy handed" (session s_70ed48449817e056, event 974). 0578 then dropped round caps. Its work log records that rescope.
+  - Decision needed: retire 0322, narrow it to what the newer tasks leave out (the structured finding ledger and reporting of unavailable reviewer slots), or keep it as is with its round cap.
 
 ## Work log
 - 2026-11-21 groom: kept the 0471 and 0520 flags, which still apply. Rewrote the 0548 flag, because its fix landed in `4d38b28`. Added the 0568/0511 overlap flag. Removed an empty Acceptance criteria heading.
+- 2026-11-22 groom: kept the 0471, 0520, 0548 and 0568/0511 flags, which still apply. Added flags for 0286 (superseded by the web and iOS tier editors) and for 0322's overlap with 0577, 0578 and 0579.

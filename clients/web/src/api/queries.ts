@@ -52,6 +52,8 @@ export const queryKeys = {
   /** GetWorkLoop: the project's loop snapshot (null when none has run). */
   workLoop: (project: string) => ["workLoop", project] as const,
   workLoopAll: ["workLoop"] as const,
+  /** GetWorkLoopPreflight: in-review work a loop started now would route around. */
+  workLoopPreflight: (project: string) => ["workLoopPreflight", project] as const,
   /** ListWorkstreams for a project ("" lists every project's). */
   workstreams: (project: string) => ["workstreams", project] as const,
   workstreamsAll: ["workstreams"] as const,
@@ -311,6 +313,18 @@ export function useWorkLoop(project: string, enabled = true) {
     enabled,
     refetchInterval: (q) => loopPollInterval(q.state.data),
     queryFn: ({ signal }) => fetchWorkLoop(project, signal),
+  });
+}
+
+/** GetWorkLoopPreflight, fetched fresh whenever the start dialog opens. */
+export function useWorkLoopPreflight(project: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.workLoopPreflight(project),
+    enabled,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    queryFn: ({ signal }) => client.getWorkLoopPreflight({ project }, { signal }),
   });
 }
 

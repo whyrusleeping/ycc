@@ -19,7 +19,7 @@ spec_refs:
 ## Description
 Current state: accepted parent, split on 2026-11-22 into 0582 (daemon API and CLI for the project
 sessions view and user-posted notices), 0583 (web surfaces) and 0584 (iOS surfaces and the Settings
-toggle). It closes once all three are done and the acceptance below holds across them. It follows 0443
+toggle). 0582 is done (`b5c61d7`); 0583 and 0584 are todo. It closes once all three are done and the acceptance below holds across them. It follows 0443
 (experimental session awareness: `list_sessions`, path ownership lookup, overlap notices) and 0564
 (experimental project notice board), both done (`4096a81`, `41c611e`); they ship only the web
 per-project toggle and the generic event fallback. ycc has no separate TUI; the terminal client is
@@ -40,8 +40,9 @@ to other sessions.
 - iOS Settings toggle for the per-project `session_coordination` setting, using the RPC from 0443.
 
 ## Acceptance (draft)
-- Web and iOS show the sessions view with notices and held-task badges; TUI shows at least the
-  notice list and held badges.
+- Web and iOS show the sessions view with notices and held-task badges; the terminal client shows at
+  least the notice list and held badges. The TUI this criterion first named was retired on 2026-11-10
+  (`6ce9e51`, 0481); the `ycc` CLI is the terminal client.
 - The pending-question screen shows active notices.
 - Overlap notices and digests render distinctly with links to the other session.
 - iOS Settings shows and changes the per-project setting.
@@ -52,3 +53,4 @@ to other sessions.
 - 2026-11-21 groom: noted that dependencies 0443 and 0564 are done, with their commits, and cited the session that requested the wheeler log reviews. Still proposed.
 - 2026-11-22: split into 0582 (daemon API and CLI), 0583 (web) and 0584 (iOS) along the shared RPC contract and the per-client build and screenshot checks.
 - 2026-11-22: 0582 done (ListProjectNotices `sessions`, PostProjectNotice, `ycc notices`, CLI held badges); the terminal-client criterion holds. Web (0583) and iOS (0584) remain.
+- 2026-11-22 groom: added 0582's commit `b5c61d7` to the current state, and reworded the TUI acceptance line to the `ycc` CLI because the TUI was retired in `6ce9e51` (0481).

@@ -1565,6 +1565,10 @@ message WorkLoopInfo {
   repeated WorkLoopDigestTask unfinished = 25; // attempted accepted work still todo/in_progress
   bool resource_envelope_captured = 26; // false only for pre-envelope persisted snapshots
   string finished_at = 27; // RFC3339; empty unless finished (and for pre-upgrade snapshots)
+  // In-review tasks whose work was uncommitted in the workspace when the loop
+  // started; reason names the files. Loop sessions leave that work to its owner.
+  repeated WorkLoopDigestTask uncommitted_in_review = 28;
+  int32 uncommitted_paths = 29; // distinct uncommitted paths attributed to uncommitted_in_review
 }
 
 // StartWorkLoop starts an unattended work loop for a project. It fails
@@ -1583,6 +1587,16 @@ message StopWorkLoopResponse { WorkLoopInfo loop = 1; }
 // when no loop has run for the workspace.
 message GetWorkLoopRequest { string project = 1; }
 message GetWorkLoopResponse { WorkLoopInfo loop = 1; }
+
+// GetWorkLoopPreflight reports what a loop started now would route around:
+// in_review tasks whose work is uncommitted in the workspace (their own backlog
+// file, or files claimed by sessions that focused them). Clients show it
+// before StartWorkLoop; reason names each task's uncommitted files.
+message GetWorkLoopPreflightRequest { string project = 1; }
+message GetWorkLoopPreflightResponse {
+  repeated WorkLoopDigestTask uncommitted_in_review = 1;
+  int32 uncommitted_paths = 2; // distinct uncommitted paths attributed to them
+}
 
 // A parallel workstream
 // is a linked git worktree + branch plus the `work` session scoped to it, tracked
@@ -2039,6 +2053,7 @@ service SessionService {
   rpc StartWorkLoop(StartWorkLoopRequest) returns (StartWorkLoopResponse);
   rpc StopWorkLoop(StopWorkLoopRequest) returns (StopWorkLoopResponse);
   rpc GetWorkLoop(GetWorkLoopRequest) returns (GetWorkLoopResponse);
+  rpc GetWorkLoopPreflight(GetWorkLoopPreflightRequest) returns (GetWorkLoopPreflightResponse);
 
   // Spawn a parallel workstream:
   // worktree+session, list them, preview/merge a branch back to base with the

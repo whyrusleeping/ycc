@@ -4932,6 +4932,26 @@ th[aria-sort="descending"] .sort-btn {
   padding: 2px 0;
 }
 
+.loop-uncommitted {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+}
+
+.loop-uncommitted ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.loop-uncommitted li {
+  padding: 2px 0;
+}
+
+.loop-uncommitted-note {
+  margin-top: 6px;
+}
+
 .loop-options {
   border: 1px solid var(--border);
   border-radius: var(--radius);

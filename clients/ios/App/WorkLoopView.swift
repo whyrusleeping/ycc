@@ -106,10 +106,12 @@ struct WorkLoopView: View {
                 } description: {
                     Text("Start an unattended drain of this project’s ready backlog tasks.")
                 } actions: {
-                    Button("Start loop") { showStartConfirmation = true }
+                    Button("Start loop") { confirmStart(model) }
                         .buttonStyle(.accent)
                         .disabled(!model.canStart)
-                        .workLoopStartConfirmation(isPresented: $showStartConfirmation) {
+                        .workLoopStartConfirmation(
+                            isPresented: $showStartConfirmation, warning: model.preflightWarning
+                        ) {
                             start(model)
                         }
                 }
@@ -193,7 +195,10 @@ struct WorkLoopView: View {
             ForEach(WorkLoopModel.digestSections(for: loop)) { section in
                 Section {
                     ForEach(section.rows, id: \.id) { task in
-                        digestRow(task, blocked: section.title == "Blocked")
+                        digestRow(
+                            task,
+                            showReason: section.title == "Blocked"
+                                || section.title == WorkLoopModel.uncommittedSectionTitle)
                     }
                 } header: {
                     Label(section.title, systemImage: section.systemImage)
@@ -203,12 +208,14 @@ struct WorkLoopView: View {
             Section {
                 if model.state.canStart {
                     Button {
-                        showStartConfirmation = true
+                        confirmStart(model)
                     } label: {
                         Label("Start loop", systemImage: "play.circle")
                     }
                     .disabled(!model.canStart)
-                    .workLoopStartConfirmation(isPresented: $showStartConfirmation) {
+                    .workLoopStartConfirmation(
+                        isPresented: $showStartConfirmation, warning: model.preflightWarning
+                    ) {
                         start(model)
                     }
                 }
@@ -232,6 +239,15 @@ struct WorkLoopView: View {
             }
         }
         .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
+    }
+
+    /// Check for uncommitted in-review work, then confirm; the dialog warns
+    /// when the preflight found some.
+    private func confirmStart(_ model: WorkLoopModel) {
+        Task {
+            await model.loadPreflight()
+            showStartConfirmation = true
+        }
     }
 
     private func start(_ model: WorkLoopModel) {
@@ -264,6 +280,12 @@ struct WorkLoopView: View {
             if model.state == .finished && !loop.outcome.isEmpty {
                 Label(loop.outcome, systemImage: "flag.checkered")
                     .font(.subheadline)
+            }
+            if let warning = WorkLoopModel.uncommittedInReviewLine(
+                tasks: loop.uncommittedInReview, paths: Int(loop.uncommittedPaths)) {
+                Label("At start, \(warning); loop sessions route around that work.", systemImage: "tray.full")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.attention)
             }
             if let error = model.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -321,7 +343,7 @@ struct WorkLoopView: View {
         .padding(.vertical, 2)
     }
 
-    private func digestRow(_ task: Ycc_V1_WorkLoopDigestTask, blocked: Bool) -> some View {
+    private func digestRow(_ task: Ycc_V1_WorkLoopDigestTask, showReason: Bool) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
                 Text(task.id).font(.headline.monospaced())
@@ -344,7 +366,7 @@ struct WorkLoopView: View {
                 cost: task.cost,
                 priceStatus: task.priceStatus))
                 .monospacedDigit()
-            if blocked && !task.reason.isEmpty {
+            if showReason && !task.reason.isEmpty {
                 Label(task.reason, systemImage: "exclamationmark.bubble")
                     .foregroundStyle(Theme.attention)
             }
@@ -408,8 +430,11 @@ extension View {
     /// screen: on iOS 26 a confirmation dialog presents as a popover anchored to
     /// the view it modifies, so a screen-level dialog points its arrow at the
     /// middle of the screen.
+    /// A `warning` (uncommitted in-review work) leads the message and makes
+    /// the action "Start anyway".
     func workLoopStartConfirmation(
         isPresented: Binding<Bool>,
+        warning: String?,
         onStart: @escaping () -> Void
     ) -> some View {
         confirmationDialog(
@@ -417,10 +442,15 @@ extension View {
             isPresented: isPresented,
             titleVisibility: .visible
         ) {
-            Button("Start loop", action: onStart)
+            Button(warning == nil ? "Start loop" : "Start anyway", action: onStart)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended.")
+            let base = "The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended."
+            if let warning {
+                Text("\(warning). Loop sessions leave that work to its owner and route around those files; commit or settle it first, or start anyway.\n\n\(base)")
+            } else {
+                Text(base)
+            }
         }
     }
 

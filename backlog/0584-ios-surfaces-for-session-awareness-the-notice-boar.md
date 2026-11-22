@@ -22,9 +22,8 @@ Current state: todo; its dependency 0582 (daemon API and CLI for the project ses
 - `coordination_notice` events (overlap notices and board digests) render distinctly, with session ids linked to the session.
 - Settings shows and changes the per-project `session_coordination` setting through `SetProjectSettings`.
 
-## Acceptance
+## Acceptance criteria
 - Built and tested on the configured Mac (`xcodebuild` build/test, `swift test` for YccKit model changes), with simulator screenshots of each surface.
 
-## Acceptance criteria
-
 ## Work log
+- 2026-11-22 groom: renamed the Acceptance heading to Acceptance criteria and removed the empty duplicate. Checked that `ListProjectNotices`, `PostProjectNotice` and `ClearProjectNotice` exist in proto/ycc/v1/ycc.proto and that no iOS client code outside generated files calls them yet.

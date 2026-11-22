@@ -63,7 +63,7 @@ export function loopSessionIds(loop: WorkLoopInfo | null | undefined): Set<strin
 }
 
 export interface DigestSection {
-  key: "completed" | "blocked" | "inReview" | "unfinished" | "created";
+  key: "completed" | "blocked" | "inReview" | "unfinished" | "created" | "uncommittedInReview";
   title: string;
   rows: WorkLoopDigestTask[];
 }
@@ -76,11 +76,22 @@ export function digestSections(loop: WorkLoopInfo): DigestSection[] {
     { key: "inReview", title: "In review", rows: loop.inReview },
     { key: "unfinished", title: "Unfinished", rows: loop.unfinished },
     { key: "created", title: "Created", rows: loop.created },
+    { key: "uncommittedInReview", title: "Uncommitted in review at start", rows: loop.uncommittedInReview },
   ];
   return all.filter((s) => s.rows.length > 0);
 }
 
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * "2 in-review tasks have uncommitted changes in 5 files", or "" when none:
+ * loop sessions leave that work to its owner and route around those files.
+ */
+export function uncommittedInReviewLine(tasks: WorkLoopDigestTask[], paths: number): string {
+  if (tasks.length === 0) return "";
+  const subject = tasks.length === 1 ? "1 in-review task has" : `${tasks.length} in-review tasks have`;
+  return `${subject} uncommitted changes in ${plural(paths, "file")}`;
+}
 
 /** "3 sessions · 2 completed, 1 blocked". */
 export function summaryLine(loop: WorkLoopInfo): string {

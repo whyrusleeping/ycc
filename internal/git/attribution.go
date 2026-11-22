@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/whyrusleeping/ycc/internal/credenv"
@@ -229,4 +230,21 @@ func (r *Repo) CleanAgainstHEAD(paths []string) (map[string]bool, error) {
 		}
 	}
 	return clean, nil
+}
+
+// DirtyPaths returns every repository-relative path with a staged, unstaged,
+// or untracked change, sorted.
+func (r *Repo) DirtyPaths() ([]string, error) {
+	out, err := r.run("--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, record := range strings.Split(out, "\x00") {
+		if len(record) > 3 {
+			paths = append(paths, record[3:])
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }

@@ -347,6 +347,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getWorkLoop`(request: Ycc_V1_GetWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWorkLoopResponse>
 
+    @available(iOS 13, *)
+    func `getWorkLoopPreflight`(request: Ycc_V1_GetWorkLoopPreflightRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetWorkLoopPreflightResponse>
+
     /// Spawn a parallel workstream:
     /// worktree+session, list them, preview/merge a branch back to base with the
     /// conflict-aware review gate, or discard one. Subscribe(session_id) is reused
@@ -824,6 +827,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getWorkLoopPreflight`(request: Ycc_V1_GetWorkLoopPreflightRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetWorkLoopPreflightResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetWorkLoopPreflight", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `spawnWorkstream`(request: Ycc_V1_SpawnWorkstreamRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_SpawnWorkstreamResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/SpawnWorkstream", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -974,6 +982,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let startWorkLoop = Connect.MethodSpec(name: "StartWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let stopWorkLoop = Connect.MethodSpec(name: "StopWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkLoop = Connect.MethodSpec(name: "GetWorkLoop", service: "ycc.v1.SessionService", type: .unary)
+            public static let getWorkLoopPreflight = Connect.MethodSpec(name: "GetWorkLoopPreflight", service: "ycc.v1.SessionService", type: .unary)
             public static let spawnWorkstream = Connect.MethodSpec(name: "SpawnWorkstream", service: "ycc.v1.SessionService", type: .unary)
             public static let listWorkstreams = Connect.MethodSpec(name: "ListWorkstreams", service: "ycc.v1.SessionService", type: .unary)
             public static let previewMerge = Connect.MethodSpec(name: "PreviewMerge", service: "ycc.v1.SessionService", type: .unary)
