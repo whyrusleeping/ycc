@@ -123,17 +123,35 @@ func genericModelProp(d *Deps) map[string]any {
 	return p
 }
 
-func spawnAgent(d *Deps) *gollama.Tool {
+func spawnAgent(d *Deps) *gollama.Tool { return spawnGenericAgent(d, false) }
+
+func sendToAgent(d *Deps) *gollama.Tool { return sendToGenericAgent(d, false) }
+
+// Work mode's generic agents are read-only: a mutating one would be a second
+// writer outside the implementer slot, changeset attribution, and review flow.
+func readOnlySpawnAgent(d *Deps) *gollama.Tool { return spawnGenericAgent(d, true) }
+
+func readOnlySendToAgent(d *Deps) *gollama.Tool { return sendToGenericAgent(d, true) }
+
+func spawnGenericAgent(d *Deps, readOnlyOnly bool) *gollama.Tool {
+	description := "Start an isolated subagent on a configured model; returns agent_id and background job_id. " +
+		"Default read-only; allow mutation only for coding, with disjoint files for concurrent writers. " +
+		"Use the job tools for completion/output/cancellation, then send_to_agent for follow-ups."
+	props := map[string]any{
+		"model":    genericModelProp(d),
+		"prompt":   tools.StrProp("self-contained task or question for the subagent"),
+		"mutating": tools.BoolProp("allow this agent to edit the workspace; default false. Mutating agents run concurrently with other mutating work in this worktree; keep their files disjoint"),
+	}
+	if readOnlyOnly {
+		description = "Start an isolated read-only subagent on a configured model for research or a second opinion; " +
+			"returns agent_id and background job_id. It cannot edit the workspace. Use the job tools for " +
+			"completion/output/cancellation, then send_to_agent for follow-ups."
+		delete(props, "mutating")
+	}
 	return &gollama.Tool{
-		Name: "spawn_agent",
-		Description: "Start an isolated subagent on a configured model; returns agent_id and background job_id. " +
-			"Default read-only; allow mutation only for coding, with disjoint files for concurrent writers. " +
-			"Use the job tools for completion/output/cancellation, then send_to_agent for follow-ups.",
-		Params: tools.Obj(map[string]any{
-			"model":    genericModelProp(d),
-			"prompt":   tools.StrProp("self-contained task or question for the subagent"),
-			"mutating": tools.BoolProp("allow this agent to edit the workspace; default false. Mutating agents run concurrently with other mutating work in this worktree; keep their files disjoint"),
-		}, "model", "prompt"),
+		Name:        "spawn_agent",
+		Description: description,
+		Params:      tools.Obj(props, "model", "prompt"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			if d.Jobs == nil {
 				return tools.ErrResult("spawn_agent: background subagents are not available in this session"), nil
@@ -152,6 +170,9 @@ func spawnAgent(d *Deps) *gollama.Tool {
 				return tools.ErrResult("spawn_agent: %v", err), nil
 			}
 			requestedMutating := tools.GetBool(params, "mutating", false)
+			if requestedMutating && readOnlyOnly {
+				return tools.ErrResult("spawn_agent: work-mode subagents are read-only; implement the change yourself or through the implementer, or omit mutating"), nil
+			}
 			planOnlyNote := ""
 			if requestedMutating && d.PlanOnly() {
 				// Plan only forces subagents read-only.
@@ -217,7 +238,7 @@ func spawnAgent(d *Deps) *gollama.Tool {
 	}
 }
 
-func sendToAgent(d *Deps) *gollama.Tool {
+func sendToGenericAgent(d *Deps, readOnlyOnly bool) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "send_to_agent",
 		Description: "Continue a finished subagent run as a new background job; refused while execution is still unwinding, " +
@@ -258,6 +279,10 @@ func sendToAgent(d *Deps) *gollama.Tool {
 					return tools.ErrResult("send_to_agent: mutating agent %s is still running or unwinding as %s; wait for actual completion, stop it with kill_job, or use a separate workstream", agentID, jobID), nil
 				}
 				return tools.ErrResult("send_to_agent: agent %s is still running as %s; wait for it to finish before sending a follow-up", agentID, jobID), nil
+			}
+			if h.writeAccess && readOnlyOnly {
+				d.mu.Unlock()
+				return tools.ErrResult("send_to_agent: %s can edit the workspace, and work-mode subagents are read-only; spawn a read-only agent instead", agentID), nil
 			}
 			if h.writeAccess && d.PlanOnly() {
 				d.mu.Unlock()

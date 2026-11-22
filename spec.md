@@ -544,6 +544,12 @@ and, because research is their main use, the optional Exa web tools. Supported h
 workspace non-mutation with the reviewer sandbox; unsupported hosts visibly degrade to prompt-only
 enforcement and conservatively count the agent as a mutating job.
 Explicitly mutating generic agents use worker tools and may run alongside other mutating work.
+Work-mode coordinators, direct and delegated, also get `spawn_agent` and `send_to_agent`, limited
+to read-only agents: `spawn_agent` there has no `mutating` parameter and refuses a request for
+write access, and `send_to_agent` refuses a handle with write access. A mutating generic agent would
+be a second writer outside the implementer slot, changeset attribution, and the review flow. A work
+subagent's report, such as a second opinion on an approach, is input to the coordinator, not review;
+`spawn_reviewers` remains the gate before commit. Reviewers do not get these tools.
 Generic agent handles are live session state and are not reconstructed after daemon restart.
 
 Several sessions and agents may mutate one worktree concurrently. Nothing holds the worktree for an
@@ -1021,7 +1027,8 @@ A work session starts with fresh coordinator context, reads the task and relevan
 an approach, and persists a plan only when complexity warrants one. `work.implementation` defaults
 to `direct`: the coordinator uses worker tools itself. Explicit `delegate` uses a retained
 implementer subagent. Both retain the independent reviewer pipeline and its separately configured
-models/tiers. Subagent roles resolve metadata without building clients or resolving credentials at
+models/tiers, and both may start read-only generic subagents (§7.3) for research or second opinions.
+Subagent roles resolve metadata without building clients or resolving credentials at
 startup; an unavailable role reports failure when invoked, not a successful review or nil backend.
 The strategy is recorded at session start and restored on reopen, not changed by later
 config edits. Legacy logs with implementer calls retain delegation; otherwise the current setting

@@ -109,6 +109,8 @@ is not being worked on elsewhere. Do not infer parallel sessions from commit tim
 or processes: recent commits do not mean a session is still running, an idle session holds
 nothing, and an in_progress task no session is working on is continuation work.
 Persist a plan only for complex or ambiguous work. Implement and verify the acceptance criteria.
+spawn_agent starts a read-only subagent on any configured model for research or a second opinion
+on an approach. Its report is input, not review: spawn_reviewers remains the gate before commit.
 
 Review through spawn_reviewers using a configured tier proportionate to risk: one independent
 reviewer, preferably another model, for ordinary work; multiple perspectives for high-risk work.

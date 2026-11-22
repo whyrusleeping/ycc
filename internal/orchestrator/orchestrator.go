@@ -520,11 +520,13 @@ func (d *Deps) reviewerSpecs() []AgentSpec {
 
 // CoordinatorTools builds the work toolset. Direct mode omits worker-agent tools;
 // delegated mode keeps them while still allowing coordinator inspection and touch-ups.
+// Both get read-only generic agents for research and second opinions.
 func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry {
 	reg := tools.New()
 	reg.Add(tools.Editing(ws)...)
 	// propose_plan is a docs.Store task write like update_task: unleased.
-	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d))
+	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d),
+		readOnlySpawnAgent(d), readOnlySendToAgent(d))
 	if !direct {
 		reg.Add(spawnImplementer(d), sendToImplementer(d))
 	}
@@ -819,7 +821,7 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				return tools.ErrResult("spawn_implementer: background subagents are not available in this session"), nil
 			}
 			if live := d.liveImplJob(); live != nil {
-				return tools.ErrResult("spawn_implementer: this session's implementer (%s: %s) is still running; wait for it or kill_job it before spawning another implementer, or use send_to_implementer / spawn_agent for parallel work", live.ID(), live.Label()), nil
+				return tools.ErrResult("spawn_implementer: this session's implementer (%s: %s) is still running; wait for it or kill_job it before spawning another implementer, or use send_to_implementer (spawn_agent runs read-only research beside it)", live.ID(), live.Label()), nil
 			}
 			token := d.mutationToken(fmt.Sprintf("implementer for task %s", id))
 			releaseOnReturn := true

@@ -399,6 +399,66 @@ func TestGenericMutatingAgentRunsBesideOtherWriters(t *testing.T) {
 	waitJobDone(t, job)
 }
 
+// Work-mode coordinators, direct and delegated, get generic agents limited to
+// read-only access: no mutating parameter, a refused write request, and a
+// refused follow-up to a write-access handle (one left by an earlier mode).
+func TestWorkModeGenericAgentsAreReadOnly(t *testing.T) {
+	for _, impl := range []string{"direct", "delegate"} {
+		d, _ := bgDeps(t, &syncRec{}, nil, nil)
+		d.WorkImplementation = impl
+		turner := &scripted{resp: []*gollama.ResponseMessageGenerate{text("second opinion"), text("follow-up opinion")}}
+		d.ResolveAgent = func(name string) (AgentSpec, error) {
+			return AgentSpec{Name: name, Model: "m", NewClient: func() engine.Turner { return turner }}, nil
+		}
+		reg, _ := BuildMode("work", d, false)
+		if !hasTool(reg, "spawn_agent") || !hasTool(reg, "send_to_agent") {
+			t.Fatalf("%s work coordinator missing generic agent tools", impl)
+		}
+		if _, ok := readOnlySpawnAgent(d).Params.(gollama.ToolFunctionParams).Properties["mutating"]; ok {
+			t.Fatal("work-mode spawn_agent advertises a mutating parameter")
+		}
+		dispatch := func(name, args string) *gollama.ToolResult {
+			return reg.Dispatch(context.Background(), gollama.ToolCall{ID: name, Type: "function",
+				Function: gollama.ToolCallFunction{Name: name, Arguments: args}})
+		}
+		res := dispatch("spawn_agent", `{"model":"coder","prompt":"edit it","mutating":true}`)
+		if !res.IsError || !strings.Contains(res.Content, "read-only") || len(d.Jobs.List("", true)) != 0 {
+			t.Fatalf("%s: mutating work-mode spawn = %+v", impl, res)
+		}
+		res = dispatch("spawn_agent", `{"model":"other","prompt":"critique this approach"}`)
+		if res.IsError || !strings.Contains(res.Content, "subagent agent_1") || strings.Contains(res.Content, "started mutating") {
+			t.Fatalf("%s: read-only work-mode spawn = %+v", impl, res)
+		}
+		job, _ := d.Jobs.Get("job_1")
+		waitJobDone(t, job)
+		waitGenericIdle(t, d, "agent_1")
+		d.mu.Lock()
+		h := d.genericAgent["agent_1"]
+		d.mu.Unlock()
+		if h.writeAccess || !hasTool(h.loop.Tools, "Read") || hasTool(h.loop.Tools, "Edit") || hasTool(h.loop.Tools, "Write") {
+			t.Fatalf("%s: work-mode agent is not read-only: writeAccess=%v", impl, h.writeAccess)
+		}
+		res = dispatch("send_to_agent", `{"agent_id":"agent_1","prompt":"and the alternative?"}`)
+		if res.IsError {
+			t.Fatalf("%s: read-only work-mode follow-up = %+v", impl, res)
+		}
+		job2, _ := d.Jobs.Get("job_2")
+		waitJobDone(t, job2)
+		waitGenericIdle(t, d, "agent_1")
+		if rep := job2.Report(); rep.Status != jobs.Done || !strings.Contains(rep.Result, "follow-up opinion") {
+			t.Fatalf("%s: read-only follow-up report = %+v", impl, rep)
+		}
+
+		d.mu.Lock()
+		d.genericAgent["agent_9"] = &genericAgentHandle{id: "agent_9", spec: h.spec, loop: h.loop, job: job2, mutates: true, writeAccess: true}
+		d.mu.Unlock()
+		res = dispatch("send_to_agent", `{"agent_id":"agent_9","prompt":"keep editing"}`)
+		if !res.IsError || !strings.Contains(res.Content, "read-only") {
+			t.Fatalf("%s: follow-up to write-access handle = %+v", impl, res)
+		}
+	}
+}
+
 func TestGenericAgentErrorsAndRunningFollowup(t *testing.T) {
 	d, _ := bgDeps(t, &syncRec{}, nil, nil)
 	ownership := workspacelease.NewService()
