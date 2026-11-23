@@ -600,6 +600,23 @@ delegates to) is an attribution scope. Writes record a claim on the path for tha
   window. A changed path whose other claims all predate the command gets an overlap claim instead:
   it stays out of the shell session's changeset but counts as that session's claim for every other
   scope, so the earlier claimant's commit sees it (below). Background shells claim when they exit.
+- Running shells are registered per worktree, so a command knows which other scopes' shells ran
+  there while it did. Then a changed path that no scope claims definitely (ambiguous and overlap
+  claims do not count) has no single likely writer: it gets an ambiguous claim for this scope and
+  each of those scopes, rather than going to whichever shell finished first. An ambiguous claim
+  counts as each holder's own and as another scope's claim for everyone else, so the path is in
+  every holder's changeset, listed as ambiguous, and a commit refuses it while another holder is
+  live (below). A scope's file-tool write, its shell write while no other scope's shell runs, or
+  its commit taking the path makes its claim definite; other holders keep theirs until they release
+  it or the path is retired. A path that another scope claims definitely, changed while that
+  scope's shell also ran, is left to that scope with no overlap claim or notice: the change is as
+  likely that scope's own shell write, and this command may only have read.
+
+A coordinator can release its claims on paths it did not write with `release_claim`, which records
+a `claim_released` event (paths, the ones it held a claim on, and a reason) in its log. Released
+paths stay out of its changeset, even when no other scope claims them, until it writes them again or
+they are retired (committed or reverted); an ambiguous change never revives a release. Backlog
+task files and `memory.md` are not released.
 
 Backlog task files and `memory.md` are the exception: they are shared bookkeeping, never claimed,
 and attributed by line instead. Each scoped write of one, whether a structured docs-store write or a
@@ -631,8 +648,8 @@ alert naming the uncommitted edits.
 
 A session's changeset — reviewed, inspected by clients, and committed — then:
 
-- excludes paths that only other scopes claimed;
-- includes paths both claimed, reporting them as shared;
+- excludes paths that only other scopes claimed, and paths this session released;
+- includes paths both claimed, reporting them as shared, and lists ambiguous ones;
 - adopts baseline-dirty paths that changed since the baseline, whole, reporting the earlier changes
   that ride along;
 - leaves out baseline-dirty paths only another scope has written since.
@@ -655,7 +672,8 @@ shell) is included rather than refused or silently dropped. Other unclaimed chan
 to whichever session commits them. When the tree is shared, the change manifest and review evidence
 list them as unclaimed, alongside the other classifications.
 
-Claims persist per worktree in its git directory (`ycc/claims.json`), so they survive daemon restarts.
+Claims persist per worktree in its git directory (`ycc/claims.json`), with their overlap and
+ambiguous marks and the paths each session released, so they survive daemon restarts.
 They also outlive the writing session, which keeps a stopped session's uncommitted work attributed to
 it. A claim is retired once its path matches HEAD again (committed by anyone, or reverted). The check
 runs after each commit and whenever a changeset is computed.
@@ -715,6 +733,8 @@ further notices are delivered. With the setting off nothing is added.
   both sides once per path and session pair: the writer in its Write/Edit result, or in its Bash
   result when a shell changed a path another scope claimed before the command started (the shell
   records only an overlap claim), and the other session's live coordinator at its next safe checkpoint.
+  Ambiguous claims cause no notice; the shell's result lists the paths it left ambiguous, and
+  `list_sessions` marks ambiguous claims.
   That coordinator is never woken and its `wait` does not end early; the notice simply waits for its
   next run. Each side is told only if its own session has the feature. Backlog task files and `memory.md`
   are never claimed, so they never cause one. A notice names the path, the other session, and its
