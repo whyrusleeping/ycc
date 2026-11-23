@@ -507,6 +507,14 @@ function LoopSessionRow({ project, session: s, index }: { project: string; sessi
           {s.errorRetryable ? ", retryable" : ""}){s.errorMessage ? `: ${s.errorMessage}` : ""}
         </div>
       )}
+      {s.createdTasks.length > 0 && (
+        <div className="muted small">
+          Created {s.createdTasks.length === 1 ? "task" : `${s.createdTasks.length} tasks`}:{" "}
+          {s.createdTasks.map((id) => (
+            <TaskLink key={id} project={project} id={id} className="task-chip" />
+          ))}
+        </div>
+      )}
       {s.evidence && <ClampedText text={s.evidence} />}
     </li>
   );

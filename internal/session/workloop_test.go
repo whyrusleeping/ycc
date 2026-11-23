@@ -2,13 +2,17 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -777,7 +781,7 @@ func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 				return loopSessRec{}, false, nil
 			}
 			_, _ = store.Update(id, func(tk *docs.Task) { tk.Status = docs.StatusDone })
-			return loopSessRec{id: "sess_" + id, focus: id, tokens: 100, cost: 0.01, priceStatus: "priced"}, false, nil
+			return loopSessRec{id: "sess_" + id, focus: id, updated: []string{id}, tokens: 100, cost: 0.01, priceStatus: "priced"}, false, nil
 		}
 	}
 	var sink *notifySink
@@ -852,7 +856,7 @@ func TestWorkLoopPublishesIncrementalDigest(t *testing.T) {
 			}
 			id := topReadyTask(tasks)
 			_, err = store.Update(id, func(task *docs.Task) { task.Status = docs.StatusDone })
-			return loopSessRec{id: fmt.Sprintf("session-%d", calls), focus: id, priceStatus: "unpriced"}, false, err
+			return loopSessRec{id: fmt.Sprintf("session-%d", calls), focus: id, updated: []string{id}, priceStatus: "unpriced"}, false, err
 		}
 	}
 	m, _, ws = loopTestManager(t, factory)
@@ -926,7 +930,7 @@ func TestWorkLoopUnchangedSessions(t *testing.T) {
 					if tc.name == "stop" && calls == 2 {
 						_, err = m.StopWorkLoop("demo")
 					}
-					return loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id,
+					return loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id, updated: []string{id},
 							tokens: 50, cost: 0.5, priceStatus: "priced"},
 						tc.name == "session budget" && calls == 2, err
 				}
@@ -977,7 +981,7 @@ func TestWorkLoopSkipsTaskHeldByActiveSession(t *testing.T) {
 			tasks, _ := store.List()
 			id := topReadyTask(tasks)
 			_, err := store.Update(id, func(tk *docs.Task) { tk.Status = docs.StatusDone })
-			return loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id}, false, err
+			return loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id, updated: []string{id}}, false, err
 		}
 	}
 	m, _, ws := loopTestManager(t, factory)
@@ -1023,6 +1027,121 @@ func TestWorkLoopSkipsTaskHeldByActiveSession(t *testing.T) {
 	final = waitLoopFinished(t, m, "demo")
 	if final.Outcome != "loop complete: no ready tasks remain" || final.SessionsRun != 1 {
 		t.Fatalf("released: outcome %q after %d sessions, want the task continued", final.Outcome, final.SessionsRun)
+	}
+}
+
+// Two live sessions racing to claim one task: exactly one wins, and the loser
+// is told the winner's id without recording a focus of its own.
+func TestClaimTaskRaceHasOneWinner(t *testing.T) {
+	m, _, ws := loopTestManager(t, nil)
+	add := func(id string) *Session {
+		s := newStopSession(t)
+		s.ID, s.Workspace, s.Mode = id, ws, "work"
+		m.mu.Lock()
+		m.sessions[id] = s
+		m.mu.Unlock()
+		return s
+	}
+	sessions := []*Session{add("s_a"), add("s_b")}
+	for round := 1; round <= 50; round++ {
+		task := fmt.Sprintf("%04d", round)
+		holders := make([]string, len(sessions))
+		var start, done sync.WaitGroup
+		start.Add(1)
+		for i, s := range sessions {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				start.Wait()
+				// The unpadded id names the same task.
+				holders[i] = m.claimTask(ws, s.ID, strings.TrimLeft(task, "0"), func() {
+					s.emitter.Emit(event.TaskFocus, map[string]any{"task": task})
+				})
+			}()
+		}
+		start.Done()
+		done.Wait()
+		winners := 0
+		for i, s := range sessions {
+			focused := slices.Contains(focusTasks(s.Log().Snapshot()), task)
+			switch holders[i] {
+			case "":
+				winners++
+				if !focused {
+					t.Fatalf("task %s: winner %s recorded no focus", task, s.ID)
+				}
+			case sessions[1-i].ID:
+				if focused {
+					t.Fatalf("task %s: loser %s recorded a focus", task, s.ID)
+				}
+			default:
+				t.Fatalf("task %s: %s got holder %q", task, s.ID, holders[i])
+			}
+		}
+		if winners != 1 {
+			t.Fatalf("task %s: %d winners, want exactly one (holders %q)", task, winners, holders)
+		}
+	}
+}
+
+// Work-loop sessions get set_intent and show their intents to siblings even
+// with session coordination off; other sessions get neither.
+func TestWorkLoopSessionsDeclareIntentsWithoutCoordination(t *testing.T) {
+	m := NewManager(testRegistry(), t.TempDir())
+	defer m.ReclaimAll()
+	ws := t.TempDir()
+	loop, err := m.Start(Config{Workspace: ws, Mode: "work", Unattended: true, Origin: OriginWorkLoop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loop.Stop()
+	other, err := m.Start(Config{Workspace: ws, Mode: "work", Unattended: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Stop()
+	if m.coordinationEnabled(ws) || loop.deps.Board != nil {
+		t.Fatal("test needs session coordination off")
+	}
+	if loop.deps.SetIntent == nil || other.deps.SetIntent != nil {
+		t.Fatalf("set_intent wiring: loop %v, other %v", loop.deps.SetIntent != nil, other.deps.SetIntent != nil)
+	}
+	if _, err := loop.deps.SetIntent("editing internal/session; using the gpu box"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.otherSessionsNote(ws, other.ID, time.Now()); !strings.Contains(got, `intent: "editing internal/session; using the gpu box"`) {
+		t.Fatalf("sibling's backlog footer lacks the loop session's intent:\n%s", got)
+	}
+}
+
+// A loop session started with coordination on keeps its intent current after
+// coordination is turned off, since the intent stays visible.
+func TestWorkLoopIntentUpdatesAfterCoordinationTurnsOff(t *testing.T) {
+	m := NewManager(testRegistry(), t.TempDir())
+	defer m.ReclaimAll()
+	ws := t.TempDir()
+	if err := docs.SetSessionCoordination(ws, true); err != nil {
+		t.Fatal(err)
+	}
+	s, err := m.Start(Config{Workspace: ws, Mode: "work", Unattended: true, Origin: OriginWorkLoop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Stop()
+	setIntent := func(text string) {
+		t.Helper()
+		res := s.currentLoop().Tools.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "set_intent", Arguments: `{"text":"` + text + `"}`}})
+		if res.IsError {
+			t.Fatalf("set_intent: %s", res.Content)
+		}
+	}
+	setIntent("GPU A")
+	if err := docs.SetSessionCoordination(ws, false); err != nil {
+		t.Fatal(err)
+	}
+	setIntent("GPU B")
+	if got := m.otherSessionsNote(ws, "s_sibling", time.Now()); !strings.Contains(got, `intent: "GPU B"`) {
+		t.Fatalf("loop intent not updated after coordination turned off:\n%s", got)
 	}
 }
 
@@ -1079,7 +1198,7 @@ func TestWorkLoopRetryableFailureWaitsThenResumes(t *testing.T) {
 			tasks, _ := store.List()
 			id := topReadyTask(tasks)
 			_, err := store.Update(id, func(task *docs.Task) { task.Status = docs.StatusDone })
-			return loopSessRec{id: "recovered", focus: id, priceStatus: "unpriced"}, false, err
+			return loopSessRec{id: "recovered", focus: id, updated: []string{id}, priceStatus: "unpriced"}, false, err
 		}
 	}
 	m, _, ws = loopTestManager(t, factory)
@@ -1113,7 +1232,7 @@ func TestWorkLoopNonRetryableFailureStopsTruthfully(t *testing.T) {
 			tasks, _ := store.List()
 			id := topReadyTask(tasks)
 			_, _ = store.Update(id, func(task *docs.Task) { task.Status = docs.StatusBlocked })
-			return loopSessRec{id: "failed", focus: id, errKind: "auth"}, false, nil
+			return loopSessRec{id: "failed", focus: id, updated: []string{id}, errKind: "auth"}, false, nil
 		}
 	}
 	m, _, ws := loopTestManager(t, factory)
@@ -1210,19 +1329,29 @@ func TestStopWorkLoopDuringProviderWait(t *testing.T) {
 	}
 }
 
-// A session that neither commits nor changes the backlog made no progress: the
-// loop backs off on an escalating schedule, and a commit or any backlog change
-// (here a work-log entry) resets it.
+// A session that neither commits nor changes the backlog file of a task it
+// focused made no progress: the loop backs off on an escalating schedule, and
+// a commit or a focused task's change (here a work-log entry) resets it.
+// Creating tasks or editing a task it never focused is not progress; the
+// digest reports the tasks each session created.
 func TestWorkLoopNoProgressBackoffResetsOnProgress(t *testing.T) {
 	var m *Manager
 	var store *docs.Store
-	var id string
+	var id, other string
 	calls := 0
 	factory := func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
 		return func(context.Context) (loopSessRec, bool, error) {
 			calls++
-			rec := loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id}
+			rec := loopSessRec{id: fmt.Sprintf("s%d", calls), focus: id, updated: []string{id}}
 			switch calls {
+			case 2:
+				created, err := store.Create("split-off piece", "", 1, nil, nil)
+				if err != nil {
+					return rec, false, err
+				}
+				rec.created = []string{created.ID}
+				_, err = store.AppendWorkLog(other, "groomed a task it never focused")
+				return rec, false, err
 			case 3:
 				_, err := store.AppendWorkLog(id, "ruled out the cache")
 				return rec, false, err
@@ -1256,12 +1385,20 @@ func TestWorkLoopNoProgressBackoffResetsOnProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	id = task.ID
+	otherTask, err := store.Create("someone else's", "## Work log", 2, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other = otherTask.ID
 	if _, err := m.StartWorkLoop("demo"); err != nil {
 		t.Fatal(err)
 	}
 	final := waitLoopFinished(t, m, "demo")
 	if final.Outcome != "loop stopped: requested" || final.SessionsRun != 6 {
 		t.Fatalf("final = %+v", final)
+	}
+	if got := final.Sessions[1].CreatedTasks; len(got) != 1 || got[0] == id || got[0] == other {
+		t.Fatalf("session 2 created tasks = %v", got)
 	}
 	want := []time.Duration{2 * time.Minute, 5 * time.Minute, 2 * time.Minute}
 	if fmt.Sprint(waits) != fmt.Sprint(want) {
@@ -1270,6 +1407,108 @@ func TestWorkLoopNoProgressBackoffResetsOnProgress(t *testing.T) {
 	for _, k := range kinds {
 		if k != waitKindNoProgress {
 			t.Fatalf("wait kinds = %v, want %s", kinds, waitKindNoProgress)
+		}
+	}
+}
+
+// The loop prompt leaves the choice to the session, with sibling awareness.
+func TestWorkLoopPromptSiblingAwareChoice(t *testing.T) {
+	for _, want := range []string{"in parallel", "list_backlog", "what those\nsibling sessions are doing",
+		"size is not a reason to skip", "at most once in this session", "update_task in_progress",
+		"set_intent the areas or files", "GPUs, databases"} {
+		if !strings.Contains(workLoopPrompt, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, workLoopPrompt)
+		}
+	}
+}
+
+// Through the real work tools: claiming a task already in progress changes
+// nothing, so a sibling's work-log edit after that claim is not the session's
+// progress; the session's own Edit of the task file is.
+func TestLoopProgressFromSessionToolEvents(t *testing.T) {
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	task, err := store.CreateWithStatus("already in progress", "## Work log\n", 1, nil, nil, docs.StatusInProgress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := newStopSession(t)
+	reg, _ := orchestrator.BuildMode("work", &orchestrator.Deps{Workspace: ws, Docs: store, Emitter: sess.emitter}, true)
+	dispatch := func(name string, args any) {
+		t.Helper()
+		raw, _ := json.Marshal(args)
+		if res := reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: name, Arguments: string(raw)}}); res.IsError {
+			t.Fatalf("%s: %s", name, res.Content)
+		}
+	}
+	start := backlogTaskHashes(store)
+	dispatch("update_task", map[string]string{"task_id": task.ID, "status": "in_progress"})
+	if _, err := docs.NewStore(ws).AppendWorkLog(task.ID, "sibling's work only"); err != nil {
+		t.Fatal(err)
+	}
+	var rec loopSessRec
+	rec.addEvents(sess.Log().Snapshot())
+	if rec.focus != task.ID || focusedTasksChanged(start, backlogTaskHashes(store), rec) {
+		t.Fatalf("no-op claim plus a sibling edit counted as progress (focus %q, updated %v)", rec.focus, rec.updated)
+	}
+	start = backlogTaskHashes(store)
+	dispatch("Edit", map[string]string{"file_path": task.Path, "old_string": "## Work log\n", "new_string": "## Work log\n- ruled out the cache\n"})
+	rec = loopSessRec{}
+	rec.addEvents(sess.Log().Snapshot())
+	if !focusedTasksChanged(start, backlogTaskHashes(store), rec) {
+		t.Fatalf("the session's own edit of %s was not progress (updated %v)", task.ID, rec.updated)
+	}
+}
+
+// A sibling that moves the task to in_progress after update_task's claim but
+// before its write leaves the session's update a no-op, so the sibling's change
+// is not the session's progress.
+func TestLoopProgressIgnoresSiblingStatusChangeBeforeOwnUpdate(t *testing.T) {
+	ws := t.TempDir()
+	store := docs.NewStore(ws)
+	task, err := store.Create("shared task", "## Work log\n", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := newStopSession(t)
+	start := backlogTaskHashes(store)
+	deps := &orchestrator.Deps{Workspace: ws, Docs: store, Emitter: sess.emitter, ClaimTask: func(id string, record func()) string {
+		if _, err := docs.NewStore(ws).Update(task.ID, func(t *docs.Task) { t.Status = docs.StatusInProgress }); err != nil {
+			t.Fatal(err)
+		}
+		record()
+		return ""
+	}}
+	reg, _ := orchestrator.BuildMode("work", deps, true)
+	if res := reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "update_task", Arguments: `{"task_id":"` + task.ID + `","status":"in_progress"}`}}); res.IsError {
+		t.Fatalf("update_task: %s", res.Content)
+	}
+	var rec loopSessRec
+	rec.addEvents(sess.Log().Snapshot())
+	if focusedTasksChanged(start, backlogTaskHashes(store), rec) {
+		t.Fatalf("sibling's status change counted as the session's progress (updated %v)", rec.updated)
+	}
+}
+
+// Progress needs the session's own update of a task it focused that existed
+// before it ran; a sibling's edit of that task, an update of a task it never
+// focused, and a task it created do not count.
+func TestFocusedTasksChangedNeedsTheSessionsOwnUpdate(t *testing.T) {
+	before := map[string]string{"0001": "a", "0002": "b"}
+	after := map[string]string{"0001": "a2", "0002": "b2", "0003": "c"}
+	for _, tc := range []struct {
+		name string
+		rec  loopSessRec
+		want bool
+	}{
+		{"sibling edit only", loopSessRec{focus: "0001"}, false},
+		{"own update", loopSessRec{focus: "0001", updated: []string{"1"}}, true},
+		{"earlier focus", loopSessRec{focus: "0002", focused: []string{"0001", "0002"}, updated: []string{"0001"}}, true},
+		{"unfocused update", loopSessRec{focus: "0001", updated: []string{"0002"}}, false},
+		{"created task", loopSessRec{focus: "0003", created: []string{"0003"}, updated: []string{"0003"}}, false},
+	} {
+		if got := focusedTasksChanged(before, after, tc.rec); got != tc.want {
+			t.Errorf("%s: progress = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

@@ -1372,7 +1372,8 @@ type LiveSession struct {
 // omitted. detail adds each session's title and the paths it claims in its
 // worktree.
 func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bool) []LiveSession {
-	// Intent lines are part of experimental session coordination.
+	// Intent lines are part of experimental session coordination, except
+	// that work-loop sessions declare them regardless.
 	intents := m.coordinationEnabled(primary)
 	primary = canonicalPath(primary)
 	claimsByTree := map[string]map[string][]workspacelease.Claim{}
@@ -1386,7 +1387,7 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 		evs := s.Log().Snapshot()
 		ls := LiveSession{ID: s.ID, Mode: s.Mode, Held: s.activelyWorking(), Workspace: s.Workspace,
 			InPrimary: canonicalPath(s.Workspace) == primary}
-		if intents {
+		if intents || s.origin == OriginWorkLoop {
 			ls.Intent, ls.IntentAt = s.intent()
 		}
 		if len(evs) > 0 {

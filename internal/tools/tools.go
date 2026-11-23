@@ -289,8 +289,9 @@ type Workspace struct {
 	WriteRoots []string
 	// OnWrite, if set, is invoked with the resolved absolute path after a
 	// successful Write or Edit. Callers use it to surface document updates
-	// (e.g. an edit to spec.md) as events; it must not block.
-	OnWrite func(path string)
+	// (e.g. an edit to spec.md) as events; it must not block. A non-empty
+	// return is appended to the tool result as a notice.
+	OnWrite func(path string) string
 	// WriteGate, if set, may refuse a Write or Edit of the resolved absolute
 	// path before anything is touched; its error is the tool's message.
 	WriteGate func(path string) error

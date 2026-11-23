@@ -601,6 +601,13 @@ type mutationReceipt struct {
 
 // withNotice appends a coordination notice (see workspacelease overlaps) to a
 // tool result.
+func joinNotices(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return a + "\n" + b
+}
+
 func withNotice(res *gollama.ToolResult, notice string) *gollama.ToolResult {
 	if res != nil && notice != "" {
 		res.Content += "\n" + notice
@@ -870,6 +877,7 @@ func writeFile(ws *Workspace) *gollama.Tool {
 				return errResult("Write: %v", err), nil
 			}
 			data := []byte(content)
+			unchanged := false
 			receipt := mutationReceipt{
 				Operation: policy,
 				Path:      fp,
@@ -907,11 +915,13 @@ func writeFile(ws *Workspace) *gollama.Tool {
 				if err := atomicPublish(publishPath, data, mode, false); err != nil {
 					return errResult("Write: %v", err), nil
 				}
+				unchanged = strings.EqualFold(digestHex(data), actualRevision)
 			}
 			notice := claim()
 			release()
-			if ws.OnWrite != nil {
-				ws.OnWrite(abs)
+			// A byte-identical overwrite changed nothing to report.
+			if ws.OnWrite != nil && !unchanged {
+				notice = joinNotices(notice, ws.OnWrite(abs))
 			}
 			return withNotice(mutationResult(receipt), notice), nil
 		},
@@ -996,7 +1006,7 @@ func editFile(ws *Workspace) *gollama.Tool {
 			notice := claim()
 			release()
 			if ws.OnWrite != nil {
-				ws.OnWrite(abs)
+				notice = joinNotices(notice, ws.OnWrite(abs))
 			}
 			startLine := 1 + strings.Count(text[:matchAt], "\n")
 			receipt := mutationReceipt{

@@ -1545,6 +1545,7 @@ message WorkLoopSession {
   string error_kind = 9;
   string error_message = 10;
   bool error_retryable = 11;
+  repeated string created_tasks = 12; // tasks the session created with create_task
 }
 
 // WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it

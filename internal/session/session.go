@@ -2162,6 +2162,10 @@ type Manager struct {
 	// (sequential reconciliation).
 	mergeMu sync.Mutex
 
+	// claimMu serializes task claims (claimTask) so checking for another
+	// holder and recording this session's focus are one step.
+	claimMu sync.Mutex
+
 	// workLoops holds the daemon-side work loops keyed by resolved absolute
 	// workspace. Guarded by loopMu, a dedicated mutex so loop
 	// bookkeeping never contends with the session-map mu that Start/reclaim take.
@@ -3136,6 +3140,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	}
 	deps.MemoryPressure = func(int) string { return m.memoryPressure(absWS, id) }
 	deps.HeldTasks = func() map[string]string { return m.heldTasks(absWS, id) }
+	deps.ClaimTask = func(taskID string, record func()) string { return m.claimTask(absWS, id, taskID, record) }
 	deps.OtherSessions = func() string { return m.otherSessionsNote(absWS, id, time.Now()) }
 	coordination := m.coordinationEnabled(absWS)
 	if coordination {
@@ -3197,6 +3202,11 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	// It reads the session's current coordinator assignment so a mid-session
 	// role-config change drives the next coordinator loop.
 	s.buildLoop = func(mode, prompt string) (*engine.Loop, error) {
+		// Loop sessions declare intents even without session coordination, so
+		// parallel loop siblings see each other's areas and resources.
+		if s.board == nil && s.origin == OriginWorkLoop {
+			deps.SetIntent = s.declareIntent
+		}
 		reg, sys := orchestrator.BuildMode(mode, deps, unattended)
 		s.mu.Lock()
 		coord := s.coordinator

@@ -146,7 +146,7 @@ func TestWritePoliciesRevisionsAndReceipts(t *testing.T) {
 	}
 	var writes []string
 	reg := New()
-	reg.Add(Worker(&Workspace{Root: root, OnWrite: func(path string) { writes = append(writes, path) }})...)
+	reg.Add(Worker(&Workspace{Root: root, OnWrite: func(path string) string { writes = append(writes, path); return "" }})...)
 
 	assertOriginal := func(label string) {
 		t.Helper()
@@ -176,6 +176,10 @@ func TestWritePoliciesRevisionsAndReceipts(t *testing.T) {
 	}
 	if len(writes) != 0 {
 		t.Fatalf("failed writes invoked OnWrite: %v", writes)
+	}
+	same := dispatch(t, reg, "Write", `{"file_path":"existing.txt","content":"old\ncontent\n","policy":"overwrite","expected_revision":"`+digestHex(original)+`"}`)
+	if same.IsError || len(writes) != 0 {
+		t.Fatalf("byte-identical overwrite: %q, OnWrite calls %v", same.Content, writes)
 	}
 
 	read := dispatch(t, reg, "Read", `{"file_path":"existing.txt","limit":1}`)

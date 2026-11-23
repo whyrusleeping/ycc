@@ -49,16 +49,17 @@ type persistedWorkLoop struct {
 }
 
 type persistedWorkLoopSession struct {
-	SessionID      string  `json:"session_id"`
-	Focus          string  `json:"focus,omitempty"`
-	Evidence       string  `json:"evidence,omitempty"`
-	ErrorKind      string  `json:"error_kind,omitempty"`
-	ErrorMessage   string  `json:"error_message,omitempty"`
-	ErrorRetryable bool    `json:"error_retryable,omitempty"`
-	Tokens         int64   `json:"tokens"`
-	Cost           float64 `json:"cost"`
-	PriceStatus    string  `json:"price_status"`
-	DurationSecs   int64   `json:"duration_secs,omitempty"`
+	SessionID      string   `json:"session_id"`
+	Focus          string   `json:"focus,omitempty"`
+	Evidence       string   `json:"evidence,omitempty"`
+	ErrorKind      string   `json:"error_kind,omitempty"`
+	ErrorMessage   string   `json:"error_message,omitempty"`
+	ErrorRetryable bool     `json:"error_retryable,omitempty"`
+	Tokens         int64    `json:"tokens"`
+	Cost           float64  `json:"cost"`
+	PriceStatus    string   `json:"price_status"`
+	DurationSecs   int64    `json:"duration_secs,omitempty"`
+	CreatedTasks   []string `json:"created_tasks,omitempty"`
 }
 
 type persistedWorkLoopTask struct {
@@ -135,6 +136,7 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 			SessionID: s.SessionID, Focus: s.Focus, Evidence: s.Evidence,
 			ErrorKind: s.ErrorKind, ErrorMessage: s.ErrorMessage, ErrorRetryable: s.ErrorRetryable,
 			Tokens: s.Tokens, Cost: s.Cost, PriceStatus: s.PriceStatus, DurationSecs: s.DurationSecs,
+			CreatedTasks: s.CreatedTasks,
 		})
 	}
 	p.Completed = persistedTasks(snapshot.Completed)
@@ -257,6 +259,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 			tokens: s.Tokens, cost: s.Cost, priceStatus: s.PriceStatus,
 			duration: time.Duration(s.DurationSecs) * time.Second,
 			errKind:  s.ErrorKind, errMessage: s.ErrorMessage, errRetryable: s.ErrorRetryable,
+			created: s.CreatedTasks,
 		})
 	}
 

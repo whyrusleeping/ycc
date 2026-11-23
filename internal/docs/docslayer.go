@@ -130,6 +130,20 @@ func (s *Store) IsBookkeeping(absPath string) bool {
 	return within(absPath, s.dir) || s.IsMemory(absPath)
 }
 
+// TaskIDForPath returns the id of the backlog task stored at absPath, or ""
+// when absPath is not a readable task file directly in the backlog directory.
+func (s *Store) TaskIDForPath(absPath string) string {
+	absPath = filepath.Clean(absPath)
+	if filepath.Dir(absPath) != filepath.Clean(s.dir) || filepath.Ext(absPath) != ".md" {
+		return ""
+	}
+	t, err := parseMetadataFile(absPath)
+	if err != nil || t == nil {
+		return ""
+	}
+	return NormalizeID(t.ID)
+}
+
 func within(path, dir string) bool {
 	rel, err := filepath.Rel(dir, path)
 	if err != nil {

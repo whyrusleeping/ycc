@@ -74,6 +74,8 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 	if mode != "integrate" && d.Board != nil {
 		reg.Add(boardTools(d)...)
 		system += boardGuidance
+	} else if mode == "work" && d.SetIntent != nil {
+		reg.Add(setIntentTool(d.SetIntent))
 	}
 	return reg, system
 }
@@ -89,7 +91,11 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		Ownership:     d.Ownership,
 		MutationToken: d.CoordinatorToken,
 		DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
-		OnWrite: func(path string) {
+		OnWrite: func(path string) string {
+			var notice string
+			if mode == "work" {
+				notice = d.onBacklogEdit(d.Emitter, path)
+			}
 			// Memory is checked FIRST: memory.md is not spec (DocFiles excludes
 			// it), but a broad doc_glob (e.g. "*.md") could still match it via
 			// IsDoc — a direct Edit/Write of it must surface as doc:"memory",
@@ -107,6 +113,7 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 				}
 				d.Emitter.Emit(event.DocUpdated, data)
 			}
+			return notice
 		},
 	}
 	reg := tools.New()
@@ -325,7 +332,9 @@ func switchToWork(d *Deps) *gollama.Tool {
 				return tools.OkResult("User declined to start work; staying in pm mode."), nil
 			}
 			// Record the explicit target now; the work coordinator dedupes it later.
-			d.emitFocus(id)
+			if holder := d.claimFocus(id); holder != "" {
+				return heldError("switch_to_work", id, holder), nil
+			}
 			return &gollama.ToolResult{
 				Content:    "transitioning to work mode for task " + id,
 				Structured: &tools.Control{Stop: true, Mode: "work", Report: "Plan agreed for task " + id + "; switching to work mode.", Prompt: workHandoffPrompt(id, plan)},

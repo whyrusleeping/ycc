@@ -121,7 +121,7 @@ func TestSessionOriginInputBeforeStarted(t *testing.T) {
 func TestSessionOriginWorkLoopLaunchSite(t *testing.T) {
 	stop := errors.New("stop before creating test session")
 	wl := &workLoop{startSession: func(cfg Config) (*Session, error) {
-		if cfg.Origin != OriginWorkLoop || !cfg.Unattended {
+		if cfg.Origin != OriginWorkLoop || !cfg.Unattended || cfg.Prompt != workLoopPrompt {
 			t.Fatalf("work loop launch config = %+v", cfg)
 		}
 		return nil, stop

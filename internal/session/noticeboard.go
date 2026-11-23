@@ -431,16 +431,24 @@ func (b *sessionBoard) enabled() error {
 }
 
 func (b *sessionBoard) SetIntent(text string) (string, error) {
-	if err := b.enabled(); err != nil {
+	// Work-loop sessions keep their intents when coordination is turned off
+	// (their intents stay visible, so they must stay current).
+	if err := b.enabled(); err != nil && b.s.origin != OriginWorkLoop {
 		return "", err
 	}
+	return b.s.declareIntent(text)
+}
+
+// declareIntent sets, replaces, or (with empty text) clears the session's
+// one-line intent.
+func (s *Session) declareIntent(text string) (string, error) {
 	text = sanitizeLine(text)
 	if n := utf8.RuneCountInString(text); n > intentMaxText {
 		return "", fmt.Errorf("intent is %d characters; the limit is %d", n, intentMaxText)
 	}
-	b.s.noticeMu.Lock()
-	b.s.intentText, b.s.intentAt = text, time.Now().UTC()
-	b.s.noticeMu.Unlock()
+	s.noticeMu.Lock()
+	s.intentText, s.intentAt = text, time.Now().UTC()
+	s.noticeMu.Unlock()
 	if text == "" {
 		return "Intent cleared.", nil
 	}

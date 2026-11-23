@@ -13456,6 +13456,7 @@ type WorkLoopSession struct {
 	ErrorKind      string                 `protobuf:"bytes,9,opt,name=error_kind,json=errorKind,proto3" json:"error_kind,omitempty"`
 	ErrorMessage   string                 `protobuf:"bytes,10,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	ErrorRetryable bool                   `protobuf:"varint,11,opt,name=error_retryable,json=errorRetryable,proto3" json:"error_retryable,omitempty"`
+	CreatedTasks   []string               `protobuf:"bytes,12,rep,name=created_tasks,json=createdTasks,proto3" json:"created_tasks,omitempty"` // tasks the session created with create_task
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -13565,6 +13566,13 @@ func (x *WorkLoopSession) GetErrorRetryable() bool {
 		return x.ErrorRetryable
 	}
 	return false
+}
+
+func (x *WorkLoopSession) GetCreatedTasks() []string {
+	if x != nil {
+		return x.CreatedTasks
+	}
+	return nil
 }
 
 // WorkLoopInfo is a snapshot of a work loop: its lifecycle state, the session it
@@ -17970,7 +17978,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	" \x01(\x05R\battempts\x12'\n" +
 	"\x0flatest_evidence\x18\v \x01(\tR\x0elatestEvidence\x12-\n" +
 	"\x12remaining_criteria\x18\f \x01(\tR\x11remainingCriteria\x12\x1b\n" +
-	"\tnext_step\x18\r \x01(\tR\bnextStep\"\xdd\x02\n" +
+	"\tnext_step\x18\r \x01(\tR\bnextStep\"\x82\x03\n" +
 	"\x0fWorkLoopSession\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -17985,7 +17993,8 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"error_kind\x18\t \x01(\tR\terrorKind\x12#\n" +
 	"\rerror_message\x18\n" +
 	" \x01(\tR\ferrorMessage\x12'\n" +
-	"\x0ferror_retryable\x18\v \x01(\bR\x0eerrorRetryable\"\xf9\t\n" +
+	"\x0ferror_retryable\x18\v \x01(\bR\x0eerrorRetryable\x12#\n" +
+	"\rcreated_tasks\x18\f \x03(\tR\fcreatedTasks\"\xf9\t\n" +
 	"\fWorkLoopInfo\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x14\n" +

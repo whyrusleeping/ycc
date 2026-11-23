@@ -717,7 +717,9 @@ daemon-wide switch, so enabling it for one project never affects another). Clien
 `ProjectInfo` and change it with `SetProjectSettings`, which edits only that line. A session gets the
 feature when the setting is on as it is built (started or reopened), because its tool set is fixed
 then; turning the setting off applies at once: the tool answers that coordination is off and no
-further notices are delivered. With the setting off nothing is added.
+further notices are delivered. With the setting off nothing is added. Work-loop sessions are the
+exception for intents: they get `set_intent` alone, and it keeps working and their intents stay
+shown when the setting is off or turned off (§9.1).
 
 - **`list_sessions`** is a read-only tool for coordinators and mutating subagents (implementers and
   mutating generic agents), not read-only agents. Without arguments it lists the project's other
@@ -956,7 +958,21 @@ task it left is ordinary continuation work. Work sessions' backlog views mark he
 actionable and end with the project's other live sessions (mode, state such as running or idle
 since a time, focused tasks, running jobs; sessions not working and quiet for over an hour are
 omitted), so agents choose from daemon state rather than
-inferring parallel work from commit times or processes. Loop sessions leave uncommitted work of
+inferring parallel work from commit times or processes. Claiming a task is atomic: `update_task` to
+in_progress, `spawn_implementer`, `spawn_reviewers`, `re_review` and `switch_to_work` check for
+another holder and record the session's focus as one step, serialized across the daemon's sessions
+in a workspace, and fail naming the holder when another live session holds the task. A Write or
+Edit of a task's backlog file by a work session's coordinator or implementer records a
+`doc_updated` event for the task and also claims it; the edit still lands when another session
+holds the task, and the tool result names the holder. Loop sessions choose their own
+task; the loop never assigns one. Their opening prompt says other loop and live sessions may be
+working in parallel, asks for the best next task given backlog order and what those siblings are
+doing, says size is no reason to skip a task, allows splitting a task at most once per session
+before working its first piece in the same session, and asks the session to state in `set_intent`
+the areas or files and external resources (hosts, services, GPUs, databases) its work will touch.
+Loop sessions have `set_intent`, and the `list_backlog` footer shows their intents (as
+`list_sessions` does where available), even when session coordination (§7.3) is off or turned off.
+Loop sessions leave uncommitted work of
 in-review tasks to its owner, so before a start clients show a preflight naming in-review tasks
 whose own backlog file, or a file claimed by a session that focused them, is uncommitted, and
 confirm "start anyway"; the loop digest and completion notification keep that list.
@@ -964,11 +980,15 @@ A loop whose only ready work is held
 finishes saying which sessions hold it rather
 than starting sessions that would decline to collide. Unchanged task metadata after a session
 is not a stop condition, and there is no fixed retry count for unfinished ready work. A completed
-session that neither commits nor changes any backlog file (status, body or work log, creation or
-removal) made no progress, typically because every ready task is waiting on time or an outside
-result. The loop then waits before re-deciding, escalating 2, 5, 15 and 30 minutes, then hourly,
-shown as waiting with wait kind `no_progress`; any progress resets the backoff, and graceful stop
-wakes the wait. Once one stall has waited 12 hours in total, the loop stops as stalled, naming
+session made progress only through its own commits or its own changes to the backlog files of
+tasks it focused that existed when it started (status, body or work log, or removal): the file's
+content changed and the session's tools recorded a `doc_updated` event for the task.
+`update_task` to the status a task already has (such as claiming a task already in progress)
+records its event as unchanged, and a byte-identical Write records none. Creating tasks alone, or
+other sessions' edits, is not progress. A session without progress typically found
+every ready task waiting on time or an outside result. The loop then waits before re-deciding,
+escalating 2, 5, 15 and 30 minutes, then hourly, shown as waiting with wait kind `no_progress`;
+any progress resets the backoff, and graceful stop wakes the wait. Once one stall has waited 12 hours in total, the loop stops as stalled, naming
 the ready tasks. Stop is
 graceful: the current session finishes, then no next session starts. Session budget breaches and
 cumulative loop budgets still stop at the next safe decision point.
@@ -1005,7 +1025,8 @@ it as unavailable rather than misreporting missing historical caps as unbounded.
 no-progress stall stop above, there is no default wall-time, attempt-count, or unchanged-metadata
 limit; adding one would be a behavior-changing policy decision.
 
-Completed session records retain bounded reports and structured failure details. The digest counts
+Completed session records retain bounded reports, structured failure details, and the tasks each
+session created. The digest counts
 attempts per task and exposes the latest evidence, remaining acceptance criteria, and a useful next
 step for unfinished or blocked work. When a failed session has no idle report, its structured error
 is retained as bounded continuation evidence. These records survive daemon restart.

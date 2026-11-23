@@ -2211,6 +2211,7 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 			Evidence: sn.Evidence, ErrorKind: sn.ErrorKind, ErrorMessage: sn.ErrorMessage,
 			ErrorRetryable: sn.ErrorRetryable, Tokens: sn.Tokens, Cost: sn.Cost,
 			PriceStatus: sn.PriceStatus, DurationSecs: sn.DurationSecs,
+			CreatedTasks: sn.CreatedTasks,
 		})
 	}
 	info.Completed = digestTasksToProto(wl.Completed)

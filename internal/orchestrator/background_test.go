@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -1042,5 +1043,35 @@ func TestSpawnImplementerBackgroundUnavailable(t *testing.T) {
 	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "go", "background": true})
 	if !res.IsError || !strings.Contains(res.Content, "not available") {
 		t.Fatalf("expected background-unavailable error, got: %q", res.Content)
+	}
+}
+
+// The implementer's file-tool edit of another task's backlog file records that
+// task's focus and update in the session, like the coordinator's edit does.
+func TestImplementerBacklogEditRecordsFocus(t *testing.T) {
+	rec := &syncRec{}
+	impl := &scripted{}
+	d, store := bgDeps(t, rec, impl, nil)
+	defer d.Jobs.KillAll()
+	second, err := store.Create("related task", "## Work log\n", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editArgs, err := json.Marshal(map[string]string{"file_path": second.Path, "old_string": "## Work log\n", "new_string": "## Work log\n- worked on related task\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	impl.resp = []*gollama.ResponseMessageGenerate{call("Edit", string(editArgs)), call("finish", `{"report":"done"}`)}
+	res, err := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "edit related task"})
+	if err != nil || res.IsError {
+		t.Fatalf("implementer result: %+v, %v", res, err)
+	}
+	var focused, updated bool
+	for _, ev := range rec.snapshot() {
+		focused = focused || (ev.Type == event.TaskFocus && ev.Data["task"] == second.ID)
+		updated = updated || (ev.Type == event.DocUpdated && ev.Data["task"] == second.ID && ev.Actor == "implementer")
+	}
+	if !focused || !updated {
+		t.Fatalf("implementer edit of %s: focus %v, doc_updated %v; want both", second.ID, focused, updated)
 	}
 }

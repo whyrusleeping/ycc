@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -125,6 +126,7 @@ func TestRunningWorkLoopRestoresInterruptedAndCanRestart(t *testing.T) {
 		startedAt:        time.Unix(1_700_000_000, 123).UTC(),
 		sessions: []loopSessRec{{
 			id: "sess_done", focus: "0001", tokens: 40, cost: 0.04, priceStatus: "priced",
+			created: []string{"0002"},
 		}},
 		cumTokens:  40,
 		cumCost:    0.04,
@@ -146,7 +148,7 @@ func TestRunningWorkLoopRestoresInterruptedAndCanRestart(t *testing.T) {
 	if got.CurrentSessionID != "" {
 		t.Fatalf("restored current session = %q, want empty", got.CurrentSessionID)
 	}
-	if len(got.Sessions) != 1 || got.TotalTokens != 40 || got.TotalCost != 0.04 {
+	if len(got.Sessions) != 1 || fmt.Sprint(got.Sessions[0].CreatedTasks) != "[0002]" || got.TotalTokens != 40 || got.TotalCost != 0.04 {
 		t.Fatalf("restored interrupted accumulator = sessions=%#v tokens=%d cost=%v",
 			got.Sessions, got.TotalTokens, got.TotalCost)
 	}

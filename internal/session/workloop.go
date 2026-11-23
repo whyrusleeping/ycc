@@ -110,6 +110,7 @@ type WorkLoopSession struct {
 	Cost           float64
 	PriceStatus    string
 	DurationSecs   int64
+	CreatedTasks   []string // tasks the session created
 }
 
 // WorkLoopDigestTask is one task row in a work loop's incremental/final digest.
@@ -137,8 +138,11 @@ type loopCommit struct{ task, sha, message string }
 // session completes) its priced cost/status.
 type loopSessRec struct {
 	id           string
-	focus        string
-	report       string // bounded continuation and user-visible evidence
+	focus        string   // latest focused task
+	focused      []string // every task the session focused
+	created      []string // tasks the session created with create_task
+	updated      []string // existing tasks the session's own tools changed (doc_updated)
+	report       string   // bounded continuation and user-visible evidence
 	tokens       int64
 	commits      []loopCommit
 	verdicts     []string
@@ -262,6 +266,7 @@ func (wl *workLoop) snapshotLocked() *WorkLoop {
 			ErrorRetryable: s.errRetryable, Tokens: s.tokens,
 			Cost: s.cost, PriceStatus: s.priceStatus,
 			DurationSecs: int64(s.duration / time.Second),
+			CreatedTasks: append([]string(nil), s.created...),
 		})
 	}
 	out.Completed = append(out.Completed, wl.completed...)
@@ -512,9 +517,9 @@ func (wl *workLoop) run() {
 		wl.loopStarted = true
 		wl.mu.Unlock()
 
-		before := backlogFingerprint(store.Dir())
+		before := backlogTaskHashes(store)
 		rec, breach, err := wl.runSession(wl.m.loopCtx)
-		progressed := len(rec.commits) > 0 || backlogFingerprint(store.Dir()) != before
+		progressed := len(rec.commits) > 0 || focusedTasksChanged(before, backlogTaskHashes(store), rec)
 		wl.accumulate(rec, breach)
 		if err != nil {
 			// Re-read the backlog so the digest reflects any progress the session
@@ -886,6 +891,52 @@ func boundLoopContext(s string, limit int) string {
 
 // --- session runner (the injectable seam's default) ---
 
+// workLoopPrompt opens every loop session. The session chooses its own task;
+// the loop does not assign one.
+const workLoopPrompt = `Work on the backlog as one session of an unattended work loop.
+Other work-loop and live sessions may be working in this project in parallel: the list_backlog
+footer lists them with their state, focused tasks and declared intents. Choose the best next ready
+task (one whose dependencies are all done), considering backlog priority and order and what those
+sibling sessions are doing; leave tasks they hold to them and avoid colliding with the areas they
+are changing. A task's size is not a reason to skip it. If a task genuinely needs splitting, split
+it at most once in this session, then work the first piece in this same session. Claim your choice
+with update_task in_progress; a claim fails when another live session holds the task, so choose
+again then. Once claimed, state in set_intent the areas or files and any external resources
+(hosts, services, GPUs, databases) the work will touch. Then complete the task.`
+
+// addEvents records a finished session's focus, task creations and changes,
+// commits and review verdicts from its events.
+func (rec *loopSessRec) addEvents(events []event.Event) {
+	rec.focused = focusTasks(events)
+	for _, ev := range events {
+		switch ev.Type {
+		case event.TaskFocus:
+			if t := strField(ev, "task"); t != "" {
+				rec.focus = t
+			}
+		case event.DocUpdated:
+			if t := strField(ev, "task"); t != "" {
+				created, _ := ev.Data["created"].(bool)
+				unchanged, _ := ev.Data["unchanged"].(bool)
+				switch {
+				case created:
+					rec.created = append(rec.created, t)
+				case !unchanged:
+					rec.updated = append(rec.updated, t)
+				}
+			}
+		case event.CommitMade:
+			rec.commits = append(rec.commits, loopCommit{
+				task: strField(ev, "task"), sha: strField(ev, "sha"), message: strField(ev, "message"),
+			})
+		case event.ReviewSubmitted:
+			if v := strField(ev, "verdict"); v != "" {
+				rec.verdicts = append(rec.verdicts, v)
+			}
+		}
+	}
+}
+
 // realRunSession starts one unattended `work` session, waits for it to finish,
 // snapshots + prices it, then reclaims it. Graceful stop still lets the current
 // session complete (checked before the NEXT pick, not here).
@@ -897,7 +948,7 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	}
 	sess, err := startSession(Config{
 		Project: wl.projectArg, Mode: "work", Unattended: true, Origin: OriginWorkLoop,
-		loopContinuation: wl.continuationContext(),
+		Prompt: workLoopPrompt, loopContinuation: wl.continuationContext(),
 	})
 	if err != nil {
 		return loopSessRec{}, false, err
@@ -957,22 +1008,7 @@ waitLoop:
 	endedWithError := sess.Status() == event.StatusError
 	events := sess.Log().Snapshot()
 	rec := loopSessRec{id: sess.ID, report: loopSessionReport(events), priceStatus: string(usage.StatusUnpriced)}
-	for _, ev := range events {
-		switch ev.Type {
-		case event.TaskFocus:
-			if t := strField(ev, "task"); t != "" {
-				rec.focus = t
-			}
-		case event.CommitMade:
-			rec.commits = append(rec.commits, loopCommit{
-				task: strField(ev, "task"), sha: strField(ev, "sha"), message: strField(ev, "message"),
-			})
-		case event.ReviewSubmitted:
-			if v := strField(ev, "verdict"); v != "" {
-				rec.verdicts = append(rec.verdicts, v)
-			}
-		}
-	}
+	rec.addEvents(events)
 	if endedWithError {
 		var action string
 		rec.errKind, rec.errMessage, action, rec.errRetryable = loopSessionFailureDetails(events)
@@ -1040,27 +1076,42 @@ func readyTaskIDs(tasks []*docs.Task) []string {
 	return ids
 }
 
-// backlogFingerprint hashes the name and content of every backlog file, so any
-// status, body/work-log, creation, or removal change between two calls counts as
-// loop progress. An unreadable backlog hashes as empty.
-func backlogFingerprint(dir string) string {
-	entries, err := os.ReadDir(dir)
+// backlogTaskHashes hashes each backlog task file's content by task id. An
+// unreadable backlog hashes as empty.
+func backlogTaskHashes(store *docs.Store) map[string]string {
+	tasks, err := store.ListMetadata()
 	if err != nil {
-		return ""
+		return nil
 	}
-	h := sha256.New()
-	for _, e := range entries {
-		if !e.Type().IsRegular() {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+	out := make(map[string]string, len(tasks))
+	for _, t := range tasks {
+		data, err := os.ReadFile(t.Path)
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(h, "%s\x00%d\x00", e.Name(), len(data))
-		h.Write(data)
+		sum := sha256.Sum256(data)
+		out[t.ID] = hex.EncodeToString(sum[:])
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return out
+}
+
+// focusedTasksChanged reports whether a session changed the backlog file of a
+// task it focused that existed before it ran: its status, body or work log,
+// or its removal. The change must also be the session's own: its tools
+// recorded an update of that task. Creating tasks alone, and other sessions'
+// edits, are not this session's progress.
+func focusedTasksChanged(before, after map[string]string, rec loopSessRec) bool {
+	focused := map[string]bool{docs.NormalizeID(rec.focus): true}
+	for _, id := range rec.focused {
+		focused[docs.NormalizeID(id)] = true
+	}
+	for _, id := range rec.updated {
+		id = docs.NormalizeID(id)
+		if prev, ok := before[id]; ok && id != "" && focused[id] && after[id] != prev {
+			return true
+		}
+	}
+	return false
 }
 
 // heldTasks maps backlog task ids in workspace absWS to the live session
@@ -1084,6 +1135,20 @@ func (m *Manager) heldTasks(absWS, exclude string) map[string]string {
 		}
 	}
 	return held
+}
+
+// claimTask makes taskID session claimant's focus via record unless another
+// live session in workspace absWS holds it (the heldTasks rule), in which case
+// it returns the holder and records nothing. Claims are serialized, so of two
+// sessions racing for one task exactly one wins.
+func (m *Manager) claimTask(absWS, claimant, taskID string, record func()) (holder string) {
+	m.claimMu.Lock()
+	defer m.claimMu.Unlock()
+	if holder := m.heldTasks(absWS, claimant)[docs.NormalizeID(taskID)]; holder != "" {
+		return holder
+	}
+	record()
+	return ""
 }
 
 // canonicalPath resolves symlinks so aliases of one workspace (and its backlog)

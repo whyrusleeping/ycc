@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -482,6 +483,122 @@ func TestUpdateTaskInProgressEmitsFocusWithDedupe(t *testing.T) {
 				t.Fatalf("focus event title = %v, want %q", ev.Data["title"], "task a")
 			}
 		}
+	}
+}
+
+// Without the notice board, a work coordinator with SetIntent gets set_intent
+// alone; without SetIntent it gets none of the board tools.
+func TestWorkModeSetIntentWithoutBoard(t *testing.T) {
+	d := depsFor(t)
+	reg, system := BuildMode("work", d, true)
+	if hasTool(reg, "set_intent") {
+		t.Fatal("set_intent offered without a board or SetIntent")
+	}
+	var got string
+	d.SetIntent = func(text string) (string, error) { got = text; return "Intent set.", nil }
+	reg, system = BuildMode("work", d, true)
+	if !hasTool(reg, "set_intent") || hasTool(reg, "post_notice") || strings.Contains(system, "NOTICE BOARD") {
+		t.Fatalf("work tools with SetIntent: set_intent %v, post_notice %v", hasTool(reg, "set_intent"), hasTool(reg, "post_notice"))
+	}
+	res := reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "set_intent", Arguments: `{"text":"editing internal/session"}`}})
+	if res.IsError || got != "editing internal/session" {
+		t.Fatalf("set_intent = %+v, recorded %q", res, got)
+	}
+}
+
+// A claim of a task another live session holds fails, names the holder, and
+// leaves the task and this session's focus unchanged.
+func TestUpdateTaskRefusesTaskHeldByAnotherSession(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	held, err := d.Docs.Create("held elsewhere", "", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.ClaimTask = func(id string, record func()) string {
+		if docs.NormalizeID(id) == held.ID {
+			return "s_other"
+		}
+		record()
+		return ""
+	}
+	res, _ := updateTask(d).Call(context.Background(), map[string]any{"task_id": held.ID, "status": "in_progress"})
+	if !res.IsError || !strings.Contains(res.Content, "s_other") {
+		t.Fatalf("update_task of a held task = %+v, want an error naming s_other", res)
+	}
+	if got, _ := d.Docs.Get(held.ID); got.Status != docs.StatusTodo {
+		t.Fatalf("held task status = %s, want todo unchanged", got.Status)
+	}
+	if got := rec.focusTasks(); len(got) != 0 {
+		t.Fatalf("refused claim recorded focus %v", got)
+	}
+	res, _ = spawnReviewers(d).Call(context.Background(), map[string]any{"task_id": held.ID})
+	if !res.IsError || !strings.Contains(res.Content, "s_other") {
+		t.Fatalf("spawn_reviewers of a held task = %+v, want an error naming s_other", res)
+	}
+}
+
+// A work session's file-tool edit of a task's backlog file makes that task its
+// focus; when another session holds the task, the edit lands but its result
+// names the holder and no focus is recorded. Other modes' edits record nothing.
+func TestBacklogFileEditClaimsFocusInWorkMode(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	mine, err := d.Docs.Create("mine", "## Work log\n", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := d.Docs.Create("theirs", "## Work log\n", 1, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.ClaimTask = func(id string, record func()) string {
+		if id == theirs.ID {
+			return "s_other"
+		}
+		record()
+		return ""
+	}
+	edit := func(mode string, task *docs.Task, note string) *gollama.ToolResult {
+		t.Helper()
+		reg, _ := BuildMode(mode, d, true)
+		args, _ := json.Marshal(map[string]string{"file_path": task.Path, "old_string": "## Work log\n", "new_string": "## Work log\n- " + note + "\n"})
+		res := reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "Edit", Arguments: string(args)}})
+		if res.IsError {
+			t.Fatalf("Edit %s: %s", task.ID, res.Content)
+		}
+		return res
+	}
+	edit("pm", mine, "groomed")
+	if got := rec.focusTasks(); len(got) != 0 {
+		t.Fatalf("pm edit recorded focus %v", got)
+	}
+	if res := edit("work", mine, "worked"); strings.Contains(res.Content, "held by") {
+		t.Fatalf("unheld edit reported a holder: %s", res.Content)
+	}
+	if got := rec.focusTasks(); len(got) != 1 || got[0] != mine.ID {
+		t.Fatalf("focus after editing %s = %v", mine.ID, got)
+	}
+	updated := 0
+	for _, ev := range rec.events {
+		if ev.Type == event.DocUpdated && ev.Data["task"] == mine.ID {
+			updated++
+		}
+	}
+	if updated != 1 {
+		t.Fatalf("work edit of %s recorded %d doc_updated events, want 1 (the pm edit records none)", mine.ID, updated)
+	}
+	res := edit("work", theirs, "collided")
+	if !strings.Contains(res.Content, "held by live session s_other") {
+		t.Fatalf("held edit result does not name the holder: %s", res.Content)
+	}
+	if got := rec.focusTasks(); len(got) != 1 {
+		t.Fatalf("held edit recorded focus: %v", got)
+	}
+	if got, _ := d.Docs.Get(theirs.ID); !strings.Contains(got.Body, "collided") {
+		t.Fatalf("held edit did not land: %q", got.Body)
 	}
 }
 

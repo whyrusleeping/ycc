@@ -4739,6 +4739,9 @@ public nonisolated struct Ycc_V1_WorkLoopSession: Sendable {
 
   public var errorRetryable: Bool = false
 
+  /// tasks the session created with create_task
+  public var createdTasks: [String] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -14863,7 +14866,7 @@ nonisolated extension Ycc_V1_WorkLoopDigestTask: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopSession"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}focus\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{3}duration_secs\0\u{1}attempt\0\u{1}evidence\0\u{3}error_kind\0\u{3}error_message\0\u{3}error_retryable\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}focus\0\u{1}tokens\0\u{1}cost\0\u{3}price_status\0\u{3}duration_secs\0\u{1}attempt\0\u{1}evidence\0\u{3}error_kind\0\u{3}error_message\0\u{3}error_retryable\0\u{3}created_tasks\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -14882,6 +14885,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
       case 9: try { try decoder.decodeSingularStringField(value: &self.errorKind) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.errorMessage) }()
       case 11: try { try decoder.decodeSingularBoolField(value: &self.errorRetryable) }()
+      case 12: try { try decoder.decodeRepeatedStringField(value: &self.createdTasks) }()
       default: break
       }
     }
@@ -14921,6 +14925,9 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
     if self.errorRetryable != false {
       try visitor.visitSingularBoolField(value: self.errorRetryable, fieldNumber: 11)
     }
+    if !self.createdTasks.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.createdTasks, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -14936,6 +14943,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
     if lhs.errorKind != rhs.errorKind {return false}
     if lhs.errorMessage != rhs.errorMessage {return false}
     if lhs.errorRetryable != rhs.errorRetryable {return false}
+    if lhs.createdTasks != rhs.createdTasks {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

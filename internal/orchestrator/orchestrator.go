@@ -110,6 +110,16 @@ type Deps struct {
 	// HeldTasks maps backlog task ids to another live session actively working
 	// on them. Nil-safe: when unset no task is held.
 	HeldTasks func() map[string]string
+	// ClaimTask atomically claims a task for this session: it returns the id of
+	// another live session that holds the task (same rule as HeldTasks), or
+	// calls record, which makes the task this session's focus, and returns "".
+	// Claims in one workspace are serialized so two sessions cannot both win.
+	// Nil-safe: when unset every claim succeeds.
+	ClaimTask func(taskID string, record func()) (holder string)
+	// SetIntent, when set on a session without the notice board (Board nil),
+	// gives a work coordinator set_intent alone: work-loop sessions declare
+	// intents even with session coordination off.
+	SetIntent func(text string) (string, error)
 	// OtherSessions describes the project's other live sessions for
 	// list_backlog. Nil-safe: when unset nothing is appended.
 	OtherSessions func() string
@@ -233,8 +243,54 @@ type genericAgentHandle struct {
 	running     bool // Run may still be unwinding after kill_job marks job killed
 }
 
+// claimFocus makes taskID the session's focus unless another live session
+// holds it, in which case it returns that session's id and records nothing.
+func (d *Deps) claimFocus(taskID string) (holder string) {
+	id := strings.TrimSpace(taskID)
+	if id == "" {
+		return ""
+	}
+	if d.ClaimTask == nil {
+		d.emitFocus(id)
+		return ""
+	}
+	return d.ClaimTask(id, func() { d.emitFocus(id) })
+}
+
+// onBacklogEdit is the work-session Write/Edit hook for a backlog task file. A
+// session editing a task's file is working on that task, so the edit records a
+// doc_updated event for it (the session's own change, which loop progress
+// counts) and claims it like update_task does. The edit has already landed, so
+// a refused claim only returns a notice naming the holder.
+func (d *Deps) onBacklogEdit(em *event.Emitter, path string) string {
+	if d.Docs == nil {
+		return ""
+	}
+	id := d.Docs.TaskIDForPath(path)
+	if id == "" {
+		return ""
+	}
+	data := map[string]any{"task": id}
+	if rel, err := filepath.Rel(d.Workspace, path); err == nil {
+		data["path"] = filepath.ToSlash(rel)
+	}
+	em.Emit(event.DocUpdated, data)
+	if holder := d.claimFocus(id); holder != "" {
+		return fmt.Sprintf("notice: task %s is held by live session %s, which is working on it; this edit did not make it your focus. "+
+			"Leave the task to that session unless the edit was deliberate coordination.", id, holder)
+	}
+	return ""
+}
+
+// heldError is the tool error for a claim refused because holder holds the task.
+func heldError(tool, taskID, holder string) *gollama.ToolResult {
+	return tools.ErrResult("%s: task %s is held by live session %s, which is working on it; leave it to that session and choose another task",
+		tool, strings.TrimSpace(taskID), holder)
+}
+
 // emitFocus records a task_focus event when the active task changes. Re-focusing
-// the same task is a no-op.
+// the same task is a no-op. Callers that may contend with other sessions go
+// through claimFocus.
 func (d *Deps) emitFocus(taskID string) {
 	id := strings.TrimSpace(taskID)
 	if id == "" {
@@ -840,18 +896,11 @@ func spawnImplementer(d *Deps) *gollama.Tool {
 				}
 			}()
 			// Delegating a task makes it the session's active focus.
-			d.emitFocus(id)
+			if holder := d.claimFocus(id); holder != "" {
+				return heldError("spawn_implementer", id, holder), nil
+			}
 			reg := tools.New()
-			reg.Add(tools.Worker(&tools.Workspace{
-				Root:          d.Workspace,
-				Env:           append([]string(nil), d.Env...),
-				WriteRoots:    tools.NormalizeRoots(d.WriteRoots),
-				Jobs:          d.Jobs,
-				Emitter:       d.Emitter.With("implementer"),
-				Ownership:     d.Ownership,
-				MutationToken: token,
-				DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
-			})...)
+			reg.Add(tools.Worker(d.implementerWorkspace(token))...)
 			reg.Add(coordinationTools(d)...)
 			impl := d.implementer()
 			loop := d.newLoop(impl, sys(implementerSystem, false, d.Workspace), reg, "implementer")
@@ -1265,14 +1314,22 @@ func revisionContextMode(params any) (string, error) {
 	return mode, nil
 }
 
-func newImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token) *engine.Loop {
-	reg := tools.New()
-	reg.Add(tools.Worker(&tools.Workspace{
+// implementerWorkspace is the tool workspace of this session's implementer.
+// Its backlog-file edits claim tasks like the work coordinator's.
+func (d *Deps) implementerWorkspace(token *workspacelease.Token) *tools.Workspace {
+	em := d.Emitter.With("implementer")
+	return &tools.Workspace{
 		Root: d.Workspace, Env: append([]string(nil), d.Env...),
 		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs,
-		Emitter: d.Emitter.With("implementer"), Ownership: d.Ownership,
+		Emitter: em, Ownership: d.Ownership,
 		MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
-	})...)
+		OnWrite: func(path string) string { return d.onBacklogEdit(em, path) },
+	}
+}
+
+func newImplementerLoop(d *Deps, spec AgentSpec, token *workspacelease.Token) *engine.Loop {
+	reg := tools.New()
+	reg.Add(tools.Worker(d.implementerWorkspace(token))...)
 	reg.Add(coordinationTools(d)...)
 	loop := d.newLoop(spec, sys(implementerSystem, false, d.Workspace), reg, "implementer")
 	loop.ContextLengthHandled = true
@@ -1352,7 +1409,9 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 			}
 			// Reviewing a task makes it the session's focus even when the session
 			// resumed an already in_progress task without update_task.
-			d.emitFocus(t.ID)
+			if holder := d.claimFocus(t.ID); holder != "" {
+				return heldError("spawn_reviewers", t.ID, holder), nil
+			}
 			preloadedDiff := d.reviewDiff(id)
 			if preloadedDiff.Err != nil {
 				return tools.ErrResult("spawn_reviewers: changeset evidence failed: %v", preloadedDiff.Err), nil
@@ -1505,7 +1564,9 @@ func reReview(d *Deps) *gollama.Tool {
 			if getErr != nil {
 				return tools.ErrResult("re_review: %v", getErr), nil
 			}
-			d.emitFocus(t.ID)
+			if holder := d.claimFocus(t.ID); holder != "" {
+				return heldError("re_review", t.ID, holder), nil
+			}
 			currentDiff := d.reviewDiff(id)
 			if currentDiff.Err != nil {
 				return tools.ErrResult("re_review: changeset evidence failed: %v", currentDiff.Err), nil
@@ -1774,14 +1835,27 @@ func updateTask(d *Deps) *gollama.Tool {
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			status, _ := tools.GetString(params, "status")
-			if _, err := d.Docs.Update(id, func(t *docs.Task) { t.Status = docs.Status(status) }); err != nil {
+			// Starting a task claims it as the session's focus; the claim comes
+			// first so a task another live session holds is left unchanged.
+			if status == "in_progress" {
+				if _, err := d.Docs.Get(id); err != nil {
+					return tools.ErrResult("update_task: %v", err), nil
+				}
+				if holder := d.claimFocus(id); holder != "" {
+					return heldError("update_task", id, holder), nil
+				}
+			}
+			var was docs.Status // read under the store lock, so a sibling's change is not ours
+			if _, err := d.Docs.Update(id, func(t *docs.Task) { was, t.Status = t.Status, docs.Status(status) }); err != nil {
 				return tools.ErrResult("update_task: %v", err), nil
 			}
-			// Starting a task also makes it the session's accounting focus.
-			if status == "in_progress" {
-				d.emitFocus(id)
+			data := map[string]any{"task": id, "status": status}
+			if was == docs.Status(status) {
+				// Re-setting the current status (e.g. claiming a task already
+				// in progress) changes nothing; loop progress ignores it.
+				data["unchanged"] = true
 			}
-			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": id, "status": status})
+			d.Emitter.Emit(event.DocUpdated, data)
 			return tools.OkResult(fmt.Sprintf("task %s -> %s", id, status)), nil
 		},
 	}
