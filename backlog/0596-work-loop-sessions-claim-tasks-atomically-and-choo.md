@@ -1,7 +1,7 @@
 ---
 id: "0596"
 title: Work-loop sessions claim tasks atomically and choose with sibling awareness
-status: todo
+status: done
 priority: 2
 created: "2026-11-23"
 updated: "2026-11-23"
@@ -11,7 +11,7 @@ spec_refs:
 ---
 
 ## Description
-Status: todo. First step of the parallel work-loop plan (user decision 2026-11-23, session s_a96d1f53776eaa46). It is useful at N=1 because loops already run beside hand-started sessions. 0598 (parallel loop slots) builds on it.
+First step of the parallel work-loop plan (user decision 2026-11-23, session s_a96d1f53776eaa46). It is useful at N=1 because loops already run beside hand-started sessions. 0598 (parallel loop slots) builds on it.
 
 ## Why
 Work sessions choose their own task, which the user wants to keep: agents reading the backlog find a better order than priority plus id. Two flaws in how choices are recorded showed up in wheeler, the user's data-pipeline project. On 2026-11-23, seven sessions told to "choose the next ready task" ran in parallel:
@@ -36,4 +36,8 @@ User decisions (2026-11-23, s_a96d1f53776eaa46):
 - Tests cover two sessions racing to claim one task (exactly one wins) and focus recorded from a backlog-file edit.
 - spec.md §9.1 records the behavior.
 
-## Work log
+## Outcome
+
+Claims go through `Manager.claimTask`, which serializes the `heldTasks` check and the focus event, so of two racing sessions exactly one wins. `update_task` to in_progress (checked before the status changes), `spawn_implementer`, `spawn_reviewers`, `re_review` and `switch_to_work` fail naming the holder. A work coordinator's or implementer's Write/Edit of a backlog task file records `doc_updated` for the task and claims it; a held task's edit lands with a notice naming the holder. Loop sessions open with a sibling-aware prompt covering every listed point. They always get `set_intent`, and their intents show in the `list_backlog` footer even with session coordination off or turned off (a reversible design choice: the reviewer held the criterion requires it, while §7.3 had said coordination off adds nothing; §7.3 now names the exception). Loop progress is the session's own commits or its own changes to focused tasks that existed before it: content changed plus a `doc_updated` from its tools. Same-status `update_task` (decided under the store lock) and byte-identical Writes do not count, and neither do created tasks. `WorkLoopSession.created_tasks` carries per-session created tasks through the digest, persistence and proto, and the web loop page shows them. Spec §7.3 and §9.1 hunks were landed alone because spec.md also holds another session's uncommitted Gemini hunks. Tests cover the claim race, held-claim refusal, backlog-edit focus from the coordinator and the implementer, progress attribution (sibling edit, no-op claim, interleaved status change), and intents without coordination. Go suites, web tests (dist built from HEAD plus this change) and the YccKit `swift test` on the Mac pass.
+
+Commit: Work loop: atomic task claims, backlog-edit focus, sibling-aware loop prompt, per-session progress and created tasks (0596)
