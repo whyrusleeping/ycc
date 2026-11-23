@@ -110,6 +110,10 @@ const (
 	// { id, reason }). They do not enter the conversation.
 	NoticePosted  Type = "notice_posted"
 	NoticeCleared Type = "notice_cleared"
+	// ClaimReleased records the coordinator releasing its claims on paths it
+	// did not write with release_claim (data: { paths, held, reason }; held
+	// lists the paths it had a claim on). It does not enter the conversation.
+	ClaimReleased Type = "claim_released"
 	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"

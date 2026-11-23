@@ -375,3 +375,232 @@ func TestShellWithoutTheWriteDoesNotBlockConcurrentlyWrittenFile(t *testing.T) {
 		t.Fatalf("commit refused though B never edited the file; claims=%v result=%s", ownership.Claims(ws)["shared.go"], got.Content)
 	}
 }
+
+// Two sessions' shells overlap, each writing its own file: neither is claimed
+// by whichever shell finished first. Both paths are ambiguous for both
+// sessions and in both changesets, a commit is refused while the other session
+// holds them, and each session releases the file it did not write (recorded in
+// its log), after which its commit takes only its own file.
+func TestOverlappingShellsLeaveAmbiguousPathsUntilReleased(t *testing.T) {
+	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, ws, "add", "-A")
+	gitRun(t, ws, "commit", "-m", "seed")
+	ownership := workspacelease.NewService()
+	ownership.SetLiveScopes(func(string) bool { return true })
+	type session struct {
+		d    *Deps
+		rec  *captureRec
+		call func(string, string) *gollama.ToolResult
+	}
+	open := func(id string) session {
+		repo, err := git.Open(ws)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := &captureRec{}
+		d := finalizationDeps(ws, repo, repo.OpenBaseline(), docs.NewStore(ws), rec)
+		d.Asker = noopAsker{}
+		d.Ownership = ownership
+		d.CoordinatorToken = ownership.NewScopedToken(id, id)
+		reg, _ := BuildMode("chat", d, false)
+		return session{d, rec, func(name, args string) *gollama.ToolResult {
+			return reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: name, Arguments: args}})
+		}}
+	}
+	a, b := open("s_a"), open("s_b")
+	// A starts, B starts and writes, A writes and finishes first, then B.
+	results := make(chan *gollama.ToolResult, 2)
+	go func() {
+		results <- a.call("Bash", `{"command":"touch .git/a-started; while test ! -f .git/b-wrote; do sleep 0.02; done; echo a > gen_a.txt; touch .git/a-done"}`)
+	}()
+	waitFor(t, func() bool { _, err := os.Stat(filepath.Join(ws, ".git", "a-started")); return err == nil })
+	go func() {
+		results <- b.call("Bash", `{"command":"echo b > gen_b.txt; touch .git/b-wrote; while test ! -f .git/a-done; do sleep 0.02; done; sleep 0.2"}`)
+	}()
+	for range 2 {
+		if got := <-results; got.IsError || !strings.Contains(got.Content, "[shell attribution]") {
+			t.Fatalf("overlapping Bash result: %s", got.Content)
+		}
+	}
+	for _, s := range []session{a, b} {
+		changes, err := s.d.sessionChangeset()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"gen_a.txt", "gen_b.txt"}
+		if strings.Join(changes.Paths, ",") != strings.Join(want, ",") || strings.Join(changes.Ambiguous, ",") != strings.Join(want, ",") {
+			t.Fatalf("%s changeset paths=%v ambiguous=%v", s.d.CoordinatorToken.Scope(), changes.Paths, changes.Ambiguous)
+		}
+		if note := attributionNote(changes); !strings.Contains(note, "AMBIGUOUS") {
+			t.Fatalf("manifest does not list ambiguous paths: %s", note)
+		}
+	}
+	if got := a.call("commit", `{"message":"A work"}`); !got.IsError || !strings.Contains(got.Content, "release_claim") {
+		t.Fatalf("A's commit was not refused with the release hint: %s", got.Content)
+	}
+	if got := a.call("release_claim", `{"paths":["gen_b.txt"],"reason":"B's generator output"}`); got.IsError {
+		t.Fatalf("A release_claim: %s", got.Content)
+	}
+	if got := b.call("release_claim", `{"paths":["gen_a.txt"],"reason":"A's generator output"}`); got.IsError {
+		t.Fatalf("B release_claim: %s", got.Content)
+	}
+	released := false
+	for _, ev := range a.rec.events {
+		if ev.Type == event.ClaimReleased {
+			released = true
+			if paths, _ := ev.Data["paths"].([]string); len(paths) != 1 || paths[0] != "gen_b.txt" || ev.Data["reason"] != "B's generator output" {
+				t.Fatalf("claim_released data = %v", ev.Data)
+			}
+		}
+	}
+	if !released {
+		t.Fatal("release was not recorded in A's session log")
+	}
+	if changes, err := b.d.sessionChangeset(); err != nil || strings.Join(changes.Paths, ",") != "gen_b.txt" {
+		t.Fatalf("B's changeset after releases: %+v, %v", changes, err)
+	}
+	if got := a.call("commit", `{"message":"A work"}`); got.IsError {
+		t.Fatalf("A's commit after releases: %s", got.Content)
+	}
+	out, err := exec.Command("git", "-C", ws, "show", "--name-only", "--format=", "HEAD").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "gen_a.txt" {
+		t.Fatalf("A committed %q, %v", out, err)
+	}
+}
+
+// claimLifecycleFixture is an empty committed repository and an opener for
+// chat sessions sharing one ownership service in it.
+func claimLifecycleFixture(t *testing.T) (string, *workspacelease.Service, func(string) (*Deps, func(string, string) *gollama.ToolResult)) {
+	t.Helper()
+	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, ws, "commit", "--allow-empty", "-m", "seed")
+	ownership := workspacelease.NewService()
+	ownership.SetLiveScopes(func(string) bool { return true })
+	return ws, ownership, func(scope string) (*Deps, func(string, string) *gollama.ToolResult) {
+		repo, err := git.Open(ws)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := finalizationDeps(ws, repo, repo.OpenBaseline(), docs.NewStore(ws), &captureRec{})
+		d.Asker, d.Ownership, d.CoordinatorToken = noopAsker{}, ownership, ownership.NewScopedToken(scope, scope)
+		reg, _ := BuildMode("chat", d, false)
+		return d, func(name, args string) *gollama.ToolResult {
+			return reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: name, Arguments: args}})
+		}
+	}
+}
+
+// A release survives shells of the releasing session that see the path change
+// while another session's shell runs: one already running at the release, and
+// a later one.
+func TestReleaseSurvivesTheReleasersRunningShell(t *testing.T) {
+	ws, ownership, open := claimLifecycleFixture(t)
+	_, a := open("s_a")
+	_, b := open("s_b")
+	finish := filepath.Join(ws, ".git", "finish-b")
+	defer os.WriteFile(finish, nil, 0o644)
+	done := make(chan *gollama.ToolResult, 1)
+	go func() {
+		done <- b("Bash", `{"command":"touch .git/b-started; while test ! -f .git/finish-b; do sleep 0.02; done; cat gen.txt"}`)
+	}()
+	waitFor(t, func() bool { _, err := os.Stat(filepath.Join(ws, ".git", "b-started")); return err == nil })
+	if got := a("Bash", `{"command":"echo content > gen.txt"}`); got.IsError {
+		t.Fatal(got.Content)
+	}
+	if got := ownership.Claims(ws)["gen.txt"]; strings.Join(got, ",") != "s_a,s_b" {
+		t.Fatalf("gen.txt claims = %v", got)
+	}
+	if got := b("release_claim", `{"paths":["gen.txt"],"reason":"A generated it"}`); got.IsError {
+		t.Fatal(got.Content)
+	}
+	if err := os.WriteFile(finish, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; got.IsError {
+		t.Fatal(got.Content)
+	}
+	if got := ownership.Claims(ws)["gen.txt"]; strings.Join(got, ",") != "s_a" {
+		t.Fatalf("B's shell end restored its released claim: %v", got)
+	}
+	// A later read-only shell of B, overlapping A's regeneration, does not
+	// revive it either, so A's commit is not refused.
+	again := filepath.Join(ws, ".git", "finish-b-again")
+	defer os.WriteFile(again, nil, 0o644)
+	go func() {
+		done <- b("Bash", `{"command":"touch .git/b-again; while test ! -f .git/finish-b-again; do sleep 0.02; done; cat gen.txt"}`)
+	}()
+	waitFor(t, func() bool { _, err := os.Stat(filepath.Join(ws, ".git", "b-again")); return err == nil })
+	if got := a("Bash", `{"command":"echo regenerated-by-A > gen.txt"}`); got.IsError {
+		t.Fatal(got.Content)
+	}
+	if err := os.WriteFile(again, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; got.IsError {
+		t.Fatal(got.Content)
+	}
+	if got := ownership.Claims(ws)["gen.txt"]; strings.Join(got, ",") != "s_a" {
+		t.Fatalf("a later overlapping shell revived B's released claim: %v", got)
+	}
+	if got := a("commit", `{"message":"generator output"}`); got.IsError {
+		t.Fatalf("A's commit: %s", got.Content)
+	}
+}
+
+// A release whose path no one else claims is retired once the path is seen
+// clean, so a later edit is not excluded.
+func TestReleaseRetiresWhenThePathIsReverted(t *testing.T) {
+	ws, ownership, open := claimLifecycleFixture(t)
+	d, call := open("s_a")
+	file := filepath.Join(ws, "gen.txt")
+	if err := os.WriteFile(file, []byte("first\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ownership.RecordWrites(ws, []string{"gen.txt"}, d.CoordinatorToken)
+	if got := call("release_claim", `{"paths":["gen.txt"],"reason":"not my output"}`); got.IsError {
+		t.Fatal(got.Content)
+	}
+	if changes, err := d.sessionChangeset(); err != nil || len(changes.Paths) != 0 || strings.Join(changes.Released, ",") != "gen.txt" {
+		t.Fatalf("changeset after release: %+v, %v", changes, err)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.sessionChangeset(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("later hand edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changes, err := d.sessionChangeset(); err != nil || strings.Join(changes.Paths, ",") != "gen.txt" {
+		t.Fatalf("later edit after the release was retired: %+v, %v", changes, err)
+	}
+}
+
+// After one holder of an ambiguous path writes it with a file tool, the other
+// holder's shell write while no other shell runs makes its claim definite too.
+func TestLoneShellSettlesAmbiguousClaimBesideDefiniteOne(t *testing.T) {
+	ws, ownership, open := claimLifecycleFixture(t)
+	_, a := open("s_a")
+	_, b := open("s_b")
+	ownership.RecordAmbiguous(ws, []string{"gen.txt"}, []string{"s_a", "s_b"})
+	if got := a("Write", `{"file_path":"gen.txt","content":"first\n"}`); got.IsError {
+		t.Fatal(got.Content)
+	}
+	if got := b("Bash", `{"command":"echo second > gen.txt"}`); got.IsError {
+		t.Fatal(got.Content)
+	}
+	claims := ownership.ClaimDetails(ws)["gen.txt"]
+	if len(claims) != 2 || !claims[0].Definite() || !claims[1].Definite() {
+		t.Fatalf("gen.txt claims = %+v", claims)
+	}
+}

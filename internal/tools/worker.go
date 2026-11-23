@@ -1602,6 +1602,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	before := ws.snapshotShell(cmdStr)
 	if err := cmd.Start(); err != nil {
 		cancelTimeout()
+		ws.endShell(before)
 		result := "exit: failed to start: " + err.Error()
 		_, artifact := commandResultForArtifact(ws.artifactStore(), capture, artifactID)
 		result += fmt.Sprintf("\n[output artifact %s: %d bytes/%d lines, sha256 %s]", artifact.id, artifact.bytes, artifact.lines, artifact.digest)

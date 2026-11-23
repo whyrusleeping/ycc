@@ -1,7 +1,7 @@
 ---
 id: "0594"
 title: 'Shell attribution: mark paths ambiguous while shells overlap, and let a session release a wrong claim'
-status: todo
+status: done
 priority: 3
 created: "2026-11-23"
 updated: "2026-11-23"
@@ -11,6 +11,7 @@ spec_refs:
 ---
 
 ## Description
+
 Current state: accepted by the user on 2026-11-23 in session s_0d8d2921ae239466, after it was widened to cover false overlap notices. Not started. It was proposed on 2026-11-22 from `docs/reports/shared-tree-concurrency-2026-11.md` in session s_fc31ffbed8395135.
 
 `claimShellChanges` (`internal/tools/shellclaims.go`) claims for the command's scope every path that changed during the command and that no other scope claims at the end. When two scopes' shells overlap, the first to finish claims what the other is still writing, such as generator output or a web build. The later shell then finds the paths claimed and records nothing for them. About 6 such misattributions occurred on 2026-11-21 and 2026-11-22. In one, the 0580 session (other-work review note) was attributed `server.go`, the proto bindings and `dist`, all written by 0582 (project sessions view). Sessions also have no way to release a claim; s_b33f38df5f019e1c noted at event 325 that "No tool exposes claim release".
@@ -23,6 +24,7 @@ The same race also produces false overlap notices when the true writer already c
 Each notice cost the receiving session an investigation. Two of that day's six board notices (n4 and its rebuttal n5) only spread and then corrected the false attribution. Three commits had to name the file in `paths`.
 
 ## Acceptance criteria
+
 - A path that changed during a shell command while another scope's shell was running in the same worktree, and that no file tool claimed, is recorded as ambiguous for both scopes rather than claimed by the first to finish. Both changesets and both coordinators see it listed as ambiguous.
 - An ambiguous path becomes a normal claim when a scope's file tool writes it or a commit takes it. A shell write that happens with no other scope's shell running also makes it a normal claim.
 - A change to a path that another scope already claims, made while that scope's shell was running, does not record an overlap or send a "just wrote" notice that names the other shell's scope as the writer. At most it is reported as ambiguous. A test covers a claimant's shell rewriting its own file while a read-only shell from another scope starts and finishes inside that window.
@@ -30,4 +32,8 @@ Each notice cost the receiving session an investigation. Two of that day's six b
 - Single-shell attribution behaves as before. Tests cover two overlapping shells writing different paths.
 - spec §7.3 describes ambiguous claims and release.
 
-## Work log
+## Outcome
+
+Running shells register per worktree (workspacelease BeginShell/EndShell). A path changed during a command while another session's shell ran, with no definite claim, gets an ambiguous claim for every overlapping session: in each changeset, listed AMBIGUOUS in the manifest and list_sessions, and a commit refuses it while another holder is live (with a release_claim hint). A file-tool write, a lone shell write, or a commit makes a claim definite. A change to a path a concurrently running shell's session already claims records no overlap or notice. The new coordinator tool release_claim (work and chat) drops this session's claims, keeps the paths out of its changeset until it writes them or they are retired, and logs claim_released. Ambiguous claims never revive a release. Spec §7.3 was landed separately as a hunk-only commit so the other session's gemini hunks stay uncommitted. docs/remote-api.md documents the event. Tests cover two overlapping shells, a read-only shell inside the claimant's window, release lifecycle, and the lone-shell upgrade.
+
+Commit: Shell attribution: ambiguous claims while shells of two sessions overlap, and release_claim (0594)

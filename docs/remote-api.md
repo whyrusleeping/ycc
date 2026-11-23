@@ -1490,7 +1490,8 @@ Common `type` values (initial set; full table in spec §5.2):
 `coordination_notice` (actor `system`, `{text, notices?:[{path, session}], board?:[{id, change}]}`:
 another session's write to a file this session claims, or a project notice board digest, delivered
 at a checkpoint; spec §7.3), `notice_posted` / `notice_cleared` (this session posted or cleared a
-board notice: `{id, text, subject?, expires_at}` / `{id, reason}`),
+board notice: `{id, text, subject?, expires_at}` / `{id, reason}`), `claim_released` (the
+coordinator released its claims on files it did not write: `{paths, held, reason}`; spec §7.3),
 `context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
 `session_reopened`, `log`, and the transient `turn_delta`.
 

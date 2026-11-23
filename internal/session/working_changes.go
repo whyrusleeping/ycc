@@ -70,7 +70,8 @@ func (m *Manager) WorkingChanges(project, sessionID, taskID string) (*git.Change
 	if mine, foreign := m.ownership.Split(ws, sessionID); mine != nil {
 		store := docs.NewStore(ws)
 		attr := &git.Attribution{
-			Mine: mine, Foreign: foreign, Bookkeeping: orchestrator.BookkeepingPaths(ws, store),
+			Mine: mine, Foreign: foreign, Ambiguous: m.ownership.Ambiguous(ws),
+			Released: m.ownership.Disowned(ws, sessionID), Bookkeeping: orchestrator.BookkeepingPaths(ws, store),
 			Lines: orchestrator.BookkeepingLines(ws, store, m.ownership, sessionID),
 		}
 		changes, err := repo.InspectChangesFor(baseline, attr, adopted...)

@@ -116,7 +116,7 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		ws.WriteGate = d.planOnlyWriteGate
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
-			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d), chatCommitTool(d, policy))
+			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d), chatCommitTool(d, policy), releaseClaim(d))
 		base := chatModeSystem + "\n\n" + chatFinishGuidance(policy)
 		if d.ListWatches != nil {
 			reg.Add(listWatches(d))

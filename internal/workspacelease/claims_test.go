@@ -155,3 +155,80 @@ func TestOverlapClaimsPersistAndUpgrade(t *testing.T) {
 		t.Fatalf("s_b's own write did not upgrade its overlap claim: %v", mine)
 	}
 }
+
+// Ambiguous claims count as each scope's own, persist, and become ordinary
+// with a scope's own write; Disown drops a claim and keeps the path out of the
+// scope's view until it is retired.
+func TestAmbiguousClaimsAndDisown(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	first := NewService()
+	first.PersistClaims()
+	first.RecordAmbiguous(root, []string{"gen.go", "other.go"}, []string{"s_a", "s_b"})
+
+	s := NewService()
+	s.PersistClaims()
+	if got := s.Ambiguous(root); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "other.go": true}) {
+		t.Fatalf("ambiguous after restart = %v", got)
+	}
+	for _, scope := range []string{"s_a", "s_b"} {
+		if mine, foreign := s.Split(root, scope); !mine["gen.go"] || !foreign["gen.go"] {
+			t.Fatalf("%s: mine=%v foreign=%v", scope, mine, foreign)
+		}
+	}
+	var notified []Overlap
+	s.SetOverlapNotifier(func(o Overlap) string { notified = append(notified, o); return "" })
+	s.RecordWrite(filepath.Join(root, "gen.go"), root, s.NewScopedToken("s_a", "a"))
+	if len(notified) != 0 {
+		t.Fatalf("an ambiguous claimant was notified: %+v", notified)
+	}
+	for _, c := range s.ClaimDetails(root)["gen.go"] {
+		if (c.Scope == "s_a") != c.Definite() {
+			t.Fatalf("gen.go after s_a's write: %+v", s.ClaimDetails(root)["gen.go"])
+		}
+	}
+
+	if held := s.Disown(root, "s_b", []string{"gen.go", "unclaimed.go"}); !reflect.DeepEqual(held, []string{"gen.go"}) {
+		t.Fatalf("held = %v", held)
+	}
+	if got := s.Claims(root)["gen.go"]; !reflect.DeepEqual(got, []string{"s_a"}) {
+		t.Fatalf("gen.go after disown = %v", got)
+	}
+	restarted := NewService()
+	restarted.PersistClaims()
+	if got := restarted.Disowned(root, "s_b"); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "unclaimed.go": true}) {
+		t.Fatalf("disowned after restart = %v", got)
+	}
+	restarted.ReleaseAll(root, []string{"unclaimed.go"}, restarted.Generation())
+	restarted.RecordWrites(root, []string{"gen.go"}, restarted.NewScopedToken("s_b", "b"))
+	if got := restarted.Disowned(root, "s_b"); len(got) != 0 {
+		t.Fatalf("disowned after retire and rewrite = %v", got)
+	}
+	restarted.SettleAmbiguous(root, "s_b", []string{"other.go"})
+	if c := restarted.ClaimDetails(root)["other.go"]; len(c) != 2 || !c[1].Definite() || c[0].Definite() {
+		t.Fatalf("other.go after s_b's commit = %+v", c)
+	}
+}
+
+// A shell run learns every other scope whose shell ran in its worktree while it
+// was registered, including ones that started and ended in the meantime.
+func TestShellRunsReportConcurrentScopes(t *testing.T) {
+	s := NewService()
+	a := s.BeginShell("/w", "s_a")
+	same := s.BeginShell("/w", "s_a")
+	elsewhere := s.BeginShell("/x", "s_c")
+	b := s.BeginShell("/w", "s_b")
+	if got := s.EndShell(b); !reflect.DeepEqual(got, []string{"s_a"}) {
+		t.Fatalf("b saw %v", got)
+	}
+	s.EndShell(same)
+	s.EndShell(elsewhere)
+	if got := s.EndShell(a); !reflect.DeepEqual(got, []string{"s_b"}) {
+		t.Fatalf("a saw %v", got)
+	}
+	if got := s.EndShell(s.BeginShell("/w", "s_a")); len(got) != 0 {
+		t.Fatalf("lone shell saw %v", got)
+	}
+}

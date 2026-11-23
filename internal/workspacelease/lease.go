@@ -27,7 +27,12 @@ type Service struct {
 	released chan struct{}
 	// claims: canonical worktree -> repository-relative path -> scope -> the
 	// generation of its latest claim (see claims.go).
-	claims    map[string]map[string]claimSet
+	claims map[string]map[string]claimSet
+	// disowned: canonical worktree -> path -> scope -> generation of the
+	// scope's Disown of the path (claims.go).
+	disowned map[string]map[string]map[string]uint64
+	// shells are the running shell commands of scoped sessions (shells.go).
+	shells    map[*ShellRun]struct{}
 	gen       uint64
 	persist   bool
 	onOverlap func(Overlap) string
@@ -81,6 +86,8 @@ func NewService() *Service {
 		owners:   make(map[string]*entry),
 		released: make(chan struct{}),
 		claims:   make(map[string]map[string]claimSet),
+		disowned: make(map[string]map[string]map[string]uint64),
+		shells:   make(map[*ShellRun]struct{}),
 	}
 }
 

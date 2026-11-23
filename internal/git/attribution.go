@@ -25,10 +25,17 @@ import (
 //     (Preexisting) unless only another scope is writing it, in which case it
 //     is left out (Deferred);
 //   - unclaimed changes (shell output, structured docs writes) remain
-//     attributed to whichever scope inspects them, and are reported.
+//     attributed to whichever scope inspects them, and are reported;
+//   - a path this scope released is treated like one only other scopes wrote.
 type Attribution struct {
 	Mine    map[string]bool
 	Foreign map[string]bool
+	// Ambiguous lists paths some scope claims only ambiguously (a shell
+	// changed them while another scope's shell also ran); included ones are
+	// reported. Released lists paths this scope released as not its work: they
+	// are left out unless Mine, even when no other scope claims them.
+	Ambiguous map[string]bool
+	Released  map[string]bool
 	// Bookkeeping, when set, reports shared bookkeeping paths (backlog task
 	// files, memory) that every session writes. A baseline-dirty bookkeeping
 	// path that changed since the baseline is adopted like the session's own
@@ -50,6 +57,12 @@ type Attribution struct {
 	// BookkeepingOnly limits the changeset to bookkeeping paths Lines reports
 	// as this scope's.
 	BookkeepingOnly bool
+}
+
+// leftOut reports whether path is another scope's alone: written only by
+// other scopes, or released by this one.
+func (a *Attribution) leftOut(path string) bool {
+	return a != nil && !a.Mine[path] && (a.Foreign[path] || a.Released[path])
 }
 
 // Baseline returns the (possibly rebased) baseline this changeset was computed

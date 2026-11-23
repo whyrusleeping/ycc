@@ -109,6 +109,12 @@ type Changeset struct {
 	// or generator output, structured docs writes, or another writer that left
 	// no claim); their attribution is approximate.
 	Unclaimed []string
+	// Ambiguous lists included paths some scope claims only ambiguously: a
+	// shell changed them while another scope's shell also ran, so either may
+	// have written them. Released lists changed paths left out because this
+	// scope released them as not its work and no claim of its own remains.
+	Ambiguous []string
+	Released  []string
 	// MovedFrom is the baseline commit when HEAD has since moved outside its
 	// history (reset, rebase, checkout). The baseline was re-anchored on the
 	// current HEAD, so files the move left differing from HEAD count as changes.
@@ -560,7 +566,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		// deferred to it. Everything else that changed — this scope's edits,
 		// shared bookkeeping, unclaimed shell output or hand edits — rides
 		// along whole, with the same staged-variant safety checks below.
-		if attr != nil && attr.Foreign[path] && !attr.Mine[path] && (attr.Bookkeeping == nil || !attr.Bookkeeping(path)) {
+		if attr.leftOut(path) && (attr.Bookkeeping == nil || !attr.Bookkeeping(path)) {
 			deferred = append(deferred, path)
 		} else {
 			preexisting = append(preexisting, path)
@@ -643,7 +649,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 			excluded++
 		}
 	}
-	var foreign, shared, unclaimed []string
+	var foreign, shared, unclaimed, ambiguous, released []string
 	explicitSet := make(map[string]bool, len(explicit))
 	for _, path := range explicit {
 		explicitSet[path] = true
@@ -659,9 +665,16 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 		if bookkeepingOnly || dirtyAtBaseline && !owned[path] {
 			continue
 		}
-		if attr != nil && !owned[path] && attr.Foreign[path] && !attr.Mine[path] {
-			foreign = append(foreign, path)
+		if !owned[path] && attr.leftOut(path) {
+			if attr.Foreign[path] {
+				foreign = append(foreign, path)
+			} else {
+				released = append(released, path)
+			}
 			continue
+		}
+		if attr != nil && attr.Ambiguous[path] {
+			ambiguous = append(ambiguous, path)
 		}
 		if attr != nil && attr.Foreign[path] {
 			shared = append(shared, path)
@@ -675,6 +688,8 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	sort.Strings(foreign)
 	sort.Strings(shared)
 	sort.Strings(unclaimed)
+	sort.Strings(ambiguous)
+	sort.Strings(released)
 	tree, _, err := r.writeWorktreeTree(head, paths)
 	if err != nil {
 		return nil, fmt.Errorf("build scoped changeset: %w", err)
@@ -704,7 +719,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	return &Changeset{
 		ID: id, BaselineID: b.ID, BaselineOrigin: b.Origin(), BaseCommit: head, Tree: tree, Paths: paths, Diff: diff,
 		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: reported, Deferred: deferred,
-		Partial: partial, Unclaimed: unclaimed, MovedFrom: movedFrom, Oversized: oversized,
+		Partial: partial, Unclaimed: unclaimed, Ambiguous: ambiguous, Released: released, MovedFrom: movedFrom, Oversized: oversized,
 		baseline: b, adopted: append([]string(nil), explicit...), attr: attr,
 	}, nil
 }

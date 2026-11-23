@@ -75,11 +75,13 @@ func (m *Manager) listSessionsFor(absWS, self, path string, now time.Time) (stri
 	return out + board, nil
 }
 
-// PathClaim is one repository-relative path a session claims and when it
-// first claimed it.
+// PathClaim is one repository-relative path a session claims, when it first
+// claimed it, and whether the claim is only ambiguous (its shell changed the
+// path while another session's shell also ran).
 type PathClaim struct {
-	Path  string
-	Since time.Time
+	Path      string
+	Since     time.Time
+	Ambiguous bool
 }
 
 // sessionClaims returns scope's claimed paths from a worktree's claims, newest
@@ -89,7 +91,7 @@ func sessionClaims(claims map[string][]workspacelease.Claim, scope string) []Pat
 	for path, list := range claims {
 		for _, c := range list {
 			if c.Scope == scope {
-				out = append(out, PathClaim{Path: path, Since: c.Since})
+				out = append(out, PathClaim{Path: path, Since: c.Since, Ambiguous: c.Ambiguous})
 			}
 		}
 	}
@@ -113,7 +115,11 @@ func claimLines(claims []PathClaim, now time.Time) string {
 			parts = append(parts, fmt.Sprintf("… %d more", len(claims)-i))
 			break
 		}
-		parts = append(parts, c.Path+" ("+claimAge(c.Since, now)+")")
+		note := claimAge(c.Since, now)
+		if c.Ambiguous {
+			note = "ambiguous, " + note
+		}
+		parts = append(parts, c.Path+" ("+note+")")
 	}
 	return fmt.Sprintf("    claims %d path(s): %s\n", len(claims), strings.Join(parts, ", "))
 }
@@ -224,6 +230,9 @@ func (m *Manager) pathClaimants(absWS, path string, now time.Time) (string, erro
 		}
 		listed++
 		fmt.Fprintf(&b, "- %s claimed %s", c.Scope, claimAge(c.Since, now))
+		if c.Ambiguous {
+			b.WriteString(" (ambiguous: changed by its shell while another session's shell also ran)")
+		}
 		switch {
 		case brief.live:
 			fmt.Fprintf(&b, "; live %s session, %s", brief.mode, brief.state)

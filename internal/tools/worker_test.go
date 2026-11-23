@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -991,6 +992,86 @@ func TestOverlappingWritesReportNotices(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("overlaps = %+v, want %+v", got, want)
 	}
+}
+
+// A claimant's shell rewrites its own file while another session's read-only
+// shell starts and finishes inside that window (before the claimant's shell
+// ends and renews its claim): the read-only shell records no
+// overlap and sends no notice naming itself as the writer. A later shell write
+// while no other session's shell runs turns an ambiguous claim definite.
+func TestConcurrentShellOfClaimantIsNotBlamedOnReadOnlyShell(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	syncDir := t.TempDir()
+	ownership := workspacelease.NewService()
+	var overlaps []workspacelease.Overlap
+	var mu sync.Mutex
+	ownership.SetOverlapNotifier(func(o workspacelease.Overlap) string {
+		mu.Lock()
+		defer mu.Unlock()
+		overlaps = append(overlaps, o)
+		return "NOTICE " + o.Path
+	})
+	session := func(scope string) *Registry {
+		reg := New()
+		reg.Add(Worker(&Workspace{Root: root, Ownership: ownership,
+			MutationToken: ownership.NewScopedToken(scope, scope)})...)
+		return reg
+	}
+	owner, reader := session("s_owner"), session("s_reader")
+	if res := dispatch(t, owner, "Write", `{"file_path":"owned.go","content":"package owned\n"}`); res.IsError {
+		t.Fatalf("Write: %s", res.Content)
+	}
+	done := make(chan *gollama.ToolResult, 1)
+	go func() {
+		done <- dispatch(t, owner, "Bash", fmt.Sprintf(`{"command":%q}`, fmt.Sprintf(
+			"touch %[1]s/started; while test ! -f %[1]s/reading; do sleep 0.02; done; echo 'package owned // v2' > owned.go; touch %[1]s/written; "+
+				"while test ! -f %[1]s/read; do sleep 0.02; done", syncDir)))
+	}()
+	waitForFile(t, filepath.Join(syncDir, "started"))
+	res := dispatch(t, reader, "Bash", fmt.Sprintf(`{"command":%q}`, fmt.Sprintf(
+		"touch %[1]s/reading; while test ! -f %[1]s/written; do sleep 0.02; done; cat owned.go", syncDir)))
+	if err := os.WriteFile(filepath.Join(syncDir, "read"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || strings.Contains(res.Content, "NOTICE") || strings.Contains(res.Content, "[shell attribution]") {
+		t.Fatalf("read-only Bash result: %s", res.Content)
+	}
+	if res := <-done; res.IsError || strings.Contains(res.Content, "NOTICE") {
+		t.Fatalf("owner Bash result: %s", res.Content)
+	}
+	if len(overlaps) != 0 {
+		t.Fatalf("overlaps recorded: %+v", overlaps)
+	}
+	if got := ownership.ClaimDetails(root)["owned.go"]; len(got) != 1 || got[0].Scope != "s_owner" || !got[0].Definite() {
+		t.Fatalf("owned.go claims = %+v", got)
+	}
+
+	// An ambiguous claim on a path becomes definite when its scope's shell
+	// writes it while no other session's shell runs.
+	ownership.RecordAmbiguous(root, []string{"gen.txt"}, []string{"s_owner", "s_reader"})
+	if res := dispatch(t, owner, "Bash", `{"command":"echo gen > gen.txt"}`); res.IsError || strings.Contains(res.Content, "[shell attribution]") {
+		t.Fatalf("lone Bash: %s", res.Content)
+	}
+	for _, c := range ownership.ClaimDetails(root)["gen.txt"] {
+		if (c.Scope == "s_owner") != c.Definite() {
+			t.Fatalf("gen.txt claims after the lone write = %+v", ownership.ClaimDetails(root)["gen.txt"])
+		}
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s did not appear", path)
 }
 
 // A shell that rewrites, switches or stashes a HEAD that other live sessions
