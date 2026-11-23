@@ -54,3 +54,4 @@ name = "prod"; capacity = 1; scope = "global";  match = ["./deploy.sh*"]; confir
 
 ## Work log
 - 2026-11-21 groom: cited the source of the 2026-08-06 deferral (session s_c5badc8fb90d408b, event 81). Repointed spec_refs from the pruned design-doc §8 (removed in `c6907b1`) to "Bootstrap and resources". Glossed 0252, vals and oldgrowth. Not implemented: there is no `[[resources]]` config or lease tool. Still proposed.
+- 2026-11-23: the user accepted a reduced subset as 0599 (explicit, fail-fast named leases for deploys and shared services, required for unattended loop deploys; session s_a96d1f53776eaa46). Shell-pattern blocking, flock/CLI interop and cross-project scope remain here, still proposed.
