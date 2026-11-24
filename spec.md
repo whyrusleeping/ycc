@@ -371,18 +371,21 @@ provider-neutral history; provider libraries remain transports. Provider request
 engine limits only when the target accepts them; the Codex output-cap exception is in §13.
 Cancellation reaches retry backoff, token refresh, HTTP requests, and streaming reads so hard stop
 and daemon shutdown do not strand inference. Provider HTTP clients built by the registry (gollama
-Anthropic/OpenAI/Ollama and the separate Codex Responses client) share a transport policy:
+Anthropic/OpenAI/Gemini/Ollama and the separate Codex Responses client) share a transport policy:
 SSE byte-read inactivity defaults to five minutes, counting heartbeat/ping frames as progress;
 a separate total-request backstop defaults to one hour. Non-SSE responses have only the total
 limit. Caller/session cancellation remains independent and is never classified as a provider
 stall. Every registry-built streaming provider requires a terminal event before a response
 succeeds: OpenAI-compatible/Ollama SSE needs `[DONE]` or a finish reason, Anthropic needs
-message_stop, and Codex needs `response.completed`/`response.incomplete`. EOF after partial
+message_stop, Gemini needs a candidate `finishReason`, and Codex needs
+`response.completed`/`response.incomplete`. EOF after partial
 output without that signal is a retryable failure, not success. Standalone provider clients
 built outside the registry retain their own transport defaults.
 
 Opaque provider state needed for stateless continuation is recorded with the model turn and
-replayed only to the same compatible backend. Non-compatible backends do not receive it.
+replayed only to the same compatible backend. Non-compatible backends do not receive it. Gemini's
+per-call thought signatures are recorded on the coordinator's `tool_call` events and restored with
+those calls on replay; only the Gemini transport sends them.
 Reasoning summaries may be rendered, but private or encrypted reasoning state is never presented
 as transcript text.
 
@@ -822,6 +825,7 @@ levels a provider ignores or rewrites:
 | `anthropic` | all six | `off` disables thinking; other levels set adaptive thinking at that effort |
 | `openai` (API key or Codex subscription) | `low medium high xhigh` | `reasoning_effort` / `reasoning.effort`; `off` would omit the effort (model default) and `max` would be sent as `xhigh` |
 | `openai-compatible`, `glm` | `low medium high` | `reasoning_effort`; how the server applies it is server-specific |
+| `gemini` | `low medium high` (`xhigh` added for `gemini-4-neon`) | `thinkingConfig.thinkingLevel`; thinking cannot be turned off, so `off` is not offered; because Gemini rejects unsupported levels, saved effort is clamped too |
 | `ollama` | `off high` | thinking on/off only; the effort is not sent |
 
 A newly chosen level that a model does not support is clamped rather than rejected: a supported
@@ -1227,8 +1231,10 @@ omitted value preserves stored notes), and `modalities` list operator-supplied
 input modalities; absent modalities remain unknown. `spawn_agent` exposes enabled logical names
 and a bounded capability catalog in its model parameter metadata, without credential or endpoint
 configuration; spawn-time validation still uses the live registry.
+Backends are `anthropic`, `openai`, `openai-compatible`, `glm`, `gemini` (the native Gemini API,
+keyed by `x-goog-api-key`), and `ollama`.
 The context window is an input-request capacity distinct from the global per-turn output cap;
-the safe fraction defaults to 0.8, and known Claude/OpenAI model families have built-in windows when
+the safe fraction defaults to 0.8, and known Claude/OpenAI/Gemini model families have built-in windows when
 none is configured. Unknown models report unknown capacity rather than deriving it from the output
 cap. Context telemetry and subagent pressure hints share one visibly approximate next-request
 estimate: it includes repeated tool schemas, tool arguments/results, and replayable provider state;

@@ -11,7 +11,7 @@ spec_refs:
 ---
 
 ## Description
-Current state: proposed on 2026-11-22 from `docs/reports/shared-tree-concurrency-2026-11.md`. The user asked for it to be filed as a proposal in session s_fc31ffbed8395135; it is not yet accepted. It would absorb 0586 (line attribution of code files, proposed), whose open question is whether a mix of two sessions' hunks builds; building the candidate answers it.
+Current state: proposed on 2026-11-22 from `docs/reports/shared-tree-concurrency-2026-11.md`. The user asked for it to be filed as a proposal in session s_fc31ffbed8395135 (event 164, 2026-11-23 02:07 UTC); it is not yet accepted. It would absorb 0586 (line attribution of code files, proposed), whose open question is whether a mix of two sessions' hunks builds; building the candidate answers it.
 
 In the shared tree, review snapshots and reviewers' read-only shells see other sessions' in-progress work. From 18:38 to 19:15 UTC on 2026-11-22 that cost about 6 extra review rounds and 7 blockers that belonged to other tasks; for example, every 0582 round had the blocker that 0461's handler broke the build. It also led to 5 commits landed by hand. Three sessions (0461, 0580, 0582) each built a `/tmp` `git worktree add --detach` copy to test or commit their change alone. Each did so only after the conflict appeared. 0582 landed as `b5c61d7` without a reviewer accept, after `update-ref` and `git reset` in the shared tree.
 
@@ -30,3 +30,4 @@ Proposed direction: when the tree is shared, the daemon builds a candidate tree,
 - spec §7.3 describes the candidate tree; 0586's acceptance criteria are met or 0586 is closed as superseded.
 
 ## Work log
+- 2026-11-23 groom: added the event reference for the filing request. Not implemented. Flagged the proposed absorption of 0586 for the user in 0550 (backlog groom decisions). Still proposed.

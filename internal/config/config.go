@@ -37,7 +37,7 @@ var _ engine.StreamTurner = (*gollama.Client)(nil)
 
 // Model describes one logical backend.
 type Model struct {
-	Backend string `toml:"backend"` // anthropic | openai | ollama
+	Backend string `toml:"backend"` // anthropic | openai | openai-compatible | glm | gemini | ollama
 	BaseURL string `toml:"base_url"`
 	Model   string `toml:"model"`
 	KeyEnv  string `toml:"key_env"`
@@ -184,7 +184,7 @@ func (m Model) Validate(name string) error {
 		return fmt.Errorf("model %q: model id is required", name)
 	}
 	switch m.Backend {
-	case "anthropic", "openai", "openai-compatible", "glm", "ollama":
+	case "anthropic", "openai", "openai-compatible", "glm", "gemini", "ollama":
 	default:
 		return fmt.Errorf("model %q: unsupported backend %q", name, m.Backend)
 	}
@@ -296,6 +296,10 @@ func knownContextWindow(backend, model string) int {
 		case knownModelPrefix(model, "o1"), knownModelPrefix(model, "o3"), knownModelPrefix(model, "o4"):
 			return 200000
 		}
+	case "gemini":
+		if knownModelPrefix(model, "gemini-4") || knownModelPrefix(model, "gemini-3") {
+			return 1048576
+		}
 	}
 	return 0
 }
@@ -320,6 +324,11 @@ func (m Model) ResolveThinking() Thinking {
 	effort := m.Effort
 	if effort == "" {
 		effort = defaultEffort
+	}
+	if m.Backend == "gemini" {
+		// Gemini rejects a thinkingLevel the model lacks with a 400 instead of
+		// degrading, so even a saved effort is clamped for this backend.
+		effort = ClampThinkingLevel(m.SupportedThinkingLevels(), effort)
 	}
 	display := m.ThinkingDisplay
 	if display == "" {
@@ -367,11 +376,18 @@ func thinkingLevelIndex(s string) int {
 // settings. OpenAI-style backends omit "off" (it omits reasoning_effort, so the
 // model uses its own default effort) and "max" (clamped to xhigh by the
 // transport); generic OpenAI-compatible servers get the standard
-// low/medium/high set. Ollama only switches thinking on or off.
+// low/medium/high set. Gemini maps levels onto thinkingLevel and cannot turn
+// thinking off; models other than Neon reject XHIGH. Ollama only switches
+// thinking on or off.
 func backendThinkingLevels(m Model) []string {
 	switch m.Backend {
 	case "openai":
 		return []string{"low", "medium", "high", "xhigh"}
+	case "gemini":
+		if knownModelPrefix(strings.TrimPrefix(strings.ToLower(m.Model), "models/"), "gemini-4-neon") {
+			return []string{"low", "medium", "high", "xhigh"}
+		}
+		return []string{"low", "medium", "high"}
 	case "openai-compatible", "glm":
 		return []string{"low", "medium", "high"}
 	case "ollama":
@@ -2144,6 +2160,13 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 		}
 		if key != "" {
 			c.SetBearerToken(key)
+		}
+	case "gemini":
+		// Native Gemini API (generateContent): pin the transport like Anthropic
+		// so a proxy URL still speaks Gemini, and send the key as x-goog-api-key.
+		c.SetGeminiMode(true)
+		if key != "" {
+			c.SetHeader(gollama.GeminiAPIKeyHeader, key)
 		}
 	case "ollama":
 		// no auth

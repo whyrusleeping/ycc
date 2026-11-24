@@ -130,6 +130,7 @@ func estimateRequestContext(opts gollama.RequestOptions, shape string) contextEs
 
 	anthropicShape := shape == "anthropic" || shape == "bedrock"
 	codexShape := shape == codexRequestShape
+	geminiShape := shape == "gemini"
 	for _, msg := range opts.Messages {
 		if anthropicShape && msg.Role == "system" {
 			// Anthropic consumes system-role messages into the top-level system only
@@ -182,6 +183,30 @@ func estimateRequestContext(opts gollama.RequestOptions, shape string) contextEs
 			default:
 				// Anthropic user conversion selects MultiContent over Content and
 				// legacy Images/Documents.
+				if len(msg.MultiContent) > 0 {
+					addMultiContent(msg.MultiContent, true)
+				} else {
+					add(msg.Content)
+					addImages(msg.Images)
+					addDocuments(msg.Documents)
+				}
+			}
+		case geminiShape:
+			// Gemini sends tool media inline, drops reasoning text, and replays
+			// each call's opaque thought signature.
+			switch msg.Role {
+			case "tool":
+				add(msg.Content)
+				add(msg.ToolCallID)
+				addImages(msg.Images)
+				addDocuments(msg.Documents)
+			case "assistant":
+				add(msg.Content)
+				addCalls(msg.ToolCalls)
+				for _, call := range msg.ToolCalls {
+					add(call.ThoughtSignature)
+				}
+			default:
 				if len(msg.MultiContent) > 0 {
 					addMultiContent(msg.MultiContent, true)
 				} else {

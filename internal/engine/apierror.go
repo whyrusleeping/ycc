@@ -99,11 +99,19 @@ func boundedErrorText(s string) string {
 func providerBody(body string) (code, message string) {
 	var raw struct {
 		Code, Type, Message string
-		Error               *struct{ Code, Type, Message string }
+		// Gemini reports a numeric HTTP code plus a symbolic status
+		// (e.g. {"code":429,"status":"RESOURCE_EXHAUSTED"}).
+		Error *struct {
+			Code                  json.RawMessage
+			Type, Message, Status string
+		}
 	}
 	if json.Unmarshal([]byte(body), &raw) == nil {
 		if raw.Error != nil {
-			code, message = raw.Error.Code, raw.Error.Message
+			message = raw.Error.Message
+			if json.Unmarshal(raw.Error.Code, &code) != nil || code == "" {
+				code = raw.Error.Status
+			}
 			if code == "" {
 				code = raw.Error.Type
 			}

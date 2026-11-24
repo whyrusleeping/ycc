@@ -383,6 +383,7 @@ private struct ModelEditorView: View {
                     Text("OpenAI").tag("openai")
                     Text("OpenAI-compatible").tag("openai-compatible")
                     Text("GLM").tag("glm")
+                    Text("Gemini").tag("gemini")
                     Text("Ollama").tag("ollama")
                 }
                 Picker("Authentication", selection: $auth) {

@@ -12,6 +12,7 @@ export const BACKENDS = [
   { value: "openai", title: "OpenAI" },
   { value: "openai-compatible", title: "OpenAI-compatible" },
   { value: "glm", title: "GLM" },
+  { value: "gemini", title: "Gemini" },
   { value: "ollama", title: "Ollama" },
 ] as const;
 

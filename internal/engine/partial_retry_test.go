@@ -12,15 +12,22 @@ import (
 	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
 
-type generatedOnlyTurner struct{ calls int }
+type generatedOnlyTurner struct {
+	calls   int
+	viaOpts bool // report through RequestOptions.OnGenerated, as the Gemini transport does
+}
 
 func (f *generatedOnlyTurner) TurnCtx(ctx context.Context, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, error) {
 	return f.TurnStreamCtx(ctx, opts, nil)
 }
-func (f *generatedOnlyTurner) TurnStreamCtx(ctx context.Context, _ gollama.RequestOptions, _ func(string)) (*gollama.ResponseMessageGenerate, error) {
+func (f *generatedOnlyTurner) TurnStreamCtx(ctx context.Context, opts gollama.RequestOptions, _ func(string)) (*gollama.ResponseMessageGenerate, error) {
 	f.calls++
 	if f.calls == 1 {
-		llmhttp.MarkGenerated(ctx)
+		if f.viaOpts {
+			opts.OnGenerated()
+		} else {
+			llmhttp.MarkGenerated(ctx)
+		}
 	} // reasoning/tool arguments, no assistant text callback
 	if f.calls <= 2 {
 		return nil, io.ErrUnexpectedEOF
@@ -29,14 +36,16 @@ func (f *generatedOnlyTurner) TurnStreamCtx(ctx context.Context, _ gollama.Reque
 }
 
 func TestGeneratedWithoutTextCallbackCapsRetries(t *testing.T) {
-	client := &generatedOnlyTurner{}
-	loop, rec, _ := newRetryLoop(t, client, DefaultRetryPolicy())
-	_, err := loop.Run(context.Background())
-	if !errors.Is(err, io.ErrUnexpectedEOF) || client.calls != 2 {
-		t.Fatalf("error=%v calls=%d, want failure after two attempts", err, client.calls)
-	}
-	if errs := sessionErrors(rec); len(errs) != 1 || errs[0].Data["attempts"] != 2 {
-		t.Fatalf("final failure not recorded: %+v", errs)
+	for _, viaOpts := range []bool{false, true} {
+		client := &generatedOnlyTurner{viaOpts: viaOpts}
+		loop, rec, _ := newRetryLoop(t, client, DefaultRetryPolicy())
+		_, err := loop.Run(context.Background())
+		if !errors.Is(err, io.ErrUnexpectedEOF) || client.calls != 2 {
+			t.Fatalf("viaOpts=%v: error=%v calls=%d, want failure after two attempts", viaOpts, err, client.calls)
+		}
+		if errs := sessionErrors(rec); len(errs) != 1 || errs[0].Data["attempts"] != 2 {
+			t.Fatalf("viaOpts=%v: final failure not recorded: %+v", viaOpts, errs)
+		}
 	}
 }
 

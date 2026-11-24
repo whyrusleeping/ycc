@@ -22,7 +22,7 @@ var credentials = struct {
 	names map[string]bool
 }{names: map[string]bool{
 	"YCC_TOKEN": true, "ANTHROPIC_API_KEY": true, "ANTHROPIC_AUTH_TOKEN": true,
-	"OPENAI_API_KEY": true, "EXA_API_KEY": true,
+	"OPENAI_API_KEY": true, "GEMINI_API_KEY": true, "EXA_API_KEY": true,
 	"ANTHROPIC_OAUTH": true, "OPENAI_OAUTH": true,
 }}
 

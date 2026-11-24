@@ -222,8 +222,17 @@ model  = "sol"
 prompt = "Focus on correctness and code cleanliness."
 ```
 
-Other backends are `openai-compatible` (any OpenAI-style endpoint, with `base_url` and
-`key_env`) and `ollama`. Optional `[budget]` caps (`session_cost`, `loop_cost`) stop sessions and
+Other backends are `gemini` (the native Gemini API), `openai-compatible` (any OpenAI-style
+endpoint, with `base_url` and `key_env`) and `ollama`. A Gemini model with an API key:
+
+```toml
+[models.neon]
+backend = "gemini"
+model = "gemini-4-neon"
+key_env = "GEMINI_API_KEY"
+```
+
+Optional `[budget]` caps (`session_cost`, `loop_cost`) stop sessions and
 work loops at a dollar or token limit. [`spec.md` §13](spec.md#13-models-credentials-and-review-tiers)
 covers every setting.
 

@@ -12,6 +12,8 @@ spec_refs:
 
 ## Description
 
+Current state: proposed. On 2026-11-23 the user accepted a reduced subset as 0599 (explicit, fail-fast named leases for deploys and shared services; todo). This task keeps the rest: shell-pattern blocking in the bash tool, flock/CLI interop, global scope and waiting visibility. The TUI named below was retired in `6ce9e51`; the clients are now web and iOS.
+
 **Deferred by decision** (2026-08-06): asked whether to build leases or a parallelism cap first, the user answered "maybe we just punt on this and dont have a resource manager thing yet" (session s_c5badc8fb90d408b, event 81). Captured so the design isn't lost; the stand-in is
 `[integration] max_parallel` (task 0252, the integration queue, done) plus doing hardware/prod work on the base branch.
 The design doc's former "§8 Deliberately deferred: exclusive resources" was pruned in `c6907b1`;
@@ -55,3 +57,4 @@ name = "prod"; capacity = 1; scope = "global";  match = ["./deploy.sh*"]; confir
 ## Work log
 - 2026-11-21 groom: cited the source of the 2026-08-06 deferral (session s_c5badc8fb90d408b, event 81). Repointed spec_refs from the pruned design-doc §8 (removed in `c6907b1`) to "Bootstrap and resources". Glossed 0252, vals and oldgrowth. Not implemented: there is no `[[resources]]` config or lease tool. Still proposed.
 - 2026-11-23: the user accepted a reduced subset as 0599 (explicit, fail-fast named leases for deploys and shared services, required for unattended loop deploys; session s_a96d1f53776eaa46). Shell-pattern blocking, flock/CLI interop and cross-project scope remain here, still proposed.
+- 2026-11-23 groom: added a current-state line at the top naming the accepted subset 0599 and what stays here, and noted the TUI's retirement. No lease tool exists in the code yet. Still proposed.

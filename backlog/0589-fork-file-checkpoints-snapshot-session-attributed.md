@@ -19,6 +19,5 @@ Sketch carried over from 0471: at each user turn, snapshot the session's attribu
 - Retention and garbage collection of checkpoint refs.
 - Should restore be offered from the fork action, or as a separate "restore files to this turn" action?
 
-## Acceptance criteria
-
 ## Work log
+- 2026-11-23 groom: removed an empty Acceptance criteria heading (the idea has open questions and no criteria yet). 0471 is done (`8628914` web, `a071480` iOS via 0588) and forks conversation state only. Still proposed.

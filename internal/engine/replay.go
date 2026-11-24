@@ -273,6 +273,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 					Name:      str(ev.Data, "name"),
 					Arguments: str(ev.Data, "args"),
 				},
+				ThoughtSignature: str(ev.Data, "thought_signature"),
 			}
 			history[assistantIdx].ToolCalls = append(history[assistantIdx].ToolCalls, call)
 		case event.ToolResult:

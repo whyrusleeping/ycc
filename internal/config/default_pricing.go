@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-// Built-in default pricing for well-known Anthropic and OpenAI
+// Built-in default pricing for well-known Anthropic, OpenAI and Gemini
 // models, in US dollars per million tokens. Explicit per-model pricing in
 // config always wins (see Model.EffectivePricing); this table only fills the
 // gap so cost estimates work out of the box instead of showing "—" for the
@@ -17,6 +17,7 @@ import (
 // Sources:
 //   - https://platform.claude.com/docs/en/about-claude/pricing (fetched 2026-07)
 //   - https://developers.openai.com/api/docs/pricing (fetched 2026-08)
+//   - https://ai.google.dev/gemini-api/docs/pricing (gemini-4-neon, 2026-11)
 //
 // Semantics per backend:
 //   - Anthropic reports cache reads/writes DISJOINT from input_tokens, and
@@ -31,6 +32,10 @@ import (
 //   - Long-context premiums (e.g. GPT-5.6 and GPT-5.5 >272K, Sonnet legacy 1M
 //     pricing) and priority/batch tiers are NOT modeled; standard-tier
 //     short-context rates are used.
+//   - Gemini, like OpenAI, reports cached tokens inside the prompt count (the
+//     engine subtracts them from Input) and has no cache-write charge; thinking
+//     tokens are billed as output. Storage fees for explicit caches are not
+//     modeled.
 
 // defaultPrice is one row of the built-in table: rates for a normalized
 // model-id prefix.
@@ -106,6 +111,11 @@ var openaiDefaults = []defaultPrice{
 	{"o4-mini", 1.1, 4.4, 0.275, 0},
 }
 
+// geminiDefaults maps normalized Gemini model-id prefixes to rates.
+var geminiDefaults = []defaultPrice{
+	{"gemini-4-neon", 3, 15, 0.15, 0},
+}
+
 var sortDefaultsOnce sync.Once
 
 // sortedDefaults returns the table for a backend family with entries sorted
@@ -122,6 +132,7 @@ func sortedDefaults(backend string) []defaultPrice {
 		}
 		byLen(anthropicDefaults)
 		byLen(openaiDefaults)
+		byLen(geminiDefaults)
 	})
 	switch backend {
 	case "anthropic":
@@ -131,6 +142,8 @@ func sortedDefaults(backend string) []defaultPrice {
 		// well-known OpenAI/Anthropic model name, in which case the first-party
 		// rate is the best available estimate.
 		return openaiDefaults
+	case "gemini":
+		return geminiDefaults
 	}
 	return nil
 }

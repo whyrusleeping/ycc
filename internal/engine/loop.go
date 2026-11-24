@@ -290,8 +290,9 @@ func (l *Loop) SetThinking(think Thinking) {
 // SetBackend/SetThinking so a backend or level change may warn once more.
 //
 // Mapping: anthropic expresses thinking + effort fully; openai expresses effort
-// via reasoning_effort; ollama is on/off only (effort levels are ignored); any
-// other backend (e.g. bedrock) does not translate thinking/effort at all.
+// via reasoning_effort and gemini via thinkingLevel; ollama is on/off only
+// (effort levels are ignored); any other backend (e.g. bedrock) does not
+// translate thinking/effort at all.
 func (l *Loop) thinkingWarning() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -299,9 +300,9 @@ func (l *Loop) thinkingWarning() string {
 		return ""
 	}
 	switch {
-	case strings.EqualFold(l.Backend, "anthropic"), strings.EqualFold(l.Backend, "openai"):
+	case strings.EqualFold(l.Backend, "anthropic"), strings.EqualFold(l.Backend, "openai"), strings.EqualFold(l.Backend, "gemini"):
 		// Fully expressible (Anthropic thinking + effort) or levels expressible
-		// (OpenAI reasoning_effort). No warning.
+		// (OpenAI reasoning_effort, Gemini thinkingLevel). No warning.
 		return ""
 	case strings.EqualFold(l.Backend, "ollama"):
 		// Ollama expresses thinking on/off but has no effort levels. Only the
@@ -678,18 +679,18 @@ func (l *Loop) PendingResponse() bool {
 // any native media (images/PDFs) the tool returned so multimodal Reads round-
 // trip to the model.
 //
-// Anthropic accepts image/document blocks inside a tool_result, so we attach them
-// directly to the tool message. OpenAI-compatible APIs do not allow media in a
-// tool-role message, so for those backends we attach images as a follow-up user
-// message (the model still sees them, right after the result). Documents (PDFs)
-// are Anthropic-only in gollama and are dropped for other backends.
+// Anthropic and Gemini accept image/document parts inside a tool result, so we
+// attach them directly to the tool message. OpenAI-compatible APIs do not allow
+// media in a tool-role message, so for those backends we attach images as a
+// follow-up user message (the model still sees them, right after the result).
+// Documents (PDFs) are dropped for those backends.
 func (l *Loop) appendToolResult(callID string, res *gollama.ToolResult) {
 	msg := gollama.Message{Role: "tool", ToolCallID: callID, Content: res.Content}
 	if len(res.Images) == 0 && len(res.Documents) == 0 {
 		l.history = append(l.history, msg)
 		return
 	}
-	if strings.EqualFold(l.Backend, "anthropic") {
+	if strings.EqualFold(l.Backend, "anthropic") || strings.EqualFold(l.Backend, "gemini") {
 		msg.Images = res.Images
 		msg.Documents = res.Documents
 		l.history = append(l.history, msg)
@@ -720,6 +721,9 @@ const turnDeltaInterval = 100 * time.Millisecond
 // Non-streaming clients use TurnCtx. Final model_turn emission is the caller's job.
 func (l *Loop) turnOnce(ctx context.Context, client Turner, opts gollama.RequestOptions) (*gollama.ResponseMessageGenerate, bool, error) {
 	ctx, progress := llmhttp.WithProgress(ctx)
+	// Transports that parse their own stream (Gemini) report generated output
+	// directly; the SSE byte heuristic does not recognize their frames.
+	opts.OnGenerated = func() { llmhttp.MarkGenerated(ctx) }
 	streamer, ok := client.(StreamTurner)
 	if !ok {
 		resp, err := client.TurnCtx(ctx, opts)
@@ -1231,6 +1235,11 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 				"name": call.Function.Name,
 				"args": call.Function.Arguments,
 				"id":   call.ID,
+			}
+			// Gemini rejects replayed calls without their thought signature, so
+			// ReplayHistory restores it on reopen. Other backends never send it.
+			if call.ThoughtSignature != "" {
+				callData["thought_signature"] = call.ThoughtSignature
 			}
 			l.Emitter.Emit(event.ToolCall, callData)
 			if err := l.durableEmitError(ctx); err != nil {

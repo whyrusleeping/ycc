@@ -13,7 +13,7 @@ spec_refs:
 ---
 
 ## Description
-Vals retrospective: completed jobs historically waited hours for user check-ins (idle wakeup fixed by 0379), while external recordings/soaks could die or stall long before the next check-in. A hand-rolled hourly watcher failed immediately due to sh/bash mismatch. Another check-in reported +70k events as healthy until the user prompted rate/drop-count analysis, revealing ~13 events/s and dropped batches (s_0dd031d407fe4524 #948-990). Process completion wakeup alone is not remote-experiment health supervision.
+Retrospective on vals (the user's hardware benchmarking project, developed with ycc): completed jobs historically waited hours for user check-ins (idle wakeup fixed by 0379), while external recordings/soaks could die or stall long before the next check-in. A hand-rolled hourly watcher failed immediately due to sh/bash mismatch. Another check-in reported +70k events as healthy until the user prompted rate/drop-count analysis, revealing ~13 events/s and dropped batches (s_0dd031d407fe4524 #948-990). Process completion wakeup alone is not remote-experiment health supervision.
 
 Design/evaluation scope, not approval for unbounded autonomous hardware work:
 - A bounded run record should identify owner/session, source/build, command/runtime, artifacts, resource lease/authorization, expected cadence, stop conditions, and monitored processes; distinguish local Bash job lifetime from external service lifetime.
@@ -24,6 +24,5 @@ Design/evaluation scope, not approval for unbounded autonomous hardware work:
 
 Related existing 0256 resource leases, 0324 preflight, 0366 limits, 0379 completion wakeup. Evidence/report: docs/reports/vals-harness-retrospective.md.
 
-## Acceptance criteria
-
 ## Work log
+- 2026-11-23 groom: glossed vals, removed an empty Acceptance criteria heading (this is a design/evaluation task with no criteria yet), and noted the newer related tasks: 0599 (exclusive named leases for deploys and shared services, todo) and 0597 (the work loop moves on while a session waits on its own jobs, todo). 0366 and 0379 are done. Still proposed.

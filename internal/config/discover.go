@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
 	"github.com/whyrusleeping/ycc/internal/llmhttp"
 )
@@ -21,6 +24,7 @@ var curatedModelIDs = map[string][]string{
 	"anthropic": {"claude-opus-5-5", "claude-fable-5-1", "claude-opus-4-8", "claude-sonnet-4-5", "claude-fable-5", "claude-haiku-4-5"},
 	"openai":    {"gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5-mini", "gpt-4o", "o3"},
 	"glm":       {"glm-4.6", "glm-4.5-air"},
+	"gemini":    {"gemini-4-neon", "gemini-4-hydrogen"},
 	"ollama":    {"qwen2.5-coder", "llama3.3", "deepseek-r1"},
 }
 
@@ -43,8 +47,13 @@ func CuratedModelIDs(backend string) []string {
 // Explicit URLs are preserved so proxies and staging endpoints keep working.
 func providerBaseURL(backend, baseURL string) string {
 	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" && backend == "anthropic" {
-		return DefaultAnthropicBaseURL
+	if baseURL == "" {
+		switch backend {
+		case "anthropic":
+			return DefaultAnthropicBaseURL
+		case "gemini":
+			return gollama.DefaultGeminiBaseURL
+		}
 	}
 	return baseURL
 }
@@ -52,9 +61,9 @@ func providerBaseURL(backend, baseURL string) string {
 // DiscoverModels queries a backend's model-listing endpoint and returns the
 // available model ids. It supports the OpenAI-compatible /models
 // endpoint (openai, glm, openai-compatible), the Anthropic /v1/models endpoint,
-// and the Ollama /api/tags endpoint. A blank Anthropic base URL resolves to the
-// native Anthropic API. key is the resolved API credential (may be empty for
-// keyless/local backends).
+// the Gemini models.list endpoint, and the Ollama /api/tags endpoint. A blank
+// Anthropic or Gemini base URL resolves to the provider's native API. key is the
+// resolved API credential (may be empty for keyless/local backends).
 //
 // It is a best-effort convenience for the connection form: on any failure the
 // caller should fall back to CuratedModelIDs. The returned ids are sorted and
@@ -69,6 +78,8 @@ func DiscoverModels(ctx context.Context, backend, baseURL, key string) ([]string
 		return discoverOpenAI(ctx, baseURL, key)
 	case "anthropic":
 		return discoverAnthropic(ctx, baseURL, key)
+	case "gemini":
+		return discoverGemini(ctx, baseURL, key)
 	case "ollama":
 		return discoverOllama(ctx, baseURL)
 	default:
@@ -154,6 +165,40 @@ func discoverAnthropic(ctx context.Context, baseURL, key string) ([]string, erro
 	for _, d := range out.Data {
 		if d.ID != "" {
 			ids = append(ids, d.ID)
+		}
+	}
+	return normalizeIDs(ids), nil
+}
+
+// discoverGemini lists the models that support generateContent. Gemini names
+// them "models/<id>"; the prefix is stripped so ids match the config's model.
+func discoverGemini(ctx context.Context, baseURL, key string) ([]string, error) {
+	headers := map[string]string{gollama.GeminiAPIKeyHeader: key}
+	var ids []string
+	pageToken := ""
+	for page := 0; page < 20; page++ {
+		url := baseURL + "/models?pageSize=1000"
+		if pageToken != "" {
+			url += "&pageToken=" + neturl.QueryEscape(pageToken)
+		}
+		var out struct {
+			Models []struct {
+				Name                       string   `json:"name"`
+				SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+			} `json:"models"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := getJSON(ctx, url, headers, &out); err != nil {
+			return nil, err
+		}
+		for _, m := range out.Models {
+			if len(m.SupportedGenerationMethods) > 0 && !slices.Contains(m.SupportedGenerationMethods, "generateContent") {
+				continue
+			}
+			ids = append(ids, strings.TrimPrefix(m.Name, "models/"))
+		}
+		if pageToken = out.NextPageToken; pageToken == "" {
+			break
 		}
 	}
 	return normalizeIDs(ids), nil
