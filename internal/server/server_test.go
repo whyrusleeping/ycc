@@ -25,6 +25,28 @@ import (
 
 func boolPtr(value bool) *bool { return &value }
 
+// On the wire "none" has a present wrapper and no repeated field. It must not
+// turn back into the unrestricted default when decoded by the daemon.
+func TestStartSessionSubagentModelsPresence(t *testing.T) {
+	for _, names := range [][]string{nil, {}, {"small"}} {
+		req := &v1.StartSessionRequest{}
+		if names != nil {
+			req.SubagentModels = &v1.SubagentModelAllowlist{Names: names}
+		}
+		data, err := proto.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded v1.StartSessionRequest
+		if err := proto.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if got := subagentModels(decoded.SubagentModels); !reflect.DeepEqual(got, names) {
+			t.Errorf("decoded subagent models = %#v, want %#v", got, names)
+		}
+	}
+}
+
 // SetThinking with no live session resolves the requested role to its current
 // model and persists the level in that model's config — a home-menu change must
 // survive a restart (spec §7.4, §18.2). An invalid level is still rejected.

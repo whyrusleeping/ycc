@@ -133,6 +133,16 @@ func readOnlySpawnAgent(d *Deps) *gollama.Tool { return spawnGenericAgent(d, tru
 
 func readOnlySendToAgent(d *Deps) *gollama.Tool { return sendToGenericAgent(d, true) }
 
+func genericAgentTools(d *Deps, readOnlyOnly bool) []*gollama.Tool {
+	if d.DisableGenericAgents {
+		return nil
+	}
+	if readOnlyOnly {
+		return []*gollama.Tool{readOnlySpawnAgent(d), readOnlySendToAgent(d)}
+	}
+	return []*gollama.Tool{spawnAgent(d), sendToAgent(d)}
+}
+
 func spawnGenericAgent(d *Deps, readOnlyOnly bool) *gollama.Tool {
 	description := "Start an isolated subagent on a configured model; returns agent_id and background job_id. " +
 		"Default read-only; allow mutation only for coding, with disjoint files for concurrent writers. " +

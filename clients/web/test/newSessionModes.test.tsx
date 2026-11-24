@@ -97,7 +97,7 @@ async function type(value: string) {
   });
 }
 
-const submit = () => act(() => container.querySelector<HTMLButtonElement>("button[type=submit]")!.click());
+const submit = () => act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")!.click());
 const advanced = () => container.querySelector<HTMLDetailsElement>("details.new-session-advanced")!;
 const presetTitles = () => Array.from(container.querySelectorAll(".preset-card .choice-title")).map((e) => e.textContent);
 
@@ -105,7 +105,8 @@ it("starts chat by default, with mode choice folded away and no suggestions for 
   await render("alpha");
   expect(presetTitles()).toEqual([]);
   expect(advanced().open).toBe(false);
-  expect(container.textContent).not.toContain("Mode: ");
+  expect(advanced().querySelector("summary")!.textContent).toContain("Mode: Chat · Subagents: default");
+  expect(container.querySelector(".option-chips")!.textContent).not.toContain("Mode: ");
   await type("hello");
   await submit();
   expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ project: "alpha", mode: "chat", preset: "", prompt: "hello" }));

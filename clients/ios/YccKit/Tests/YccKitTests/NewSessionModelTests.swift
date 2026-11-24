@@ -17,10 +17,7 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     var resumeError: Error?
     var startedSessionId = "s_new"
 
-    private(set) var startArgs: (
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        images: [MessageImage])?
-    private(set) var startThinking: String?
+    private(set) var startArgs: Ycc_V1_StartSessionRequest?
     private(set) var resumeArgs: (project: String, sessionId: String)?
 
     func listModes() async throws -> Ycc_V1_ListModesResponse {
@@ -41,12 +38,8 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
         return models
     }
 
-    func startSession(
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        coordinatorThinking: String, images: [MessageImage]
-    ) async throws -> String {
-        startArgs = (project, mode, prompt, coordinatorModel, images)
-        startThinking = coordinatorThinking
+    func startSession(_ request: Ycc_V1_StartSessionRequest) async throws -> String {
+        startArgs = request
         if let startError { throw startError }
         return startedSessionId
     }
@@ -61,10 +54,7 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
     var backlogError: Error?
     var spawnError: Error?
     private(set) var backlogCalls: [String] = []
-    private(set) var spawnArgs: (
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        preset: String, taskID: String, images: [MessageImage])?
-    private(set) var spawnThinking: String?
+    private(set) var spawnArgs: Ycc_V1_SpawnWorkstreamRequest?
 
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
         backlogCalls.append(project)
@@ -72,16 +62,12 @@ private final class MockNewSessionSource: NewSessionSource, @unchecked Sendable 
         return backlog[project] ?? []
     }
 
-    func spawnWorkstream(
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
-    ) async throws -> Ycc_V1_WorkstreamInfo {
-        spawnArgs = (project, mode, prompt, coordinatorModel, preset, taskID, images)
-        spawnThinking = coordinatorThinking
+    func spawnWorkstream(_ request: Ycc_V1_SpawnWorkstreamRequest) async throws -> Ycc_V1_WorkstreamInfo {
+        spawnArgs = request
         if let spawnError { throw spawnError }
         var info = Ycc_V1_WorkstreamInfo()
         info.id = "ws_1"
-        info.project = project
+        info.project = request.project
         info.sessionID = "s_ws"
         return info
     }
@@ -153,7 +139,65 @@ final class NewSessionModelTests: XCTestCase {
         model.prompt = "go"
         _ = await model.start()
         XCTAssertEqual(source.startArgs?.coordinatorModel, "")
-        XCTAssertEqual(source.startThinking, "")
+        XCTAssertEqual(source.startArgs?.coordinatorThinking, "")
+    }
+
+    func testSessionAndWorkstreamSendAbsentSubsetAndEmptySubagentModels() async throws {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.projects = [project("one")]
+        var listed = modelList(["z", "a", "b", "disabled"], coordinator: "a")
+        listed.models[3].disabled = true
+        source.models = listed
+        let defaults = MockDefaults()
+
+        for workstream in [false, true] {
+            let model = NewSessionModel(source: source, defaults: defaults)
+            await model.load()
+            model.separateWorkstream = workstream
+            XCTAssertNil(model.selectedSubagentModels, "a new draft follows the daemon")
+
+            func assertRequest(_ names: [String]?, line: UInt = #line) async throws {
+                let id = await model.start()
+                XCTAssertNotNil(id, line: line)
+                if workstream {
+                    let req = try XCTUnwrap(source.spawnArgs, line: line)
+                    XCTAssertEqual(req.hasSubagentModels, names != nil, line: line)
+                    XCTAssertEqual(req.subagentModels.names, names ?? [], line: line)
+                } else {
+                    let req = try XCTUnwrap(source.startArgs, line: line)
+                    XCTAssertEqual(req.hasSubagentModels, names != nil, line: line)
+                    XCTAssertEqual(req.subagentModels.names, names ?? [], line: line)
+                }
+            }
+
+            try await assertRequest(nil)
+            model.setSubagentModel("b", enabled: false)
+            model.setSubagentModel("disabled", enabled: true)
+            try await assertRequest(["a", "z"])
+            model.setSubagentModel("b", enabled: true)
+            try await assertRequest(["a", "b", "z"])
+            model.selectedSubagentModels = nil
+            try await assertRequest(nil)
+            model.selectedSubagentModels = []
+            try await assertRequest([])
+        }
+    }
+
+    func testRefreshingCatalogNeverBroadensExplicitSubagentSelection() async {
+        let source = MockNewSessionSource()
+        source.modes = [mode("work")]
+        source.models = modelList(["fast", "deep"], coordinator: "fast")
+        let model = NewSessionModel(source: source, defaults: MockDefaults())
+        await model.load()
+        model.setSubagentModel("deep", enabled: false)
+        source.modelsError = YccError.rpc(message: "offline")
+        await model.load()
+        XCTAssertEqual(model.selectedSubagentModels, ["fast"])
+        source.modelsError = nil
+        source.models.models[0].disabled = true
+        await model.load()
+        XCTAssertEqual(model.selectedSubagentModels, [])
     }
 
     // MARK: - Thinking picker
@@ -191,7 +235,7 @@ final class NewSessionModelTests: XCTestCase {
         model.prompt = "go"
         _ = await model.start()
         XCTAssertEqual(source.startArgs?.coordinatorModel, "local")
-        XCTAssertEqual(source.startThinking, "high")
+        XCTAssertEqual(source.startArgs?.coordinatorThinking, "high")
     }
 
     func testThinkingPickerHiddenWithoutModels() async {
@@ -614,7 +658,7 @@ final class NewSessionModelTests: XCTestCase {
         XCTAssertEqual(source.spawnArgs?.mode, "pm")
         XCTAssertEqual(source.spawnArgs?.prompt, "Plan the next step")
         XCTAssertEqual(source.spawnArgs?.coordinatorModel, "smart")
-        XCTAssertEqual(source.spawnThinking, "xhigh")
+        XCTAssertEqual(source.spawnArgs?.coordinatorThinking, "xhigh")
         XCTAssertEqual(source.spawnArgs?.preset, "plan")
         XCTAssertEqual(source.spawnArgs?.taskID, "")
         XCTAssertEqual(source.spawnArgs?.images.count, 1)

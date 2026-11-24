@@ -1,8 +1,8 @@
 // The new-session page: which project (asked when starting from the unscoped
 // Recent feed, last-viewed project first), then a prompt starting chat. A
 // project that needs onboarding is offered the onboarding preset; an Advanced
-// disclosure keeps explicit mode choice. Also an optional per-session
-// coordinator model and reasoning level, and pictures → StartSession, or
+// disclosure holds mode and subagent model choices. The per-session choices,
+// coordinator model and reasoning, and pictures go to StartSession, or
 // with "Separate workstream" on → SpawnWorkstream (plus an optional task and
 // base ref). On success it navigates straight into the live session.
 import { useQueryClient } from "@tanstack/react-query";
@@ -95,13 +95,19 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
     if (draftMode && defaultModeName && draftMode !== defaultModeName) setAdvancedOpen(true);
   }, [draftMode, defaultModeName]);
 
-  const choice = modelChoices(models.data);
-  // Never keep an override pointing at a model that is no longer offered.
+  const choice = useMemo(() => modelChoices(models.data), [models.data]);
+  // Never keep overrides pointing at models that are no longer offered.
   useEffect(() => {
-    if (draft.model && models.data && !choice.models.some((m) => m.name === draft.model)) {
+    if (!models.data) return;
+    if (draft.model && !choice.models.some((m) => m.name === draft.model)) {
       setDraft((d) => ({ ...d, model: "" }));
     }
-  }, [draft.model, models.data, choice.models]);
+    const enabled = new Set(choice.models.map((m) => m.name));
+    if (draft.subagentModels?.some((name) => !enabled.has(name))) {
+      // A restricted list that loses its last entry still means none, not default.
+      setDraft((d) => ({ ...d, subagentModels: d.subagentModels?.filter((name) => enabled.has(name)) }));
+    }
+  }, [draft.model, draft.subagentModels, models.data, choice.models]);
 
   // A start error is about the draft that was sent; editing pictures moves on.
   useEffect(() => setError(null), [pictures.pictures]);
@@ -187,6 +193,8 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
   const modeList = modes.data?.modes ?? [];
   const selectedMode = modeList.find((m) => m.name === draft.mode);
   const otherMode = !!draft.mode && draft.mode !== defaultModeName;
+  const subagentModels = draft.subagentModels;
+  const subagentSummary = subagentModels === undefined ? "default" : subagentModels.length ? `${subagentModels.length} selected` : "none";
 
   return (
     <div className={`new-session${drop.dragging ? " dragging" : ""}`} {...drop.handlers}>
@@ -265,7 +273,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
             >
               <summary data-track="new_session.advanced">
-                Advanced: mode <span className="muted">· {selectedMode?.title || draft.mode || "—"}</span>
+                Advanced <span className="muted">· Mode: {selectedMode?.title || draft.mode || "—"} · Subagents: {subagentSummary}</span>
               </summary>
               <div className="mode-grid" role="group" aria-label="Mode">
                 {modeList.map((m) => (
@@ -285,6 +293,52 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                   </button>
                 ))}
               </div>
+              <fieldset className="settings-reviewers" disabled={starting}>
+                <legend>Subagent models</legend>
+                <label className="chip-select">
+                  <span>Allow</span>
+                  <select
+                    aria-label="Subagent model policy"
+                    value={subagentModels === undefined ? "default" : "custom"}
+                    onChange={(e) => {
+                      const custom = e.target.value === "custom";
+                      setDraft((d) => ({ ...d, subagentModels: custom ? [] : undefined }));
+                    }}
+                  >
+                    <option value="default">All enabled models (default)</option>
+                    <option value="custom">Only selected models</option>
+                  </select>
+                </label>
+                <p className="muted small">
+                  Applies to the spawn_agent tool for this session, not the work mode’s implementer or reviewers.
+                  {subagentModels !== undefined && " Leave all models unchecked to turn off this tool."}
+                </p>
+                {subagentModels !== undefined && (
+                  choice.models.length > 0 ? (
+                    <div role="group" aria-label="Allowed subagent models">
+                      {choice.models.map((m) => (
+                        <label key={m.name} className="check">
+                          <input
+                            type="checkbox"
+                            checked={subagentModels.includes(m.name)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setDraft((d) => {
+                                const names = d.subagentModels;
+                                if (names === undefined) return d;
+                                return { ...d, subagentModels: checked ? [...names, m.name] : names.filter((name) => name !== m.name) };
+                              });
+                            }}
+                          />
+                          {m.name}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted small">{models.error ? "Couldn’t load models." : models.data ? "No enabled models." : "Loading models…"}</p>
+                  )
+                )}
+              </fieldset>
             </details>
           </>
         )}

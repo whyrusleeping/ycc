@@ -440,9 +440,10 @@ func TestSpawnWorkstreamNewSessionFields(t *testing.T) {
 	}
 
 	for name, req := range map[string]*v1.SpawnWorkstreamRequest{
-		"bad picture":   {Project: "demo", Prompt: "hi", Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/jpeg"}}},
-		"unknown model": {Project: "demo", Prompt: "hi", CoordinatorModel: "nope"},
-		"bad thinking":  {Project: "demo", Prompt: "hi", CoordinatorThinking: "huge"},
+		"bad picture":      {Project: "demo", Prompt: "hi", Images: []*v1.ImageAttachment{{Data: pic.Bytes(), MediaType: "image/jpeg"}}},
+		"unknown model":    {Project: "demo", Prompt: "hi", CoordinatorModel: "nope"},
+		"bad thinking":     {Project: "demo", Prompt: "hi", CoordinatorThinking: "huge"},
+		"unknown subagent": {Project: "demo", Prompt: "hi", SubagentModels: &v1.SubagentModelAllowlist{Names: []string{"nope"}}},
 	} {
 		if _, err := client.SpawnWorkstream(ctx, connect.NewRequest(req)); connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("%s: err = %v, want InvalidArgument", name, err)

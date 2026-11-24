@@ -15,24 +15,14 @@ public protocol NewSessionSource: Sendable {
     /// (`ListModels`); drives the optional model picker.
     func listModels() async throws -> Ycc_V1_ListModelsResponse
     /// Start a new session; returns its id to subscribe from seq 0.
-    /// `coordinatorModel` is empty for "use the configured default" and
-    /// `coordinatorThinking` empty for that model's saved level; `images`
-    /// attaches pictures to the opening prompt.
-    func startSession(
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        coordinatorThinking: String, images: [MessageImage]
-    ) async throws -> String
+    func startSession(_ request: Ycc_V1_StartSessionRequest) async throws -> String
     /// Re-open a persisted session on its existing log; returns its id.
     func resumeSession(project: String, sessionId: String) async throws -> String
     /// A project's backlog (`ListBacklog`); drives the workstream task picker.
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary]
     /// Start the session in a new workstream (`SpawnWorkstream`) with the same
-    /// choices as ``startSession(project:mode:prompt:coordinatorModel:coordinatorThinking:images:)``
-    /// plus the applied preset and an optional backlog task.
-    func spawnWorkstream(
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
-    ) async throws -> Ycc_V1_WorkstreamInfo
+    /// choices as ``startSession(_:)`` plus the applied preset and an optional backlog task.
+    func spawnWorkstream(_ request: Ycc_V1_SpawnWorkstreamRequest) async throws -> Ycc_V1_WorkstreamInfo
 }
 
 extension YccClient: NewSessionSource {}
@@ -110,6 +100,20 @@ public final class NewSessionModel {
     /// model's saved level. Moves to the nearest supported level when the model
     /// changes.
     public var selectedThinking: ThinkingLevel?
+    /// Per-draft spawn_agent choices. nil follows the daemon's enabled catalog;
+    /// an empty set explicitly allows no subagent models.
+    public var selectedSubagentModels: Set<String>?
+
+    public func setSubagentModel(_ name: String, enabled: Bool) {
+        let catalog = Set(models.map(\.name))
+        guard catalog.contains(name) else { return }
+        var selection = selectedSubagentModels ?? catalog
+        if enabled { selection.insert(name) } else { selection.remove(name) }
+        // Even selecting every current name is a fixed list. Only the explicit
+        // “Allow all enabled models” action opts back into following the catalog.
+        selectedSubagentModels = selection
+    }
+
     /// The multiline prompt composer draft.
     public var prompt: String = ""
     /// Pictures attached to the opening prompt (at most
@@ -348,6 +352,11 @@ public final class NewSessionModel {
         presets = catalog.presets
         listedModels = catalog.models?.models ?? []
         models = listedModels.filter { !$0.disabled }
+        if catalog.models != nil {
+            // A removed/disabled model drops out of an explicit selection;
+            // never widen it (even to the default) on a refresh or RPC failure.
+            selectedSubagentModels?.formIntersection(models.map(\.name))
+        }
         defaultModel = catalog.models?.coordinator ?? ""
         defaultModelDisabled = listedModels.contains {
             $0.name == defaultModel && $0.disabled
@@ -453,33 +462,23 @@ public final class NewSessionModel {
         guard canStart else { return nil }
         isStarting = true
         defer { isStarting = false }
-        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let task = chosenWorkstreamTask
+        var openingPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if openingPrompt.isEmpty, let task {
+            openingPrompt = Self.taskPrompt(id: task.id, title: task.title)
+        }
+        let opening = Ycc_V1_StartSessionRequest(
+            project: selectedProject, mode: selectedMode, prompt: openingPrompt,
+            coordinatorModel: selectedModel, coordinatorThinking: selectedThinking?.wireValue ?? "",
+            images: images, subagentModels: selectedSubagentModels)
         do {
             let sessionId: String
             if separateWorkstream {
-                let task = chosenWorkstreamTask
-                var workstreamPrompt = trimmedPrompt
-                if workstreamPrompt.isEmpty, let task {
-                    workstreamPrompt = Self.taskPrompt(id: task.id, title: task.title)
-                }
                 sessionId = try await source.spawnWorkstream(
-                    project: selectedProject,
-                    mode: selectedMode,
-                    prompt: workstreamPrompt,
-                    coordinatorModel: selectedModel,
-                    coordinatorThinking: selectedThinking?.wireValue ?? "",
-                    preset: presetForStart,
-                    taskID: task?.id ?? "",
-                    images: images
+                    .init(opening: opening, preset: presetForStart, taskID: task?.id ?? "")
                 ).sessionID
             } else {
-                sessionId = try await source.startSession(
-                    project: selectedProject,
-                    mode: selectedMode,
-                    prompt: trimmedPrompt,
-                    coordinatorModel: selectedModel,
-                    coordinatorThinking: selectedThinking?.wireValue ?? "",
-                    images: images)
+                sessionId = try await source.startSession(opening)
             }
             rememberSelections()
             errorMessage = nil

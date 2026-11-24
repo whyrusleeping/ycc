@@ -86,6 +86,7 @@ func (s *Server) SpawnWorkstream(_ context.Context, req *connect.Request[v1.Spaw
 		Mode:                m.Mode,
 		CoordinatorModel:    m.CoordinatorModel,
 		CoordinatorThinking: m.CoordinatorThinking,
+		SubagentModels:      subagentModels(m.SubagentModels),
 		Preset:              m.Preset,
 		Images:              images,
 	})

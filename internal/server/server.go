@@ -86,6 +86,15 @@ func (s *Server) ListModes(_ context.Context, _ *connect.Request[v1.ListModesReq
 	return connect.NewResponse(&v1.ListModesResponse{Modes: modes, Presets: presets, DefaultMode: orchestrator.DefaultMode}), nil
 }
 
+// Preserve the difference between no override and an explicitly empty allowlist,
+// even when protobuf decodes the latter with a nil names slice.
+func subagentModels(allow *v1.SubagentModelAllowlist) []string {
+	if allow == nil {
+		return nil
+	}
+	return append([]string{}, allow.Names...)
+}
+
 // StartSession creates and launches a new session.
 func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSessionRequest]) (*connect.Response[v1.StartSessionResponse], error) {
 	m := req.Msg
@@ -103,6 +112,7 @@ func (s *Server) StartSession(_ context.Context, req *connect.Request[v1.StartSe
 		Project:             m.Project,
 		CoordinatorModel:    m.CoordinatorModel,
 		CoordinatorThinking: m.CoordinatorThinking,
+		SubagentModels:      subagentModels(m.SubagentModels),
 		Preset:              m.Preset,
 		Images:              images,
 		PlanOnly:            m.PlanOnly,

@@ -1531,16 +1531,10 @@ private final class CatalogSource: NewSessionSource, @unchecked Sendable {
         return projects
     }
     func listModels() async throws -> Ycc_V1_ListModelsResponse { settingsResponse() }
-    func startSession(
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        coordinatorThinking: String, images: [MessageImage]
-    ) async throws -> String { "s_new" }
+    func startSession(_ request: Ycc_V1_StartSessionRequest) async throws -> String { "s_new" }
     func resumeSession(project: String, sessionId: String) async throws -> String { sessionId }
     func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] { [] }
-    func spawnWorkstream(
-        project: String, mode: String, prompt: String, coordinatorModel: String,
-        coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
-    ) async throws -> Ycc_V1_WorkstreamInfo { Ycc_V1_WorkstreamInfo() }
+    func spawnWorkstream(_ request: Ycc_V1_SpawnWorkstreamRequest) async throws -> Ycc_V1_WorkstreamInfo { .init() }
 }
 
 private final class MemoryDefaults: SessionDefaultsStore {

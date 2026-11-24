@@ -47,6 +47,7 @@ message StartSessionRequest {
   // (ModelInfo.thinking_levels) is clamped to the nearest supported one. Empty
   // means the model's saved level. An unknown level => InvalidArgument.
   string coordinator_thinking = 10;
+  SubagentModelAllowlist subagent_models = 11;
 }
 message StartSessionResponse { string session_id = 1; }
 
@@ -1712,6 +1713,7 @@ message SpawnWorkstreamRequest {
   repeated ImageAttachment images = 9;
   // Session-only coordinator thinking level, as StartSessionRequest.coordinator_thinking.
   string coordinator_thinking = 10;
+  SubagentModelAllowlist subagent_models = 11;
 }
 message SpawnWorkstreamResponse { WorkstreamInfo workstream = 1; }
 
@@ -1940,6 +1942,10 @@ message RunWatchNowRequest {
   string name = 2;
 }
 message RunWatchNowResponse {}
+
+// Session-only logical model choices for spawn_agent. Absent allows all enabled
+// models; present with no names allows none.
+message SubagentModelAllowlist { repeated string names = 1; }
 
 service SessionService {
   rpc ListModes(ListModesRequest) returns (ListModesResponse);

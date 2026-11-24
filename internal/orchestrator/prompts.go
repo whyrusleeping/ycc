@@ -109,7 +109,7 @@ is not being worked on elsewhere. Do not infer parallel sessions from commit tim
 or processes: recent commits do not mean a session is still running, an idle session holds
 nothing, and an in_progress task no session is working on is continuation work.
 Persist a plan only for complex or ambiguous work. Implement and verify the acceptance criteria.
-spawn_agent starts a read-only subagent on any configured model for research or a second opinion
+spawn_agent starts a read-only subagent on any model allowed by this session for research or a second opinion
 on an approach. Its report is input, not review: spawn_reviewers remains the gate before commit.
 
 Review through spawn_reviewers using a configured tier proportionate to risk: one independent
@@ -210,7 +210,7 @@ conversation continue.
 ` + projectDocsGuidance + `
 
 Use spawn_agent for independent research, verification, or delegated coding. Choose the appropriate
-configured model and a self-contained prompt; agents default to read-only. After completion,
+model allowed by this session and a self-contained prompt; agents default to read-only. After completion,
 send_to_agent can retain context or replace it with a bounded fresh handoff containing evidence,
 unresolved questions, and verification requirements. Model and access level remain unchanged.
 

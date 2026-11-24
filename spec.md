@@ -1233,7 +1233,11 @@ flag. Optional `notes` provide operator suitability advice, editable from the mo
 omitted value preserves stored notes), and `modalities` list operator-supplied
 input modalities; absent modalities remain unknown. `spawn_agent` exposes enabled logical names
 and a bounded capability catalog in its model parameter metadata, without credential or endpoint
-configuration; spawn-time validation still uses the live registry.
+configuration. New Session can limit `spawn_agent` to selected logical models, or to none,
+including when starting in a workstream. An unset selection permits all enabled models. The
+catalog snapshots eligible names when the tool is built; spawning rechecks the session’s selection
+and current model availability. Selecting none omits the generic delegation tools. The choice
+survives reopening that session and does not change coordinator, implementer, or reviewer roles.
 Backends are `anthropic`, `openai`, `openai-compatible`, `glm`, `gemini` (the native Gemini API,
 keyed by `x-goog-api-key`), and `ollama`.
 The context window is an input-request capacity distinct from the global per-turn output cap;

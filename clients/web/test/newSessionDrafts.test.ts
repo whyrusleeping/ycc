@@ -21,7 +21,7 @@ describe("tab-local new-session drafts", () => {
     const store = new NewSessionDraftStore(async () => ({ pictures: [pic], errors: [] }), revoke);
     const leave = store.subscribe(vi.fn());
     store.seedProject("alpha");
-    store.update((d) => ({ ...d, project: "chosen", mode: "pm", model: "custom", prompt: "My edited prompt", preset: "doctor" }));
+    store.update((d) => ({ ...d, project: "chosen", mode: "pm", model: "custom", subagentModels: ["fast"], prompt: "My edited prompt", preset: "doctor" }));
     await store.add([{} as File]);
     const saved = store.getSnapshot().draft;
     leave();

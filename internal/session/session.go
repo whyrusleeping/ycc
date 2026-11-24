@@ -81,6 +81,9 @@ type Config struct {
 	// PlanOnly starts a chat session with its plan-only guardrail on (see
 	// SetPlanOnly). Other modes reject it with ErrPlanOnlyMode.
 	PlanOnly bool
+	// SubagentModels restricts generic spawn_agent choices for this session.
+	// nil allows all enabled models; non-nil is an explicit allowlist (including empty).
+	SubagentModels []string
 }
 
 // Session is one running agent conversation backed by a persistent event log.
@@ -104,8 +107,9 @@ type Session struct {
 	reg                 *config.Registry
 	prompt              string
 	preset              string
-	coordinatorExplicit bool   // StartSession coordinator_model won over any preset binding
-	coordinatorThinking string // start-time session-only coordinator level, recorded in session_started
+	coordinatorExplicit bool     // StartSession coordinator_model won over any preset binding
+	coordinatorThinking string   // start-time session-only coordinator level, recorded in session_started
+	subagentModels      []string // nil allows all enabled models; non-nil is a session-local allowlist
 	// startupNotices are emitted as visible, non-fatal events after the session
 	// lifecycle marker (a stale preset binding falling back safely, untracked
 	// files too large to snapshot).
@@ -1479,6 +1483,22 @@ func (s *Session) SetThinking(role, level string) error {
 	return nil
 }
 
+// replaySubagentModels restores the optional generic-spawn allowlist from the
+// initial session marker. Missing field means legacy/all enabled; [] means none.
+func replaySubagentModels(events []event.Event) []string {
+	for _, ev := range events {
+		if ev.Type != event.SessionStarted {
+			continue
+		}
+		value, ok := ev.Data["subagent_models"]
+		if !ok || value == nil {
+			return nil
+		}
+		return append([]string{}, strList(value)...)
+	}
+	return nil
+}
+
 // replayThinkLevels rebuilds a session's thinking overrides from its log: the
 // start-time coordinator level, then each thinking_level_changed in order.
 func replayThinkLevels(events []event.Event) map[string]string {
@@ -1582,13 +1602,17 @@ func (t failedTurner) TurnCtx(context.Context, gollama.RequestOptions) (*gollama
 	return nil, t.err
 }
 
-// agentModels snapshots enabled configuration for spawn_agent's tool schema.
+func (s *Session) allowsSubagentModel(name string) bool {
+	return s.subagentModels == nil || slices.Contains(s.subagentModels, name)
+}
+
+// agentModels snapshots eligible models for spawn_agent's tool schema.
 // The resolved agent spec is still checked against the live registry at spawn.
 func (s *Session) agentModels() []orchestrator.ModelCatalogEntry {
 	infos := s.reg.Models()
 	entries := make([]orchestrator.ModelCatalogEntry, 0, len(infos))
 	for _, info := range infos {
-		if info.Disabled {
+		if info.Disabled || !s.allowsSubagentModel(info.Name) {
 			continue
 		}
 		th := s.thinkingFor(info.Name)
@@ -1601,6 +1625,15 @@ func (s *Session) agentModels() []orchestrator.ModelCatalogEntry {
 		})
 	}
 	return entries
+}
+
+// resolveSubagentSpec enforces the session-local generic-spawn allowlist before
+// resolving a live model spec. Role-based implementer/reviewer paths do not use it.
+func (s *Session) resolveSubagentSpec(name string) (orchestrator.AgentSpec, error) {
+	if !s.allowsSubagentModel(name) {
+		return orchestrator.AgentSpec{}, fmt.Errorf("model %q is not allowed for generic subagents in this session", name)
+	}
+	return s.agentSpec(name)
 }
 
 // agentSpec resolves metadata without constructing a backend or resolving credentials.
@@ -1806,6 +1839,9 @@ func (s *Session) run() {
 			// the model it was started with, including a per-session override
 			// picked at StartSession.
 			"coordinator": coord,
+		}
+		if s.subagentModels != nil {
+			started["subagent_models"] = s.subagentModels
 		}
 		if s.coordinatorThinking != "" {
 			started["coordinator_thinking"] = s.coordinatorThinking
@@ -2597,10 +2633,23 @@ func (m *Manager) Start(cfg Config) (*Session, error) {
 	return s, err
 }
 
+// validateSubagentModels rejects explicit generic-spawn allowlist entries that
+// cannot be selected by a newly started session.
+func (m *Manager) validateSubagentModels(models []string) error {
+	for _, name := range models {
+		if !m.reg.Has(name) {
+			return fmt.Errorf("%w %q", ErrUnknownModel, name)
+		}
+		if !m.reg.Enabled(name) {
+			return fmt.Errorf("%w %q", ErrDisabledModel, name)
+		}
+	}
+	return nil
+}
+
 // initialCoordinator resolves the session-only coordinator selection. An
-// explicit API override wins; otherwise a preset binding is applied. Unlike an
-// explicit unknown override, a stale preset binding is non-fatal: it falls back
-// to the configured coordinator and returns a warning for the session log/UI.
+// explicit API override wins; otherwise a preset binding is applied. A stale
+// preset binding safely falls back to the configured coordinator with a warning.
 func (m *Manager) initialCoordinator(preset, explicit string) (coordinator, warning string, err error) {
 	if explicit != "" {
 		if !m.reg.Has(explicit) {
@@ -2655,6 +2704,9 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
+	if err := m.validateSubagentModels(cfg.SubagentModels); err != nil {
+		return nil, err
+	}
 	// Auto-register a not-yet-known workspace so it becomes a first-class,
 	// listable project — unless this is a workstream worktree.
 	if autoRegisterProject {
@@ -2704,6 +2756,8 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		log.Close()
 		return nil, err
 	}
+	s.subagentModels = slices.Clone(cfg.SubagentModels)
+	s.deps.DisableGenericAgents = s.subagentModels != nil && len(s.subagentModels) == 0
 	s.origin = cfg.Origin
 	if s.origin == "" {
 		s.origin = OriginUser
@@ -2789,6 +2843,9 @@ type SpawnWorkstreamConfig struct {
 	CoordinatorThinking string
 	Preset              string
 	Images              []engine.Image
+	// SubagentModels carries the session's generic-spawn allowlist; nil allows
+	// all enabled models, while a non-nil empty slice allows none.
+	SubagentModels []string
 }
 
 // SpawnWorkstream creates a linked git worktree + branch (ycc/ws/<id>) off the
@@ -2814,6 +2871,9 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		return workstream.Workstream{}, nil, err
 	}
 	if err := validStartThinking(cfg.CoordinatorThinking); err != nil {
+		return workstream.Workstream{}, nil, err
+	}
+	if err := m.validateSubagentModels(cfg.SubagentModels); err != nil {
 		return workstream.Workstream{}, nil, err
 	}
 	mode := cfg.Mode
@@ -2949,6 +3009,7 @@ func (m *Manager) SpawnWorkstream(cfg SpawnWorkstreamConfig) (workstream.Workstr
 		CoordinatorThinking: cfg.CoordinatorThinking,
 		Preset:              cfg.Preset,
 		Images:              cfg.Images,
+		SubagentModels:      cfg.SubagentModels,
 	}, false)
 	if err != nil {
 		cleanup()
@@ -3276,7 +3337,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	// Generic chat subagents resolve at spawn time so live per-model overrides
 	// and refreshed credentials are honored. Tool metadata is a bounded snapshot
 	// of enabled models at loop construction; spawn validation remains live.
-	deps.ResolveAgent = s.agentSpec
+	deps.ResolveAgent = s.resolveSubagentSpec
 	deps.AgentModels = s.agentModels
 	deps.InputWake = s.inputWake
 
@@ -3518,6 +3579,8 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		log.Close()
 		return nil, err
 	}
+	s.subagentModels = replaySubagentModels(events)
+	s.deps.DisableGenericAgents = s.subagentModels != nil && len(s.subagentModels) == 0
 	s.participation.consume(events)
 	s.participationCursor = len(events)
 	s.origin = s.participation.origin

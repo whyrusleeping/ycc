@@ -294,7 +294,7 @@ struct NewSessionView: View {
 
     private var modeChip: some View {
         Menu {
-            modePicker
+            advancedOptions
         } label: {
             chipLabel(selectedModeTitle, systemImage: "circle.grid.2x2")
         }
@@ -304,7 +304,7 @@ struct NewSessionView: View {
     /// chip at the end of the row (the web's collapsed "Advanced: mode").
     private var advancedModeChip: some View {
         Menu {
-            modePicker
+            advancedOptions
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.caption.weight(.medium))
@@ -313,8 +313,43 @@ struct NewSessionView: View {
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .foregroundStyle(.primary)
         }
-        .accessibilityLabel("Advanced: mode")
+        .accessibilityLabel("Advanced: mode and subagent models")
         .accessibilityValue(selectedModeTitle)
+    }
+
+    @ViewBuilder
+    private var advancedOptions: some View {
+        modePicker
+        Divider()
+        Menu("Subagent models") {
+            Section("Allow for spawn_agent") {
+                Button {
+                    model.selectedSubagentModels = nil
+                } label: {
+                    if model.selectedSubagentModels == nil {
+                        Label("All enabled (default)", systemImage: "checkmark")
+                    } else {
+                        Text("All enabled (default)")
+                    }
+                }
+                Button {
+                    model.selectedSubagentModels = []
+                } label: {
+                    if model.selectedSubagentModels?.isEmpty == true {
+                        Label("None", systemImage: "checkmark")
+                    } else {
+                        Text("None")
+                    }
+                }
+            }
+            ForEach(model.models, id: \.name) { info in
+                Toggle(info.name, isOn: Binding(
+                    get: { model.selectedSubagentModels?.contains(info.name) ?? true },
+                    set: { model.setSubagentModel(info.name, enabled: $0) }))
+            }
+        }
+        .menuActionDismissBehavior(.disabled)
+        .disabled(model.isStarting)
     }
 
     private var modePicker: some View {

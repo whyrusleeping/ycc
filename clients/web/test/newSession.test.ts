@@ -1,12 +1,14 @@
 // New-session logic: project prompt ordering, defaults, presets, start gate,
 // and the StartSession request.
-import { create } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
   ListModelsResponseSchema,
   ModelInfoSchema,
   PresetSchema,
   ProjectInfoSchema,
+  SpawnWorkstreamRequestSchema,
+  StartSessionRequestSchema,
 } from "../src/gen/ycc/v1/ycc_pb";
 import {
   applyPreset,
@@ -125,6 +127,17 @@ describe("new session", () => {
       preset: "spec-doctor",
       images: [{ data, mediaType: "image/jpeg", filename: "a.jpg" }],
     });
+  });
+
+  it.each([
+    ["StartSession", StartSessionRequestSchema, buildStartRequest],
+    ["SpawnWorkstream", SpawnWorkstreamRequestSchema, buildWorkstreamRequest],
+  ] as const)("%s preserves absent, empty, and explicit subagent allowlists on the wire", (_name, schema, buildRequest) => {
+    const roundTrip = (d: NewSessionDraft) => fromBinary(schema, toBinary(schema, create(schema, buildRequest(d))));
+    expect(buildRequest(draft())).not.toHaveProperty("subagentModels");
+    expect(roundTrip(draft()).subagentModels).toBeUndefined();
+    expect(roundTrip(draft({ subagentModels: [] })).subagentModels?.names).toEqual([]);
+    expect(roundTrip(draft({ subagentModels: ["fast", "big"] })).subagentModels?.names).toEqual(["fast", "big"]);
   });
 
   it("starts a chat in plan only, never another mode or a workstream", () => {

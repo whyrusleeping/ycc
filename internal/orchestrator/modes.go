@@ -127,7 +127,8 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		ws.WriteGate = d.planOnlyWriteGate
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
-			askUser(d), remember(d), forget(d), spawnAgent(d), sendToAgent(d), chatCommitTool(d, policy), releaseClaim(d))
+			askUser(d), remember(d), forget(d), chatCommitTool(d, policy), releaseClaim(d))
+		reg.Add(genericAgentTools(d, false)...)
 		base := chatModeSystem + "\n\n" + chatFinishGuidance(policy)
 		if d.ListWatches != nil {
 			reg.Add(listWatches(d))
@@ -146,7 +147,8 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		// One scheduled watch run. Questions are real (the run parks while the
 		// schedule continues); the run ends with watch_report.
 		reg.Add(tools.Editing(ws)...)
-		reg.Add(listBacklog(d), getTask(d), askUser(d), spawnAgent(d), sendToAgent(d), watchReport(d))
+		reg.Add(listBacklog(d), getTask(d), askUser(d), watchReport(d))
+		reg.Add(genericAgentTools(d, false)...)
 		return reg, sys(watchModeSystem, unattended, d.Workspace)
 	case "pm":
 		// pm maintains the project's design docs (plain files) so it keeps

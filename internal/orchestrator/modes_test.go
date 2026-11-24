@@ -96,6 +96,21 @@ func TestBuildModeToolsets(t *testing.T) {
 	}
 }
 
+func TestExplicitNoGenericModelsOmitsSpawnTools(t *testing.T) {
+	for _, mode := range []string{"chat", "watch", "work"} {
+		t.Run(mode, func(t *testing.T) {
+			d := depsFor(t)
+			d.DisableGenericAgents = true
+			reg, _ := BuildMode(mode, d, false)
+			for _, name := range []string{"spawn_agent", "send_to_agent"} {
+				if hasTool(reg, name) {
+					t.Errorf("%s mode mounted %s despite explicit empty policy", mode, name)
+				}
+			}
+		})
+	}
+}
+
 func TestScheduleWatchNotOffered(t *testing.T) {
 	for _, mode := range []string{"chat", "work", "watch", "pm", "integrate"} {
 		for _, impl := range []string{"direct", "delegate"} {

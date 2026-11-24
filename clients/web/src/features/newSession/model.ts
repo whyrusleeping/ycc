@@ -108,6 +108,8 @@ export interface NewSessionDraft {
   model: string;
   /** Coordinator thinking level for this session only; "" = the model's saved level. */
   thinking: string;
+  /** Models allowed for generic subagents in this session only; absent = live default, [] = none. */
+  subagentModels?: readonly string[];
   prompt: string;
   /** Name of the applied preset while its mode is still selected. */
   preset: string;
@@ -192,6 +194,8 @@ function sessionChoices(draft: NewSessionDraft) {
     coordinatorThinking: draft.thinking,
     preset: draft.preset,
     images: toImageAttachments(draft.pictures),
+    // Keep the wrapper present for an explicit empty allowlist.
+    ...(draft.subagentModels === undefined ? {} : { subagentModels: { names: [...draft.subagentModels] } }),
   };
 }
 

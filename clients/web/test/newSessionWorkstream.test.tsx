@@ -18,6 +18,13 @@ import {
   WorkstreamInfoSchema,
 } from "../src/gen/ycc/v1/ycc_pb";
 
+const enabledModels = [create(ModelInfoSchema, { name: "big" }), create(ModelInfoSchema, { name: "fast", thinkingLevels: ["low", "medium", "high"] })];
+let catalog: ReturnType<typeof modelCatalog>;
+const modelCatalog = () => create(ListModelsResponseSchema, {
+  coordinator: "big",
+  models: [...enabledModels, create(ModelInfoSchema, { name: "unavailable", disabled: true })],
+});
+
 const { client, track } = vi.hoisted(() => ({
   client: { startSession: vi.fn(), spawnWorkstream: vi.fn() },
   track: { submit: vi.fn(), action: vi.fn(), error: vi.fn() },
@@ -34,16 +41,12 @@ vi.mock("../src/api/queries", async (importOriginal) => {
   const modes = create(ListModesResponseSchema, {
     modes: [create(ModeSchema, { name: "chat", title: "Chat" }), create(ModeSchema, { name: "work", title: "Work" })],
   });
-  const models = create(ListModelsResponseSchema, {
-    coordinator: "big",
-    models: [create(ModelInfoSchema, { name: "big" }), create(ModelInfoSchema, { name: "fast", thinkingLevels: ["low", "medium", "high"] })],
-  });
   const tasks = [create(BacklogTaskSummarySchema, { id: "0042", title: "Fix it", status: "todo", priority: 2, ready: true })];
   return {
     ...actual,
     useProjects: () => ({ data: projects }),
     useModes: () => ({ data: modes, isPending: false }),
-    useModels: () => ({ data: models }),
+    useModels: () => ({ data: catalog }),
     useBacklog: (_project: string, enabled: boolean) => ({ data: enabled ? tasks : undefined, isPending: !enabled }),
   };
 });
@@ -66,6 +69,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ workstream: create(WorkstreamInfoSchema, { id: "ws_1", project: "alpha", sessionId: "s_ws" }) });
   track.submit.mockReset();
+  catalog = modelCatalog();
   localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
@@ -108,11 +112,24 @@ async function choose(select: HTMLSelectElement, value: string) {
 }
 
 const toggle = () => container.querySelector<HTMLInputElement>(".chip-toggle input")!;
-const submit = () => act(() => container.querySelector<HTMLButtonElement>("button[type=submit]")!.click());
+const submit = () => act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")!.click());
+const advanced = () => container.querySelector<HTMLDetailsElement>("details.new-session-advanced")!;
+const summary = () => advanced().querySelector("summary")!;
+const policy = () => advanced().querySelector<HTMLSelectElement>('select[aria-label="Subagent model policy"]')!;
+const subagentOptions = () => Array.from(advanced().querySelectorAll<HTMLLabelElement>('[aria-label="Allowed subagent models"] label'));
+const pickSubagent = (name: string) => act(() => subagentOptions().find((label) => label.textContent === name)!.click());
 
 it("spawns a workstream with the same session choices and opens its session", async () => {
   await render();
-  await act(() => container.querySelector<HTMLButtonElement>(".mode-card")!.click()); // Chat
+  expect(advanced().open).toBe(false);
+  await act(() => summary().click());
+  expect(advanced().open).toBe(true);
+  await choose(policy(), "custom");
+  expect(subagentOptions().map((label) => label.textContent)).toEqual(["big", "fast"]);
+  await pickSubagent("big");
+  await act(() => summary().click());
+  expect(advanced().open).toBe(false);
+  expect(summary().textContent).toContain("Subagents: 1 selected");
   const reasoning = () => container.querySelector<HTMLSelectElement>('select[aria-label="Coordinator reasoning for this session"]')!;
   await choose(reasoning(), "max");
   await choose(container.querySelector<HTMLSelectElement>('select[aria-label="Coordinator model for this session"]')!, "fast");
@@ -134,6 +151,7 @@ it("spawns a workstream with the same session choices and opens its session", as
     prompt: "look at this",
     coordinatorModel: "fast",
     coordinatorThinking: "high",
+    subagentModels: { names: ["big"] },
     preset: "",
     images: [],
     taskId: "0042",
@@ -145,11 +163,54 @@ it("spawns a workstream with the same session choices and opens its session", as
 
 it("starts a plain session while the toggle is off", async () => {
   await render();
+  await act(() => summary().click());
+  expect(policy().value).toBe("default");
+  await choose(policy(), "custom");
+  await pickSubagent("fast");
+  await choose(policy(), "default");
   await type(container.querySelector("textarea")!, "hello");
   await submit();
   expect(client.spawnWorkstream).not.toHaveBeenCalled();
   expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ project: "alpha", prompt: "hello", coordinatorThinking: "" }));
+  expect(client.startSession.mock.calls[0][0]).not.toHaveProperty("subagentModels");
   expect(container.querySelector(".workstream-options")).toBeNull();
   expect(location).toBe("/p/alpha/s/s_plain");
   expect(track.submit).toHaveBeenCalledWith("new_session", expect.objectContaining({ workstream: false }));
+});
+
+it("starts a plain session with no subagents without changing preferences or the next draft", async () => {
+  await render();
+  await act(() => summary().click());
+  await choose(policy(), "custom");
+  await pickSubagent("fast");
+  await pickSubagent("fast");
+  expect(summary().textContent).toContain("Subagents: none");
+  expect(localStorage.length).toBe(0);
+  await type(container.querySelector("textarea")!, "no subagents");
+  await submit();
+  expect(client.startSession).toHaveBeenNthCalledWith(1, expect.objectContaining({ subagentModels: { names: [] } }));
+
+  // The real route unmounts the form when it opens the started session.
+  await act(() => root.unmount());
+  root = createRoot(container);
+  await render();
+  expect(policy().value).toBe("default");
+  await type(container.querySelector("textarea")!, "next draft");
+  await submit();
+  expect(client.startSession).toHaveBeenCalledTimes(2);
+  expect(client.startSession.mock.calls[1][0]).not.toHaveProperty("subagentModels");
+});
+
+it("removes unavailable models from a kept selection without reverting to default", async () => {
+  await render();
+  await act(() => summary().click());
+  await choose(policy(), "custom");
+  await pickSubagent("fast");
+  catalog = create(ListModelsResponseSchema, { coordinator: "big", models: [enabledModels[0]] });
+  await render();
+  expect(policy().value).toBe("custom");
+  expect(summary().textContent).toContain("Subagents: none");
+  await type(container.querySelector("textarea")!, "no more fast");
+  await submit();
+  expect(client.startSession).toHaveBeenCalledWith(expect.objectContaining({ subagentModels: { names: [] } }));
 });

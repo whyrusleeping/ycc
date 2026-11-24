@@ -10,21 +10,13 @@ extension YccClient {
         project: String, mode: String, prompt: String, coordinatorModel: String,
         coordinatorThinking: String, preset: String, taskID: String, images: [MessageImage]
     ) async throws -> Ycc_V1_WorkstreamInfo {
-        var request = Ycc_V1_SpawnWorkstreamRequest()
-        request.project = project
-        request.mode = mode
-        request.prompt = prompt
-        request.coordinatorModel = coordinatorModel
-        request.coordinatorThinking = coordinatorThinking
-        request.preset = preset
-        request.taskID = taskID
-        request.images = images.map { image in
-            var attachment = Ycc_V1_ImageAttachment()
-            attachment.data = image.data
-            attachment.mediaType = image.mediaType
-            attachment.filename = image.filename
-            return attachment
-        }
+        let opening = Ycc_V1_StartSessionRequest(
+            project: project, mode: mode, prompt: prompt, coordinatorModel: coordinatorModel,
+            coordinatorThinking: coordinatorThinking, images: images, subagentModels: nil)
+        return try await spawnWorkstream(.init(opening: opening, preset: preset, taskID: taskID))
+    }
+
+    public func spawnWorkstream(_ request: Ycc_V1_SpawnWorkstreamRequest) async throws -> Ycc_V1_WorkstreamInfo {
         // Creating the worktree and branch takes longer than an ordinary call.
         let response = await generatedBulk.spawnWorkstream(request: request)
         switch response.result {

@@ -188,6 +188,9 @@ type Deps struct {
 	ResolveAgent func(name string) (AgentSpec, error)
 	// AgentModels describes enabled logical models for the generic spawn tool.
 	AgentModels func() []ModelCatalogEntry
+	// DisableGenericAgents omits spawn_agent/send_to_agent when the session's
+	// explicit generic-agent model allowlist is empty.
+	DisableGenericAgents bool
 	// ReviewTiers lists the review tiers available in this project so the
 	// spawn_reviewers tool description can name them (custom tiers included).
 	// Nil-safe: when unset the description falls back to the built-in blurb.
@@ -593,8 +596,8 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	reg := tools.New()
 	reg.Add(tools.Editing(ws)...)
 	// propose_plan is a docs.Store task write like update_task: unleased.
-	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d),
-		readOnlySpawnAgent(d), readOnlySendToAgent(d))
+	reg.Add(listBacklog(d), getTask(d), proposePlan(d), spawnReviewers(d), reReview(d))
+	reg.Add(genericAgentTools(d, true)...)
 	if !direct {
 		reg.Add(spawnImplementer(d), sendToImplementer(d))
 	}

@@ -98,9 +98,20 @@ public nonisolated struct Ycc_V1_StartSessionRequest: Sendable {
   /// means the model's saved level. An unknown level => InvalidArgument.
   public var coordinatorThinking: String = String()
 
+  public var subagentModels: Ycc_V1_SubagentModelAllowlist {
+    get {_subagentModels ?? Ycc_V1_SubagentModelAllowlist()}
+    set {_subagentModels = newValue}
+  }
+  /// Returns true if `subagentModels` has been explicitly set.
+  public var hasSubagentModels: Bool {self._subagentModels != nil}
+  /// Clears the value of `subagentModels`. Subsequent reads from it will return its default value.
+  public mutating func clearSubagentModels() {self._subagentModels = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _subagentModels: Ycc_V1_SubagentModelAllowlist? = nil
 }
 
 public nonisolated struct Ycc_V1_StartSessionResponse: Sendable {
@@ -5338,9 +5349,20 @@ public nonisolated struct Ycc_V1_SpawnWorkstreamRequest: Sendable {
   /// Session-only coordinator thinking level, as StartSessionRequest.coordinator_thinking.
   public var coordinatorThinking: String = String()
 
+  public var subagentModels: Ycc_V1_SubagentModelAllowlist {
+    get {_subagentModels ?? Ycc_V1_SubagentModelAllowlist()}
+    set {_subagentModels = newValue}
+  }
+  /// Returns true if `subagentModels` has been explicitly set.
+  public var hasSubagentModels: Bool {self._subagentModels != nil}
+  /// Clears the value of `subagentModels`. Subsequent reads from it will return its default value.
+  public mutating func clearSubagentModels() {self._subagentModels = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _subagentModels: Ycc_V1_SubagentModelAllowlist? = nil
 }
 
 public nonisolated struct Ycc_V1_SpawnWorkstreamResponse: Sendable {
@@ -6192,6 +6214,20 @@ public nonisolated struct Ycc_V1_RunWatchNowResponse: Sendable {
   public init() {}
 }
 
+/// Session-only logical model choices for spawn_agent. Absent allows all enabled
+/// models; present with no names allows none.
+public nonisolated struct Ycc_V1_SubagentModelAllowlist: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var names: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "ycc.v1"
@@ -6253,7 +6289,7 @@ nonisolated extension Ycc_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._Messag
 
 nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartSessionRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{1}preset\0\u{3}plan_only\0\u{3}coordinator_thinking\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}workspace\0\u{1}mode\0\u{2}\u{2}prompt\0\u{1}project\0\u{3}coordinator_model\0\u{1}images\0\u{1}preset\0\u{3}plan_only\0\u{3}coordinator_thinking\0\u{3}subagent_models\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6270,12 +6306,17 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
       case 8: try { try decoder.decodeSingularStringField(value: &self.preset) }()
       case 9: try { try decoder.decodeSingularBoolField(value: &self.planOnly) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.coordinatorThinking) }()
+      case 11: try { try decoder.decodeSingularMessageField(value: &self._subagentModels) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.workspace.isEmpty {
       try visitor.visitSingularStringField(value: self.workspace, fieldNumber: 1)
     }
@@ -6303,6 +6344,9 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if !self.coordinatorThinking.isEmpty {
       try visitor.visitSingularStringField(value: self.coordinatorThinking, fieldNumber: 10)
     }
+    try { if let v = self._subagentModels {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6316,6 +6360,7 @@ nonisolated extension Ycc_V1_StartSessionRequest: SwiftProtobuf.Message, SwiftPr
     if lhs.preset != rhs.preset {return false}
     if lhs.planOnly != rhs.planOnly {return false}
     if lhs.coordinatorThinking != rhs.coordinatorThinking {return false}
+    if lhs._subagentModels != rhs._subagentModels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -16096,7 +16141,7 @@ nonisolated extension Ycc_V1_WorkstreamInfo: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpawnWorkstreamRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{2}\u{2}mode\0\u{3}coordinator_model\0\u{1}preset\0\u{1}images\0\u{3}coordinator_thinking\0\u{c}\u{5}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{3}base_ref\0\u{3}task_id\0\u{1}prompt\0\u{2}\u{2}mode\0\u{3}coordinator_model\0\u{1}preset\0\u{1}images\0\u{3}coordinator_thinking\0\u{3}subagent_models\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -16113,12 +16158,17 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
       case 8: try { try decoder.decodeSingularStringField(value: &self.preset) }()
       case 9: try { try decoder.decodeRepeatedMessageField(value: &self.images) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.coordinatorThinking) }()
+      case 11: try { try decoder.decodeSingularMessageField(value: &self._subagentModels) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.project.isEmpty {
       try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
     }
@@ -16146,6 +16196,9 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if !self.coordinatorThinking.isEmpty {
       try visitor.visitSingularStringField(value: self.coordinatorThinking, fieldNumber: 10)
     }
+    try { if let v = self._subagentModels {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -16159,6 +16212,7 @@ nonisolated extension Ycc_V1_SpawnWorkstreamRequest: SwiftProtobuf.Message, Swif
     if lhs.preset != rhs.preset {return false}
     if lhs.images != rhs.images {return false}
     if lhs.coordinatorThinking != rhs.coordinatorThinking {return false}
+    if lhs._subagentModels != rhs._subagentModels {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -17824,6 +17878,36 @@ nonisolated extension Ycc_V1_RunWatchNowResponse: SwiftProtobuf.Message, SwiftPr
   }
 
   public static func ==(lhs: Ycc_V1_RunWatchNowResponse, rhs: Ycc_V1_RunWatchNowResponse) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SubagentModelAllowlist: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SubagentModelAllowlist"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}names\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.names) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.names.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.names, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SubagentModelAllowlist, rhs: Ycc_V1_SubagentModelAllowlist) -> Bool {
+    if lhs.names != rhs.names {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

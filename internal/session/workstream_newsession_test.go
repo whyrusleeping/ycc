@@ -22,13 +22,17 @@ func TestSpawnWorkstreamCarriesNewSessionChoices(t *testing.T) {
 		CoordinatorModel: "b",
 		Preset:           "spec-doctor",
 		Images:           []engine.Image{picture},
+		SubagentModels:   []string{"b"},
 	})
 	if err != nil {
 		t.Fatalf("SpawnWorkstream: %v", err)
 	}
 	defer m.Stop(s.ID)
-	if s.Mode != "chat" || s.coordinator != "b" || !s.coordinatorExplicit || s.preset != "spec-doctor" {
+	if s.Mode != "chat" || s.coordinator != "b" || !s.coordinatorExplicit || s.preset != "spec-doctor" || len(s.subagentModels) != 1 || s.subagentModels[0] != "b" {
 		t.Fatalf("session mode=%q coordinator=%q explicit=%v preset=%q", s.Mode, s.coordinator, s.coordinatorExplicit, s.preset)
+	}
+	if got := s.agentModels(); len(got) != 1 || got[0].Name != "b" {
+		t.Fatalf("workstream generic spawn catalog = %+v, want only b", got)
 	}
 	if len(s.promptImages) != 1 || s.promptImages[0].AttachmentID == "" {
 		t.Fatalf("opening pictures = %+v, want one retained picture", s.promptImages)
