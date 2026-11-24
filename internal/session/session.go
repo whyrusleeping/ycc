@@ -3350,6 +3350,11 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		if s.board == nil && s.origin == OriginWorkLoop {
 			deps.SetIntent = s.declareIntent
 		}
+		// A loop session blocked in a long wait on its shell jobs holds a
+		// working slot; a capped wait reminds it to end its turn (spec §9.1).
+		if s.origin == OriginWorkLoop {
+			deps.ShellWaitCap = loopShellWaitCap
+		}
 		reg, sys := orchestrator.BuildMode(mode, deps, unattended)
 		s.mu.Lock()
 		coord := s.coordinator

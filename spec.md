@@ -1052,7 +1052,9 @@ A loop session that has ended its turn and for 30 seconds can be resumed only by
 background shell jobs, with no subagent run outstanding, counts as waiting rather than working.
 The loop then starts its next session if ready, unheld work exists. Loop sessions are told to
 end their turn with a progress report, rather than block in a long `wait`, when all that remains
-is a long-running shell job. A waiting session stays live with its task hold, file claims and
+is a long-running shell job. A loop session's `wait` on its shell jobs alone returns after at
+most 10 minutes, and its "still running" result repeats that advice. A waiting session stays
+live with its task hold, file claims and
 jobs. Waiting sessions do not count against the working slots, but a waiting session's job
 continuation must take a free slot, so a completion that arrives while other loop sessions fill
 the slots stays queued and wakes the session once one frees; a woken waiting session counts as

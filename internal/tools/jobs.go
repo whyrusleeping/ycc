@@ -215,6 +215,10 @@ func waitTool(ws *Workspace) *gollama.Tool {
 			if timeout <= 0 {
 				timeout = defaultWaitTimeout
 			}
+			shellOnly := ws.ShellWaitCap > 0 && onlyShellJobs(ws.Jobs, ids)
+			if shellOnly && timeout > ws.ShellWaitCap {
+				timeout = ws.ShellWaitCap
+			}
 			waitCtx, wake := ctx, (<-chan struct{})(nil)
 			if ws.InputWake != nil {
 				wake = ws.InputWake()
@@ -267,6 +271,11 @@ func waitTool(ws *Workspace) *gollama.Tool {
 						"Answer the user in visible text (reasoning is not shown), then wait again or end your turn: "+
 						"their completion is still notified automatically and wakes this session",
 						strings.Join(running, ", "))
+				} else if shellOnly {
+					fmt.Fprintf(&b, "still running after %s: %s. This work-loop session holds a working slot while it "+
+						"waits. If nothing else remains, report progress in visible text and end your turn: the job's "+
+						"completion resumes you, and meanwhile the loop counts you as waiting and starts other work",
+						timeout, strings.Join(running, ", "))
 				} else {
 					fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
 						timeout, strings.Join(running, ", "))
@@ -275,6 +284,17 @@ func waitTool(ws *Workspace) *gollama.Tool {
 			return okResult(b.String()), nil
 		},
 	}
+}
+
+// onlyShellJobs reports whether every listed job is a background shell job
+// (not a subagent run), the case in which an idle loop session counts as waiting.
+func onlyShellJobs(reg *jobs.Registry, ids []string) bool {
+	for _, id := range ids {
+		if job, ok := reg.Get(id); !ok || job.Kind() == "agent" {
+			return false
+		}
+	}
+	return len(ids) > 0
 }
 
 func killJobTool(ws *Workspace) *gollama.Tool {

@@ -75,6 +75,35 @@ func TestWaitDefaultsToAny(t *testing.T) {
 	}
 }
 
+// A work-loop coordinator's wait on shell jobs alone is capped and tells it to
+// end its turn; a wait that includes a subagent run keeps the requested timeout.
+func TestShellWaitCapBoundsShellOnlyWait(t *testing.T) {
+	rec := &captureRec{}
+	jr := jobs.NewRegistry()
+	t.Cleanup(jr.KillAll)
+	ws := &Workspace{Root: t.TempDir(), Jobs: jr, Emitter: event.NewEmitter(rec, "coordinator"),
+		ShellWaitCap: 300 * time.Millisecond}
+	reg := New()
+	reg.Add(Editing(ws)...)
+	dispatch(t, reg, "Bash", `{"command":"sleep 30","run_in_background":true}`)
+
+	start := time.Now()
+	res := dispatch(t, reg, "wait", `{"job_ids":["job_1"],"timeout_s":20}`)
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("shell-only wait ignored the cap (%s)", time.Since(start))
+	}
+	if !strings.Contains(res.Content, "still running after 300ms: job_1") || !strings.Contains(res.Content, "end your turn") {
+		t.Fatalf("capped wait = %q, want the end-your-turn reminder", res.Content)
+	}
+
+	agent := jr.Start("agent", "reviewers", "coordinator")
+	start = time.Now()
+	res = dispatch(t, reg, "wait", `{"job_ids":["job_1","`+agent.ID()+`"],"timeout_s":1}`)
+	if time.Since(start) < time.Second || strings.Contains(res.Content, "end your turn") {
+		t.Fatalf("mixed wait = %q after %s, want the full 1s timeout without the reminder", res.Content, time.Since(start))
+	}
+}
+
 // A backgrounded command returns a job_id immediately (well under its runtime),
 // wait returns exit 0 + output, and job_started/job_finished are emitted.
 func TestBackgroundBashWaitReturnsExitAndOutput(t *testing.T) {

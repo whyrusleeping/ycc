@@ -309,6 +309,11 @@ type Workspace struct {
 	// A blocking wait returns early on it so the message is not held behind the
 	// jobs. Only the session coordinator, which receives user input, sets it.
 	InputWake func() <-chan struct{}
+	// ShellWaitCap, when positive, bounds a wait whose jobs are all background
+	// shell jobs, and its "still running" result tells the agent to end its
+	// turn instead. Work-loop coordinators set it: a session blocked in wait
+	// holds a working slot, while one that ends its turn counts as waiting.
+	ShellWaitCap time.Duration
 	// Ownership and MutationToken scope file writes: each write holds the
 	// worktree's operation section only while it runs and is claimed for the
 	// token's attribution scope (see workspacelease).

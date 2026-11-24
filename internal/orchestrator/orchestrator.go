@@ -213,6 +213,9 @@ type Deps struct {
 	// InputWake is the coordinator workspace's tools.Workspace.InputWake: it lets
 	// a user message cut the coordinator's blocking wait short. Nil disables it.
 	InputWake func() <-chan struct{}
+	// ShellWaitCap is the coordinator workspace's tools.Workspace.ShellWaitCap
+	// (work-loop sessions only). Zero leaves wait uncapped.
+	ShellWaitCap time.Duration
 
 	// Ownership is shared by every session in the daemon. CoordinatorToken is
 	// scoped to this session's direct mutations; delegated mutators use child tokens.

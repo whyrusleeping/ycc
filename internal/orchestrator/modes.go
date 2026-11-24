@@ -92,6 +92,7 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		Jobs:          d.Jobs,
 		Emitter:       d.Emitter,
 		InputWake:     d.InputWake,
+		ShellWaitCap:  d.ShellWaitCap,
 		Ownership:     d.Ownership,
 		MutationToken: d.CoordinatorToken,
 		DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),

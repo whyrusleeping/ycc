@@ -1925,6 +1925,11 @@ func boundLoopContext(s string, limit int) string {
 
 // --- session runner (the injectable seam's default) ---
 
+// loopShellWaitCap bounds a loop session's wait on its own shell jobs only, so a
+// session that ignores workLoopPrompt's "do not block in a long wait" holds its
+// working slot for at most this long per call and is reminded to end its turn.
+const loopShellWaitCap = 10 * time.Minute
+
 // workLoopPrompt opens every loop session. The session chooses its own task;
 // the loop does not assign one.
 const workLoopPrompt = `Work on the backlog as one session of an unattended work loop.
