@@ -296,7 +296,12 @@ struct BacklogView: View {
                 }
                 .accessibilityLabel("Start work loop")
                 .workLoopStartConfirmation(
-                    isPresented: $showLoopStartConfirmation, warning: pendingLoopStart?.preflightWarning
+                    isPresented: $showLoopStartConfirmation, warning: pendingLoopStart?.preflightWarning,
+                    parallel: pendingLoopStart?.parallel ?? 1,
+                    onChooseParallel: {
+                        guard let target = pendingLoopStart, target === scopedLoopModel else { return }
+                        router.open(.workLoop(project: target.project))
+                    }
                 ) {
                     guard let target = pendingLoopStart, target === scopedLoopModel else { return }
                     Task { await target.start() }

@@ -5153,6 +5153,10 @@ public nonisolated struct Ycc_V1_GetWorkLoopPreflightResponse: Sendable {
   /// distinct uncommitted paths attributed to them
   public var uncommittedPaths: Int32 = 0
 
+  /// The project's [work_loop] parallel (1..16), which StartWorkLoop uses when
+  /// its parallel is 0. Clients show it as the default slot count.
+  public var configuredParallel: Int32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -15694,7 +15698,7 @@ nonisolated extension Ycc_V1_GetWorkLoopPreflightRequest: SwiftProtobuf.Message,
 
 nonisolated extension Ycc_V1_GetWorkLoopPreflightResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetWorkLoopPreflightResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}uncommitted_in_review\0\u{3}uncommitted_paths\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}uncommitted_in_review\0\u{3}uncommitted_paths\0\u{3}configured_parallel\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -15704,6 +15708,7 @@ nonisolated extension Ycc_V1_GetWorkLoopPreflightResponse: SwiftProtobuf.Message
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedMessageField(value: &self.uncommittedInReview) }()
       case 2: try { try decoder.decodeSingularInt32Field(value: &self.uncommittedPaths) }()
+      case 3: try { try decoder.decodeSingularInt32Field(value: &self.configuredParallel) }()
       default: break
       }
     }
@@ -15716,12 +15721,16 @@ nonisolated extension Ycc_V1_GetWorkLoopPreflightResponse: SwiftProtobuf.Message
     if self.uncommittedPaths != 0 {
       try visitor.visitSingularInt32Field(value: self.uncommittedPaths, fieldNumber: 2)
     }
+    if self.configuredParallel != 0 {
+      try visitor.visitSingularInt32Field(value: self.configuredParallel, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_GetWorkLoopPreflightResponse, rhs: Ycc_V1_GetWorkLoopPreflightResponse) -> Bool {
     if lhs.uncommittedInReview != rhs.uncommittedInReview {return false}
     if lhs.uncommittedPaths != rhs.uncommittedPaths {return false}
+    if lhs.configuredParallel != rhs.configuredParallel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

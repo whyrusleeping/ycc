@@ -6,7 +6,8 @@ import YccProto
 /// behind a protocol makes the lifecycle and digest logic testable without a
 /// connection or simulator.
 public protocol WorkLoopSource: Sendable {
-    func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo
+    /// `parallel` 0 uses the project's configured slot count.
+    func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo
     func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse?
@@ -86,6 +87,9 @@ public final class WorkLoopModel {
     /// In-review work a loop started now would route around; nil until loaded
     /// or when the daemon cannot tell.
     public private(set) var preflight: Ycc_V1_GetWorkLoopPreflightResponse?
+    /// The slot count picked for the next start; nil keeps the project's
+    /// configured count (Start sends 0). A successful start clears it.
+    public var parallelChoice: Int?
 
     private let source: WorkLoopSource
     private let cache: AppDataCache?
@@ -144,6 +148,37 @@ public final class WorkLoopModel {
             tasks: preflight.uncommittedInReview, paths: Int(preflight.uncommittedPaths))
     }
 
+    /// The project's `[work_loop] parallel` from the preflight; nil until it
+    /// loads or from a daemon that does not report it.
+    public var configuredParallel: Int? {
+        guard let value = preflight?.configuredParallel, value > 0 else { return nil }
+        return Int(value)
+    }
+
+    /// The slot count the next start runs: the pick, else the configured count.
+    public var parallel: Int {
+        get { parallelChoice ?? configuredParallel ?? 1 }
+        set { parallelChoice = min(max(newValue, 1), Self.maxParallel) }
+    }
+
+    /// The most loop sessions StartWorkLoop accepts at once.
+    public static let maxParallel = 16
+
+    /// StartWorkLoopRequest.parallel: 0 (the project's configured count
+    /// applies) unless a count other than the configured one was picked.
+    public static func parallelToSend(choice: Int?, configured: Int?) -> Int32 {
+        guard let choice, choice != configured else { return 0 }
+        return Int32(min(max(choice, 1), maxParallel))
+    }
+
+    /// The picker's caption: whether the count is the project's default, and
+    /// that running more than one session at once is experimental.
+    public static func parallelCaption(parallel: Int, configured: Int?) -> String {
+        let base = parallel == configured ? "Project default" : (configured.map { "Project default: \($0)" } ?? "")
+        let note = parallel > 1 ? "experimental: sessions share the working tree" : ""
+        return [base, note].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
     /// Load the preflight before confirming a start. A failure (for example an
     /// older daemon without the RPC) leaves no warning rather than blocking Start.
     public func loadPreflight() async {
@@ -181,7 +216,9 @@ public final class WorkLoopModel {
         defer { isBusy = false }
         completionMessage = nil
         do {
-            apply(try await source.startWorkLoop(project: project), fromStart: true)
+            let parallel = Self.parallelToSend(choice: parallelChoice, configured: configuredParallel)
+            apply(try await source.startWorkLoop(project: project, parallel: parallel), fromStart: true)
+            parallelChoice = nil
             actionError = nil
             errorMessage = nil
         } catch {

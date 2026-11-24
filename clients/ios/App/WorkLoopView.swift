@@ -106,14 +106,19 @@ struct WorkLoopView: View {
                 } description: {
                     Text("Start an unattended drain of this project’s ready backlog tasks.")
                 } actions: {
-                    Button("Start loop") { confirmStart(model) }
-                        .buttonStyle(.accent)
-                        .disabled(!model.canStart)
-                        .workLoopStartConfirmation(
-                            isPresented: $showStartConfirmation, warning: model.preflightWarning
-                        ) {
-                            start(model)
-                        }
+                    VStack(spacing: 14) {
+                        parallelStepper(model)
+                            .frame(maxWidth: 320)
+                        Button("Start loop") { confirmStart(model) }
+                            .buttonStyle(.accent)
+                            .disabled(!model.canStart)
+                            .workLoopStartConfirmation(
+                                isPresented: $showStartConfirmation, warning: model.preflightWarning,
+                                parallel: model.parallel
+                            ) {
+                                start(model)
+                            }
+                    }
                 }
             } refresh: {
                 await model.refresh()
@@ -154,7 +159,13 @@ struct WorkLoopView: View {
                 }
             }
 
-            if !model.currentSessionID.isEmpty {
+            if !loop.slots.isEmpty {
+                Section("Live sessions") {
+                    ForEach(Array(loop.slots.enumerated()), id: \.offset) { _, slot in
+                        slotRow(slot)
+                    }
+                }
+            } else if !model.currentSessionID.isEmpty {
                 Section("Current session") {
                     Button {
                         router.open(.session(
@@ -178,16 +189,27 @@ struct WorkLoopView: View {
             if !loop.sessions.isEmpty {
                 Section("Sessions run") {
                     ForEach(loop.sessions, id: \.sessionID) { session in
-                        Button {
-                            router.open(.session(
-                                id: session.sessionID,
-                                project: project,
-                                live: session.sessionID == model.currentSessionID,
-                                title: session.focus.isEmpty ? "Loop session" : session.focus))
-                        } label: {
-                            workLoopSessionRow(session)
+                        VStack(alignment: .leading, spacing: 6) {
+                            // Borderless, so the created-task chips below
+                            // stay separately tappable within the row.
+                            Button {
+                                router.open(.session(
+                                    id: session.sessionID,
+                                    project: project,
+                                    live: Self.isLive(session.sessionID, in: loop),
+                                    title: session.focus.isEmpty ? "Loop session" : session.focus))
+                            } label: {
+                                // A borderless label centres multi-line text.
+                                workLoopSessionRow(session)
+                                    .multilineTextAlignment(.leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(Color.primary)
+                            if !session.createdTasks.isEmpty {
+                                createdTasksRow(session.createdTasks)
+                            }
                         }
-                        .foregroundStyle(.primary)
                     }
                 }
             }
@@ -205,8 +227,37 @@ struct WorkLoopView: View {
                 }
             }
 
+            if !loop.manualLandings.isEmpty {
+                Section {
+                    ForEach(loop.manualLandings, id: \.sha) { landing in
+                        Button {
+                            router.open(.commitDiff(project: project, sha: landing.sha))
+                        } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(String(landing.sha.prefix(7)))
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                Text(landing.subject)
+                                    .font(.subheadline)
+                                    .lineLimit(2)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                } header: {
+                    Label("Landed manually", systemImage: "hand.raised")
+                } footer: {
+                    Text("Commits made during the loop that no loop session recorded.")
+                }
+            }
+
             Section {
                 if model.state.canStart {
+                    parallelStepper(model)
                     Button {
                         confirmStart(model)
                     } label: {
@@ -214,7 +265,8 @@ struct WorkLoopView: View {
                     }
                     .disabled(!model.canStart)
                     .workLoopStartConfirmation(
-                        isPresented: $showStartConfirmation, warning: model.preflightWarning
+                        isPresented: $showStartConfirmation, warning: model.preflightWarning,
+                        parallel: model.parallel
                     ) {
                         start(model)
                     }
@@ -253,6 +305,98 @@ struct WorkLoopView: View {
     private func start(_ model: WorkLoopModel) {
         Analytics.action("loop.start")
         Task { await model.start() }
+    }
+
+    /// Whether a session is one of the loop's live sessions (or, for
+    /// snapshots without slots, its current one).
+    private static func isLive(_ sessionID: String, in loop: Ycc_V1_WorkLoopInfo) -> Bool {
+        loop.slots.contains { $0.sessionID == sessionID }
+            || sessionID == WorkLoopModel.currentSessionID(for: loop)
+    }
+
+    /// How many loop sessions the next start runs at once (1...16); the
+    /// project's configured count unless changed.
+    private func parallelStepper(_ model: WorkLoopModel) -> some View {
+        let caption = WorkLoopModel.parallelCaption(parallel: model.parallel, configured: model.configuredParallel)
+        return Stepper(
+            value: Binding(get: { model.parallel }, set: { model.parallel = $0 }),
+            in: 1...WorkLoopModel.maxParallel
+        ) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.parallel == 1 ? "1 session at a time" : "\(model.parallel) sessions at once")
+                if !caption.isEmpty {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(model.parallel > 1 ? Theme.attention : Color.secondary)
+                }
+            }
+        }
+        .disabled(!model.canStart)
+    }
+
+    /// One live loop session: its transcript, its claimed task, and whether
+    /// it works in a slot or waits on its background jobs.
+    private func slotRow(_ slot: Ycc_V1_WorkLoopSlot) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if slot.sessionID.isEmpty {
+                Text("Starting…")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button {
+                    router.open(.session(
+                        id: slot.sessionID,
+                        project: project,
+                        live: true,
+                        title: slot.taskID.isEmpty ? "Loop session" : slot.taskID))
+                } label: {
+                    Label(String(slot.sessionID.prefix(8)), systemImage: "dot.radiowaves.left.and.right")
+                        .font(.subheadline.monospaced())
+                        .foregroundStyle(Color.primary)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityHint("Opens the session")
+            }
+            if !slot.taskID.isEmpty {
+                taskChip(slot.taskID)
+            }
+            Spacer(minLength: 4)
+            Text(slot.state)
+                .font(.caption)
+                .foregroundStyle(slot.state == "waiting" ? Theme.info : Theme.live)
+        }
+    }
+
+    /// The session's created tasks; the chips scroll sideways when they
+    /// outgrow the row.
+    private func createdTasksRow(_ ids: [String]) -> some View {
+        HStack(spacing: 6) {
+            Text(ids.count == 1 ? "Created" : "Created \(ids.count)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(ids, id: \.self) { taskChip($0) }
+                }
+            }
+        }
+    }
+
+    /// A tappable task id that opens the task's detail.
+    private func taskChip(_ taskID: String) -> some View {
+        Button {
+            router.open(.taskDetail(project: project, taskID: taskID, title: ""))
+        } label: {
+            Text(taskID)
+                .font(.caption.monospaced().weight(.medium))
+                .foregroundStyle(Theme.info)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Theme.info.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Task \(taskID)")
     }
 
     private func header(_ model: WorkLoopModel, _ loop: Ycc_V1_WorkLoopInfo) -> some View {
@@ -418,6 +562,10 @@ struct WorkLoopView: View {
         // This task restarts whenever Start/Stop flips `shouldPoll`; their
         // responses already carry the new state, so skip the duplicate load.
         await model?.refreshIfStale()
+        // The slot picker shows the project's configured count.
+        if let model, model.state.canStart, model.preflight == nil {
+            await model.loadPreflight()
+        }
         while !Task.isCancelled, model?.shouldPoll == true {
             do {
                 try await Task.sleep(nanoseconds: 5_000_000_000)
@@ -436,10 +584,14 @@ extension View {
     /// the view it modifies, so a screen-level dialog points its arrow at the
     /// middle of the screen.
     /// A `warning` (uncommitted in-review work) leads the message and makes
-    /// the action "Start anyway".
+    /// the action "Start anyway". A `parallel` above 1 is named as experimental.
+    /// `onChooseParallel`, for entry points without the slot picker, adds a
+    /// button that opens one.
     func workLoopStartConfirmation(
         isPresented: Binding<Bool>,
         warning: String?,
+        parallel: Int,
+        onChooseParallel: (() -> Void)? = nil,
         onStart: @escaping () -> Void
     ) -> some View {
         confirmationDialog(
@@ -448,9 +600,15 @@ extension View {
             titleVisibility: .visible
         ) {
             Button(warning == nil ? "Start loop" : "Start anyway", action: onStart)
+            if let onChooseParallel {
+                Button("Change sessions at once…", action: onChooseParallel)
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            let base = "The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips. This can spend tokens while your phone is locked or suspended."
+            let slots = parallel > 1
+                ? " It runs \(parallel) sessions at once in the shared working tree (experimental)."
+                : ""
+            let base = "The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips.\(slots) This can spend tokens while your phone is locked or suspended."
             if let warning {
                 Text("\(warning). Loop sessions leave that work to its owner and route around those files; commit or settle it first, or start anyway.\n\n\(base)")
             } else {
@@ -459,7 +617,7 @@ extension View {
         }
     }
 
-    /// The stop confirmation; like ``workLoopStartConfirmation(isPresented:onStart:)``,
+    /// The stop confirmation; like ``workLoopStartConfirmation(isPresented:warning:parallel:onStart:)``,
     /// apply it to the Stop button.
     func workLoopStopConfirmation(
         isPresented: Binding<Bool>,

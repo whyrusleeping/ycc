@@ -13,6 +13,7 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
     var preflight: Ycc_V1_GetWorkLoopPreflightResponse?
     var preflightError: Error?
     private(set) var startCalls = 0
+    private(set) var startParallels: [Int32] = []
 
     func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? {
         if let preflightError { throw preflightError }
@@ -24,7 +25,8 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
         return snapshot
     }
 
-    func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo {
+    func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo {
+        startParallels.append(parallel)
         let call = startCalls
         startCalls += 1
         if call < startErrors.count { throw startErrors[call] }
@@ -244,6 +246,37 @@ final class WorkLoopModelTests: XCTestCase {
 
         XCTAssertEqual(sections.flatMap(\.rows).map(\.id), ["done", "blocked", "unfinished", "new"])
         XCTAssertEqual(sections[1].rows[0].reason, "dependency missing")
+    }
+
+    func testStartSendsParallelOnlyWhenChangedFromTheProjectDefault() async {
+        let source = MockWorkLoopSource()
+        source.startSnapshot = loop(state: "finished")
+        let model = WorkLoopModel(source: source, project: "demo")
+        XCTAssertNil(model.configuredParallel)
+        XCTAssertEqual(model.parallel, 1, "unknown configured count shows 1")
+
+        var response = Ycc_V1_GetWorkLoopPreflightResponse()
+        response.configuredParallel = 3
+        source.preflight = response
+        await model.loadPreflight()
+        XCTAssertEqual(model.parallel, 3)
+        XCTAssertEqual(
+            WorkLoopModel.parallelCaption(parallel: 3, configured: 3),
+            "Project default · experimental: sessions share the working tree")
+        await model.start()
+
+        model.parallel = 3
+        await model.start()
+        model.parallel = 1
+        XCTAssertEqual(WorkLoopModel.parallelCaption(parallel: 1, configured: 3), "Project default: 3")
+        await model.start()
+        XCTAssertNil(model.parallelChoice, "a start clears the pick")
+        XCTAssertEqual(model.parallel, 3)
+        model.parallel = 40
+        XCTAssertEqual(model.parallel, WorkLoopModel.maxParallel)
+        await model.start()
+        await model.start()
+        XCTAssertEqual(source.startParallels, [0, 0, 1, 16, 0])
     }
 
     func testPreflightWarnsAboutUncommittedInReviewWork() async {

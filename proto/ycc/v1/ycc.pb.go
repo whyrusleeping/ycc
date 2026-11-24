@@ -14426,8 +14426,11 @@ type GetWorkLoopPreflightResponse struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	UncommittedInReview []*WorkLoopDigestTask  `protobuf:"bytes,1,rep,name=uncommitted_in_review,json=uncommittedInReview,proto3" json:"uncommitted_in_review,omitempty"`
 	UncommittedPaths    int32                  `protobuf:"varint,2,opt,name=uncommitted_paths,json=uncommittedPaths,proto3" json:"uncommitted_paths,omitempty"` // distinct uncommitted paths attributed to them
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The project's [work_loop] parallel (1..16), which StartWorkLoop uses when
+	// its parallel is 0. Clients show it as the default slot count.
+	ConfiguredParallel int32 `protobuf:"varint,3,opt,name=configured_parallel,json=configuredParallel,proto3" json:"configured_parallel,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GetWorkLoopPreflightResponse) Reset() {
@@ -14470,6 +14473,13 @@ func (x *GetWorkLoopPreflightResponse) GetUncommittedInReview() []*WorkLoopDiges
 func (x *GetWorkLoopPreflightResponse) GetUncommittedPaths() int32 {
 	if x != nil {
 		return x.UncommittedPaths
+	}
+	return 0
+}
+
+func (x *GetWorkLoopPreflightResponse) GetConfiguredParallel() int32 {
+	if x != nil {
+		return x.ConfiguredParallel
 	}
 	return 0
 }
@@ -18322,10 +18332,11 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x13GetWorkLoopResponse\x12(\n" +
 	"\x04loop\x18\x01 \x01(\v2\x14.ycc.v1.WorkLoopInfoR\x04loop\"7\n" +
 	"\x1bGetWorkLoopPreflightRequest\x12\x18\n" +
-	"\aproject\x18\x01 \x01(\tR\aproject\"\x9b\x01\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\"\xcc\x01\n" +
 	"\x1cGetWorkLoopPreflightResponse\x12N\n" +
 	"\x15uncommitted_in_review\x18\x01 \x03(\v2\x1a.ycc.v1.WorkLoopDigestTaskR\x13uncommittedInReview\x12+\n" +
-	"\x11uncommitted_paths\x18\x02 \x01(\x05R\x10uncommittedPaths\"\xa1\x04\n" +
+	"\x11uncommitted_paths\x18\x02 \x01(\x05R\x10uncommittedPaths\x12/\n" +
+	"\x13configured_parallel\x18\x03 \x01(\x05R\x12configuredParallel\"\xa1\x04\n" +
 	"\x0eWorkstreamInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1f\n" +

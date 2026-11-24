@@ -300,6 +300,20 @@ export function recentCompleted(loop: WorkLoopInfo): WorkLoopDigestTask[] {
   return [...loop.completed].sort((a, b) => (last.get(b.id) ?? -1) - (last.get(a.id) ?? -1));
 }
 
+/** The most loop sessions StartWorkLoop accepts at once. */
+export const MAX_LOOP_PARALLEL = 16;
+
+/**
+ * The slot count Start sends as StartWorkLoopRequest.parallel: 0 (the
+ * project's [work_loop] parallel applies) unless the user picked a count
+ * other than the configured one. `configured` is 0 when the daemon did not
+ * report it.
+ */
+export function parallelToSend(choice: number | null, configured: number): number {
+  if (choice === null || choice === configured) return 0;
+  return Math.min(Math.max(Math.trunc(choice), 1), MAX_LOOP_PARALLEL);
+}
+
 export const WORK_IMPLEMENTATIONS = [
   { value: "direct", label: "Direct", detail: "The coordinator edits the code itself (default); independent review stays delegated." },
   { value: "delegate", label: "Delegate", detail: "The coordinator hands code changes to an implementer subagent." },

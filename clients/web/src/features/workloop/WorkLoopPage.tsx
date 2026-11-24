@@ -37,6 +37,8 @@ import {
   isActive,
   isFailureOutcome,
   loopState,
+  MAX_LOOP_PARALLEL,
+  parallelToSend,
   loopTotalsLine,
   resourceEnvelopeLines,
   stateTitle,
@@ -99,7 +101,7 @@ export function WorkLoopPage({ project }: { project: string }) {
     toast(`${what}: ${errorMessage(err)}`, "error", { op, err });
   };
 
-  const start = async (implementation: string | null) => {
+  const start = async (implementation: string | null, parallel: number) => {
     if (busy) return;
     setBusy(true);
     try {
@@ -107,10 +109,10 @@ export function WorkLoopPage({ project }: { project: string }) {
         await client.setWorkImplementation({ implementation });
         void qc.invalidateQueries({ queryKey: queryKeys.models("") });
       }
-      const resp = await client.startWorkLoop({ project });
+      const resp = await client.startWorkLoop({ project, parallel });
       const next = resp.loop ?? null;
       install(next);
-      track.submit("loop_start", { implementation: implementation ?? "unchanged" });
+      track.submit("loop_start", { implementation: implementation ?? "unchanged", parallel: parallel || "default" });
       setStartOpen(false);
       // Start can return an already-finished loop when setup failed at once.
       const note = finishAnnouncement(null, next, true);
@@ -195,7 +197,7 @@ export function WorkLoopPage({ project }: { project: string }) {
         open={startOpen}
         busy={busy}
         onCancel={() => setStartOpen(false)}
-        onStart={(impl) => void start(impl)}
+        onStart={(impl, parallel) => void start(impl, parallel)}
       />
       <ConfirmDialog
         open={stopOpen}
@@ -302,7 +304,8 @@ function StartLoopDialog({
   open: boolean;
   busy: boolean;
   onCancel: () => void;
-  onStart: (implementation: string | null) => void;
+  /** `parallel` is StartWorkLoopRequest.parallel: 0 keeps the project's configured count. */
+  onStart: (implementation: string | null, parallel: number) => void;
 }) {
   const models = useModels("", open);
   const budget = useBudget(open);
@@ -315,8 +318,13 @@ function StartLoopDialog({
   const current = models.data?.workImplementation || "direct";
   const [choice, setChoice] = useState<string | null>(null);
   const implementation = choice ?? current;
+  // 0 when the daemon does not report the project's count (older daemons).
+  const configured = preflight.isError ? 0 : (preflight.data?.configuredParallel ?? 0);
+  const [slotChoice, setSlotChoice] = useState<number | null>(null);
+  const slots = slotChoice ?? (configured || 1);
   const close = () => {
     setChoice(null);
+    setSlotChoice(null);
     onCancel();
   };
   return (
@@ -326,8 +334,9 @@ function StartLoopDialog({
         onSubmit={(e) => {
           e.preventDefault();
           if (checking) return;
-          onStart(implementation !== current ? implementation : null);
+          onStart(implementation !== current ? implementation : null, parallelToSend(slotChoice, configured));
           setChoice(null);
+          setSlotChoice(null);
         }}
       >
         <p className="muted small">
@@ -340,6 +349,31 @@ function StartLoopDialog({
         ) : (
           <UncommittedReviewWarning project={project} tasks={uncommitted} paths={preflight.data?.uncommittedPaths ?? 0} />
         )}
+        <fieldset className="loop-options">
+          <legend>Parallel sessions</legend>
+          <label className="radio-row">
+            <select
+              value={slots}
+              disabled={checking}
+              aria-label="Loop sessions working at once"
+              onChange={(e) => setSlotChoice(Number(e.target.value))}
+            >
+              {Array.from({ length: MAX_LOOP_PARALLEL }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                  {n === configured ? " (project default)" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="muted small">
+              {slots === 1 ? "One session at a time." : `${slots} sessions work at once in the shared tree.`}
+            </span>
+            {slots > 1 && <span className="tag">experimental</span>}
+          </label>
+          <p className="muted small">
+            The default is this project’s <code>[work_loop] parallel</code> in <code>.ycc/config.toml</code>.
+          </p>
+        </fieldset>
         <fieldset className="loop-options">
           <legend>Work implementation</legend>
           {WORK_IMPLEMENTATIONS.map((o) => (

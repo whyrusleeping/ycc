@@ -396,9 +396,12 @@ public final class YccClient: Sendable {
 
     /// Start the daemon-owned unattended backlog drain for a project. The loop
     /// continues independently of this client connection.
-    public func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo {
+    /// `parallel` is how many loop sessions may work at once; 0 uses the
+    /// project's `[work_loop] parallel`.
+    public func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo {
         var request = Ycc_V1_StartWorkLoopRequest()
         request.project = project
+        request.parallel = parallel
         let response = await generatedBulk.startWorkLoop(request: request)
         switch response.result {
         case .success(let message):
@@ -437,7 +440,7 @@ public final class YccClient: Sendable {
     }
 
     /// In-review tasks whose work is uncommitted in the project's workspace, for
-    /// a warning before ``startWorkLoop(project:)``. `nil` from a daemon without
+    /// a warning before ``startWorkLoop(project:parallel:)``. `nil` from a daemon without
     /// the RPC.
     public func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? {
         var request = Ycc_V1_GetWorkLoopPreflightRequest()

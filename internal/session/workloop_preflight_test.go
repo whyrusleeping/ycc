@@ -106,6 +106,9 @@ func TestWorkLoopPreflightListsUncommittedInReviewWork(t *testing.T) {
 		}
 	}
 	check("preflight", pre.InReview, pre.Paths)
+	if pre.Parallel != 1 {
+		t.Fatalf("preflight parallel = %d, want the default 1", pre.Parallel)
+	}
 
 	if _, err := m.StartWorkLoop("demo"); err != nil {
 		t.Fatalf("StartWorkLoop: %v", err)

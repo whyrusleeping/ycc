@@ -1647,6 +1647,9 @@ message GetWorkLoopPreflightRequest { string project = 1; }
 message GetWorkLoopPreflightResponse {
   repeated WorkLoopDigestTask uncommitted_in_review = 1;
   int32 uncommitted_paths = 2; // distinct uncommitted paths attributed to them
+  // The project's [work_loop] parallel (1..16), which StartWorkLoop uses when
+  // its parallel is 0. Clients show it as the default slot count.
+  int32 configured_parallel = 3;
 }
 
 // A parallel workstream

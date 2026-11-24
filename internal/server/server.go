@@ -2170,6 +2170,7 @@ func (s *Server) GetWorkLoopPreflight(_ context.Context, req *connect.Request[v1
 	return connect.NewResponse(&v1.GetWorkLoopPreflightResponse{
 		UncommittedInReview: digestTasksToProto(pre.InReview),
 		UncommittedPaths:    int32(pre.Paths),
+		ConfiguredParallel:  int32(pre.Parallel),
 	}), nil
 }
 

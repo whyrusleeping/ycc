@@ -1585,7 +1585,7 @@ private final class LoopSource: WorkLoopSource, @unchecked Sendable {
         getCalls += 1
         return loop
     }
-    func startWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo {
+    func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo {
         var info = Ycc_V1_WorkLoopInfo()
         info.state = "running"
         return info

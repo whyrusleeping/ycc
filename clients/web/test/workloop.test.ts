@@ -26,6 +26,7 @@ import {
   loopIndicator,
   loopSessionIds,
   loopState,
+  parallelToSend,
   pollInterval,
   recentCompleted,
   resourceEnvelopeLines,
@@ -171,6 +172,14 @@ describe("slots", () => {
     expect(bannerLine(l)).toBe("Running · 2/3 working, 1 waiting · 0 sessions");
     expect([...loopSessionIds(l)].sort()).toEqual(["s_a", "s_w"]);
     expect(slotsLine(loop())).toBe("");
+  });
+
+  it("sends 0 for the project default and clamps explicit counts", () => {
+    expect(parallelToSend(null, 2)).toBe(0);
+    expect(parallelToSend(2, 2)).toBe(0);
+    expect(parallelToSend(1, 2)).toBe(1);
+    expect(parallelToSend(4, 0)).toBe(4);
+    expect(parallelToSend(40, 1)).toBe(16);
   });
 });
 

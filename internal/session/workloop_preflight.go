@@ -27,20 +27,26 @@ const preflightPathsShown = 5
 type WorkLoopPreflight struct {
 	InReview []WorkLoopDigestTask
 	Paths    int // distinct uncommitted paths attributed to InReview
+	// Parallel is the project's configured slot count ([work_loop] parallel),
+	// which a start without an explicit count uses. Only WorkLoopPreflight sets it.
+	Parallel int
 }
 
 // WorkLoopPreflight reports what a loop started now in project would have to
-// route around.
+// route around, and how many slots it would run by default.
 func (m *Manager) WorkLoopPreflight(project string) (WorkLoopPreflight, error) {
 	absWS, _, err := m.resolveWorkspace(project)
 	if err != nil {
 		return WorkLoopPreflight{}, err
 	}
-	tasks, err := m.backlogStore(absWS).ListMetadata()
+	store := m.backlogStore(absWS)
+	tasks, err := store.ListMetadata()
 	if err != nil {
 		return WorkLoopPreflight{}, err
 	}
-	return m.workLoopPreflight(absWS, tasks), nil
+	pre := m.workLoopPreflight(absWS, tasks)
+	pre.Parallel = store.WorkLoopParallel()
+	return pre, nil
 }
 
 // workLoopPreflight attributes the workspace's uncommitted paths to in_review
