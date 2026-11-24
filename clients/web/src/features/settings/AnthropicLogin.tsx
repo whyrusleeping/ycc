@@ -1,7 +1,8 @@
 // Subscription logins owned by the daemon (Begin/Complete/Cancel
-// AnthropicLogin and OpenAILogin): the browser opens the provider's sign-in
-// page, the user pastes back what it ends on (Anthropic shows a code#state;
-// OpenAI redirects to a localhost:1455 address that usually fails to load),
+// AnthropicLogin, OpenAILogin and GoogleLogin): the browser opens the
+// provider's sign-in page, the user pastes back what it ends on (Anthropic
+// shows a code#state; OpenAI redirects to a localhost:1455 address that
+// usually fails to load; Google's Antigravity page shows a code),
 // and the daemon exchanges and stores the tokens — they never reach this tab.
 // The authorization URL and the pasted text live only in this dialog's state
 // (never cached, logged, or put in a URL). Opened from Settings, Get started,
@@ -14,9 +15,9 @@ import { authStore } from "../../api/auth";
 import { queryKeys, refreshHealth } from "../../api/queries";
 import { Modal } from "../../ui/Modal";
 import { track } from "../../app/analytics";
-import { callbackProblem, codeProblem, validLoginStart, validOpenAILoginStart } from "./anthropic";
+import { callbackProblem, codeProblem, googleCodeProblem, validGoogleLoginStart, validLoginStart, validOpenAILoginStart } from "./anthropic";
 
-export type LoginProvider = "anthropic" | "openai";
+export type LoginProvider = "anthropic" | "openai" | "google";
 
 interface ProviderFlow {
   title: string;
@@ -29,6 +30,8 @@ interface ProviderFlow {
   problem: (pasted: string) => string | null;
   pasteLabel: string;
   steps: string;
+  /** Shown above the steps when the login path carries account risk. */
+  warning?: string;
 }
 
 const FLOWS: Record<LoginProvider, ProviderFlow> = {
@@ -57,6 +60,20 @@ const FLOWS: Record<LoginProvider, ProviderFlow> = {
     steps:
       "Sign in with your ChatGPT Plus or Pro account. Afterwards the browser goes to a localhost:1455 address that probably won’t load; that’s expected. Copy the whole address from the address bar and paste it here.",
   },
+  google: {
+    title: "Connect Google AI (unofficial)",
+    flow: "google_login",
+    account: "Google",
+    begin: () => client.beginGoogleLogin({}),
+    complete: (attemptId, code) => client.completeGoogleLogin({ attemptId, code }),
+    cancel: (attemptId) => client.cancelGoogleLogin({ attemptId }),
+    validStart: validGoogleLoginStart,
+    problem: googleCodeProblem,
+    pasteLabel: "Paste the authorization code",
+    steps: "Sign in with your Google AI Pro or Ultra account. Google’s Antigravity page then shows an authorization code; paste it here.",
+    warning:
+      "This login is unofficial. It reuses the Google Antigravity CLI’s sign-in to run Gemini on your subscription. Google’s terms forbid using it from third-party software, and Google has suspended accounts for it. A Gemini API key is the supported way to use Gemini.",
+  },
 };
 
 let openSeq = 0;
@@ -79,6 +96,10 @@ export function openAnthropicLogin() {
 
 export function openOpenAILogin() {
   openSubscriptionLogin("openai");
+}
+
+export function openGoogleLogin() {
+  openSubscriptionLogin("google");
 }
 
 function closeLogin() {
@@ -234,6 +255,11 @@ function LoginBody({ flow, onClose }: { flow: ProviderFlow; onClose: () => void 
   }
   return (
     <div className="login-body">
+      {flow.warning && (
+        <div className="banner warn" role="note">
+          {flow.warning}
+        </div>
+      )}
       <p>{flow.steps}</p>
       <p className="muted small">
         This replaces the shared {flow.account} login for every project on this daemon. The tokens stay on the daemon.

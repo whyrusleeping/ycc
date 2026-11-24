@@ -63,6 +63,12 @@ func (r *Registry) AdoptOpenAILogin() (bool, error) {
 	return r.adoptSubscriptionLogin("openai")
 }
 
+// AdoptGoogleLogin is AdoptOpenAILogin for the Google subscription (gemini
+// backend, Antigravity transport).
+func (r *Registry) AdoptGoogleLogin() (bool, error) {
+	return r.adoptSubscriptionLogin("gemini")
+}
+
 func (r *Registry) adoptSubscriptionLogin(backend string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

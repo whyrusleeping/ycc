@@ -1355,6 +1355,25 @@ message CompleteOpenAILoginResponse {}
 message CancelOpenAILoginRequest { string attempt_id = 1; }
 message CancelOpenAILoginResponse {}
 
+// Daemon-owned Google AI (Pro/Ultra) subscription login for the gemini
+// backend's unofficial Antigravity transport, independent of the other
+// attempts. Google's hosted callback page shows a code to paste back.
+message BeginGoogleLoginRequest {}
+message BeginGoogleLoginResponse {
+  string attempt_id = 1;
+  string authorization_url = 2; // sensitive, transient browser URL; do not log/cache
+  int64 expires_at_unix = 3;
+}
+message CompleteGoogleLoginRequest {
+  string attempt_id = 1;
+  string code = 2; // pasted code, or the callback page URL with code and state; never log/echo
+}
+message CompleteGoogleLoginResponse {
+  string email = 1; // signed-in account, when Google reported it
+}
+message CancelGoogleLoginRequest { string attempt_id = 1; }
+message CancelGoogleLoginResponse {}
+
 // Provider-side subscription allowance. This is intentionally
 // separate from GetUsage: it is shared account quota, not ycc-local token spend.
 // No credential material crosses this boundary.
@@ -2087,6 +2106,9 @@ service SessionService {
   rpc BeginOpenAILogin(BeginOpenAILoginRequest) returns (BeginOpenAILoginResponse);
   rpc CompleteOpenAILogin(CompleteOpenAILoginRequest) returns (CompleteOpenAILoginResponse);
   rpc CancelOpenAILogin(CancelOpenAILoginRequest) returns (CancelOpenAILoginResponse);
+  rpc BeginGoogleLogin(BeginGoogleLoginRequest) returns (BeginGoogleLoginResponse);
+  rpc CompleteGoogleLogin(CompleteGoogleLoginRequest) returns (CompleteGoogleLoginResponse);
+  rpc CancelGoogleLogin(CancelGoogleLoginRequest) returns (CancelGoogleLoginResponse);
 
   // Best-effort provider-side subscription allowance.
   rpc GetSubscriptionUsage(GetSubscriptionUsageRequest) returns (GetSubscriptionUsageResponse);

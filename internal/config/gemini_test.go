@@ -9,9 +9,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/googleauth"
 )
 
 func TestGeminiModelDefaults(t *testing.T) {
@@ -21,8 +24,8 @@ func TestGeminiModelDefaults(t *testing.T) {
 	}
 	oauth := m
 	oauth.Auth = "oauth"
-	if err := oauth.Validate("neon"); err == nil {
-		t.Fatal("gemini accepted auth = oauth")
+	if err := oauth.Validate("neon"); err != nil {
+		t.Fatalf("gemini rejected auth = oauth: %v", err)
 	}
 	if got := providerBaseURL("gemini", ""); got != gollama.DefaultGeminiBaseURL {
 		t.Fatalf("default base URL = %q", got)
@@ -104,5 +107,42 @@ func TestGeminiBuildSendsAPIKeyHeader(t *testing.T) {
 	}
 	if gotKey != "gemini-secret" || gotAuth != "" || !strings.Contains(gotPath, "/models/gemini-4-neon:") {
 		t.Fatalf("x-goog-api-key=%q Authorization=%q path=%q", gotKey, gotAuth, gotPath)
+	}
+}
+
+func TestGeminiOAuthBuildNeedsGoogleLogin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	reg := NewRegistry(&Config{Models: map[string]Model{"neon": {Backend: "gemini", Model: "gemini-4-neon", Auth: "oauth"}}})
+	if _, _, err := reg.Build("neon"); err == nil || !strings.Contains(err.Error(), "ycc login google") {
+		t.Fatalf("Build without a Google login = %v", err)
+	}
+	if err := googleauth.Save(&googleauth.Credentials{AccessToken: "at", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	client, model, err := reg.Build("neon")
+	if err != nil || model != "gemini-4-neon" {
+		t.Fatalf("Build = %v, %q", err, model)
+	}
+	if _, ok := client.(engine.StreamTurner); !ok {
+		t.Fatalf("oauth gemini client %T does not stream", client)
+	}
+	if err := googleauth.Update("rt", func(c *googleauth.Credentials) { c.Suspended = "TOS_VIOLATION" }); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := reg.Build("neon"); err == nil || !strings.Contains(err.Error(), "suspended") {
+		t.Fatalf("Build with a suspended login = %v", err)
+	}
+}
+
+func TestEnsureSubscriptionModelGemini(t *testing.T) {
+	c := &Config{}
+	name, added, err := EnsureSubscriptionModel(c, "gemini")
+	if err != nil || !added || name != "gemini" {
+		t.Fatalf("EnsureSubscriptionModel = %q, %v, %v", name, added, err)
+	}
+	if m := c.Models[name]; m.Backend != "gemini" || m.Auth != "oauth" || m.Model != "gemini-4-neon" || m.Validate(name) != nil {
+		t.Fatalf("model = %+v", m)
 	}
 }

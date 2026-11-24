@@ -65,6 +65,36 @@ export function callbackProblem(pasted: string): string | null {
   return null;
 }
 
+/** Only offer Google's own authorize page (https://accounts.google.com/o/oauth2/auth) for an unexpired attempt. */
+export function validGoogleLoginStart(
+  resp: { attemptId: string; authorizationUrl: string; expiresAtUnix: bigint | number },
+  now: number = Date.now(),
+): boolean {
+  if (!resp.attemptId) return false;
+  if (!(Number(resp.expiresAtUnix) * 1000 > now)) return false;
+  let u: URL;
+  try {
+    u = new URL(resp.authorizationUrl);
+  } catch {
+    return false;
+  }
+  return u.protocol === "https:" && u.hostname === "accounts.google.com" && u.pathname === "/o/oauth2/auth" && !u.username && !u.password && !u.port;
+}
+
+/** What Google's callback page shows (a code) or its address (with code=). */
+export function googleCodeProblem(pasted: string): string | null {
+  const v = pasted.trim();
+  if (!v) return null;
+  if (/\s/.test(v)) return "Paste the code exactly as shown, without spaces.";
+  if (v.includes("?") || v.includes("code=") || v.includes("error=")) {
+    const q = new URLSearchParams(v.includes("?") ? v.slice(v.indexOf("?") + 1) : v);
+    if (q.get("error")) return "Google reported an error instead of a login; start a new login.";
+    if (!q.get("code")) return "That address has no code; paste the code Google’s page shows instead.";
+    if (!q.get("state")) return "That address has no state; paste the whole address, or just the code Google’s page shows.";
+  }
+  return null;
+}
+
 /** An error that most likely means the shared Anthropic login expired or is missing. */
 export function needsAnthropicReconnect(text: string | null | undefined): boolean {
   if (!text) return false;

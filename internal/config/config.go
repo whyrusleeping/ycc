@@ -22,10 +22,12 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/antigravity"
 	"github.com/whyrusleeping/ycc/internal/codex"
 	"github.com/whyrusleeping/ycc/internal/credenv"
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/googleauth"
 	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 	"github.com/whyrusleeping/ycc/internal/secrets"
@@ -52,11 +54,13 @@ type Model struct {
 	Disabled bool `toml:"disabled,omitempty"`
 
 	// Auth selects the credential mechanism. Empty or "api-key"
-	// (the default) resolves key_env as usual. "oauth" — anthropic backend
-	// only — authenticates with a Claude subscription (Pro/Max) via the OAuth
-	// credentials stored by `ycc login anthropic`: requests carry an
-	// Authorization bearer token (auto-refreshed) plus the Claude Code/OAuth
-	// beta opt-ins and x-app marker, and key_env is ignored.
+	// (the default) resolves key_env as usual. "oauth" authenticates with a
+	// provider subscription stored by `ycc login`, and key_env is ignored:
+	// anthropic (Claude Pro/Max) sends an auto-refreshed bearer token plus the
+	// Claude Code/OAuth beta opt-ins and x-app marker; openai (ChatGPT
+	// Plus/Pro) routes through the codex transport; gemini (Google AI
+	// Pro/Ultra) routes through the unofficial Antigravity transport, which
+	// Google's terms forbid and which can get the account suspended.
 	Auth string `toml:"auth,omitempty"` // "" | "api-key" | "oauth"
 
 	// Thinking / Effort / ThinkingDisplay control Anthropic extended/adaptive
@@ -223,8 +227,8 @@ func (m Model) validateAuth(name string) error {
 	switch m.Auth {
 	case "", "api-key":
 	case "oauth":
-		if m.Backend != "anthropic" && m.Backend != "openai" {
-			return fmt.Errorf("model %q: auth = \"oauth\" is only supported by the anthropic and openai backends (got %q)", name, m.Backend)
+		if m.Backend != "anthropic" && m.Backend != "openai" && m.Backend != "gemini" {
+			return fmt.Errorf("model %q: auth = \"oauth\" is only supported by the anthropic, openai and gemini backends (got %q)", name, m.Backend)
 		}
 	default:
 		return fmt.Errorf("model %q: unsupported auth %q (want \"api-key\" or \"oauth\")", name, m.Auth)
@@ -1699,6 +1703,17 @@ func (r *Registry) DiscoverConnModels(ctx context.Context, backend, baseURL, key
 			return append([]string(nil), codex.Models...), nil
 		}
 	}
+	// A gemini connection with no API key but a Google subscription login
+	// lists the account's Antigravity catalog.
+	if key == "" && backend == "gemini" {
+		if _, ok := googleauth.Load(); ok {
+			ids, err := antigravity.ListModels(ctx, "", llmhttp.NewClient(r.transportPolicy()), googleauth.AccessToken)
+			if err != nil {
+				return nil, err
+			}
+			return normalizeIDs(ids), nil
+		}
+	}
 	return DiscoverModels(ctx, backend, baseURL, key)
 }
 
@@ -2044,7 +2059,9 @@ func (r *Registry) HealthProbeModels() []string {
 // failure stays deferred to the API call — to preserve the existing keyless
 // Build behavior for backends/tests that build without a key set.
 func resolveKey(m Model) string {
-	if m.KeyEnv == "" {
+	// Reserved names (daemon token, stored OAuth records) are never sent as
+	// API keys, even from a hand-edited ycc.toml.
+	if m.KeyEnv == "" || credenv.ValidateKeyRef(m.KeyEnv) != nil {
 		return ""
 	}
 	if v := os.Getenv(m.KeyEnv); v != "" {
@@ -2162,6 +2179,24 @@ func (r *Registry) BuildContext(ctx context.Context, name string) (engine.Turner
 			c.SetBearerToken(key)
 		}
 	case "gemini":
+		// Google subscription auth: inference goes through the Antigravity
+		// transport (gollama's Gemini client behind an envelope RoundTripper).
+		// Resolving the token here keeps a missing, revoked or suspended login
+		// a Build-time error. An explicit base_url other than the public
+		// Gemini API is honored as the Antigravity host (proxy/testing).
+		if m.Auth == "oauth" {
+			if _, err := googleauth.AccessToken(ctx); err != nil {
+				return nil, "", fmt.Errorf("model %q: %w", name, err)
+			}
+			base := strings.TrimSpace(m.BaseURL)
+			if u, err := url.Parse(base); err == nil && u.Hostname() == "generativelanguage.googleapis.com" {
+				base = ""
+			}
+			if err := credenv.ValidateCredentialURL(base); err != nil {
+				return nil, "", fmt.Errorf("model %q: %w", name, err)
+			}
+			return antigravity.NewClient(base, httpClient, googleauth.AccessToken), m.Model, nil
+		}
 		// Native Gemini API (generateContent): pin the transport like Anthropic
 		// so a proxy URL still speaks Gemini, and send the key as x-goog-api-key.
 		c.SetGeminiMode(true)

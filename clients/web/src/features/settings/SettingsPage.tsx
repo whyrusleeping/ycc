@@ -26,7 +26,7 @@ import { track } from "../../app/analytics";
 import { levelsAnyOf, levelsNamed, parseThinking, roleModelChoices, type ThinkingLevel } from "../session/settings";
 import { ThinkingSelect } from "../session/ThinkingSelect";
 import { budgetRows } from "../usage/model";
-import { openAnthropicLogin, openOpenAILogin } from "./AnthropicLogin";
+import { openAnthropicLogin, openGoogleLogin, openOpenAILogin } from "./AnthropicLogin";
 import { ModelEditorDialog, type EditorTarget } from "./ModelEditor";
 import { TierEditorDialog } from "./TierEditor";
 import { SECTION_ALIASES, SETTINGS_SECTIONS as SECTIONS } from "./sections";
@@ -206,6 +206,18 @@ function Subscriptions() {
         </div>
         <button type="button" className="btn" data-track="settings.openaiLogin" onClick={() => openOpenAILogin()}>
           Connect ChatGPT…
+        </button>
+      </div>
+      <div className="settings-line">
+        <div>
+          <strong>Google AI Pro or Ultra (unofficial)</strong>
+          <div className="muted small">
+            Used by Gemini models set to sign in with a subscription. This reuses the Antigravity CLI’s login, which Google’s terms forbid
+            for third-party tools; Google has suspended accounts for it.
+          </div>
+        </div>
+        <button type="button" className="btn" data-track="settings.googleLogin" onClick={() => openGoogleLogin()}>
+          Connect Google…
         </button>
       </div>
       <p className="muted small">

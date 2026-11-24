@@ -35,7 +35,16 @@ import {
   tierPayload,
   tierProblem,
 } from "../src/features/settings/tiers";
-import { callbackProblem, codeProblem, loopNeedsAnthropicReconnect, needsAnthropicReconnect, validLoginStart, validOpenAILoginStart } from "../src/features/settings/anthropic";
+import {
+  callbackProblem,
+  codeProblem,
+  googleCodeProblem,
+  loopNeedsAnthropicReconnect,
+  needsAnthropicReconnect,
+  validGoogleLoginStart,
+  validLoginStart,
+  validOpenAILoginStart,
+} from "../src/features/settings/anthropic";
 
 const draft = (o: Partial<ModelDraft>): ModelDraft => ({ ...emptyDraft(), name: "stub3", backend: "openai", modelId: "stub-model-3", keyEnv: "YCC_E2E_KEY", ...o });
 
@@ -245,6 +254,24 @@ describe("Anthropic login", () => {
     expect(validOpenAILoginStart(openai({ authorizationUrl: "https://auth.openai.com.evil.example/oauth/authorize" }), now)).toBe(false);
     expect(validOpenAILoginStart(openai({ authorizationUrl: "http://auth.openai.com/oauth/authorize" }), now)).toBe(false);
     expect(validOpenAILoginStart(openai({ expiresAtUnix: BigInt(now / 1000 - 1) }), now)).toBe(false);
+  });
+
+  it("only offers Google's own unexpired authorize page", () => {
+    const google = (o: Parameters<typeof start>[0]) => start({ authorizationUrl: "https://accounts.google.com/o/oauth2/auth?client_id=x", ...o });
+    expect(validGoogleLoginStart(google({}), now)).toBe(true);
+    expect(validGoogleLoginStart(google({ authorizationUrl: "https://accounts.google.com.evil.example/o/oauth2/auth" }), now)).toBe(false);
+    expect(validGoogleLoginStart(google({ authorizationUrl: "http://accounts.google.com/o/oauth2/auth" }), now)).toBe(false);
+    expect(validGoogleLoginStart(google({ expiresAtUnix: BigInt(now / 1000 - 1) }), now)).toBe(false);
+  });
+
+  it("accepts Google's code or its callback address", () => {
+    expect(googleCodeProblem("")).toBeNull();
+    expect(googleCodeProblem("4/0AbCd-ef")).toBeNull();
+    expect(googleCodeProblem("https://antigravity.google/oauth-callback?state=s&code=4%2F0Ab")).toBeNull();
+    expect(googleCodeProblem("https://antigravity.google/oauth-callback?error=access_denied")).toMatch(/error/);
+    expect(googleCodeProblem("https://antigravity.google/oauth-callback?state=s")).toMatch(/no code/);
+    expect(googleCodeProblem("https://antigravity.google/oauth-callback?code=abc")).toMatch(/no state/);
+    expect(googleCodeProblem("4/0A bCd")).toMatch(/spaces/);
   });
 
   it("needs the whole OpenAI redirect address, with code and state", () => {

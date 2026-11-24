@@ -87,6 +87,7 @@ including the code, the questions, and the commits, was produced by a real model
 go install github.com/whyrusleeping/ycc/cmd/ycc@latest   # or: go build -o ycc ./cmd/ycc
 ycc login anthropic   # Claude Pro/Max; opens a browser login and adds a model to your config
 ycc login openai      # ChatGPT Plus/Pro
+ycc login google      # Google AI Pro/Ultra (Gemini via Antigravity; unofficial, see below)
 ```
 
 `ycc` is a single binary containing the daemon, the CLI, and the web app. Building it only needs
@@ -278,8 +279,10 @@ viewer. [`docs/design/publishing.md`](docs/design/publishing.md) describes the s
 
 ## Credentials and secrets
 
-- **Subscriptions:** `ycc login anthropic|openai`. Tokens stay on the daemon's machine and
-  refresh automatically. Anthropic can also be reconnected from the iOS app under
+- **Subscriptions:** `ycc login anthropic|openai|google`. Tokens stay on the daemon's machine and
+  refresh automatically. The Google login is unofficial: it reuses the Antigravity CLI's OAuth
+  client, which Google's terms forbid for third-party software, and Google has suspended accounts
+  for it. A Gemini API key (`key_env = "GEMINI_API_KEY"`) is the supported way to use Gemini. Anthropic can also be reconnected from the iOS app under
   **Settings → Provider accounts**.
 - **API keys:** `ycc token set NAME` stores a key in the machine-local secrets store, and
   configs refer to it only by name (`key_env = "NAME"`). Keys are never passed to tool processes,

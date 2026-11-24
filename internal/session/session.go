@@ -4066,6 +4066,9 @@ func (m *Manager) AdoptAnthropicLogin() (bool, error) { return m.reg.AdoptAnthro
 // AdoptOpenAILogin points an untouched built-in fallback at the ChatGPT subscription.
 func (m *Manager) AdoptOpenAILogin() (bool, error) { return m.reg.AdoptOpenAILogin() }
 
+// AdoptGoogleLogin points an untouched built-in fallback at the Google subscription.
+func (m *Manager) AdoptGoogleLogin() (bool, error) { return m.reg.AdoptGoogleLogin() }
+
 // DiscoverModels lists the model ids available from a backend connection for the
 // connection form. key_env is resolved locally; the secret
 // value never leaves the daemon.

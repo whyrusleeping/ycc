@@ -255,6 +255,15 @@ const (
 	// SessionServiceCancelOpenAILoginProcedure is the fully-qualified name of the SessionService's
 	// CancelOpenAILogin RPC.
 	SessionServiceCancelOpenAILoginProcedure = "/ycc.v1.SessionService/CancelOpenAILogin"
+	// SessionServiceBeginGoogleLoginProcedure is the fully-qualified name of the SessionService's
+	// BeginGoogleLogin RPC.
+	SessionServiceBeginGoogleLoginProcedure = "/ycc.v1.SessionService/BeginGoogleLogin"
+	// SessionServiceCompleteGoogleLoginProcedure is the fully-qualified name of the SessionService's
+	// CompleteGoogleLogin RPC.
+	SessionServiceCompleteGoogleLoginProcedure = "/ycc.v1.SessionService/CompleteGoogleLogin"
+	// SessionServiceCancelGoogleLoginProcedure is the fully-qualified name of the SessionService's
+	// CancelGoogleLogin RPC.
+	SessionServiceCancelGoogleLoginProcedure = "/ycc.v1.SessionService/CancelGoogleLogin"
 	// SessionServiceGetSubscriptionUsageProcedure is the fully-qualified name of the SessionService's
 	// GetSubscriptionUsage RPC.
 	SessionServiceGetSubscriptionUsageProcedure = "/ycc.v1.SessionService/GetSubscriptionUsage"
@@ -480,6 +489,9 @@ type SessionServiceClient interface {
 	BeginOpenAILogin(context.Context, *connect.Request[v1.BeginOpenAILoginRequest]) (*connect.Response[v1.BeginOpenAILoginResponse], error)
 	CompleteOpenAILogin(context.Context, *connect.Request[v1.CompleteOpenAILoginRequest]) (*connect.Response[v1.CompleteOpenAILoginResponse], error)
 	CancelOpenAILogin(context.Context, *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error)
+	BeginGoogleLogin(context.Context, *connect.Request[v1.BeginGoogleLoginRequest]) (*connect.Response[v1.BeginGoogleLoginResponse], error)
+	CompleteGoogleLogin(context.Context, *connect.Request[v1.CompleteGoogleLoginRequest]) (*connect.Response[v1.CompleteGoogleLoginResponse], error)
+	CancelGoogleLogin(context.Context, *connect.Request[v1.CancelGoogleLoginRequest]) (*connect.Response[v1.CancelGoogleLoginResponse], error)
 	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard: return the configured budget caps so the
@@ -992,6 +1004,24 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("CancelOpenAILogin")),
 			connect.WithClientOptions(opts...),
 		),
+		beginGoogleLogin: connect.NewClient[v1.BeginGoogleLoginRequest, v1.BeginGoogleLoginResponse](
+			httpClient,
+			baseURL+SessionServiceBeginGoogleLoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("BeginGoogleLogin")),
+			connect.WithClientOptions(opts...),
+		),
+		completeGoogleLogin: connect.NewClient[v1.CompleteGoogleLoginRequest, v1.CompleteGoogleLoginResponse](
+			httpClient,
+			baseURL+SessionServiceCompleteGoogleLoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CompleteGoogleLogin")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelGoogleLogin: connect.NewClient[v1.CancelGoogleLoginRequest, v1.CancelGoogleLoginResponse](
+			httpClient,
+			baseURL+SessionServiceCancelGoogleLoginProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("CancelGoogleLogin")),
+			connect.WithClientOptions(opts...),
+		),
 		getSubscriptionUsage: connect.NewClient[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse](
 			httpClient,
 			baseURL+SessionServiceGetSubscriptionUsageProcedure,
@@ -1211,6 +1241,9 @@ type sessionServiceClient struct {
 	beginOpenAILogin       *connect.Client[v1.BeginOpenAILoginRequest, v1.BeginOpenAILoginResponse]
 	completeOpenAILogin    *connect.Client[v1.CompleteOpenAILoginRequest, v1.CompleteOpenAILoginResponse]
 	cancelOpenAILogin      *connect.Client[v1.CancelOpenAILoginRequest, v1.CancelOpenAILoginResponse]
+	beginGoogleLogin       *connect.Client[v1.BeginGoogleLoginRequest, v1.BeginGoogleLoginResponse]
+	completeGoogleLogin    *connect.Client[v1.CompleteGoogleLoginRequest, v1.CompleteGoogleLoginResponse]
+	cancelGoogleLogin      *connect.Client[v1.CancelGoogleLoginRequest, v1.CancelGoogleLoginResponse]
 	getSubscriptionUsage   *connect.Client[v1.GetSubscriptionUsageRequest, v1.GetSubscriptionUsageResponse]
 	getBudget              *connect.Client[v1.GetBudgetRequest, v1.GetBudgetResponse]
 	notify                 *connect.Client[v1.NotifyRequest, v1.NotifyResponse]
@@ -1616,6 +1649,21 @@ func (c *sessionServiceClient) CancelOpenAILogin(ctx context.Context, req *conne
 	return c.cancelOpenAILogin.CallUnary(ctx, req)
 }
 
+// BeginGoogleLogin calls ycc.v1.SessionService.BeginGoogleLogin.
+func (c *sessionServiceClient) BeginGoogleLogin(ctx context.Context, req *connect.Request[v1.BeginGoogleLoginRequest]) (*connect.Response[v1.BeginGoogleLoginResponse], error) {
+	return c.beginGoogleLogin.CallUnary(ctx, req)
+}
+
+// CompleteGoogleLogin calls ycc.v1.SessionService.CompleteGoogleLogin.
+func (c *sessionServiceClient) CompleteGoogleLogin(ctx context.Context, req *connect.Request[v1.CompleteGoogleLoginRequest]) (*connect.Response[v1.CompleteGoogleLoginResponse], error) {
+	return c.completeGoogleLogin.CallUnary(ctx, req)
+}
+
+// CancelGoogleLogin calls ycc.v1.SessionService.CancelGoogleLogin.
+func (c *sessionServiceClient) CancelGoogleLogin(ctx context.Context, req *connect.Request[v1.CancelGoogleLoginRequest]) (*connect.Response[v1.CancelGoogleLoginResponse], error) {
+	return c.cancelGoogleLogin.CallUnary(ctx, req)
+}
+
 // GetSubscriptionUsage calls ycc.v1.SessionService.GetSubscriptionUsage.
 func (c *sessionServiceClient) GetSubscriptionUsage(ctx context.Context, req *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {
 	return c.getSubscriptionUsage.CallUnary(ctx, req)
@@ -1887,6 +1935,9 @@ type SessionServiceHandler interface {
 	BeginOpenAILogin(context.Context, *connect.Request[v1.BeginOpenAILoginRequest]) (*connect.Response[v1.BeginOpenAILoginResponse], error)
 	CompleteOpenAILogin(context.Context, *connect.Request[v1.CompleteOpenAILoginRequest]) (*connect.Response[v1.CompleteOpenAILoginResponse], error)
 	CancelOpenAILogin(context.Context, *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error)
+	BeginGoogleLogin(context.Context, *connect.Request[v1.BeginGoogleLoginRequest]) (*connect.Response[v1.BeginGoogleLoginResponse], error)
+	CompleteGoogleLogin(context.Context, *connect.Request[v1.CompleteGoogleLoginRequest]) (*connect.Response[v1.CompleteGoogleLoginResponse], error)
+	CancelGoogleLogin(context.Context, *connect.Request[v1.CancelGoogleLoginRequest]) (*connect.Response[v1.CancelGoogleLoginResponse], error)
 	// Best-effort provider-side subscription allowance.
 	GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error)
 	// Spend guard: return the configured budget caps so the
@@ -2395,6 +2446,24 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("CancelOpenAILogin")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceBeginGoogleLoginHandler := connect.NewUnaryHandler(
+		SessionServiceBeginGoogleLoginProcedure,
+		svc.BeginGoogleLogin,
+		connect.WithSchema(sessionServiceMethods.ByName("BeginGoogleLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCompleteGoogleLoginHandler := connect.NewUnaryHandler(
+		SessionServiceCompleteGoogleLoginProcedure,
+		svc.CompleteGoogleLogin,
+		connect.WithSchema(sessionServiceMethods.ByName("CompleteGoogleLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sessionServiceCancelGoogleLoginHandler := connect.NewUnaryHandler(
+		SessionServiceCancelGoogleLoginProcedure,
+		svc.CancelGoogleLogin,
+		connect.WithSchema(sessionServiceMethods.ByName("CancelGoogleLogin")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceGetSubscriptionUsageHandler := connect.NewUnaryHandler(
 		SessionServiceGetSubscriptionUsageProcedure,
 		svc.GetSubscriptionUsage,
@@ -2687,6 +2756,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCompleteOpenAILoginHandler.ServeHTTP(w, r)
 		case SessionServiceCancelOpenAILoginProcedure:
 			sessionServiceCancelOpenAILoginHandler.ServeHTTP(w, r)
+		case SessionServiceBeginGoogleLoginProcedure:
+			sessionServiceBeginGoogleLoginHandler.ServeHTTP(w, r)
+		case SessionServiceCompleteGoogleLoginProcedure:
+			sessionServiceCompleteGoogleLoginHandler.ServeHTTP(w, r)
+		case SessionServiceCancelGoogleLoginProcedure:
+			sessionServiceCancelGoogleLoginHandler.ServeHTTP(w, r)
 		case SessionServiceGetSubscriptionUsageProcedure:
 			sessionServiceGetSubscriptionUsageHandler.ServeHTTP(w, r)
 		case SessionServiceGetBudgetProcedure:
@@ -3044,6 +3119,18 @@ func (UnimplementedSessionServiceHandler) CompleteOpenAILogin(context.Context, *
 
 func (UnimplementedSessionServiceHandler) CancelOpenAILogin(context.Context, *connect.Request[v1.CancelOpenAILoginRequest]) (*connect.Response[v1.CancelOpenAILoginResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CancelOpenAILogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) BeginGoogleLogin(context.Context, *connect.Request[v1.BeginGoogleLoginRequest]) (*connect.Response[v1.BeginGoogleLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.BeginGoogleLogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CompleteGoogleLogin(context.Context, *connect.Request[v1.CompleteGoogleLoginRequest]) (*connect.Response[v1.CompleteGoogleLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CompleteGoogleLogin is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) CancelGoogleLogin(context.Context, *connect.Request[v1.CancelGoogleLoginRequest]) (*connect.Response[v1.CancelGoogleLoginResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.CancelGoogleLogin is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSubscriptionUsage(context.Context, *connect.Request[v1.GetSubscriptionUsageRequest]) (*connect.Response[v1.GetSubscriptionUsageResponse], error) {

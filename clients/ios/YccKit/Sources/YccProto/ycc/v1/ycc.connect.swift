@@ -317,6 +317,15 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `cancelOpenAilogin`(request: Ycc_V1_CancelOpenAILoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CancelOpenAILoginResponse>
 
+    @available(iOS 13, *)
+    func `beginGoogleLogin`(request: Ycc_V1_BeginGoogleLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_BeginGoogleLoginResponse>
+
+    @available(iOS 13, *)
+    func `completeGoogleLogin`(request: Ycc_V1_CompleteGoogleLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CompleteGoogleLoginResponse>
+
+    @available(iOS 13, *)
+    func `cancelGoogleLogin`(request: Ycc_V1_CancelGoogleLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_CancelGoogleLoginResponse>
+
     /// Best-effort provider-side subscription allowance.
     @available(iOS 13, *)
     func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse>
@@ -796,6 +805,21 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `beginGoogleLogin`(request: Ycc_V1_BeginGoogleLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_BeginGoogleLoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/BeginGoogleLogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `completeGoogleLogin`(request: Ycc_V1_CompleteGoogleLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CompleteGoogleLoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CompleteGoogleLogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
+    public func `cancelGoogleLogin`(request: Ycc_V1_CancelGoogleLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_CancelGoogleLoginResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/CancelGoogleLogin", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `getSubscriptionUsage`(request: Ycc_V1_GetSubscriptionUsageRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetSubscriptionUsageResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/GetSubscriptionUsage", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -988,6 +1012,9 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let beginOpenAilogin = Connect.MethodSpec(name: "BeginOpenAILogin", service: "ycc.v1.SessionService", type: .unary)
             public static let completeOpenAilogin = Connect.MethodSpec(name: "CompleteOpenAILogin", service: "ycc.v1.SessionService", type: .unary)
             public static let cancelOpenAilogin = Connect.MethodSpec(name: "CancelOpenAILogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let beginGoogleLogin = Connect.MethodSpec(name: "BeginGoogleLogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let completeGoogleLogin = Connect.MethodSpec(name: "CompleteGoogleLogin", service: "ycc.v1.SessionService", type: .unary)
+            public static let cancelGoogleLogin = Connect.MethodSpec(name: "CancelGoogleLogin", service: "ycc.v1.SessionService", type: .unary)
             public static let getSubscriptionUsage = Connect.MethodSpec(name: "GetSubscriptionUsage", service: "ycc.v1.SessionService", type: .unary)
             public static let getBudget = Connect.MethodSpec(name: "GetBudget", service: "ycc.v1.SessionService", type: .unary)
             public static let notify = Connect.MethodSpec(name: "Notify", service: "ycc.v1.SessionService", type: .unary)

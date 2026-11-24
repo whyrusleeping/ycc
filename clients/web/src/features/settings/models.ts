@@ -173,8 +173,12 @@ export function validateDraft(d: ModelDraft, existingNames: readonly string[] = 
   else if (isNew && existingNames.includes(name)) errors.name = `A model named “${name}” already exists.`;
   if (!BACKENDS.some((b) => b.value === d.backend)) errors.backend = "Choose a backend.";
   if (!AUTH_MODES.some((a) => a.value === d.auth)) errors.auth = "Choose an authentication mode.";
-  else if (d.auth === "oauth" && d.backend !== "anthropic" && d.backend !== "openai") {
-    errors.auth = "OAuth login is only supported by the Anthropic and OpenAI backends.";
+  else if (d.auth === "oauth" && d.backend !== "anthropic" && d.backend !== "openai" && d.backend !== "gemini") {
+    errors.auth = "OAuth login is only supported by the Anthropic, OpenAI and Gemini backends.";
+  } else if (d.auth === "oauth" && d.backend === "gemini") {
+    warnings.push(
+      "Gemini subscription login is unofficial: it uses Google’s Antigravity backend, which Google’s terms forbid for third-party tools and which can get the account suspended.",
+    );
   }
   if (!d.modelId.trim()) errors.modelId = "A model id is required.";
   const base = d.baseUrl.trim();

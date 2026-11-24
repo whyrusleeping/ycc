@@ -14,7 +14,7 @@ import (
 )
 
 var reserved = map[string]bool{
-	"YCC_TOKEN": true, "ANTHROPIC_OAUTH": true, "OPENAI_OAUTH": true,
+	"YCC_TOKEN": true, "ANTHROPIC_OAUTH": true, "OPENAI_OAUTH": true, "GOOGLE_OAUTH": true,
 }
 
 var credentials = struct {
@@ -23,7 +23,7 @@ var credentials = struct {
 }{names: map[string]bool{
 	"YCC_TOKEN": true, "ANTHROPIC_API_KEY": true, "ANTHROPIC_AUTH_TOKEN": true,
 	"OPENAI_API_KEY": true, "GEMINI_API_KEY": true, "EXA_API_KEY": true,
-	"ANTHROPIC_OAUTH": true, "OPENAI_OAUTH": true,
+	"ANTHROPIC_OAUTH": true, "OPENAI_OAUTH": true, "GOOGLE_OAUTH": true,
 }}
 
 // Register adds configured provider key references to the process-wide scrub set.

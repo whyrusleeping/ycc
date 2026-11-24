@@ -54,6 +54,7 @@ type Server struct {
 	viewKeepalive  time.Duration
 	anthropicLogin anthropicLoginState
 	openaiLogin    openaiLoginState
+	googleLogin    googleLoginState
 	analytics      *uianalytics.Store // nil: usage events are validated and discarded
 	health         *health.Monitor    // nil: GetHealth reports no checks
 }

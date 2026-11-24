@@ -15,11 +15,12 @@ import (
 	"github.com/whyrusleeping/ycc/internal/codex"
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/googleauth"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 )
 
 // loginCommand authenticates a provider subscription via OAuth.
-// Two providers are supported:
+// Three providers are supported:
 //   - anthropic (Claude Pro/Max): paste-code flow — the login page shows a
 //     code#state string the user pastes back.
 //   - openai (ChatGPT Plus/Pro): browser flow with a local callback server on
@@ -27,9 +28,12 @@ import (
 //     with). When the browser runs elsewhere (e.g. ycc over ssh) the redirect
 //     never lands; pasting the failed callback URL from the browser's address
 //     bar into the terminal completes the login instead.
+//   - google (Google AI Pro/Ultra, unofficial): Antigravity CLI paste-code
+//     flow — Google's hosted callback page shows a code the user pastes back.
+//     Google's terms forbid this use and it can get the account suspended.
 //
 // Credentials land in the machine-local secrets store (never in ycc.toml)
-// under ANTHROPIC_OAUTH / OPENAI_OAUTH; a model opts in with `auth = "oauth"`
+// under ANTHROPIC_OAUTH / OPENAI_OAUTH / GOOGLE_OAUTH; a model opts in with `auth = "oauth"`
 // in its [models.X] block. After a successful login the config is updated
 // automatically (see configureSubscriptionModel) so the subscription is usable
 // on the next `ycc` run without hand-editing ycc.toml. Logout = `ycc token rm
@@ -37,13 +41,16 @@ import (
 func (a *app) loginCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "login",
-		Usage:     "authenticate a provider subscription via OAuth (anthropic | openai)",
-		ArgsUsage: "anthropic|openai",
-		Description: "Logs into a Claude (Pro/Max) or ChatGPT (Plus/Pro) subscription so models can be\n" +
+		Usage:     "authenticate a provider subscription via OAuth (anthropic | openai | google)",
+		ArgsUsage: "anthropic|openai|google",
+		Description: "Logs into a Claude (Pro/Max), ChatGPT (Plus/Pro) or Google AI (Pro/Ultra) subscription so models can be\n" +
 			"used without an API key, and configures a matching `auth = \"oauth\"` model in\n" +
 			"ycc.toml (creating the config if needed) so it is ready on the next run.\n" +
 			"Credentials are stored in the machine-local secrets store (never in ycc.toml);\n" +
-			"remove them with `ycc token rm ANTHROPIC_OAUTH` / `ycc token rm OPENAI_OAUTH`.",
+			"remove them with `ycc token rm ANTHROPIC_OAUTH` / `ycc token rm OPENAI_OAUTH` /\n" +
+			"`ycc token rm GOOGLE_OAUTH`.\n\n" +
+			"The google login is unofficial: it reuses the Antigravity CLI's OAuth client, which\n" +
+			"Google's terms forbid for third-party software, and Google has suspended accounts for it.",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			provider := cmd.Args().First()
 			if provider == "" {
@@ -54,8 +61,10 @@ func (a *app) loginCommand() *cli.Command {
 				return a.loginAnthropic(ctx)
 			case "openai":
 				return a.loginOpenAI(ctx)
+			case "google":
+				return a.loginGoogle(ctx)
 			default:
-				return fmt.Errorf("unsupported provider %q (want \"anthropic\" or \"openai\")", provider)
+				return fmt.Errorf("unsupported provider %q (want \"anthropic\", \"openai\" or \"google\")", provider)
 			}
 		},
 	}
@@ -140,6 +149,58 @@ func (a *app) loginOpenAI(ctx context.Context) error {
 		creds.AccountID, time.Unix(creds.ExpiresAt, 0).Format(time.RFC1123))
 	fmt.Printf("Codex models: %s\n", strings.Join(codex.Models, ", "))
 	a.configureSubscriptionModel("openai")
+	return nil
+}
+
+// googleRiskWarning is shown before every Google login.
+const googleRiskWarning = `Warning: this login is unofficial. It reuses the Google Antigravity CLI's OAuth
+client to run Gemini on your Google AI subscription. Google's Antigravity terms
+forbid using that login from third-party software, and Google has suspended
+accounts for it. ycc stops using the login if Google reports a suspension.
+Use a Gemini API key (backend = "gemini", key_env = "GEMINI_API_KEY") for the
+supported path.`
+
+func (a *app) loginGoogle(ctx context.Context) error {
+	fmt.Println(googleRiskWarning)
+	fmt.Println()
+	pkce, err := googleauth.NewPKCE()
+	if err != nil {
+		return fmt.Errorf("generating PKCE challenge: %w", err)
+	}
+	state, err := googleauth.NewState()
+	if err != nil {
+		return fmt.Errorf("generating login state: %w", err)
+	}
+	authURL := googleauth.AuthorizeURL(pkce, state)
+	fmt.Println("Open this URL in your browser and sign in with your Google account:")
+	fmt.Println()
+	fmt.Println("  " + authURL)
+	fmt.Println()
+	openBrowser(authURL)
+	fmt.Print("Paste the authorization code, or the full URL of the page you land on: ")
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && strings.TrimSpace(line) == "" {
+		return fmt.Errorf("reading code: %w", err)
+	}
+	code, err := googleauth.ParsePasted(line, state)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	creds, err := googleauth.Exchange(ctx, code, pkce)
+	if err != nil {
+		return fmt.Errorf("exchanging code: %w", err)
+	}
+	if err := googleauth.Save(creds); err != nil {
+		return fmt.Errorf("storing credentials: %w", err)
+	}
+	who := creds.Email
+	if who == "" {
+		who = "Google account"
+	}
+	fmt.Printf("Logged in (%s). The token refreshes automatically.\n", who)
+	a.configureSubscriptionModel("gemini")
 	return nil
 }
 

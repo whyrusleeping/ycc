@@ -30,6 +30,11 @@ func EnsureSubscriptionModel(c *Config, backend string) (name string, added bool
 		// an empty base_url resolves to the codex backend at Build time.
 		defName = "chatgpt"
 		modelID = codex.Models[0]
+	case "gemini":
+		// Google subscription inference goes through the Antigravity
+		// transport; an empty base_url resolves to its host at Build time.
+		defName = "gemini"
+		modelID = "gemini-4-neon"
 	default:
 		return "", false, fmt.Errorf("subscription auth is not supported for backend %q", backend)
 	}

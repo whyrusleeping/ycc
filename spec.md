@@ -885,8 +885,8 @@ accident guardrail, not a security boundary.
 
 Model/repository-triggered shell commands (including background and reviewer Bash), repository
 Git commands (including hooks), and Search subprocesses scrub inherited `YCC_TOKEN`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `EXA_API_KEY`, `ANTHROPIC_OAUTH`,
-`OPENAI_OAUTH`, and every configured provider `key_env` name seen in this daemon process, including
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `EXA_API_KEY`,
+`ANTHROPIC_OAUTH`, `OPENAI_OAUTH`, `GOOGLE_OAUTH`, and every configured provider `key_env` name seen in this daemon process, including
 retired configurations. This is a denylist, not an allowlist, to preserve operator tools such as
 gh, ssh-agent, npm registries, and Go proxies. Explicit workspace/worktree environment overrides
 are trusted and applied afterward. Same-uid shells can still read files or
@@ -1258,15 +1258,17 @@ when an explicit total-attempt budget is configured (as for rate limits).
 
 API-key values resolve from the environment first and then the machine-local secrets store
 managed by `ycc token`; committed config stores only the key name. Model RPCs reject `YCC_TOKEN`,
-`ANTHROPIC_OAUTH`, and `OPENAI_OAUTH` as API-key references. Credential-bearing custom base URLs
+`ANTHROPIC_OAUTH`, `OPENAI_OAUTH`, and `GOOGLE_OAUTH` as API-key references. Credential-bearing custom base URLs
 must use HTTPS, except HTTP loopback endpoints (`localhost`, 127.0.0.0/8, ::1); Anthropic discovery
 is credential-bearing even without a key reference because it can use stored OAuth.
-Anthropic and OpenAI also support subscription OAuth through `ycc login`. Authenticated
-begin/complete/cancel RPCs also connect Claude or ChatGPT subscriptions from remote clients via
+Anthropic, OpenAI and Gemini also support subscription OAuth through `ycc login`. Authenticated
+begin/complete/cancel RPCs also connect Claude, ChatGPT or Google subscriptions from remote clients via
 a daemon-owned browser login. Anthropic exchanges the full pasted `code#state`; ChatGPT exchanges
 a pasted redirect URL or query containing both code and matching state (bare codes are rejected).
 ChatGPT uses the fixed `http://localhost:1455/auth/callback` redirect without binding that port on
-the daemon; the user copies the address-bar URL even if the browser cannot load it. Each provider
+the daemon; the user copies the address-bar URL even if the browser cannot load it. Google uses the
+Antigravity CLI's hosted `https://antigravity.google/oauth-callback` page, which shows a code; the
+daemon exchanges that code, or the page URL when its state matches. Each provider
 has its own single pending attempt per daemon, valid for ten minutes; a new begin supersedes it, and submission
 consumes it even on failure. State must match before exchange. An in-flight exchange excludes a
 new begin; cancellation discards only the matching pending attempt, not submitted exchanges or
@@ -1292,7 +1294,16 @@ parameter. Every loop on the `openai` backend sends a stable per-loop prompt-cac
 uses for cache affinity). Session-owned loops use `<session id>/<actor>` so a coordinator and its
 concurrent subagents route to distinct cache shards instead of competing for one; a loop without an
 assigned key derives a random one once. The key is recorded on `model_turn` and is never sent to
-other backends (strict openai-compatible servers reject unknown fields). Subscription models are
+other backends (strict openai-compatible servers reject unknown fields). Gemini subscription
+inference (`backend = "gemini"`, `auth = "oauth"`) is unofficial: it uses the Antigravity Code
+Assist backend (`daily-cloudcode-pa.googleapis.com/v1internal`) with the Antigravity CLI's OAuth
+client, which Google's terms forbid for third-party software, so login and settings surfaces warn
+that the account can be suspended. Its transport wraps the native Gemini request in the Antigravity
+envelope, discovers the account's project (`loadCodeAssist`, else `onboardUser`), picks the wire
+model id carrying the thinking level from the account's catalog (`gemini-4-neon-high`), and
+unwraps each streamed response. An ineligible account, a missing or rejected login, and a
+terms-of-service suspension (403 `TOS_VIOLATION`) are non-retryable auth errors; a suspension is
+also recorded on the stored login, which is never used again until a new login. Subscription models are
 unpriced unless the user supplies rates.
 
 Runtime settings changes persist to the active `ycc.toml` and affect the next model construction.
@@ -1644,7 +1655,7 @@ improvement loop; an agent is pointed at the report on request. Event vocabulary
 Machine setup must work before a model does, so it is never an agent flow. There are two entry
 points, and each leaves the same `ycc.toml`:
 
-- `ycc login anthropic|openai` stores the subscription login and adds an `auth = "oauth"` model,
+- `ycc login anthropic|openai|google` stores the subscription login and adds an `auth = "oauth"` model,
   creating the config with all roles on it when none exists. A daemon already running keeps the
   config it loaded, so the command tells the user to restart it.
 - `ycc daemon` without a config runs the built-in Anthropic fallback. At startup it prints the web
