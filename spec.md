@@ -717,7 +717,8 @@ daemon-wide switch, so enabling it for one project never affects another). Clien
 `ProjectInfo` and change it with `SetProjectSettings`, which edits only that line. A session gets the
 feature when the setting is on as it is built (started or reopened), because its tool set is fixed
 then; turning the setting off applies at once: the tool answers that coordination is off and no
-further notices are delivered. With the setting off nothing is added. Work-loop sessions are the
+further notices are delivered. With the setting off nothing is added, except that `list_sessions`
+still lists exclusive lease holders (below). Work-loop sessions are the
 exception for intents: they get `set_intent` alone, and it keeps working and their intents stay
 shown when the setting is off or turned off (§9.1).
 
@@ -797,10 +798,13 @@ except for exclusive leases.
   renewed) and `lease_released` (name, why: released, expired, job_exited or session_ended).
   A refusal points to the `list_backlog` footer, which shows held leases under their holder, as
   `list_sessions` and `ListProjectNotices` sessions (as `leases`) do; a held lease keeps a quiet
-  session listed. While session coordination is off, `ListProjectNotices` still lists the sessions
-  holding leases, without focus, intent or claims, and the web and iOS Live sessions views show
-  them below the coordination-off note (the web sidebar line appears only while a lease is held).
-  A stopping session's job-attached lease stays held until the job's execution has actually stopped.
+  session listed. While session coordination is off, `list_sessions` is still offered and lists
+  only the other sessions holding leases (no claims, notices or `path=` queries), and
+  `ListProjectNotices` lists the sessions holding leases without focus, intent or claims; the web
+  and iOS Live sessions views show them below the coordination-off note, and the iOS More menu
+  always offers that view (the web sidebar line appears only while a lease is held). A stopping
+  session's job-attached lease stays held until the job's execution has actually stopped, and the
+  listings keep showing that session, as stopping, until the lease ends.
 
 ### 7.4 Reasoning settings
 
