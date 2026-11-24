@@ -990,21 +990,38 @@ every ready task waiting on time or an outside result. The loop then waits befor
 escalating 2, 5, 15 and 30 minutes, then hourly, shown as waiting with wait kind `no_progress`;
 any progress resets the backoff, and graceful stop wakes the wait. Once one stall has waited 12 hours in total, the loop stops as stalled, naming
 the ready tasks. Stop is
-graceful: the current session finishes, then no next session starts. Session budget breaches and
+graceful: working sessions finish, then no next session starts. Session budget breaches and
 cumulative loop budgets still stop at the next safe decision point.
+
+`[work_loop] parallel` in `.ycc/config.toml` (default 1, at most 16), or a positive `parallel` on
+`StartWorkLoop`, sets how many loop sessions may work at once, all in the shared tree. Values
+above 1 are experimental until commits use a candidate tree of HEAD plus the session's own
+changes. Each slot runs one session at a time. A new session starts only once the most recently
+started loop session has claimed a task (its first `task_focus`) or ended, or after 10 minutes,
+so each session chooses with its predecessor's claim visible. No-progress backoff and stall
+patience are per slot: a slot past patience starts no more sessions, and the loop stalls only
+once every slot has. Provider-outage backoff holds every slot. Loop token and cost caps are
+checked before each start against accounted usage plus the usage so far of live loop sessions.
+A reached cap, a session breaching its own budget, a non-retryable session failure, a runner
+error, a graceful stop or a daemon shutdown starts no new session; the loop shows `stopping`
+while working sessions finish, then finishes. A session's own failure outranks a stop or cap as
+the outcome. The loop snapshot lists its parallelism and slots (session, focused task, working
+or waiting); clients show "k/N working, m waiting". The digest lists, as manual landings,
+commits made since the loop started that no loop session's `commit_made` recorded.
 
 A loop session that has ended its turn and for 30 seconds can be resumed only by its own
 background shell jobs, with no subagent run outstanding, counts as waiting rather than working.
 The loop then starts its next session if ready, unheld work exists. Loop sessions are told to
 end their turn with a progress report, rather than block in a long `wait`, when all that remains
 is a long-running shell job. A waiting session stays live with its task hold, file claims and
-jobs. The loop has one working slot: the foreground session holds it, and a waiting session's
-job continuation must take it, so a completion that arrives while another loop session works
-stays queued and wakes the session once the slot frees. While a woken waiting session works,
-the loop starts no new session. `[work_loop] max_waiting` in `.ycc/config.toml` caps waiting
-sessions (default 2; 0 makes the loop wait for every session to end). At the cap, while a
-waiting session works again, or when the only ready work is held by waiting sessions, the loop
-waits with wait kind `sessions_waiting` until one ends; a reached budget still stops it. When a
+jobs. Waiting sessions do not count against the working slots, but a waiting session's job
+continuation must take a free slot, so a completion that arrives while other loop sessions fill
+the slots stays queued and wakes the session once one frees; a woken waiting session counts as
+working. `[work_loop] max_waiting` in `.ycc/config.toml` caps waiting sessions (default 2; 0
+makes the loop wait for every session to end); a session is let wait only while a place under
+the cap is free. At the cap, while woken waiting sessions fill the slots, or when the only
+ready work is held by the loop's own sessions, the loop starts nothing; with no session working
+it waits with wait kind `sessions_waiting` until one ends. A reached budget still stops it. When a
 waiting session ends, its commits, usage, verdicts and report count toward the digest and loop
 budgets, and its result goes through the same progress, stall, provider-retry and failure rules
 as a session that ends in the foreground. Its end interrupts a backoff wait, and no session
@@ -1013,8 +1030,8 @@ patience count only backoff actually served. Graceful stop and budget stops star
 and leave waiting sessions and their jobs running, no longer gated by the slot. The outcome names
 them, separating any that a job has woken and that now work, and counts a session that ended as
 the loop stopped. The loop snapshot and `.ycc/workloop.json` list
-waiting sessions. A daemon shutdown stops them, and its outcome, like that of a loop restored as
-interrupted, names the sessions that were waiting.
+every slot. A daemon shutdown stops them, and its outcome, like that of a loop restored as
+interrupted, names the sessions that were waiting (a restored loop also names those working).
 
 Fresh loop sessions receive bounded continuation context from the immediately preceding session
 (session id, focus, and available report). Prior reports are untrusted evidence, not instructions
