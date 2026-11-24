@@ -57,6 +57,7 @@ export function loopSessionIds(loop: WorkLoopInfo | null | undefined): Set<strin
   const ids = new Set<string>();
   if (!loop) return ids;
   for (const s of loop.sessions) if (s.sessionId) ids.add(s.sessionId);
+  for (const s of loop.slots) if (s.sessionId) ids.add(s.sessionId);
   const current = currentSessionId(loop);
   if (current) ids.add(current);
   return ids;
@@ -102,6 +103,7 @@ export function summaryLine(loop: WorkLoopInfo): string {
     [loop.inReview.length, "in review"],
     [loop.unfinished.length, "unfinished"],
     [loop.created.length, "created"],
+    [loop.manualLandings.length, "landed manually"],
   ] as const;
   const digest = counts
     .filter(([n]) => n > 0)
@@ -195,15 +197,26 @@ export function waitingLine(loop: WorkLoopInfo): string {
   return line;
 }
 
+/**
+ * "2/3 working, 1 waiting": the loop's slots in use out of its parallelism,
+ * and its sessions waiting on background jobs. Empty for snapshots without slots.
+ */
+export function slotsLine(loop: WorkLoopInfo): string {
+  if (loop.parallel <= 0) return "";
+  const working = loop.slots.filter((s) => s.state === "working").length;
+  const waiting = loop.slots.filter((s) => s.state === "waiting").length;
+  return `${working}/${loop.parallel} working, ${waiting} waiting`;
+}
+
 /** A compact status line for banners and the sidebar tooltip. */
 export function bannerLine(loop: WorkLoopInfo | null | undefined): string {
   const state = loopState(loop);
   if (!loop) return stateTitle(state);
   switch (state) {
     case "running":
-      return `Running · ${summaryLine(loop)}`;
+      return ["Running", slotsLine(loop), summaryLine(loop)].filter(Boolean).join(" · ");
     case "waiting":
-      return waitingLine(loop);
+      return [waitingLine(loop), slotsLine(loop)].filter(Boolean).join(" · ");
     case "stopping":
       return "Stopping…";
     case "finished":

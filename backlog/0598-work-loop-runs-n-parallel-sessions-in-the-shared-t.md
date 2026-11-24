@@ -1,10 +1,10 @@
 ---
 id: "0598"
 title: Work loop runs N parallel sessions in the shared tree (experimental)
-status: todo
+status: done
 priority: 3
 created: "2026-11-23"
-updated: "2026-11-23"
+updated: "2026-11-24"
 depends_on:
     - "0596"
     - "0597"
@@ -13,18 +13,11 @@ spec_refs:
 ---
 
 ## Description
+
 Status: todo. Waits on 0596 (atomic task claims and a sibling-aware loop prompt) and 0597 (the loop moves on while a session waits on its jobs). Third step of the parallel work-loop plan.
 
-## Why
-The user wants one work loop to run a configurable number of agents in parallel, all in the shared tree. Their projects already share GPUs, databases, disks and hosts, so coordination has to improve whether or not files are isolated. In wheeler, the user's data-pipeline project, 2+ sessions overlapped in 27% of active hours (peak 7). The real collisions came from shared files and services, not shared task ids. 0596 handles choosing and claiming, and 0599 handles exclusive deploy and service access.
-
-User decisions (2026-11-23, session s_a96d1f53776eaa46):
-- Run in the shared tree, not workstreams.
-- Agents choose their tasks. The next slot starts only after the previous agent has finished choosing.
-- N counts actively working loop sessions only.
-- N>1 may ship as experimental before 0593 (candidate-tree commits) lands, with manual landings counted in the digest.
-
 ## Acceptance criteria
+
 - A `[work_loop] parallel` project setting (default 1) and a per-start override on `StartWorkLoop`. Values above 1 are documented as experimental until 0593 lands.
 - The loop keeps up to N actively working sessions. Waiting sessions (0597) do not count and keep their separate cap.
 - A new slot's session starts only after the most recently started loop session has claimed a task or ended, with a timeout fallback.
@@ -36,4 +29,8 @@ User decisions (2026-11-23, session s_a96d1f53776eaa46):
 - A test with a fake session runner at N=3 covers: distinct claimed tasks, start gating on the previous claim, stop draining all slots, per-slot stall, and a budget breach without overshooting by N whole sessions.
 - spec.md §9.1 records the behavior.
 
-## Work log
+## Outcome
+
+[work_loop] parallel (default 1, max 16) plus a StartWorkLoop override runs up to N working loop sessions in the shared tree (experimental above 1). Each slot runs in its own goroutine. A new start waits for the latest session's first claim, or for that session to end, with a 10-minute fallback. Stall backoff and patience are per slot; idle slots age together, and the loop stalls only once every slot has given up. Provider backoff is shared. Loop caps count the usage so far of live sessions. Breach, failure, stop and shutdown drain the working slots, and a session's own failure outranks the other outcomes. Nothing is admitted while a slot or a woken waiter has ended with its record unpublished. Wake admission and detach handoff are serialized. workloop.json v2 records slots, parallel and manual landings (v1 still restores). The snapshot, proto, web and iOS show slots and 'k/N working, m waiting'. The digest lists manual landings. The spec §9.1 hunks landed separately. Verified: Go suites with race; N=3 fake-runner tests, each guard mutation-checked; web 489 tests and bundle; YccKit tests and app build on the Mac. opus and sol accepted (round 5).
+
+Commit: Work loop runs N parallel slots in the shared tree (0598)

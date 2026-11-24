@@ -1555,7 +1555,7 @@ message WorkLoopInfo {
   string loop_id = 1;
   string project = 2;
   string state = 3;              // running | waiting | stopping | finished
-  string current_session_id = 4; // the session being driven now (Subscribe target); empty between sessions
+  string current_session_id = 4; // most recently started session still working (Subscribe target); empty between sessions
   string outcome = 5;            // human outcome line once finished
   string started_at = 6;         // RFC3339
   int32 sessions_run = 7;
@@ -1583,11 +1583,37 @@ message WorkLoopInfo {
   // started; reason names the files. Loop sessions leave that work to its owner.
   repeated WorkLoopDigestTask uncommitted_in_review = 28;
   int32 uncommitted_paths = 29; // distinct uncommitted paths attributed to uncommitted_in_review
+  int32 parallel = 30; // loop sessions that may work at once (0 for loops recorded before slots)
+  // The loop's live sessions: working in its slots (including waiting sessions
+  // a job has woken) or waiting on their background shell jobs.
+  repeated WorkLoopSlot slots = 31;
+  // Commits made during the loop that no loop session recorded, newest first.
+  repeated WorkLoopLanding manual_landings = 32;
+}
+
+// WorkLoopSlot is one live loop session.
+message WorkLoopSlot {
+  int32 slot = 1;        // slot the session started in
+  string session_id = 2; // empty while the session starts
+  string task_id = 3;    // focused task; empty until it claims one
+  string state = 4;      // working | waiting
+  string since = 5;      // RFC3339
+}
+
+// WorkLoopLanding is a commit made during a loop that no loop session recorded.
+message WorkLoopLanding {
+  string sha = 1;
+  string subject = 2;
 }
 
 // StartWorkLoop starts an unattended work loop for a project. It fails
 // (FailedPrecondition) if a loop is already running/waiting/stopping for that workspace.
-message StartWorkLoopRequest { string project = 1; }
+message StartWorkLoopRequest {
+  string project = 1;
+  // Loop sessions that may work at once; 0 uses the project's [work_loop]
+  // parallel (default 1). Values above 1 are experimental. At most 16.
+  int32 parallel = 2;
+}
 message StartWorkLoopResponse { WorkLoopInfo loop = 1; }
 
 // StopWorkLoop gracefully stops a live loop: the current session finishes and no

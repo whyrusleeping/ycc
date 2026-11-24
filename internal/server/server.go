@@ -2105,9 +2105,13 @@ func (s *Server) Notify(_ context.Context, req *connect.Request[v1.NotifyRequest
 // StartWorkLoop starts a daemon-side unattended work loop for a project. The
 // loop survives client disconnects; the returned snapshot
 // carries the current session id for Subscribe. An unknown project is client
-// input (InvalidArgument); an already-running loop is FailedPrecondition.
+// input (InvalidArgument), as is a parallel outside 0..16; an already-running
+// loop is FailedPrecondition.
 func (s *Server) StartWorkLoop(_ context.Context, req *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
-	wl, err := s.mgr.StartWorkLoop(req.Msg.Project)
+	if p := req.Msg.Parallel; p < 0 || p > docs.MaxWorkLoopParallel {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("parallel must be between 0 and %d", docs.MaxWorkLoopParallel))
+	}
+	wl, err := s.mgr.StartWorkLoopWith(req.Msg.Project, session.WorkLoopOptions{Parallel: int(req.Msg.Parallel)})
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrUnknownProject):
@@ -2121,7 +2125,7 @@ func (s *Server) StartWorkLoop(_ context.Context, req *connect.Request[v1.StartW
 	return connect.NewResponse(&v1.StartWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
 }
 
-// StopWorkLoop gracefully stops a running loop (the current session finishes, no
+// StopWorkLoop gracefully stops a running loop (working sessions finish, no
 // next session is picked). A missing loop is not an error — it returns an empty
 // response (nil loop).
 func (s *Server) StopWorkLoop(_ context.Context, req *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {
@@ -2221,6 +2225,19 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 	info.Unfinished = digestTasksToProto(wl.Unfinished)
 	info.UncommittedInReview = digestTasksToProto(wl.UncommittedInReview)
 	info.UncommittedPaths = int32(wl.UncommittedPaths)
+	info.Parallel = int32(wl.Parallel)
+	for _, slot := range wl.Slots {
+		since := ""
+		if !slot.Since.IsZero() {
+			since = slot.Since.UTC().Format(time.RFC3339)
+		}
+		info.Slots = append(info.Slots, &v1.WorkLoopSlot{
+			Slot: int32(slot.Slot), SessionId: slot.SessionID, TaskId: slot.Task, State: slot.State, Since: since,
+		})
+	}
+	for _, l := range wl.ManualLandings {
+		info.ManualLandings = append(info.ManualLandings, &v1.WorkLoopLanding{Sha: l.SHA, Subject: l.Subject})
+	}
 	return info
 }
 

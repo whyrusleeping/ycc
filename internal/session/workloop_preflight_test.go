@@ -125,6 +125,8 @@ func TestWorkLoopPreflightListsUncommittedInReviewWork(t *testing.T) {
 	}
 	check("persisted", restoredTasks(persisted.UncommittedInReview), persisted.UncommittedPaths)
 
+	// Finished state is published before notification; join the driver first.
+	m.loopWG.Wait()
 	m.notifier.Flush()
 	var found bool
 	for _, r := range sink.all() {

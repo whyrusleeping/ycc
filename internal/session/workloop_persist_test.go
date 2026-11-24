@@ -218,6 +218,7 @@ func TestInterruptedWorkLoopReportsWaitingSessions(t *testing.T) {
 		loopID: "loop_with_waiters", project: filepath.Base(ws), workspace: ws,
 		state: "running", startedAt: time.Now().Add(-2 * time.Hour).UTC(),
 		waiters: []*loopWaiter{{id: "s_wait", focus: "0042", since: since}, {id: "s_other", since: since}},
+		lanes:   []*loopLane{{run: &loopRun{id: "s_work", focus: "0043", started: since}}},
 	}
 	old.persist()
 
@@ -226,12 +227,36 @@ func TestInterruptedWorkLoopReportsWaitingSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "loop interrupted: daemon restarted; sessions were waiting on background jobs: s_wait (0042), s_other"
+	want := "loop interrupted: daemon restarted; sessions were working: s_work (0043); sessions were waiting on background jobs: s_wait (0042), s_other"
 	if got == nil || got.State != "finished" || got.Outcome != want {
 		t.Fatalf("restored loop = %+v", got)
 	}
 	if len(got.Waiting) != 2 || got.Waiting[0].SessionID != "s_wait" || got.Waiting[0].Focus != "0042" || !got.Waiting[0].Since.Equal(since) {
 		t.Fatalf("restored waiting sessions = %+v", got.Waiting)
+	}
+}
+
+// A version 1 file, which listed waiting sessions on their own, still restores.
+func TestVersion1WorkLoopRestores(t *testing.T) {
+	ws := t.TempDir()
+	path := workLoopPersistPath(ws)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	v1 := `{"version":1,"loop_id":"loop_v1","state":"running","started_at":"2026-11-20T10:00:00Z",` +
+		`"waiting_sessions":[{"session_id":"s_wait","focus":"0042","since":"2026-11-20T11:00:00Z"}]}`
+	if err := os.WriteFile(path, []byte(v1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewManager(workLoopPersistTestRegistry(), ws).GetWorkLoop("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Outcome != "loop interrupted: daemon restarted; sessions were waiting on background jobs: s_wait (0042)" {
+		t.Fatalf("restored version 1 loop = %+v", got)
+	}
+	if p, ok := readPersistedWorkLoop(ws); !ok || p.Version != workLoopPersistVersion || len(p.Slots) != 1 || p.Slots[0].State != "waiting" {
+		t.Fatalf("rewritten loop = %+v", p)
 	}
 }
 

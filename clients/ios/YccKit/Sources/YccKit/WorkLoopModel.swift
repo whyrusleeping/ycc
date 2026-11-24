@@ -271,9 +271,9 @@ public final class WorkLoopModel {
         guard let loop else { return WorkLoopState.none.title }
         switch state(for: loop) {
         case .running:
-            return "Running · \(summaryLine(for: loop))"
+            return ["Running", slotsLine(for: loop), summaryLine(for: loop)].filter { !$0.isEmpty }.joined(separator: " · ")
         case .waiting:
-            return waitingLine(for: loop)
+            return [waitingLine(for: loop), slotsLine(for: loop)].filter { !$0.isEmpty }.joined(separator: " · ")
         case .stopping:
             return "Stopping…"
         case .finished:
@@ -281,6 +281,16 @@ public final class WorkLoopModel {
         case .none, .unknown:
             return state(for: loop).title
         }
+    }
+
+    /// "2/3 working, 1 waiting": the loop's slots in use out of its
+    /// parallelism, and its sessions waiting on background jobs. Empty for
+    /// snapshots without slots.
+    public static func slotsLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
+        guard loop.parallel > 0 else { return "" }
+        let working = loop.slots.filter { $0.state == "working" }.count
+        let waiting = loop.slots.filter { $0.state == "waiting" }.count
+        return "\(working)/\(loop.parallel) working, \(waiting) waiting"
     }
 
     /// A compact lifecycle/digest summary such as
@@ -294,6 +304,7 @@ public final class WorkLoopModel {
             (loop.inReview.count, "in review"),
             (loop.unfinished.count, "unfinished"),
             (loop.created.count, "created"),
+            (loop.manualLandings.count, "landed manually"),
         ]
         let digestPart = counts.compactMap { count, label in
             count == 0 ? nil : "\(count) \(label)"

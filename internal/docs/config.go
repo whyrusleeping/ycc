@@ -44,6 +44,8 @@ type specConfig struct {
 		// background shell jobs while the loop moves on (default 2; 0 makes
 		// the loop wait for every session to finish).
 		MaxWaiting *int `toml:"max_waiting"`
+		// Parallel is how many loop sessions may work at once (default 1).
+		Parallel *int `toml:"parallel"`
 	} `toml:"work_loop"`
 }
 
@@ -99,6 +101,19 @@ func (s *Store) WorkLoopMaxWaiting() int {
 		return *v
 	}
 	return DefaultWorkLoopMaxWaiting
+}
+
+// MaxWorkLoopParallel bounds how many loop sessions may work at once.
+const MaxWorkLoopParallel = 16
+
+// WorkLoopParallel returns how many loop sessions the project lets work at
+// once ([work_loop] parallel; default 1), clamped to 1..MaxWorkLoopParallel.
+func (s *Store) WorkLoopParallel() int {
+	v := s.cfg.WorkLoop.Parallel
+	if v == nil || *v < 1 {
+		return 1
+	}
+	return min(*v, MaxWorkLoopParallel)
 }
 
 // ChatFinishedWork returns the project's policy for finished chat work

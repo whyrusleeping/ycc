@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,6 +34,15 @@ func jobSession(t *testing.T, id, ws, task, kind string) (*Session, *jobs.Regist
 	s.emitter.Emit(event.SessionIdle, map[string]any{"report": "waiting on " + kind})
 	s.setIdle(true)
 	return s, jr, job
+}
+
+// persistedSlots lists persisted slots as "session state [task]".
+func persistedSlots(p persistedWorkLoop) []string {
+	var out []string
+	for _, slot := range p.Slots {
+		out = append(out, strings.TrimSpace(slot.SessionID+" "+slot.State+" "+slot.Task))
+	}
+	return out
 }
 
 func awaitCond(t *testing.T, what string, cond func() bool) {
@@ -197,10 +207,10 @@ func TestWorkLoopProceedsPastSessionWaitingOnShellJob(t *testing.T) {
 	if _, err := m.StartWorkLoop("demo"); err != nil {
 		t.Fatal(err)
 	}
-	awaitCond(t, "the second session to start", func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return starts == 2
+	wantSlots := fmt.Sprint([]string{"second-session working", "first-session waiting " + taskA.ID})
+	awaitCond(t, "the second session to start and be recorded", func() bool {
+		p, ok := readPersistedWorkLoop(ws)
+		return ok && fmt.Sprint(persistedSlots(p)) == wantSlots
 	})
 	snap, _ := m.GetWorkLoop("demo")
 	if snap.CurrentSessionID != second.ID || len(snap.Waiting) != 1 || snap.Waiting[0].SessionID != first.ID || snap.Waiting[0].Focus != taskA.ID {
@@ -211,9 +221,6 @@ func TestWorkLoopProceedsPastSessionWaitingOnShellJob(t *testing.T) {
 	}
 	if holder := m.heldTasks(ws, "")[taskA.ID]; holder != first.ID {
 		t.Fatalf("waiting session lost its task hold: holder %q", holder)
-	}
-	if p, ok := readPersistedWorkLoop(ws); !ok || len(p.WaitingSessions) != 1 || p.WaitingSessions[0].SessionID != first.ID {
-		t.Fatalf("persisted loop = %+v", p)
 	}
 
 	// The second session finishes its task. The only ready work left is the
@@ -433,7 +440,7 @@ func TestStopWorkLoopLeavesWaitingSessionsLive(t *testing.T) {
 		defer f.mu.Unlock()
 		return f.released[f.started[0]] && f.released[f.started[1]]
 	})
-	if p, ok := readPersistedWorkLoop(ws); !ok || p.State != "finished" || len(p.WaitingSessions) != 2 {
+	if p, ok := readPersistedWorkLoop(ws); !ok || p.State != "finished" || len(persistedSlots(p)) != 2 || p.Slots[0].State != "waiting" {
 		t.Fatalf("persisted loop = %+v", p)
 	}
 }
@@ -905,14 +912,14 @@ func TestEmptyWakeDoesNotTakeTheSlot(t *testing.T) {
 		if resumed, err := sess.resumeForFinishedJobs(); resumed || err != nil {
 			t.Fatalf("empty wake = %v, %v", resumed, err)
 		}
-		if wl.slot != "" {
-			t.Fatalf("empty wake took the slot: %q", wl.slot)
+		if len(wl.holders) != 0 {
+			t.Fatalf("empty wake took the slot: %v", wl.holders)
 		}
 	}
 	// A finished job is delivered only through the slot.
 	job := jr.Start("bash", "finished", "coordinator")
 	job.Finish(jobs.Done, "ok")
-	wl.slot = "someone-else"
+	wl.holdLocked("someone-else")
 	if resumed, _ := sess.resumeForFinishedJobs(); resumed || !jr.CompletionReady("coordinator") {
 		t.Fatal("a completion was delivered, or lost, while another session held the slot")
 	}
@@ -923,7 +930,7 @@ func TestEmptyWakeDoesNotTakeTheSlot(t *testing.T) {
 // finished at varying points while the wake is in flight.
 func TestCompletionRacingTheReadinessCheckStaysQueued(t *testing.T) {
 	s, _ := newJobWakeSession(t, &scriptedTurner{})
-	wl := &workLoop{slot: "other-session"}
+	wl := &workLoop{holders: map[string]struct{}{"other-session": {}}}
 	s.setWakeGate(func() bool { return wl.admitWake(s.ID) }, func() { wl.cancelWake(s.ID) })
 	type result struct {
 		resumed bool

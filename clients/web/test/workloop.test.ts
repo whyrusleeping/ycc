@@ -8,10 +8,12 @@ import {
   WorkLoopDigestTaskSchema,
   WorkLoopInfoSchema,
   WorkLoopSessionSchema,
+  WorkLoopSlotSchema,
   type WorkLoopInfo,
 } from "../src/gen/ycc/v1/ycc_pb";
 import {
   ambientLoops,
+  bannerLine,
   budgetLines,
   canStart,
   canStop,
@@ -27,6 +29,7 @@ import {
   pollInterval,
   recentCompleted,
   resourceEnvelopeLines,
+  slotsLine,
   stateTitle,
   totalsLine,
   uncommittedInReviewLine,
@@ -157,6 +160,17 @@ describe("waiting line", () => {
     expect(waitingLine(loop({ state: "waiting", waitKind: "sessions_waiting" }))).toBe(
       "Waiting: loop sessions are waiting on background jobs",
     );
+  });
+});
+
+describe("slots", () => {
+  it("counts working slots out of the parallelism, and waiting sessions", () => {
+    const slot = (sessionId: string, state: string) => create(WorkLoopSlotSchema, { sessionId, state });
+    const l = loop({ parallel: 3, slots: [slot("s_a", "working"), slot("", "working"), slot("s_w", "waiting")] });
+    expect(slotsLine(l)).toBe("2/3 working, 1 waiting");
+    expect(bannerLine(l)).toBe("Running · 2/3 working, 1 waiting · 0 sessions");
+    expect([...loopSessionIds(l)].sort()).toEqual(["s_a", "s_w"]);
+    expect(slotsLine(loop())).toBe("");
   });
 });
 

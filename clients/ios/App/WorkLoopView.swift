@@ -271,6 +271,11 @@ struct WorkLoopView: View {
             Text(WorkLoopModel.totalsLine(for: loop))
                 .font(.subheadline.monospacedDigit())
                 .foregroundStyle(.secondary)
+            if model.state.isActive, !WorkLoopModel.slotsLine(for: loop).isEmpty {
+                Label(WorkLoopModel.slotsLine(for: loop), systemImage: "square.stack.3d.up")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             if model.state == .waiting {
                 Label(WorkLoopModel.waitingLine(for: loop), systemImage: "hourglass")
                     .font(.subheadline)

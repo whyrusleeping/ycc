@@ -88,6 +88,22 @@ func (r *Repo) Log(tip string, skip, limit int) ([]Commit, error) {
 	return parseLog(out), nil
 }
 
+// CommitsSince returns the commits reachable from HEAD but not from base
+// (`git log base..HEAD`), newest first, without shortstats. base must be a
+// full commit sha.
+func (r *Repo) CommitsSince(base string) ([]Commit, error) {
+	if !fullSHARe.MatchString(base) {
+		return nil, fmt.Errorf("invalid commit sha %q", base)
+	}
+	out, err := r.run("-c", "log.showSignature=false", "--no-optional-locks", "log", "--no-color",
+		"--no-show-signature", "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s",
+		"--end-of-options", base+"..HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return parseLog(out), nil
+}
+
 // parseLog reads Log's record-separated format. Each record is the header line
 // followed by an optional shortstat line (absent for merges and empty commits).
 func parseLog(out string) []Commit {

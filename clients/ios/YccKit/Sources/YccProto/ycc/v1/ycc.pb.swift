@@ -4771,7 +4771,7 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
     set {_uniqueStorage()._state = newValue}
   }
 
-  /// the session being driven now (Subscribe target); empty between sessions
+  /// most recently started session still working (Subscribe target); empty between sessions
   public var currentSessionID: String {
     get {_storage._currentSessionID}
     set {_uniqueStorage()._currentSessionID = newValue}
@@ -4920,11 +4920,71 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
     set {_uniqueStorage()._uncommittedPaths = newValue}
   }
 
+  /// loop sessions that may work at once (0 for loops recorded before slots)
+  public var parallel: Int32 {
+    get {_storage._parallel}
+    set {_uniqueStorage()._parallel = newValue}
+  }
+
+  /// The loop's live sessions: working in its slots (including waiting sessions
+  /// a job has woken) or waiting on their background shell jobs.
+  public var slots: [Ycc_V1_WorkLoopSlot] {
+    get {_storage._slots}
+    set {_uniqueStorage()._slots = newValue}
+  }
+
+  /// Commits made during the loop that no loop session recorded, newest first.
+  public var manualLandings: [Ycc_V1_WorkLoopLanding] {
+    get {_storage._manualLandings}
+    set {_uniqueStorage()._manualLandings = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _storage = _StorageClass.defaultInstance
+}
+
+/// WorkLoopSlot is one live loop session.
+public nonisolated struct Ycc_V1_WorkLoopSlot: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// slot the session started in
+  public var slot: Int32 = 0
+
+  /// empty while the session starts
+  public var sessionID: String = String()
+
+  /// focused task; empty until it claims one
+  public var taskID: String = String()
+
+  /// working | waiting
+  public var state: String = String()
+
+  /// RFC3339
+  public var since: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// WorkLoopLanding is a commit made during a loop that no loop session recorded.
+public nonisolated struct Ycc_V1_WorkLoopLanding: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sha: String = String()
+
+  public var subject: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 /// StartWorkLoop starts an unattended work loop for a project. It fails
@@ -4935,6 +4995,10 @@ public nonisolated struct Ycc_V1_StartWorkLoopRequest: Sendable {
   // methods supported on all messages.
 
   public var project: String = String()
+
+  /// Loop sessions that may work at once; 0 uses the project's [work_loop]
+  /// parallel (default 1). Values above 1 are experimental. At most 16.
+  public var parallel: Int32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -14951,7 +15015,7 @@ nonisolated extension Ycc_V1_WorkLoopSession: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopInfo"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0\u{3}finished_at\0\u{3}uncommitted_in_review\0\u{3}uncommitted_paths\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}loop_id\0\u{1}project\0\u{1}state\0\u{3}current_session_id\0\u{1}outcome\0\u{3}started_at\0\u{3}sessions_run\0\u{1}sessions\0\u{1}completed\0\u{1}blocked\0\u{3}in_review\0\u{1}created\0\u{3}total_tokens\0\u{3}total_cost\0\u{3}cost_status\0\u{3}resume_at\0\u{3}wait_kind\0\u{3}session_token_limit\0\u{3}session_cost_limit\0\u{3}session_time_limit_secs\0\u{3}loop_token_limit\0\u{3}loop_cost_limit\0\u{3}loop_time_limit_secs\0\u{3}cost_limits_priced_only\0\u{1}unfinished\0\u{3}resource_envelope_captured\0\u{3}finished_at\0\u{3}uncommitted_in_review\0\u{3}uncommitted_paths\0\u{1}parallel\0\u{1}slots\0\u{3}manual_landings\0")
 
   fileprivate class _StorageClass {
     var _loopID: String = String()
@@ -14983,6 +15047,9 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
     var _finishedAt: String = String()
     var _uncommittedInReview: [Ycc_V1_WorkLoopDigestTask] = []
     var _uncommittedPaths: Int32 = 0
+    var _parallel: Int32 = 0
+    var _slots: [Ycc_V1_WorkLoopSlot] = []
+    var _manualLandings: [Ycc_V1_WorkLoopLanding] = []
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -15022,6 +15089,9 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       _finishedAt = source._finishedAt
       _uncommittedInReview = source._uncommittedInReview
       _uncommittedPaths = source._uncommittedPaths
+      _parallel = source._parallel
+      _slots = source._slots
+      _manualLandings = source._manualLandings
     }
   }
 
@@ -15069,6 +15139,9 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         case 27: try { try decoder.decodeSingularStringField(value: &_storage._finishedAt) }()
         case 28: try { try decoder.decodeRepeatedMessageField(value: &_storage._uncommittedInReview) }()
         case 29: try { try decoder.decodeSingularInt32Field(value: &_storage._uncommittedPaths) }()
+        case 30: try { try decoder.decodeSingularInt32Field(value: &_storage._parallel) }()
+        case 31: try { try decoder.decodeRepeatedMessageField(value: &_storage._slots) }()
+        case 32: try { try decoder.decodeRepeatedMessageField(value: &_storage._manualLandings) }()
         default: break
         }
       }
@@ -15164,6 +15237,15 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
       if _storage._uncommittedPaths != 0 {
         try visitor.visitSingularInt32Field(value: _storage._uncommittedPaths, fieldNumber: 29)
       }
+      if _storage._parallel != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._parallel, fieldNumber: 30)
+      }
+      if !_storage._slots.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._slots, fieldNumber: 31)
+      }
+      if !_storage._manualLandings.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._manualLandings, fieldNumber: 32)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -15202,6 +15284,9 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
         if _storage._finishedAt != rhs_storage._finishedAt {return false}
         if _storage._uncommittedInReview != rhs_storage._uncommittedInReview {return false}
         if _storage._uncommittedPaths != rhs_storage._uncommittedPaths {return false}
+        if _storage._parallel != rhs_storage._parallel {return false}
+        if _storage._slots != rhs_storage._slots {return false}
+        if _storage._manualLandings != rhs_storage._manualLandings {return false}
         return true
       }
       if !storagesAreEqual {return false}
@@ -15211,9 +15296,94 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
+nonisolated extension Ycc_V1_WorkLoopSlot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WorkLoopSlot"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}slot\0\u{3}session_id\0\u{3}task_id\0\u{1}state\0\u{1}since\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt32Field(value: &self.slot) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.state) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.since) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.slot != 0 {
+      try visitor.visitSingularInt32Field(value: self.slot, fieldNumber: 1)
+    }
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 2)
+    }
+    if !self.taskID.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskID, fieldNumber: 3)
+    }
+    if !self.state.isEmpty {
+      try visitor.visitSingularStringField(value: self.state, fieldNumber: 4)
+    }
+    if !self.since.isEmpty {
+      try visitor.visitSingularStringField(value: self.since, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_WorkLoopSlot, rhs: Ycc_V1_WorkLoopSlot) -> Bool {
+    if lhs.slot != rhs.slot {return false}
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.taskID != rhs.taskID {return false}
+    if lhs.state != rhs.state {return false}
+    if lhs.since != rhs.since {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_WorkLoopLanding: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WorkLoopLanding"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sha\0\u{1}subject\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sha) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.subject) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sha.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha, fieldNumber: 1)
+    }
+    if !self.subject.isEmpty {
+      try visitor.visitSingularStringField(value: self.subject, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_WorkLoopLanding, rhs: Ycc_V1_WorkLoopLanding) -> Bool {
+    if lhs.sha != rhs.sha {return false}
+    if lhs.subject != rhs.subject {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Ycc_V1_StartWorkLoopRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartWorkLoopRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}parallel\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -15222,6 +15392,7 @@ nonisolated extension Ycc_V1_StartWorkLoopRequest: SwiftProtobuf.Message, SwiftP
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.parallel) }()
       default: break
       }
     }
@@ -15231,11 +15402,15 @@ nonisolated extension Ycc_V1_StartWorkLoopRequest: SwiftProtobuf.Message, SwiftP
     if !self.project.isEmpty {
       try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
     }
+    if self.parallel != 0 {
+      try visitor.visitSingularInt32Field(value: self.parallel, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_StartWorkLoopRequest, rhs: Ycc_V1_StartWorkLoopRequest) -> Bool {
     if lhs.project != rhs.project {return false}
+    if lhs.parallel != rhs.parallel {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

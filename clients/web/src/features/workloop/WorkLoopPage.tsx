@@ -40,6 +40,7 @@ import {
   loopTotalsLine,
   resourceEnvelopeLines,
   stateTitle,
+  slotsLine,
   summaryLine,
   totalsLine,
   uncommittedInReviewLine,
@@ -408,6 +409,7 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
         </div>
         <div className="loop-summary">{summaryLine(loop)}</div>
         <div className="muted mono small">{loopTotalsLine(loop)}</div>
+        {isActive(state) && slotsLine(loop) && <div className="muted small">{slotsLine(loop)}</div>}
         {state === "waiting" && <div className="loop-waiting">{waitingLine(loop)}</div>}
         {state === "finished" && outcome && (
           <div className={`banner ${isFailureOutcome(outcome) ? "error" : "ok"} loop-outcome`} role="status">
@@ -443,6 +445,27 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
         {isActive(state) && !current && state !== "waiting" && <div className="muted small">Between sessions…</div>}
       </section>
 
+      {loop.slots.length > 0 && (
+        <section className="loop-section" aria-labelledby="loop-slots">
+          <h2 id="loop-slots">Live sessions</h2>
+          <ul className="digest-list">
+            {loop.slots.map((slot, i) => (
+              <li key={slot.sessionId || `starting-${i}`}>
+                {slot.sessionId ? (
+                  <Link to={paths.session(project, slot.sessionId)} className="mono">
+                    {slot.sessionId}
+                  </Link>
+                ) : (
+                  <span className="muted">starting…</span>
+                )}{" "}
+                {slot.taskId && <TaskLink project={project} id={slot.taskId} className="task-chip" />}{" "}
+                <span className="tag">{slot.state}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {loop.sessions.length > 0 && (
         <section className="loop-section" aria-labelledby="loop-sessions">
           <h2 id="loop-sessions">Sessions run</h2>
@@ -471,6 +494,22 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
           </ul>
         </section>
       ))}
+
+      {loop.manualLandings.length > 0 && (
+        <section className="loop-section" aria-labelledby="loop-manual">
+          <h2 id="loop-manual">
+            Landed manually <span className="count muted">{loop.manualLandings.length}</span>
+          </h2>
+          <p className="muted small">Commits made during the loop that no loop session recorded.</p>
+          <ul className="digest-list">
+            {loop.manualLandings.map((c) => (
+              <li key={c.sha}>
+                <span className="mono">{c.sha.slice(0, 10)}</span> {c.subject}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="loop-section" aria-labelledby="loop-envelope">
         <h2 id="loop-envelope">Resource envelope</h2>

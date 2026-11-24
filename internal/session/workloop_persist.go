@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-const workLoopPersistVersion = 1
+// workLoopPersistVersion 2 added slots, parallel and manual landings;
+// version 1 files still restore.
+const workLoopPersistVersion = 2
 
 // persistedWorkLoop is the durable, versioned representation of the last work
 // loop for a workspace. The resource envelope and bounded attempt evidence remain
@@ -22,6 +24,9 @@ type persistedWorkLoop struct {
 	Workspace                string                     `json:"workspace"`
 	State                    string                     `json:"state"`
 	CurrentSessionID         string                     `json:"current_session_id,omitempty"`
+	Parallel                 int                        `json:"parallel,omitempty"`
+	Slots                    []persistedWorkLoopSlot    `json:"slots,omitempty"`
+	ManualLandings           []persistedLanding         `json:"manual_landings,omitempty"`
 	Outcome                  string                     `json:"outcome,omitempty"`
 	StartedAt                time.Time                  `json:"started_at"`
 	FinishedAt               *time.Time                 `json:"finished_at,omitempty"`
@@ -33,7 +38,7 @@ type persistedWorkLoop struct {
 	InReview                 []persistedWorkLoopTask    `json:"in_review,omitempty"`
 	Created                  []persistedWorkLoopTask    `json:"created,omitempty"`
 	Unfinished               []persistedWorkLoopTask    `json:"unfinished,omitempty"`
-	WaitingSessions          []persistedWaitingSession  `json:"waiting_sessions,omitempty"`
+	WaitingSessions          []persistedWaitingSession  `json:"waiting_sessions,omitempty"` // version 1
 	UncommittedInReview      []persistedWorkLoopTask    `json:"uncommitted_in_review,omitempty"`
 	UncommittedPaths         int                        `json:"uncommitted_paths,omitempty"`
 	TotalTokens              int64                      `json:"total_tokens"`
@@ -61,6 +66,19 @@ type persistedWorkLoopSession struct {
 	PriceStatus    string   `json:"price_status"`
 	DurationSecs   int64    `json:"duration_secs,omitempty"`
 	CreatedTasks   []string `json:"created_tasks,omitempty"`
+}
+
+type persistedWorkLoopSlot struct {
+	Slot      int       `json:"slot"`
+	SessionID string    `json:"session_id,omitempty"`
+	Task      string    `json:"task,omitempty"`
+	State     string    `json:"state"`
+	Since     time.Time `json:"since"`
+}
+
+type persistedLanding struct {
+	SHA     string `json:"sha"`
+	Subject string `json:"subject,omitempty"`
 }
 
 type persistedWaitingSession struct {
@@ -115,6 +133,7 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 		Workspace:                snapshot.Workspace,
 		State:                    snapshot.State,
 		CurrentSessionID:         snapshot.CurrentSessionID,
+		Parallel:                 snapshot.Parallel,
 		Outcome:                  snapshot.Outcome,
 		StartedAt:                snapshot.StartedAt,
 		WaitKind:                 snapshot.WaitKind,
@@ -151,8 +170,11 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 	p.InReview = persistedTasks(snapshot.InReview)
 	p.Created = persistedTasks(snapshot.Created)
 	p.Unfinished = persistedTasks(snapshot.Unfinished)
-	for _, w := range snapshot.Waiting {
-		p.WaitingSessions = append(p.WaitingSessions, persistedWaitingSession{SessionID: w.SessionID, Focus: w.Focus, Since: w.Since})
+	for _, slot := range snapshot.Slots {
+		p.Slots = append(p.Slots, persistedWorkLoopSlot{Slot: slot.Slot, SessionID: slot.SessionID, Task: slot.Task, State: slot.State, Since: slot.Since})
+	}
+	for _, l := range snapshot.ManualLandings {
+		p.ManualLandings = append(p.ManualLandings, persistedLanding{SHA: l.SHA, Subject: l.Subject})
 	}
 	p.UncommittedInReview = persistedTasks(snapshot.UncommittedInReview)
 	p.UncommittedPaths = snapshot.UncommittedPaths
@@ -236,6 +258,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		workspace:        workspace,
 		state:            p.State,
 		currentSessionID: p.CurrentSessionID,
+		parallel:         p.Parallel,
 		outcome:          p.Outcome,
 		startedAt:        p.StartedAt,
 		waitKind:         p.WaitKind,
@@ -273,14 +296,29 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		})
 	}
 
+	for _, l := range p.ManualLandings {
+		wl.manual = append(wl.manual, WorkLoopLanding{SHA: l.SHA, Subject: l.Subject})
+	}
 	for _, w := range p.WaitingSessions {
 		wl.waiters = append(wl.waiters, &loopWaiter{id: w.SessionID, focus: w.Focus, since: w.Since})
+	}
+	// Slot sessions never outlive the daemon; waiting ones are named.
+	var working []WorkLoopWaitingSession
+	for _, slot := range p.Slots {
+		if slot.State == "waiting" {
+			wl.waiters = append(wl.waiters, &loopWaiter{id: slot.SessionID, focus: slot.Task, since: slot.Since, lane: slot.Slot})
+		} else if slot.SessionID != "" {
+			working = append(working, WorkLoopWaitingSession{SessionID: slot.SessionID, Focus: slot.Task})
+		}
 	}
 
 	interrupted := wl.state == "running" || wl.state == "waiting" || wl.state == "stopping"
 	if interrupted {
 		wl.state = "finished"
 		wl.outcome = "loop interrupted: daemon restarted"
+		if names := waiterNames(working); names != "" {
+			wl.outcome += "; sessions were working: " + names
+		}
 		if names := waiterNames(wl.snapshotLocked().Waiting); names != "" {
 			wl.outcome += "; sessions were waiting on background jobs: " + names
 		}
@@ -307,7 +345,7 @@ func readPersistedWorkLoop(workspace string) (persistedWorkLoop, bool) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return persistedWorkLoop{}, false
 	}
-	if p.Version != workLoopPersistVersion || p.LoopID == "" {
+	if (p.Version != 1 && p.Version != workLoopPersistVersion) || p.LoopID == "" {
 		return persistedWorkLoop{}, false
 	}
 	switch p.State {

@@ -313,6 +313,19 @@ final class WorkLoopModelTests: XCTestCase {
                        "Waiting: loop sessions are waiting on background jobs")
     }
 
+    func testSlotsLineCountsWorkingOutOfParallelAndWaiting() {
+        var l = loop(state: "running")
+        XCTAssertEqual(WorkLoopModel.slotsLine(for: l), "")
+        l.parallel = 3
+        l.slots = ["working", "working", "waiting"].map { state in
+            var slot = Ycc_V1_WorkLoopSlot()
+            slot.state = state
+            return slot
+        }
+        XCTAssertEqual(WorkLoopModel.slotsLine(for: l), "2/3 working, 1 waiting")
+        XCTAssertEqual(WorkLoopModel.bannerLine(for: l), "Running · 2/3 working, 1 waiting · 0 sessions")
+    }
+
     func testUnknownStateDoesNotCrash() {
         XCTAssertEqual(WorkLoopState(state: "future-state"), .unknown)
         XCTAssertEqual(WorkLoopModel.state(for: loop(state: "future-state")), .unknown)
