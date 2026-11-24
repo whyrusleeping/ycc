@@ -88,6 +88,7 @@ export const queryKeys = {
   watchesAll: ["watches"] as const,
   /** ListProjectNotices: the project's notice board and live sessions (session coordination). */
   projectNotices: (project: string) => ["projectNotices", project] as const,
+  leaseHolders: (project: string) => ["leaseHolders", project] as const,
   /** SearchSessions: one project's full-text message search. */
   sessionSearch: (project: string, query: string, limit: number) => ["sessionSearch", project, query, limit] as const,
 };
@@ -512,6 +513,23 @@ export function useProjectNotices(project: string, enabled = true) {
   });
   // A disabled query keeps its last response: never surface it once coordination is off.
   return { on, ...query, data: on ? query.data : undefined };
+}
+
+/**
+ * Live sessions holding exclusive leases while the project's session
+ * coordination is off (ListProjectNotices then lists only those, without
+ * focus, intent or claims). Empty while coordination is on: the board has them.
+ */
+export function useLeaseHolders(project: string) {
+  const on = useCoordinationOn(project);
+  const projects = useProjects();
+  const query = useQuery({
+    queryKey: queryKeys.leaseHolders(project),
+    enabled: !!project && !on && projects.isSuccess,
+    refetchInterval: 20_000,
+    queryFn: ({ signal }) => client.listProjectNotices({ project }, { signal }),
+  });
+  return on ? [] : (query.data?.sessions.filter((s) => s.leases.length > 0) ?? []);
 }
 
 /** GetPlan: one plan's markdown. */

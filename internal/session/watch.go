@@ -1364,6 +1364,7 @@ type LiveSession struct {
 	Title        string      // detail only
 	Claims       []PathClaim // detail only: claimed paths, newest first
 	Jobs         []jobs.Info // running jobs
+	Leases       []Lease     // held exclusive leases, by name
 }
 
 // liveSessions lists the live sessions of project primary except exclude,
@@ -1377,13 +1378,16 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 	intents := m.coordinationEnabled(primary)
 	primary = canonicalPath(primary)
 	claimsByTree := map[string]map[string][]workspacelease.Claim{}
+	leases := m.leasesBySession(primary, now)
 	sessions := m.List()
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
 	var out []LiveSession
+	listed := map[string]bool{exclude: true}
 	for _, s := range sessions {
 		if s.ID == exclude || canonicalPath(m.primaryTreeFor(s.Workspace)) != primary {
 			continue
 		}
+		listed[s.ID] = true
 		evs := s.Log().Snapshot()
 		ls := LiveSession{ID: s.ID, Mode: s.Mode, Held: s.activelyWorking(), Workspace: s.Workspace,
 			InPrimary: canonicalPath(s.Workspace) == primary}
@@ -1393,8 +1397,9 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 		if len(evs) > 0 {
 			ls.LastActivity = evs[len(evs)-1].TS
 		}
-		// A declared intent keeps a quiet session listed.
-		if !ls.Held && ls.Intent == "" && len(evs) > 0 && now.Sub(ls.LastActivity) > quietSessionAge {
+		ls.Leases = leases[s.ID]
+		// A declared intent or a held lease keeps a quiet session listed.
+		if !ls.Held && ls.Intent == "" && len(ls.Leases) == 0 && len(evs) > 0 && now.Sub(ls.LastActivity) > quietSessionAge {
 			continue
 		}
 		ls.Activity = sessionActivity(s)
@@ -1416,6 +1421,17 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 		}
 		out = append(out, ls)
 	}
+	// A stopping session has left the live map while its job, and so its
+	// lease, is still running: list it until the lease ends.
+	for id, held := range leases {
+		if listed[id] {
+			continue
+		}
+		h := held[0].holder
+		out = append(out, LiveSession{ID: id, Mode: h.Mode, State: "stopping; its job still holds a lease", Activity: string(event.StatusStopped),
+			Workspace: h.Workspace, InPrimary: canonicalPath(h.Workspace) == primary, Leases: held})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -1436,8 +1452,13 @@ func canonicalTasks(ids []string) []string {
 // liveSessionLinesWith is liveSessionLines; detail adds each session's title
 // and the paths it claims in its worktree (list_sessions).
 func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, detail bool) string {
+	return liveSessionText(m.liveSessions(primary, exclude, now, detail), now, detail)
+}
+
+// liveSessionText formats session listing lines.
+func liveSessionText(sessions []LiveSession, now time.Time, detail bool) string {
 	var b strings.Builder
-	for _, s := range m.liveSessions(primary, exclude, now, detail) {
+	for _, s := range sessions {
 		kind := s.Mode
 		if s.Mode == watchMode {
 			kind = "watch run"
@@ -1456,6 +1477,9 @@ func (m *Manager) liveSessionLinesWith(primary, exclude string, now time.Time, d
 		b.WriteString("\n")
 		if s.Intent != "" {
 			fmt.Fprintf(&b, "    intent: %q\n", s.Intent)
+		}
+		for _, l := range s.Leases {
+			b.WriteString("    " + l.line(now) + "\n")
 		}
 		if detail {
 			if s.Title != "" {

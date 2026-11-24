@@ -377,15 +377,24 @@ func (m *Manager) ProjectNoticeBoard(project string) ([]Notice, []SessionIntent,
 }
 
 // ProjectLiveSessions returns a registered project's live sessions as
-// list_sessions reports them, with claimed paths; empty while the setting is
-// off.
+// list_sessions reports them, with claimed paths. While session coordination
+// is off it returns only the sessions holding exclusive leases (which do not
+// depend on the setting), with their titles and leases but no focus, intent or
+// claims.
 func (m *Manager) ProjectLiveSessions(project string) ([]LiveSession, error) {
 	ws, err := m.resolveProjectWorkspace(project)
 	if err != nil {
 		return nil, err
 	}
 	if !m.coordinationEnabled(ws) {
-		return nil, nil
+		var out []LiveSession
+		for _, s := range m.liveSessions(m.primaryTreeFor(ws), "", time.Now(), true) {
+			if len(s.Leases) > 0 {
+				s.Focus, s.Held, s.Intent, s.IntentAt, s.Claims = nil, false, "", time.Time{}, nil
+				out = append(out, s)
+			}
+		}
+		return out, nil
 	}
 	return m.liveSessions(m.primaryTreeFor(ws), "", time.Now(), true), nil
 }

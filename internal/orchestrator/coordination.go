@@ -13,20 +13,21 @@ import (
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
-// ErrCoordinationDisabled is returned by Deps.ListSessions once the project's
-// experimental session coordination has been turned off.
+// ErrCoordinationDisabled is returned by Deps.ListSessions while the project's
+// experimental session coordination is off and there is nothing it may list.
 var ErrCoordinationDisabled = errors.New("session coordination is turned off for this project")
 
-// listSessions is the experimental session-awareness tool. It is registered
-// only when Deps.ListSessions is set (the project enabled the setting when the
-// session was built).
+// listSessions is the session-awareness tool. It is registered only when
+// Deps.ListSessions is set; while the project's experimental session
+// coordination is off it lists only exclusive lease holders.
 func listSessions(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "list_sessions",
 		Description: "List this project's other sessions (main tree and workstreams): mode, state, held or earlier task focus, " +
-			"intent line, title, worktree, running jobs, and the paths each has claimed with claim age, followed by the " +
-			"project notice board. With path, list the sessions that claim that file, including ended ones. A claim records " +
-			"an uncommitted write; it is evidence of past work, not a reservation or lock.",
+			"intent line, title, worktree, running jobs, exclusive leases, and the paths each has claimed with claim age, " +
+			"followed by the project notice board. With path, list the sessions that claim that file, including ended ones. " +
+			"A claim records an uncommitted write; it is evidence of past work, not a reservation or lock. While the " +
+			"project's session coordination is off, only sessions holding leases are listed.",
 		Params: tools.Obj(map[string]any{
 			"path": tools.StrProp("optional file path (workspace-relative or absolute) whose claimants to list"),
 		}),
@@ -222,4 +223,69 @@ func (d *Deps) releaseClaims(ctx context.Context, paths []string, reason string)
 	}
 	return fmt.Sprintf("Released %d path(s) (this session held a claim on %d): %s. They stay out of this session's changeset "+
 		"until it writes them again or they are committed or reverted.", len(rels), len(held), boundedPathList(rels, 1024)), nil
+}
+
+// Leases is the session's view of the project's exclusive leases. Each method
+// returns the text for the tool result.
+type Leases interface {
+	// Acquire takes the lease name for ttl, or renews this session's own
+	// lease; jobID ties it to a running background job of this session.
+	Acquire(name, reason string, ttl time.Duration, jobID string) (string, error)
+	// Release gives up this session's lease.
+	Release(name string) (string, error)
+}
+
+// leaseTools returns the exclusive lease tools for a coordinator, or none
+// when the session was built without them.
+func leaseTools(d *Deps) []*gollama.Tool {
+	if d.Leases == nil {
+		return nil
+	}
+	return []*gollama.Tool{
+		{
+			Name: "acquire_lease",
+			Description: "Take this project's exclusive lease on a named target, such as a deploy target or a shared " +
+				"service (\"deploy-prod\", \"restart normalize-v2\"), before changing it. Fails at once, naming the holder, " +
+				"when another session holds it; there is no waiting, so do other work and look again later (the list_backlog " +
+				"footer shows held leases). " +
+				"Calling it again for a lease you hold renews it. With job_id it is also released when that background " +
+				"job exits, so it can outlive this turn. Otherwise it lasts until release_lease, ttl, or this session's end.",
+			Params: tools.Obj(map[string]any{
+				"name":   tools.StrProp("the target, one line of at most 80 characters (case-insensitive)"),
+				"reason": tools.StrProp("what you are doing to it (one line, at most 200 characters)"),
+				"ttl":    tools.StrProp("how long at most to hold it, as a duration such as 30m or 2h (1m to 24h)"),
+				"job_id": tools.StrProp("optional running background job of this session the lease ends with, e.g. job_3"),
+			}, "name", "reason", "ttl"),
+			Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+				name, _ := tools.GetString(params, "name")
+				reason, _ := tools.GetString(params, "reason")
+				jobID, _ := tools.GetString(params, "job_id")
+				raw, _ := tools.GetString(params, "ttl")
+				ttl, err := time.ParseDuration(strings.TrimSpace(raw))
+				if err != nil {
+					return tools.ErrResult("acquire_lease: ttl %q is not a duration such as 30m or 2h", raw), nil
+				}
+				out, err := d.Leases.Acquire(name, reason, ttl, jobID)
+				if err != nil {
+					return tools.ErrResult("acquire_lease: %v", err), nil
+				}
+				return tools.OkResult(out), nil
+			},
+		},
+		{
+			Name:        "release_lease",
+			Description: "Release an exclusive lease this session holds, as soon as the work on its target is done.",
+			Params: tools.Obj(map[string]any{
+				"name": tools.StrProp("the lease name"),
+			}, "name"),
+			Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
+				name, _ := tools.GetString(params, "name")
+				out, err := d.Leases.Release(name)
+				if err != nil {
+					return tools.ErrResult("release_lease: %v", err), nil
+				}
+				return tools.OkResult(out), nil
+			},
+		},
+	}
 }

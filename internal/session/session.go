@@ -258,6 +258,9 @@ type Session struct {
 	boardSeen   map[string]bool
 	intentText  string
 	intentAt    time.Time
+	// leases backs the coordinator's lease tools (leases.go); the session's
+	// leases are released when it ends.
+	leases *sessionLeaseTools
 
 	// contextSummary is a test seam; nil uses the deterministic durable-evidence
 	// summary builder.
@@ -696,6 +699,7 @@ func (s *Session) Stop() {
 	if s.logFailure() != nil {
 		s.cancel()
 		s.killJobs()
+		s.releaseLeases()
 		return
 	}
 	s.stopOnce.Do(func() {
@@ -705,6 +709,7 @@ func (s *Session) Stop() {
 		// Job cancellation has a separate execution-join boundary: keep the log and
 		// mutation ownership alive until every tracked process/agent has stopped.
 		s.killJobs()
+		s.releaseLeases()
 		s.log.Close()
 	})
 }
@@ -720,6 +725,7 @@ func (s *Session) reap() {
 	s.stopOnce.Do(func() {
 		s.cancel()
 		s.killJobs()
+		s.releaseLeases()
 		s.log.Close()
 	})
 }
@@ -2272,6 +2278,11 @@ type Manager struct {
 	// canonical primary tree.
 	boardMu sync.Mutex
 	boards  map[string]boardState
+	// leases holds each project's exclusive leases (leases.go), keyed by
+	// canonical primary tree and lease name. Memory only: a daemon restart
+	// releases them.
+	leaseMu sync.Mutex
+	leases  map[string]map[string]*leaseEntry
 
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
@@ -3210,9 +3221,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	deps.ClaimTask = func(taskID string, record func()) string { return m.claimTask(absWS, id, taskID, record) }
 	deps.OtherSessions = func() string { return m.otherSessionsNote(absWS, id, time.Now()) }
 	coordination := m.coordinationEnabled(absWS)
-	if coordination {
-		deps.ListSessions = func(path string) (string, error) { return m.listSessionsFor(absWS, id, path, time.Now()) }
-	}
+	// list_sessions is offered without coordination too: it then lists only
+	// exclusive lease holders.
+	deps.ListSessions = func(path string) (string, error) { return m.listSessionsFor(absWS, id, path, time.Now()) }
 	if mode == watchMode {
 		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
 	} else if !unattended && m.watchSchedulerRunning() {
@@ -3250,6 +3261,10 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		s.board = &sessionBoard{m: m, s: s, primary: m.primaryTreeFor(absWS)}
 		deps.Board = s.board
 	}
+	// Leases are not part of experimental coordination: loop sessions must
+	// hold one to deploy or restart shared services (spec §9.1).
+	s.leases = &sessionLeaseTools{m: m, s: s, primary: m.primaryTreeFor(absWS)}
+	deps.Leases = s.leases
 	// Durability loss is terminal for a live session: continuing would mutate
 	// model/tool state from history that cannot be replayed after restart. Log
 	// itself sends live subscribers a transient session_error, so do not attempt

@@ -51,9 +51,24 @@ func (m *Manager) SetSessionCoordination(project string, on bool) error {
 }
 
 // listSessionsFor backs list_sessions for session self working in absWS.
+// While session coordination is off it lists only the sessions holding
+// exclusive leases, which do not depend on the setting.
 func (m *Manager) listSessionsFor(absWS, self, path string, now time.Time) (string, error) {
 	if !m.coordinationEnabled(absWS) {
-		return "", orchestrator.ErrCoordinationDisabled
+		if strings.TrimSpace(path) != "" {
+			return "", orchestrator.ErrCoordinationDisabled
+		}
+		var holders []LiveSession
+		for _, s := range m.liveSessions(m.primaryTreeFor(absWS), self, now, false) {
+			if len(s.Leases) > 0 {
+				holders = append(holders, s)
+			}
+		}
+		if len(holders) == 0 {
+			return "", orchestrator.ErrCoordinationDisabled
+		}
+		return "Session coordination is off for this project, so this lists only the other sessions holding exclusive leases:\n" +
+			liveSessionText(holders, now, false), nil
 	}
 	if strings.TrimSpace(path) != "" {
 		return m.pathClaimants(absWS, path, now)

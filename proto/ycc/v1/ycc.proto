@@ -150,9 +150,20 @@ message ProjectLiveSession {
   string intent_set_at = 10; // RFC 3339; empty without an intent
   repeated ClaimedPath claims = 11; // newest first
   int32 running_jobs = 12;
+  repeated SessionLease leases = 13; // held exclusive leases, by name
+}
+// An exclusive project lease a live session holds (spec §7.3).
+message SessionLease {
+  string name = 1;
+  string reason = 2;
+  string acquired_at = 3; // RFC 3339
+  string expires_at = 4;  // RFC 3339
+  string job_id = 5;      // the background job it ends with; empty when none
 }
 message ListProjectNoticesRequest { string project = 1; }
-// All lists are empty while the project's session coordination is off.
+// While the project's session coordination is off, notices and intents are
+// empty and sessions lists only the sessions holding exclusive leases, without
+// focus, intent or claims.
 message ListProjectNoticesResponse {
   repeated ProjectNotice notices = 1; // active notices, oldest first
   repeated SessionIntent intents = 2; // live sessions with an intent line

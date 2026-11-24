@@ -143,6 +143,13 @@ func renderNotices(out io.Writer, r *v1.ListProjectNoticesResponse, now time.Tim
 		if s.GetIntent() != "" {
 			fmt.Fprintf(&b, "    intent: %s\n", s.GetIntent())
 		}
+		for _, l := range s.GetLeases() {
+			fmt.Fprintf(&b, "    lease %s: %s, expires %s", l.GetName(), l.GetReason(), l.GetExpiresAt())
+			if l.GetJobId() != "" {
+				b.WriteString(" or when " + l.GetJobId() + " exits")
+			}
+			b.WriteString("\n")
+		}
 		if s.GetTitle() != "" {
 			fmt.Fprintf(&b, "    title: %s\n", clipLine(s.GetTitle(), 120))
 		}

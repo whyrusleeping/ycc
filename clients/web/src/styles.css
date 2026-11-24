@@ -8697,6 +8697,14 @@ button.unread-dot:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.live-session-leases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
 .live-session-claims {
   font-size: var(--fs-xs);
 }

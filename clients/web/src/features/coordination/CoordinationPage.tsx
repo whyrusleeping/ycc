@@ -8,7 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { ProjectLiveSession, ProjectNotice } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, useProjectNotices, useProjects } from "../../api/queries";
+import { queryKeys, useLeaseHolders, useProjectNotices, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { track } from "../../app/analytics";
 import { Modal } from "../../ui/Modal";
@@ -16,7 +16,7 @@ import { Icon } from "../../ui/icons";
 import { toast } from "../../ui/toast";
 import { relativeTime } from "../sessions/feed";
 import { TaskLink } from "../backlog/parts";
-import { activityBadge, EXPIRY_CHOICES, NOTICE_MAX, SUBJECT_MAX } from "./model";
+import { activityBadge, expiresIn, EXPIRY_CHOICES, NOTICE_MAX, SUBJECT_MAX } from "./model";
 import { NoticeList, SessionLink } from "./parts";
 
 /** Claimed paths shown before "N more". */
@@ -42,6 +42,7 @@ function onRpcError(err: unknown, what: string, op: string) {
 export function CoordinationPage({ project }: { project: string }) {
   const projects = useProjects();
   const board = useProjectNotices(project);
+  const holders = useLeaseHolders(project);
   const now = useNow();
   const [clearing, setClearing] = useState<ProjectNotice | null>(null);
   const head = (
@@ -76,6 +77,19 @@ export function CoordinationPage({ project }: { project: string }) {
           <Link to={paths.settings("experimental")}>Settings › Experimental</Link> to see which live sessions hold which tasks and
           files, and to post notices to them.
         </p>
+        {holders.length > 0 && (
+          <section className="coord-section" aria-labelledby="coord-leases">
+            <h2 id="coord-leases">
+              Leases <span className="count">{holders.reduce((n, s) => n + s.leases.length, 0)}</span>
+            </h2>
+            <p className="muted small">Sessions holding exclusive leases on deploy targets or shared services.</p>
+            <ul className="live-sessions">
+              {holders.map((s) => (
+                <LiveSessionCard key={s.sessionId} project={project} session={s} now={now} />
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     );
   }
@@ -161,6 +175,22 @@ function LiveSessionCard({ project, session: s, now }: { project: string; sessio
           <span className="label">Intent</span> {s.intent}
           {s.intentSetAt && <span className="muted small"> · set {relativeTime(s.intentSetAt, now)}</span>}
         </p>
+      )}
+      {s.leases.length > 0 && (
+        <ul className="live-session-leases">
+          {s.leases.map((l) => {
+            const expiry = expiresIn(l.expiresAt, now);
+            return (
+              <li key={l.name}>
+                <span className="label">Lease</span> <span className="mono">{l.name}</span>: {l.reason}
+                <span className="muted small">
+                  {expiry && ` · expires ${expiry}`}
+                  {l.jobId && ` · or when ${l.jobId} exits`}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
       {s.focusTasks.length > 0 && (
         <p className="live-session-focus">

@@ -474,6 +474,33 @@ public nonisolated struct Ycc_V1_ProjectLiveSession: Sendable {
 
   public var runningJobs: Int32 = 0
 
+  /// held exclusive leases, by name
+  public var leases: [Ycc_V1_SessionLease] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// An exclusive project lease a live session holds (spec §7.3).
+public nonisolated struct Ycc_V1_SessionLease: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  public var reason: String = String()
+
+  /// RFC 3339
+  public var acquiredAt: String = String()
+
+  /// RFC 3339
+  public var expiresAt: String = String()
+
+  /// the background job it ends with; empty when none
+  public var jobID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -491,7 +518,9 @@ public nonisolated struct Ycc_V1_ListProjectNoticesRequest: Sendable {
   public init() {}
 }
 
-/// All lists are empty while the project's session coordination is off.
+/// While the project's session coordination is off, notices and intents are
+/// empty and sessions lists only the sessions holding exclusive leases, without
+/// focus, intent or claims.
 public nonisolated struct Ycc_V1_ListProjectNoticesResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -6813,7 +6842,7 @@ nonisolated extension Ycc_V1_ClaimedPath: SwiftProtobuf.Message, SwiftProtobuf._
 
 nonisolated extension Ycc_V1_ProjectLiveSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ProjectLiveSession"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}activity\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}held\0\u{1}title\0\u{1}worktree\0\u{1}intent\0\u{3}intent_set_at\0\u{1}claims\0\u{3}running_jobs\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}mode\0\u{1}activity\0\u{3}last_activity\0\u{3}focus_tasks\0\u{1}held\0\u{1}title\0\u{1}worktree\0\u{1}intent\0\u{3}intent_set_at\0\u{1}claims\0\u{3}running_jobs\0\u{1}leases\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6833,6 +6862,7 @@ nonisolated extension Ycc_V1_ProjectLiveSession: SwiftProtobuf.Message, SwiftPro
       case 10: try { try decoder.decodeSingularStringField(value: &self.intentSetAt) }()
       case 11: try { try decoder.decodeRepeatedMessageField(value: &self.claims) }()
       case 12: try { try decoder.decodeSingularInt32Field(value: &self.runningJobs) }()
+      case 13: try { try decoder.decodeRepeatedMessageField(value: &self.leases) }()
       default: break
       }
     }
@@ -6875,6 +6905,9 @@ nonisolated extension Ycc_V1_ProjectLiveSession: SwiftProtobuf.Message, SwiftPro
     if self.runningJobs != 0 {
       try visitor.visitSingularInt32Field(value: self.runningJobs, fieldNumber: 12)
     }
+    if !self.leases.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.leases, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6891,6 +6924,57 @@ nonisolated extension Ycc_V1_ProjectLiveSession: SwiftProtobuf.Message, SwiftPro
     if lhs.intentSetAt != rhs.intentSetAt {return false}
     if lhs.claims != rhs.claims {return false}
     if lhs.runningJobs != rhs.runningJobs {return false}
+    if lhs.leases != rhs.leases {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_SessionLease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SessionLease"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}reason\0\u{3}acquired_at\0\u{3}expires_at\0\u{3}job_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.reason) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.acquiredAt) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.expiresAt) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.jobID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.reason.isEmpty {
+      try visitor.visitSingularStringField(value: self.reason, fieldNumber: 2)
+    }
+    if !self.acquiredAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.acquiredAt, fieldNumber: 3)
+    }
+    if !self.expiresAt.isEmpty {
+      try visitor.visitSingularStringField(value: self.expiresAt, fieldNumber: 4)
+    }
+    if !self.jobID.isEmpty {
+      try visitor.visitSingularStringField(value: self.jobID, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_SessionLease, rhs: Ycc_V1_SessionLease) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.reason != rhs.reason {return false}
+    if lhs.acquiredAt != rhs.acquiredAt {return false}
+    if lhs.expiresAt != rhs.expiresAt {return false}
+    if lhs.jobID != rhs.jobID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

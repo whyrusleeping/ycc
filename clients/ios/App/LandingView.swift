@@ -489,11 +489,10 @@ struct LandingView: View {
                     NavigationLink(value: HomeDestination.workstreams(project: project)) {
                         Label("Workstreams", systemImage: "arrow.triangle.branch")
                     }
-                    // Session coordination is per project and off by default.
-                    if model?.projects.first(where: { $0.name == project })?.sessionCoordination == true {
-                        NavigationLink(value: HomeDestination.liveSessions(project: project)) {
-                            Label("Live sessions", systemImage: "person.2.wave.2")
-                        }
+                    // Session coordination is per project and off by default;
+                    // while off the screen still lists exclusive lease holders.
+                    NavigationLink(value: HomeDestination.liveSessions(project: project)) {
+                        Label("Live sessions", systemImage: "person.2.wave.2")
                     }
                     NavigationLink(value: HomeDestination.watches(project: project)) {
                         Label("Watches", systemImage: "eye")
@@ -590,8 +589,8 @@ struct LandingView: View {
                 DiffView(title: "Commit \(CommitFormat.shortSha(sha))", content: .commit(project: project, sha: sha))
             case .settings:
                 GlobalSettingsView(client: client, cache: app.dataCache, health: health) {
-                    // A project's session coordination changed: the More
-                    // menu's Live sessions entry follows the project list.
+                    // A project's session coordination changed: refresh
+                    // the project list.
                     Task { await model?.refreshProjects() }
                 }
             }

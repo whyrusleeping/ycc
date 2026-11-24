@@ -1,29 +1,21 @@
 ---
 id: "0599"
 title: Exclusive named leases for deploys and shared services
-status: todo
+status: done
 priority: 3
 created: "2026-11-23"
-updated: "2026-11-23"
+updated: "2026-11-24"
 depends_on: []
 spec_refs:
     - spec.md#9.1 Unattended work loop
 ---
 
 ## Description
-Status: todo. Fourth step of the parallel work-loop plan (user decision 2026-11-23, session s_a96d1f53776eaa46). It is a reduced subset of 0256 (exclusive-resource leases with shell-pattern blocking and flock interop), which stays proposed for the rest.
 
-## Why
-In wheeler, the user's data-pipeline project, the costly non-git collisions between parallel sessions were deploys and restarts:
-- A sibling's normalize-v2 restart interrupted a running probe (wheeler reports/2026-11-22-reddit-2026-09-load.md).
-- A deploy shipped another task's unreviewed code (wheeler task 0221).
-- A session waited on `ask_user` from 17:45 to 20:13 over whether to deploy master with a sibling's commits in it (s_5a316b94976a87d4 event 530).
-
-Notices worked as advice (notice n7 "Hold append jobs until I clear this"), but nothing made them exclusive.
-
-User decision (2026-11-23, s_a96d1f53776eaa46): an unattended loop agent may deploy or restart shared services only while holding an exclusive lease for that target.
+Status: todo. Fourth step of the parallel work-loop plan (user decision 2026-11-23, session s_a96d1f53776eaa46, event 302). It is a reduced subset of 0256 (exclusive-resource leases with shell-pattern blocking and flock interop), which stays proposed for the rest.
 
 ## Acceptance criteria
+
 - Coordinator tools `acquire_lease(name, reason, ttl)` and `release_lease(name)` operate on a daemon-owned, per-project record (name, holder session or job, reason, acquired time, expiry).
 - Acquiring a held lease fails immediately, naming the holder, reason and expiry. There is no blocking wait or polling.
 - A lease can be attached to a background job, so it outlives the turn and is released when the job exits.
@@ -34,4 +26,8 @@ User decision (2026-11-23, s_a96d1f53776eaa46): an unattended loop agent may dep
 - Tests cover contention, expiry, job-attached release and session-end release.
 - spec.md records the tool and the loop rule.
 
-## Work log
+## Outcome
+
+Coordinators (outside integrate mode, with or without session coordination) have acquire_lease(name, reason, ttl, job_id?) and release_lease(name): daemon-memory, per-project exclusive leases that fail fast naming the holder and are released on release, expiry, job exit, session end (a stopping session's job-attached lease stays held until its job really stops) and daemon restart, with lease_acquired/lease_released events. Leases show in list_sessions (lease-only while coordination is off), the list_backlog footer, ListProjectNotices sessions (lease holders only while off) and the web/iOS Live sessions views; the iOS More menu always offers Live sessions. The work-loop prompt requires a lease to deploy or restart shared services. Spec §7.3/§9.1 landed in 87490c4.. (three spec commits). Verified: Go tests (session under -race) on HEAD+task files, web typecheck/489 tests and rebuilt bundle, iOS build + 686 YccKit tests on the Mac, web and iOS screenshots against a scratch daemon with a mock model calling acquire_lease.
+
+Commit: Exclusive named leases for deploys and shared services (0599)

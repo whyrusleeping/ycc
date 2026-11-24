@@ -52,13 +52,24 @@ private final class MockCoordinationSource: CoordinationSource, @unchecked Senda
         return snapshot
     }
 
-    /// Like the daemon: every list is empty while coordination is off.
+    /// Like the daemon: while coordination is off only lease holders are
+    /// listed, without focus, intent or claims.
     func listProjectNotices(project: String) async throws -> Ycc_V1_ListProjectNoticesResponse {
         try lock.withLock {
             listNoticesCalls += 1
             if let error { throw error }
             let on = projects.first { $0.name == project }?.sessionCoordination ?? false
-            return on ? board : Ycc_V1_ListProjectNoticesResponse()
+            if on { return board }
+            var off = Ycc_V1_ListProjectNoticesResponse()
+            off.sessions = board.sessions.filter { !$0.leases.isEmpty }.map { s in
+                var s = s
+                s.focusTasks = []
+                s.held = false
+                s.intent = ""
+                s.claims = []
+                return s
+            }
+            return off
         }
     }
 
@@ -171,11 +182,29 @@ final class CoordinationModelTests: XCTestCase {
         XCTAssertNil(page.isOn)
         await page.refresh()
         XCTAssertEqual(page.isOn, false)
-        XCTAssertNil(page.board)
-        XCTAssertEqual(source.listNoticesCalls, 0)
+        XCTAssertTrue(page.sessions.isEmpty)
+        XCTAssertTrue(page.notices.isEmpty)
         let badges = CoordinationModel(source: source, project: "app")
         await badges.refresh()
         XCTAssertTrue(badges.holders(of: "0001").isEmpty)
+    }
+
+    func testOffProjectListsLeaseHolders() async {
+        let source = MockCoordinationSource()
+        source.projects = [project("app", coordination: false)]
+        var holder = live("s_a", focus: ["0001"])
+        var lease = Ycc_V1_SessionLease()
+        lease.name = "deploy-staging"
+        lease.reason = "rolling out"
+        holder.leases = [lease]
+        source.board.sessions = [holder, live("s_b", focus: ["0002"])]
+        let page = CoordinationModel(source: source, project: "app", reloadsProjects: true)
+        await page.refresh()
+        XCTAssertEqual(page.isOn, false)
+        XCTAssertEqual(page.sessions.map(\.sessionID), ["s_a"])
+        XCTAssertEqual(page.sessions.first?.leases.map(\.name), ["deploy-staging"])
+        // Lease holders never become held-task badges while coordination is off.
+        XCTAssertTrue(page.holders(of: "0001").isEmpty)
     }
 
     func testOnProjectLoadsBoardAndHolders() async {
@@ -250,7 +279,7 @@ final class CoordinationModelTests: XCTestCase {
         let page = CoordinationModel(source: source, project: "app", cache: cache, reloadsProjects: true)
         await page.refresh()
         XCTAssertEqual(page.isOn, false)
-        XCTAssertNil(page.board)
+        XCTAssertTrue(page.notices.isEmpty)
         XCTAssertEqual(cache.projects?.first?.sessionCoordination, false)
     }
 

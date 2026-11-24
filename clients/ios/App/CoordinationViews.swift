@@ -101,12 +101,16 @@ struct LiveSessionsView: View {
                 ProgressView()
             }
         case .some(false):
-            ContentUnavailableView {
-                Label("Session coordination is off", systemImage: "person.2.slash")
-            } description: {
-                Text("Turn it on for \(project) in Settings › Session coordination to see which live sessions hold which tasks and files, and to post notices to them.")
-            } actions: {
-                Button("Open Settings") { router.open(.settings) }
+            if model.sessions.isEmpty {
+                ContentUnavailableView {
+                    Label("Session coordination is off", systemImage: "person.2.slash")
+                } description: {
+                    Text(Self.offText(project))
+                } actions: {
+                    Button("Open Settings") { router.open(.settings) }
+                }
+            } else {
+                leaseHolders
             }
         case .some(true):
             board
@@ -173,6 +177,45 @@ struct LiveSessionsView: View {
                 Text("Sessions · \(model.sessions.count)")
             } footer: {
                 Text("Live sessions of this project; those quiet for over an hour without an intent are left out.")
+            }
+        }
+        .refreshable {
+            Analytics.action("refresh", via: .pull)
+            await model.refresh()
+        }
+    }
+
+    private static func offText(_ project: String) -> String {
+        "Turn it on for \(project) in Settings › Session coordination to see which live sessions hold which tasks and files, and to post notices to them."
+    }
+
+    /// Coordination off: only the sessions holding exclusive leases.
+    private var leaseHolders: some View {
+        let now = Date()
+        return List {
+            Section {
+                ForEach(model.sessions, id: \.sessionID) { session in
+                    LiveSessionRow(session: session, project: project, now: now) {
+                        openSession(session)
+                    } openTask: { taskID in
+                        router.open(.taskDetail(project: project, taskID: taskID, title: ""))
+                    } openPath: { path in
+                        router.open(.file(FileRoute(
+                            project: project, sessionID: session.sessionID,
+                            reference: FileReference(path: path))))
+                    }
+                }
+            } header: {
+                Text("Leases · \(model.sessions.reduce(0) { $0 + $1.leases.count })")
+            } footer: {
+                Text("Sessions holding exclusive leases on deploy targets or shared services.")
+            }
+            Section {
+                Button("Open Settings") { router.open(.settings) }
+            } header: {
+                Text("Session coordination is off")
+            } footer: {
+                Text(Self.offText(project))
             }
         }
         .refreshable {
@@ -300,6 +343,18 @@ private struct LiveSessionRow: View {
                 }
             }
 
+            ForEach(session.leases, id: \.name) { lease in
+                VStack(alignment: .leading, spacing: 1) {
+                    (Text("Lease  ").font(.caption.weight(.semibold)).foregroundColor(.secondary)
+                        + Text(lease.name).font(.caption.monospaced())
+                        + Text(": \(lease.reason)").font(.caption))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(leaseExpiry(lease))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
             if !session.focusTasks.isEmpty {
                 HStack(spacing: 6) {
                     Text(session.held ? "Holds" : "Earlier focus")
@@ -363,6 +418,14 @@ private struct LiveSessionRow: View {
 
     private var shownClaims: [Ycc_V1_ClaimedPath] {
         allClaims ? session.claims : Array(session.claims.prefix(Self.claimsShown))
+    }
+
+    private func leaseExpiry(_ lease: Ycc_V1_SessionLease) -> String {
+        var parts: [String] = []
+        let expiry = CoordinationFormat.expiresIn(lease.expiresAt, now: now)
+        if !expiry.isEmpty { parts.append("expires \(expiry)") }
+        if !lease.jobID.isEmpty { parts.append("or when \(lease.jobID) exits") }
+        return parts.joined(separator: " · ")
     }
 
     private var metaLine: String {

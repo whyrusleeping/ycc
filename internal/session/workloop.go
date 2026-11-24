@@ -1936,7 +1936,9 @@ are changing. A task's size is not a reason to skip it. If a task genuinely need
 it at most once in this session, then work the first piece in this same session. Claim your choice
 with update_task in_progress; a claim fails when another live session holds the task, so choose
 again then. Once claimed, state in set_intent the areas or files and any external resources
-(hosts, services, GPUs, databases) the work will touch. Then complete the task. If all that remains
+(hosts, services, GPUs, databases) the work will touch. Deploy or restart a shared service only
+while holding acquire_lease for that target, and release it when done; if another session holds
+it, do other work rather than wait. Then complete the task. If all that remains
 is a long-running background shell job (a run or deploy due much later), do not block in a long
 wait: report progress in visible text and end your turn. The job's completion resumes you, and
 meanwhile the loop counts you as waiting and starts other work.`

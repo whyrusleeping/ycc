@@ -215,8 +215,8 @@ func (s *Server) SetProjectSettings(_ context.Context, req *connect.Request[v1.S
 }
 
 // ListProjectNotices returns a project's notice board: active notices, live
-// sessions' intents and the live sessions themselves (empty while session
-// coordination is off).
+// sessions' intents and the live sessions themselves. While session
+// coordination is off only the sessions holding leases are listed.
 func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.ListProjectNoticesRequest]) (*connect.Response[v1.ListProjectNoticesResponse], error) {
 	notices, intents, err := s.mgr.ProjectNoticeBoard(req.Msg.Project)
 	var sessions []session.LiveSession
@@ -249,6 +249,10 @@ func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.L
 		}
 		for _, c := range ls.Claims {
 			p.Claims = append(p.Claims, &v1.ClaimedPath{Path: c.Path, Since: rfc3339OrEmpty(c.Since)})
+		}
+		for _, l := range ls.Leases {
+			p.Leases = append(p.Leases, &v1.SessionLease{Name: l.Name, Reason: l.Reason, AcquiredAt: rfc3339OrEmpty(l.AcquiredAt),
+				ExpiresAt: rfc3339OrEmpty(l.ExpiresAt), JobId: l.JobID})
 		}
 		resp.Sessions = append(resp.Sessions, p)
 	}

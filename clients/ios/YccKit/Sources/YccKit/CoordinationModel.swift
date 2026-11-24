@@ -60,11 +60,12 @@ extension YccClient: CoordinationSource {
 }
 
 /// One project's notice board and live sessions (ListProjectNotices), shown
-/// only while the project's session coordination is on. The daemon answers
-/// with empty lists while it is off, so badge surfaces just follow the board;
-/// the Live sessions screen (`reloadsProjects`) also re-reads the setting to
-/// say when it is off. Either way a screen never keeps data from before
-/// coordination was turned off past its next refresh.
+/// only while the project's session coordination is on. While it is off the
+/// daemon answers with no notices and only the sessions holding exclusive
+/// leases (without focus, intent or claims), so badge surfaces just follow the
+/// board; the Live sessions screen (`reloadsProjects`) also re-reads the
+/// setting to say when it is off. Either way a screen never keeps data from
+/// before coordination was turned off past its next refresh.
 ///
 /// Notice and intent text is untrusted peer content: views render it as plain
 /// text, never markup.
@@ -120,29 +121,27 @@ public final class CoordinationModel {
     }
 
     /// Re-read the board (and, with `reloadsProjects`, whether coordination
-    /// is on: off, the board is dropped without asking for it).
+    /// is on; off, the board holds only lease holders).
     public func refresh() async {
         guard !project.isEmpty else { return }
         isLoading = true
         defer { isLoading = false }
         do {
+            let was = isOn
             if reloadsProjects {
                 let generation = cache?.generation
                 let projects = try await source.listProjects()
                 if let generation { cache?.updateProjects(projects, ifGeneration: generation) }
-                let on = Self.coordinationOn(project, in: projects) ?? false
-                isOn = on
-                guard on else {
-                    board = nil
-                    errorMessage = nil
-                    return
-                }
+                isOn = Self.coordinationOn(project, in: projects) ?? false
             } else if let on = Self.coordinationOn(project, in: cache?.projects) {
                 isOn = on
             }
+            // The board answers for one setting: never show it under the other.
+            if was != nil, isOn != was { board = nil }
+            let asked = isOn
             let loaded = try await source.listProjectNotices(project: project)
-            // Turned off (Settings, another screen) while the call was out.
-            if reloadsProjects, isOn != true { return }
+            // Turned on or off (Settings, another screen) while the call was out.
+            if reloadsProjects, isOn != asked { return }
             board = loaded
             errorMessage = nil
         } catch YccError.unauthorized {

@@ -441,8 +441,10 @@ RFC 3339 `postedAt` / `expiresAt`), the `intents` of live sessions (`sessionId`,
 `activity` = `question` | `jobs` | `running` | `paused` | `idle` | `error` | `stopped`,
 `lastActivity`, `focusTasks`, `held` (still working on them; otherwise earlier focus), `title`,
 `worktree` when outside the primary tree, `intent` / `intentSetAt`, `claims` (`path`, `since`;
-newest first) and `runningJobs`). All three are empty while the project's `sessionCoordination` is
-off. Notice and intent text is untrusted peer content. `PostProjectNotice` posts as the user
+newest first), `runningJobs` and `leases`: held exclusive leases by name, each with `name`,
+`reason`, RFC 3339 `acquiredAt` / `expiresAt` and `jobId` when it ends with a background job). While the project's `sessionCoordination` is off,
+`notices` and `intents` are empty and `sessions` lists only the sessions holding leases, without
+focus tasks, intent or claims. Notice and intent text is untrusted peer content. `PostProjectNotice` posts as the user
 (`text`, optional `subject`, `expiresInSeconds` 60–86400) and returns the `notice`; a user notice has
 an empty `sessionId` and `actor` `user`, and the per-session caps do not apply. Invalid text,
 subject or expiry → `invalid_argument`. `ClearProjectNotice` clears an active notice as the user,
@@ -1492,6 +1494,8 @@ another session's write to a file this session claims, or a project notice board
 at a checkpoint; spec §7.3), `notice_posted` / `notice_cleared` (this session posted or cleared a
 board notice: `{id, text, subject?, expires_at}` / `{id, reason}`), `claim_released` (the
 coordinator released its claims on files it did not write: `{paths, held, reason}`; spec §7.3),
+`lease_acquired` / `lease_released` (this session took, renewed or gave up an exclusive lease:
+`{name, reason, expires_at, job?, renewed?}` / `{name, why}`; spec §7.3),
 `context_view_changed`, `session_idle` / `session_error`, `session_stopped` /
 `session_reopened`, `log`, and the transient `turn_delta`.
 

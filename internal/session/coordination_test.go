@@ -131,8 +131,8 @@ func TestSessionCoordinationOverlapNoticesAndListSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitIdleCount(t, off, 1)
-	if off.deps.ListSessions != nil {
-		t.Fatal("list_sessions offered with the setting off")
+	if _, err := off.deps.ListSessions(""); !errors.Is(err, orchestrator.ErrCoordinationDisabled) {
+		t.Fatalf("list_sessions with the setting off and no lease held: %v", err)
 	}
 	if err := m.SetSessionCoordination("proj", true); err != nil {
 		t.Fatal(err)

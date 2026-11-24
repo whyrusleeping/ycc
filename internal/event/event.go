@@ -114,6 +114,12 @@ const (
 	// did not write with release_claim (data: { paths, held, reason }; held
 	// lists the paths it had a claim on). It does not enter the conversation.
 	ClaimReleased Type = "claim_released"
+	// LeaseAcquired / LeaseReleased record this session taking, renewing or
+	// giving up an exclusive project lease (data: { name, reason, expires_at,
+	// job?, renewed? } / { name, why }; why is released | expired | job_exited
+	// | session_ended). They do not enter the conversation.
+	LeaseAcquired Type = "lease_acquired"
+	LeaseReleased Type = "lease_released"
 	// Settings overlay: mid-session config changes recorded in the log.
 	RoleConfigChanged    Type = "role_config_changed"
 	ThinkingLevelChanged Type = "thinking_level_changed"

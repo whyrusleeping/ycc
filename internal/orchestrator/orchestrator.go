@@ -123,16 +123,20 @@ type Deps struct {
 	// OtherSessions describes the project's other live sessions for
 	// list_backlog. Nil-safe: when unset nothing is appended.
 	OtherSessions func() string
-	// ListSessions backs the experimental list_sessions tool: the project's
-	// other sessions, or with a path that path's claimants. Set only when the
-	// project enabled session coordination when the session was built; it
-	// returns ErrCoordinationDisabled once the setting is turned off.
+	// ListSessions backs the list_sessions tool: the project's other
+	// sessions, or with a path that path's claimants. While the project's
+	// session coordination is off it lists only exclusive lease holders, and
+	// returns ErrCoordinationDisabled when there are none or for a path.
 	ListSessions func(path string) (string, error)
 	// Board backs the experimental notice board tools (set_intent,
 	// post_notice, clear_notice) for coordinators. Set under the same
 	// condition as ListSessions.
 	Board NoticeBoard
-	Repo  *git.Repo
+	// Leases backs the exclusive lease tools (acquire_lease, release_lease)
+	// for coordinators. Unlike Board it does not depend on session
+	// coordination. Nil-safe: when unset the tools are not offered.
+	Leases Leases
+	Repo   *git.Repo
 	// Baseline is captured when the session is assembled, before coordinator or
 	// worker tools can mutate the task tree. All review and commit scope derives
 	// from this immutable snapshot. BaselineErr records why a resumed legacy or

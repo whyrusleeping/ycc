@@ -165,6 +165,10 @@ func (j *Job) Mutates() bool { return j.mutates }
 // session ends. Background processes should run under it.
 func (j *Job) Context() context.Context { return j.ctx }
 
+// Done is closed once the job's terminal report is available. A tracked job's
+// execution may still be stopping then; WaitExecution joins it.
+func (j *Job) Done() <-chan struct{} { return j.done }
+
 // Status returns the job's current status.
 func (j *Job) Status() Status {
 	j.mu.Lock()
@@ -320,6 +324,11 @@ func (j *Job) WaitExecution() {
 		<-j.executionDone
 	}
 }
+
+// ExecutionRunning reports whether the job's work may still be executing: a
+// tracked job until ExecutionComplete (even after a kill finalized its report),
+// an untracked one while its status is running.
+func (j *Job) ExecutionRunning() bool { return j.executionRunning() }
 
 func (j *Job) executionRunning() bool {
 	if !j.tracked {
