@@ -27,7 +27,7 @@ import { openAnthropicLogin } from "../settings/AnthropicLogin";
 import {
   WORK_IMPLEMENTATIONS,
   bannerLine,
-  budgetLines,
+  budgetLine,
   canStart,
   canStop,
   currentSessionId,
@@ -38,6 +38,7 @@ import {
   isFailureOutcome,
   loopState,
   MAX_LOOP_PARALLEL,
+  parallelExplanation,
   parallelToSend,
   loopTotalsLine,
   resourceEnvelopeLines,
@@ -217,7 +218,7 @@ export function WorkLoopPage({ project }: { project: string }) {
   );
 }
 
-function ReadyTasks({ project }: { project: string }) {
+function ReadyTasks({ project, limit = 5 }: { project: string; limit?: number }) {
   const backlog = useBacklog(project);
   const ready = useMemo(() => spawnableTasks(backlog.data ?? []), [backlog.data]);
   if (backlog.isPending) return <p className="muted small">Checking the backlog…</p>;
@@ -236,12 +237,12 @@ function ReadyTasks({ project }: { project: string }) {
         {ready.length} ready {ready.length === 1 ? "task" : "tasks"}, highest priority first
       </div>
       <ul>
-        {ready.slice(0, 5).map((t) => (
+        {ready.slice(0, limit).map((t) => (
           <li key={t.id}>
             <TaskLink project={project} id={t.id} className="task-chip" /> <span>{t.title}</span>
           </li>
         ))}
-        {ready.length > 5 && <li className="muted">… and {ready.length - 5} more</li>}
+        {ready.length > limit && <li className="muted">… and {ready.length - limit} more</li>}
       </ul>
     </div>
   );
@@ -258,8 +259,7 @@ function UncommittedReviewWarning({ project, tasks, paths }: { project: string; 
   return (
     <div className="banner warn loop-uncommitted" role="alert">
       <div>
-        <strong>{line}.</strong> Loop sessions leave that work to its owner and route around those files, so they may split
-        tasks instead of finishing them. Commit or settle it first, or start anyway.
+        <strong>{line}.</strong> Loop sessions work around it. Commit it first, or start anyway.
       </div>
       <ul>
         {tasks.slice(0, 8).map((t) => (
@@ -279,9 +279,8 @@ function EmptyLoop({ project, onStart }: { project: string; onStart: () => void 
     <section className="loop-empty">
       <h2>No work loop has run{project ? ` for ${project}` : ""} yet</h2>
       <p className="muted">
-        The work loop drains this project’s ready backlog unattended: it starts a fresh <code>work</code> session per task, one
-        after another, until no ready task remains, a budget cap trips, or you stop it. It keeps running while this tab is
-        closed.
+        The work loop works through this project’s ready backlog unattended, a fresh <code>work</code> session per task, until
+        none remain, a budget cap trips, or you stop it.
       </p>
       <ReadyTasks project={project} />
       <p>
@@ -327,8 +326,10 @@ function StartLoopDialog({
     setSlotChoice(null);
     onCancel();
   };
+  const detail = WORK_IMPLEMENTATIONS.find((o) => o.value === implementation)?.detail ?? "";
+  const defaultNote = configured && configured !== slots ? ` Project default: ${configured}.` : "";
   return (
-    <Modal open={open} onClose={() => !busy && close()} title="Start the work loop" className="loop-start-dialog" view="loop_start" flow="loop_start">
+    <Modal open={open} onClose={() => !busy && close()} title={`Start the work loop${project ? ` · ${project}` : ""}`} className="loop-start-dialog" view="loop_start" flow="loop_start">
       <form
         className="task-editor"
         onSubmit={(e) => {
@@ -339,80 +340,52 @@ function StartLoopDialog({
           setSlotChoice(null);
         }}
       >
-        <p className="muted small">
-          {project ? `In ${project}. ` : ""}The daemon drains ready backlog tasks unattended until none remain, a budget cap trips,
-          or you stop it. It spends tokens while this tab is closed.
-        </p>
-        <ReadyTasks project={project} />
         {checking ? (
           <p className="muted small">Checking for uncommitted in-review work…</p>
         ) : (
           <UncommittedReviewWarning project={project} tasks={uncommitted} paths={preflight.data?.uncommittedPaths ?? 0} />
         )}
-        <fieldset className="loop-options">
-          <legend>Parallel sessions</legend>
-          <label className="radio-row">
-            <select
-              value={slots}
-              disabled={checking}
-              aria-label="Loop sessions working at once"
-              onChange={(e) => setSlotChoice(Number(e.target.value))}
-            >
-              {Array.from({ length: MAX_LOOP_PARALLEL }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                  {n === configured ? " (project default)" : ""}
-                </option>
-              ))}
-            </select>
-            <span className="muted small">
-              {slots === 1 ? "One session at a time." : `${slots} sessions work at once in the shared tree.`}
-            </span>
-            {slots > 1 && <span className="tag">experimental</span>}
-          </label>
+        <div className="loop-start-option">
+          <label htmlFor="loop-start-slots">Sessions at once</label>
+          <select id="loop-start-slots" value={slots} disabled={checking} onChange={(e) => setSlotChoice(Number(e.target.value))}>
+            {Array.from({ length: MAX_LOOP_PARALLEL }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {n}
+                {n === configured ? " (default)" : ""}
+              </option>
+            ))}
+          </select>
           <p className="muted small">
-            The default is this project’s <code>[work_loop] parallel</code> in <code>.ycc/config.toml</code>.
+            {parallelExplanation(slots)}
+            {defaultNote}
           </p>
-        </fieldset>
-        <fieldset className="loop-options">
-          <legend>Work implementation</legend>
-          {WORK_IMPLEMENTATIONS.map((o) => (
-            <label key={o.value} className="radio-row">
-              <input
-                type="radio"
-                name="work-implementation"
-                value={o.value}
-                checked={implementation === o.value}
-                disabled={models.isPending}
-                onChange={() => setChoice(o.value)}
-              />
-              <span>
-                <strong>{o.label}</strong>
-                {o.value === current && <span className="tag">current</span>} <span className="muted small">{o.detail}</span>
-              </span>
-            </label>
-          ))}
-          <p className="muted small">
-            A daemon-wide setting: it applies to every new work session, including this loop’s. Also in{" "}
-            <Link to={paths.settings("work")}>Settings</Link>.
-          </p>
-        </fieldset>
-        <div className="loop-options">
-          <div className="label">Budget caps this loop captures</div>
-          {budget.isPending ? (
-            <p className="muted small">Loading…</p>
-          ) : budget.isError ? (
-            <p className="error small">{errorMessage(budget.error)}</p>
-          ) : (
-            <ul className="plain-list small">
-              {budgetLines(budget.data).map((l) => (
-                <li key={l}>{l}</li>
-              ))}
-            </ul>
-          )}
         </div>
+        <div className="loop-start-option">
+          <span id="loop-start-impl">Who writes the code</span>
+          <span className="segmented inline" role="group" aria-labelledby="loop-start-impl">
+            {WORK_IMPLEMENTATIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                className={implementation === o.value ? "selected" : ""}
+                aria-pressed={implementation === o.value}
+                disabled={models.isPending}
+                onClick={() => setChoice(o.value)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </span>
+          <p className="muted small">
+            {detail}
+            {implementation !== current && " Also changes the default for new work sessions."}
+          </p>
+        </div>
+        <ReadyTasks project={project} limit={3} />
         <div className="editor-actions">
-          <span className="muted small">Configured in ycc.toml ([budget], [work])</span>
+          <span className="muted small">
+            {budget.data ? `${budgetLine(budget.data)} ` : ""}Keeps running while this tab is closed.
+          </span>
           <button type="button" className="btn" onClick={close} disabled={busy}>
             Cancel
           </button>

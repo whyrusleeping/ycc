@@ -26,8 +26,7 @@ struct BacklogView: View {
     @State private var loopModel: WorkLoopModel?
     @State private var lastLoopKey: LoopSnapshotKey?
     @State private var showCapture = false
-    @State private var showLoopStartConfirmation = false
-    /// The loop model whose preflight the start confirmation shows; Start
+    /// The loop model the start sheet configures, while it shows; Start
     /// applies only while that project is still selected.
     @State private var pendingLoopStart: WorkLoopModel?
     @State private var showLoopStopConfirmation = false
@@ -281,31 +280,12 @@ struct BacklogView: View {
 
             if loopModel?.canStart == true {
                 Button {
-                    // Check for uncommitted in-review work first; the dialog
-                    // warns. A project switch meanwhile drops the check.
-                    guard let target = scopedLoopModel else { return }
-                    Task {
-                        await target.loadPreflight()
-                        guard target === scopedLoopModel else { return }
-                        pendingLoopStart = target
-                        showLoopStartConfirmation = true
-                    }
+                    pendingLoopStart = scopedLoopModel
                 } label: {
                     Label("Start loop", systemImage: "play.circle")
                         .labelStyle(.iconOnly)
                 }
                 .accessibilityLabel("Start work loop")
-                .workLoopStartConfirmation(
-                    isPresented: $showLoopStartConfirmation, warning: pendingLoopStart?.preflightWarning,
-                    parallel: pendingLoopStart?.parallel ?? 1,
-                    onChooseParallel: {
-                        guard let target = pendingLoopStart, target === scopedLoopModel else { return }
-                        router.open(.workLoop(project: target.project))
-                    }
-                ) {
-                    guard let target = pendingLoopStart, target === scopedLoopModel else { return }
-                    Task { await target.start() }
-                }
             } else if state == .stopping {
                 Button {} label: {
                     Label("Stopping…", systemImage: "stop.circle")
@@ -334,6 +314,14 @@ struct BacklogView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color(.secondarySystemGroupedBackground))
+        .sheet(item: $pendingLoopStart) { target in
+            WorkLoopStartSheet(model: target) {
+                // A project switch meanwhile drops the start.
+                guard target === scopedLoopModel else { return }
+                Analytics.action("loop.start")
+                Task { await target.start() }
+            }
+        }
     }
 
     /// The banner text beside the state badge. `bannerLine` leads with the

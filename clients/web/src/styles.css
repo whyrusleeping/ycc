@@ -4987,6 +4987,20 @@ th[aria-sort="descending"] .sort-btn {
   margin: 6px 0 0;
 }
 
+/* One start-dialog option: label and control on a row, a short note below. */
+.loop-start-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.loop-start-option > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .radio-row {
   display: flex;
   gap: 8px;

@@ -12,8 +12,34 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
     var stopError: Error?
     var preflight: Ycc_V1_GetWorkLoopPreflightResponse?
     var preflightError: Error?
+    var backlog: [Ycc_V1_BacklogTaskSummary]?
+    var models: Ycc_V1_ListModelsResponse?
+    var budget: Ycc_V1_GetBudgetResponse?
+    var setImplementationError: Error?
     private(set) var startCalls = 0
     private(set) var startParallels: [Int32] = []
+    /// Calls in order: "impl:<value>" and "start".
+    private(set) var calls: [String] = []
+
+    func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
+        guard let backlog else { throw YccError.rpc(message: "unimplemented") }
+        return backlog
+    }
+
+    func listModels() async throws -> Ycc_V1_ListModelsResponse {
+        guard let models else { throw YccError.rpc(message: "unimplemented") }
+        return models
+    }
+
+    func getBudget() async throws -> Ycc_V1_GetBudgetResponse {
+        guard let budget else { throw YccError.rpc(message: "unimplemented") }
+        return budget
+    }
+
+    func setWorkImplementation(_ implementation: String) async throws {
+        calls.append("impl:\(implementation)")
+        if let setImplementationError { throw setImplementationError }
+    }
 
     func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? {
         if let preflightError { throw preflightError }
@@ -26,6 +52,7 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
     }
 
     func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo {
+        calls.append("start")
         startParallels.append(parallel)
         let call = startCalls
         startCalls += 1
@@ -258,17 +285,13 @@ final class WorkLoopModelTests: XCTestCase {
         var response = Ycc_V1_GetWorkLoopPreflightResponse()
         response.configuredParallel = 3
         source.preflight = response
-        await model.loadPreflight()
+        await model.loadStartOptions()
         XCTAssertEqual(model.parallel, 3)
-        XCTAssertEqual(
-            WorkLoopModel.parallelCaption(parallel: 3, configured: 3),
-            "Project default · experimental: sessions share the working tree")
         await model.start()
 
         model.parallel = 3
         await model.start()
         model.parallel = 1
-        XCTAssertEqual(WorkLoopModel.parallelCaption(parallel: 1, configured: 3), "Project default: 3")
         await model.start()
         XCTAssertNil(model.parallelChoice, "a start clears the pick")
         XCTAssertEqual(model.parallel, 3)
@@ -279,22 +302,82 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertEqual(source.startParallels, [0, 0, 1, 16, 0])
     }
 
+    func testStartOptionsListReadyTasksAndBudgetCaps() async {
+        let source = MockWorkLoopSource()
+        let model = WorkLoopModel(source: source, project: "demo")
+        await model.loadStartOptions()
+        XCTAssertNil(model.readyTasks, "an unreadable backlog shows no list")
+        XCTAssertNil(model.workImplementation)
+        XCTAssertNil(model.budget)
+
+        func summary(_ id: String, status: String, ready: Bool, priority: Int32) -> Ycc_V1_BacklogTaskSummary {
+            var value = Ycc_V1_BacklogTaskSummary()
+            value.id = id
+            value.status = status
+            value.ready = ready
+            value.priority = priority
+            return value
+        }
+        source.backlog = [
+            summary("0003", status: "todo", ready: true, priority: 3),
+            summary("0001", status: "todo", ready: false, priority: 1),
+            summary("0002", status: "proposed", ready: true, priority: 1),
+            summary("0004", status: "in_progress", ready: true, priority: 2),
+        ]
+        var budget = Ycc_V1_GetBudgetResponse()
+        budget.sessionCost = 5
+        budget.sessionTokens = 2_000_000
+        source.budget = budget
+        await model.loadStartOptions()
+        XCTAssertEqual(model.readyTasks?.map(\.id), ["0004", "0003"])
+        XCTAssertEqual(WorkLoopModel.budgetLine(budget), "Caps: $5.00 or 2.0M tokens per session · none per loop.")
+        XCTAssertEqual(WorkLoopModel.budgetLine(Ycc_V1_GetBudgetResponse()), "No budget caps set.")
+    }
+
+    func testStartAppliesAChangedImplementationBeforeStarting() async {
+        let source = MockWorkLoopSource()
+        source.startSnapshot = loop(state: "running")
+        var models = Ycc_V1_ListModelsResponse()
+        models.workImplementation = "direct"
+        source.models = models
+        let model = WorkLoopModel(source: source, project: "demo")
+        await model.loadStartOptions()
+        XCTAssertEqual(model.implementation, "direct")
+
+        model.implementation = "direct"
+        XCTAssertNil(model.implementationChoice, "picking the current value is no change")
+        await model.start()
+        XCTAssertEqual(source.calls, ["start"])
+
+        model.implementation = "delegate"
+        source.setImplementationError = YccError.failedPrecondition(message: "nope")
+        await model.start()
+        XCTAssertEqual(source.calls, ["start", "impl:delegate"], "a failed change does not start the loop")
+        XCTAssertNotNil(model.actionError)
+
+        source.setImplementationError = nil
+        await model.start()
+        XCTAssertEqual(source.calls, ["start", "impl:delegate", "impl:delegate", "start"])
+        XCTAssertEqual(model.workImplementation, "delegate")
+        XCTAssertNil(model.implementationChoice)
+    }
+
     func testPreflightWarnsAboutUncommittedInReviewWork() async {
         let source = MockWorkLoopSource()
         let model = WorkLoopModel(source: source, project: "demo")
 
-        await model.loadPreflight()
+        await model.loadStartOptions()
         XCTAssertNil(model.preflightWarning, "no preflight, no warning")
 
         var response = Ycc_V1_GetWorkLoopPreflightResponse()
         response.uncommittedInReview = [task("0366", reason: "uncommitted: a.go"), task("0371")]
         response.uncommittedPaths = 5
         source.preflight = response
-        await model.loadPreflight()
+        await model.loadStartOptions()
         XCTAssertEqual(model.preflightWarning, "2 in-review tasks have uncommitted changes in 5 files (0366, 0371)")
 
         source.preflightError = YccError.failedPrecondition(message: "boom")
-        await model.loadPreflight()
+        await model.loadStartOptions()
         XCTAssertNil(model.preflightWarning, "a failed preflight never blocks Start")
 
         var finished = loop(state: "finished")

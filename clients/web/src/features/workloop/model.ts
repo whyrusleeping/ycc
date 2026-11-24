@@ -168,12 +168,15 @@ export function resourceEnvelopeLines(loop: WorkLoopInfo): string[] {
 }
 
 /** The configured caps a new loop would capture (GetBudget), before starting. */
-export function budgetLines(b: GetBudgetResponse): string[] {
-  const line = (scope: string, tokens: bigint, cost: number) =>
-    `${scope}: ${Number(tokens) > 0 ? `${formatTokens(tokens)} tokens` : "tokens unbounded"} · ${
-      cost > 0 ? `$${cost.toFixed(2)} priced cost` : "cost unbounded"
-    }`;
-  return [line("Per session", b.sessionTokens, b.sessionCost), line("Whole loop", b.loopTokens, b.loopCost)];
+/** "Caps: $5.00 or 2.0M tokens per session · none per loop.", or that no caps are set. */
+export function budgetLine(b: GetBudgetResponse): string {
+  const cap = (tokens: bigint, cost: number) =>
+    [cost > 0 ? `$${cost.toFixed(2)}` : "", Number(tokens) > 0 ? `${formatTokens(tokens)} tokens` : ""].filter(Boolean).join(" or ") ||
+    "none";
+  const session = cap(b.sessionTokens, b.sessionCost);
+  const loop = cap(b.loopTokens, b.loopCost);
+  if (session === "none" && loop === "none") return "No budget caps set.";
+  return `Caps: ${session} per session · ${loop} per loop.`;
 }
 
 export function formatClock(iso: string): string | null {
@@ -314,7 +317,15 @@ export function parallelToSend(choice: number | null, configured: number): numbe
   return Math.min(Math.max(Math.trunc(choice), 1), MAX_LOOP_PARALLEL);
 }
 
+/** How the slots fill: one at a time, or staggered by task claims. */
+export function parallelExplanation(parallel: number): string {
+  return parallel <= 1
+    ? "One session at a time."
+    : "Each session starts once the previous one has picked its task. They share one working tree (experimental).";
+}
+
+/** Who writes the code in work sessions (the daemon-wide work implementation). */
 export const WORK_IMPLEMENTATIONS = [
-  { value: "direct", label: "Direct", detail: "The coordinator edits the code itself (default); independent review stays delegated." },
-  { value: "delegate", label: "Delegate", detail: "The coordinator hands code changes to an implementer subagent." },
+  { value: "direct", label: "Main agent", detail: "The main agent writes the code; separate agents review it." },
+  { value: "delegate", label: "Implementer", detail: "The main agent plans and checks; the implementer model writes the code." },
 ] as const;

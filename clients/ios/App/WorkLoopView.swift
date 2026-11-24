@@ -11,7 +11,7 @@ struct WorkLoopView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: WorkLoopModel?
-    @State private var showStartConfirmation = false
+    @State private var showStartSheet = false
     @State private var showStopConfirmation = false
     @State private var showAnthropicLogin = false
 
@@ -56,10 +56,15 @@ struct WorkLoopView: View {
             set: { if !$0 { model?.completionMessage = nil } })
     }
 
-    /// Login sheet and result alerts. The start/stop confirmations sit on
-    /// their buttons so the iOS 26 popover points at them.
+    /// Start and login sheets and result alerts. The stop confirmation sits
+    /// on its button so the iOS 26 popover points at it.
     private func withDialogs(_ content: some View) -> some View {
         content
+        .sheet(isPresented: $showStartSheet) {
+            if let model {
+                WorkLoopStartSheet(model: model) { start(model) }
+            }
+        }
         .sheet(isPresented: $showAnthropicLogin) {
             if let client = app.client {
                 NavigationStack { AnthropicLoginView(client: client) }
@@ -104,21 +109,11 @@ struct WorkLoopView: View {
                 ContentUnavailableView {
                     Label("No work loop yet", systemImage: "arrow.triangle.2.circlepath")
                 } description: {
-                    Text("Start an unattended drain of this project’s ready backlog tasks.")
+                    Text("Work through this project’s ready backlog tasks unattended.")
                 } actions: {
-                    VStack(spacing: 14) {
-                        parallelStepper(model)
-                            .frame(maxWidth: 320)
-                        Button("Start loop") { confirmStart(model) }
-                            .buttonStyle(.accent)
-                            .disabled(!model.canStart)
-                            .workLoopStartConfirmation(
-                                isPresented: $showStartConfirmation, warning: model.preflightWarning,
-                                parallel: model.parallel
-                            ) {
-                                start(model)
-                            }
-                    }
+                    Button("Start loop…") { showStartSheet = true }
+                        .buttonStyle(.accent)
+                        .disabled(!model.canStart)
                 }
             } refresh: {
                 await model.refresh()
@@ -257,19 +252,12 @@ struct WorkLoopView: View {
 
             Section {
                 if model.state.canStart {
-                    parallelStepper(model)
                     Button {
-                        confirmStart(model)
+                        showStartSheet = true
                     } label: {
-                        Label("Start loop", systemImage: "play.circle")
+                        Label("Start loop…", systemImage: "play.circle")
                     }
                     .disabled(!model.canStart)
-                    .workLoopStartConfirmation(
-                        isPresented: $showStartConfirmation, warning: model.preflightWarning,
-                        parallel: model.parallel
-                    ) {
-                        start(model)
-                    }
                 }
                 if model.state.isActive {
                     Button(role: .destructive) {
@@ -293,15 +281,6 @@ struct WorkLoopView: View {
         .refreshable { Analytics.action("refresh", via: .pull); await model.refresh() }
     }
 
-    /// Check for uncommitted in-review work, then confirm; the dialog warns
-    /// when the preflight found some.
-    private func confirmStart(_ model: WorkLoopModel) {
-        Task {
-            await model.loadPreflight()
-            showStartConfirmation = true
-        }
-    }
-
     private func start(_ model: WorkLoopModel) {
         Analytics.action("loop.start")
         Task { await model.start() }
@@ -312,26 +291,6 @@ struct WorkLoopView: View {
     private static func isLive(_ sessionID: String, in loop: Ycc_V1_WorkLoopInfo) -> Bool {
         loop.slots.contains { $0.sessionID == sessionID }
             || sessionID == WorkLoopModel.currentSessionID(for: loop)
-    }
-
-    /// How many loop sessions the next start runs at once (1...16); the
-    /// project's configured count unless changed.
-    private func parallelStepper(_ model: WorkLoopModel) -> some View {
-        let caption = WorkLoopModel.parallelCaption(parallel: model.parallel, configured: model.configuredParallel)
-        return Stepper(
-            value: Binding(get: { model.parallel }, set: { model.parallel = $0 }),
-            in: 1...WorkLoopModel.maxParallel
-        ) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.parallel == 1 ? "1 session at a time" : "\(model.parallel) sessions at once")
-                if !caption.isEmpty {
-                    Text(caption)
-                        .font(.caption)
-                        .foregroundStyle(model.parallel > 1 ? Theme.attention : Color.secondary)
-                }
-            }
-        }
-        .disabled(!model.canStart)
     }
 
     /// One live loop session: its transcript, its claimed task, and whether
@@ -562,10 +521,6 @@ struct WorkLoopView: View {
         // This task restarts whenever Start/Stop flips `shouldPoll`; their
         // responses already carry the new state, so skip the duplicate load.
         await model?.refreshIfStale()
-        // The slot picker shows the project's configured count.
-        if let model, model.state.canStart, model.preflight == nil {
-            await model.loadPreflight()
-        }
         while !Task.isCancelled, model?.shouldPoll == true {
             do {
                 try await Task.sleep(nanoseconds: 5_000_000_000)
@@ -579,46 +534,9 @@ struct WorkLoopView: View {
 }
 
 extension View {
-    /// The start confirmation. Apply it to the Start button itself, not the
-    /// screen: on iOS 26 a confirmation dialog presents as a popover anchored to
-    /// the view it modifies, so a screen-level dialog points its arrow at the
-    /// middle of the screen.
-    /// A `warning` (uncommitted in-review work) leads the message and makes
-    /// the action "Start anyway". A `parallel` above 1 is named as experimental.
-    /// `onChooseParallel`, for entry points without the slot picker, adds a
-    /// button that opens one.
-    func workLoopStartConfirmation(
-        isPresented: Binding<Bool>,
-        warning: String?,
-        parallel: Int,
-        onChooseParallel: (() -> Void)? = nil,
-        onStart: @escaping () -> Void
-    ) -> some View {
-        confirmationDialog(
-            "Start unattended work loop?",
-            isPresented: isPresented,
-            titleVisibility: .visible
-        ) {
-            Button(warning == nil ? "Start loop" : "Start anyway", action: onStart)
-            if let onChooseParallel {
-                Button("Change sessions at once…", action: onChooseParallel)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            let slots = parallel > 1
-                ? " It runs \(parallel) sessions at once in the shared working tree (experimental)."
-                : ""
-            let base = "The daemon will drain ready backlog tasks unattended until none remain or a budget cap trips.\(slots) This can spend tokens while your phone is locked or suspended."
-            if let warning {
-                Text("\(warning). Loop sessions leave that work to its owner and route around those files; commit or settle it first, or start anyway.\n\n\(base)")
-            } else {
-                Text(base)
-            }
-        }
-    }
-
-    /// The stop confirmation; like ``workLoopStartConfirmation(isPresented:warning:parallel:onStart:)``,
-    /// apply it to the Stop button.
+    /// The stop confirmation. Apply it to the Stop button itself, not the
+    /// screen: on iOS 26 a confirmation dialog presents as a popover anchored
+    /// to the view it modifies.
     func workLoopStopConfirmation(
         isPresented: Binding<Bool>,
         waiting: Bool,

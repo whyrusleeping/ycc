@@ -11,11 +11,43 @@ public protocol WorkLoopSource: Sendable {
     func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse?
+    /// The start sheet's context: ready tasks, the work implementation, and
+    /// the budget caps the loop will capture.
+    func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary]
+    func listModels() async throws -> Ycc_V1_ListModelsResponse
+    func getBudget() async throws -> Ycc_V1_GetBudgetResponse
+    func setWorkImplementation(_ implementation: String) async throws
 }
+
+/// What a ``WorkLoopSource`` without the start sheet's optional context throws.
+struct WorkLoopSourceUnsupported: Error {}
 
 extension WorkLoopSource {
     /// Sources without a preflight report nothing to warn about.
     public func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? { nil }
+    public func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
+        throw WorkLoopSourceUnsupported()
+    }
+    public func listModels() async throws -> Ycc_V1_ListModelsResponse { throw WorkLoopSourceUnsupported() }
+    public func getBudget() async throws -> Ycc_V1_GetBudgetResponse { throw WorkLoopSourceUnsupported() }
+    public func setWorkImplementation(_ implementation: String) async throws { throw WorkLoopSourceUnsupported() }
+}
+
+/// A work implementation choice: who writes the code in a work session.
+public struct WorkImplementationOption: Sendable, Identifiable, Equatable {
+    public let value: String
+    public let label: String
+    public let detail: String
+    public var id: String { value }
+
+    public static let all = [
+        WorkImplementationOption(
+            value: "direct", label: "Main agent",
+            detail: "The main agent writes the code; separate agents review it."),
+        WorkImplementationOption(
+            value: "delegate", label: "Implementer",
+            detail: "The main agent plans and checks; the implementer model writes the code."),
+    ]
 }
 
 extension YccClient: WorkLoopSource {}
@@ -90,6 +122,16 @@ public final class WorkLoopModel {
     /// The slot count picked for the next start; nil keeps the project's
     /// configured count (Start sends 0). A successful start clears it.
     public var parallelChoice: Int?
+    /// The start sheet's ready tasks, highest priority first; nil until
+    /// loaded or when the backlog could not be read.
+    public private(set) var readyTasks: [Ycc_V1_BacklogTaskSummary]?
+    /// The daemon's work implementation; nil until loaded or when unknown.
+    public private(set) var workImplementation: String?
+    /// The implementation picked for the next start; nil keeps the daemon's.
+    public var implementationChoice: String?
+    /// The budget caps a loop started now captures; nil until loaded.
+    public private(set) var budget: Ycc_V1_GetBudgetResponse?
+    public private(set) var isLoadingStartOptions = false
 
     private let source: WorkLoopSource
     private let cache: AppDataCache?
@@ -171,18 +213,55 @@ public final class WorkLoopModel {
         return Int32(min(max(choice, 1), maxParallel))
     }
 
-    /// The picker's caption: whether the count is the project's default, and
-    /// that running more than one session at once is experimental.
-    public static func parallelCaption(parallel: Int, configured: Int?) -> String {
-        let base = parallel == configured ? "Project default" : (configured.map { "Project default: \($0)" } ?? "")
-        let note = parallel > 1 ? "experimental: sessions share the working tree" : ""
-        return [base, note].filter { !$0.isEmpty }.joined(separator: " · ")
+    /// How the slots fill: one at a time, or staggered by task claims.
+    public static func parallelExplanation(parallel: Int) -> String {
+        parallel <= 1
+            ? "One session at a time."
+            : "Each session starts once the previous one has picked its task. They share one working tree (experimental)."
     }
 
-    /// Load the preflight before confirming a start. A failure (for example an
-    /// older daemon without the RPC) leaves no warning rather than blocking Start.
-    public func loadPreflight() async {
-        preflight = try? await source.getWorkLoopPreflight(project: project)
+    /// The implementation the next start uses: the pick, else the daemon's.
+    public var implementation: String {
+        get { implementationChoice ?? workImplementation ?? "direct" }
+        set { implementationChoice = newValue == workImplementation ? nil : newValue }
+    }
+
+    /// Load everything the start sheet shows: the preflight, ready tasks, the
+    /// work implementation, and the budget caps. Each part is optional; a
+    /// failure (for example an older daemon without the RPC) leaves it out
+    /// rather than blocking Start.
+    public func loadStartOptions() async {
+        isLoadingStartOptions = true
+        defer { isLoadingStartOptions = false }
+        let source = source
+        let project = project
+        async let preflight = try? source.getWorkLoopPreflight(project: project)
+        async let backlog = try? source.listBacklog(project: project)
+        async let models = try? source.listModels()
+        async let budget = try? source.getBudget()
+        self.preflight = await preflight
+        readyTasks = await backlog.map(NewSessionModel.spawnableTasks)
+        if let models = await models {
+            workImplementation = models.workImplementation.isEmpty ? "direct" : models.workImplementation
+            if implementationChoice == workImplementation { implementationChoice = nil }
+        }
+        self.budget = await budget
+    }
+
+    /// "Caps: $5.00 or 2M tokens per session · none per loop", or that no
+    /// caps are set.
+    public static func budgetLine(_ budget: Ycc_V1_GetBudgetResponse) -> String {
+        func cap(tokens: Int64, cost: Double) -> String {
+            let parts = [
+                cost > 0 ? String(format: "$%.2f", cost) : nil,
+                tokens > 0 ? "\(UsageModel.formatTokens(tokens)) tokens" : nil,
+            ].compactMap { $0 }
+            return parts.isEmpty ? "none" : parts.joined(separator: " or ")
+        }
+        let session = cap(tokens: budget.sessionTokens, cost: budget.sessionCost)
+        let loop = cap(tokens: budget.loopTokens, cost: budget.loopCost)
+        if session == "none" && loop == "none" { return "No budget caps set." }
+        return "Caps: \(session) per session · \(loop) per loop."
     }
 
     public var currentSessionID: String {
@@ -216,6 +295,13 @@ public final class WorkLoopModel {
         defer { isBusy = false }
         completionMessage = nil
         do {
+            // The implementation is daemon-wide and read when each session
+            // starts, so it must land before the loop's first session.
+            if let choice = implementationChoice, choice != workImplementation {
+                try await source.setWorkImplementation(choice)
+                workImplementation = choice
+            }
+            implementationChoice = nil
             let parallel = Self.parallelToSend(choice: parallelChoice, configured: configuredParallel)
             apply(try await source.startWorkLoop(project: project, parallel: parallel), fromStart: true)
             parallelChoice = nil
@@ -458,3 +544,6 @@ public final class WorkLoopModel {
         return formatter
     }()
 }
+
+/// Identity is the instance, so a screen can present a sheet for one model.
+extension WorkLoopModel: Identifiable {}

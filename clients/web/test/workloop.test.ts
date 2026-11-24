@@ -14,7 +14,7 @@ import {
 import {
   ambientLoops,
   bannerLine,
-  budgetLines,
+  budgetLine,
   canStart,
   canStop,
   currentSessionId,
@@ -97,10 +97,13 @@ describe("digest and lines", () => {
     expect(lines[1]).toBe("Loop: tokens unbounded · $5.00 priced cost · 1h 0m wall time");
     expect(lines[2]).toContain("priced models only");
     expect(resourceEnvelopeLines(loop())).toEqual(["Resource envelope unavailable for this pre-upgrade snapshot."]);
-    expect(budgetLines(create(GetBudgetResponseSchema, { sessionCost: 2, loopTokens: 1_000_000n }))).toEqual([
-      "Per session: tokens unbounded · $2.00 priced cost",
-      "Whole loop: 1M tokens · cost unbounded",
-    ]);
+    expect(budgetLine(create(GetBudgetResponseSchema, { sessionCost: 2, loopTokens: 1_000_000n }))).toBe(
+      "Caps: $2.00 per session · 1M tokens per loop.",
+    );
+    expect(budgetLine(create(GetBudgetResponseSchema, { sessionCost: 2, sessionTokens: 500_000n }))).toBe(
+      "Caps: $2.00 or 500K tokens per session · none per loop.",
+    );
+    expect(budgetLine(create(GetBudgetResponseSchema, {}))).toBe("No budget caps set.");
   });
 });
 

@@ -425,6 +425,17 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Set the daemon-wide work implementation (`direct` or `delegate`); it
+    /// applies from the next work session, including a loop's.
+    public func setWorkImplementation(_ implementation: String) async throws {
+        var request = Ycc_V1_SetWorkImplementationRequest()
+        request.implementation = implementation
+        let response = await generated.setWorkImplementation(request: request)
+        if case .failure(let error) = response.result {
+            throw Self.map(error)
+        }
+    }
+
     /// Fetch the reconnectable daemon-side loop snapshot. `nil` means no loop has
     /// ever run for this workspace.
     public func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {

@@ -92,7 +92,7 @@ enum Analytics {
     ] + [
         "new_session", "quick_capture", "add_project", "task_edit", "start_work",
         "watch_create", "watch_edit",
-        "project_choice_backlog", "project_choice_new_session",
+        "project_choice_backlog", "project_choice_new_session", "loop_start",
     ].flatMap { flow in
         ["open", "submit", "cancel"].map { "\(flow).\($0)" }
     }
