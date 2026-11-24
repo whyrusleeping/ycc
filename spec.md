@@ -777,7 +777,26 @@ shown when the setting is off or turned off (§9.1).
   user as poster). `ListProjectNotices` also returns the project's live sessions as `list_sessions`
   sees them, structured, so clients can show who holds which task and path.
 
-Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations.
+Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations,
+except for exclusive leases.
+
+- **Exclusive leases.** Coordinators outside integrate mode have `acquire_lease(name, reason, ttl,
+  job_id?)` and `release_lease(name)` whether or not session coordination is on. A lease is a
+  project-wide exclusive hold on a named target such as a deploy target or a shared service. Names
+  are one printable line of at most 80 characters, compared case-insensitively. The reason (at most
+  200 characters) is required, and the ttl runs from 1 minute to 24 hours. The daemon keeps each
+  project's leases in memory, keyed by the primary tree, and records the holder session, its
+  focused tasks, the reason, and the acquired and expiry times. Acquiring a lease another live
+  session holds fails at once, naming the holder, its reason and the expiry. Nothing waits or polls.
+  Acquiring a lease the session already holds renews it with the new reason and ttl. A session may
+  hold 8 leases. With `job_id`, a running background job of the session, the lease is also
+  released when that job exits, so it outlives the turn; a renewal without `job_id` keeps the job.
+  A lease is released by `release_lease` (holder only), at expiry, when its job exits, and when
+  the holder session ends (stopped or reclaimed, which also kills its jobs). A daemon restart
+  releases every lease. The holder's log records `lease_acquired` (name, reason, expires_at, job,
+  renewed) and `lease_released` (name, why: released, expired, job_exited or session_ended).
+  Held leases appear under their holder in `list_sessions`, the `list_backlog` footer and
+  `ListProjectNotices` sessions (as `leases`), and a held lease keeps a quiet session listed.
 
 ### 7.4 Reasoning settings
 
@@ -972,6 +991,9 @@ before working its first piece in the same session, and asks the session to stat
 the areas or files and external resources (hosts, services, GPUs, databases) its work will touch.
 Loop sessions have `set_intent`, and the `list_backlog` footer shows their intents (as
 `list_sessions` does where available), even when session coordination (§7.3) is off or turned off.
+The prompt also says to deploy or restart a shared service only while holding an exclusive lease
+(§7.3) for that target, to release it when done, and to do other work when another session
+holds it.
 Loop sessions leave uncommitted work of
 in-review tasks to its owner, so before a start clients show a preflight naming in-review tasks
 whose own backlog file, or a file claimed by a session that focused them, is uncommitted, and
