@@ -101,6 +101,14 @@ func TestDeriveTitleFromTaskFocus(t *testing.T) {
 			want: "0007 — Implement the widget",
 		},
 		{
+			name: "work-loop kickoff with task title",
+			evs: []event.Event{
+				{Type: event.UserInput, Data: map[string]any{"text": workLoopPrompt}},
+				{Type: event.TaskFocus, Data: map[string]any{"task": "0010", "title": "Loop task"}},
+			},
+			want: "0010 — Loop task",
+		},
+		{
 			name: "task focus without title",
 			evs: []event.Event{
 				{Type: event.UserInput, Data: map[string]any{"text": canned}},

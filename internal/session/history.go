@@ -321,7 +321,7 @@ func readHistoryEvents(path string, decode func([]byte, *event.Event) error) ([]
 }
 
 // deriveTitle uses the first user_input as the session title unless it is one
-// of the canned mode kickoffs (or is absent). In that case, the first task focus
+// of the canned mode or work-loop kickoffs (or is absent). In that case, the first task focus
 // is more useful: its id and optional title identify the work the session chose.
 // Custom user prompts remain authoritative even when the session later focuses
 // a task.
@@ -360,6 +360,9 @@ func deriveTitle(evs []event.Event) string {
 
 func isDefaultPrompt(prompt string) bool {
 	prompt = strings.TrimSpace(prompt)
+	if prompt == strings.TrimSpace(workLoopPrompt) {
+		return true
+	}
 	for _, mode := range []string{"work", "chat", "pm"} {
 		if prompt == strings.TrimSpace(defaultPrompt(mode)) {
 			return true
