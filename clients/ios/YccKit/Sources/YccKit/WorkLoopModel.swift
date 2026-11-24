@@ -374,13 +374,16 @@ public final class WorkLoopModel {
     }
 
     /// A localized waiting status such as
-    /// "Waiting for provider (rate_limit) — resumes 03:15", or the
-    /// no-progress backoff.
+    /// "Waiting for provider (rate_limit) — resumes 03:15", the
+    /// no-progress backoff, or a wait on loop sessions that wait on their
+    /// background jobs.
     public static func waitingLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
         let kind = loop.waitKind.trimmingCharacters(in: .whitespacesAndNewlines)
         var line = "Waiting for provider"
         if kind == "no_progress" {
             line = "Waiting: last session made no progress"
+        } else if kind == "sessions_waiting" {
+            line = "Waiting: loop sessions are waiting on background jobs"
         } else if !kind.isEmpty {
             line += " (\(kind))"
         }

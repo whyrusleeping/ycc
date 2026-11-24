@@ -172,6 +172,12 @@ type Session struct {
 	// is in fact waiting for, or resuming on, delegated work.
 	jobWakeArmed  bool
 	jobWakePosted bool
+	// wakeGate and wakeCancel, set by the work loop under mu, admit automatic
+	// job continuations into the loop's working slot. A denied wake leaves the
+	// completion queued; the loop re-arms the wake once the slot frees. An
+	// admitted wake that delivers nothing gives the slot back with wakeCancel.
+	wakeGate   func() bool
+	wakeCancel func()
 	// thinkLevels holds per-model reasoning overrides, keyed
 	// by logical model name. An empty/missing entry means "use the model config";
 	// any of off/low/medium/high/xhigh/max forces that level for the model until
@@ -355,6 +361,41 @@ func (s *Session) StatusWithJobContinuation() (event.Status, bool) {
 func (s *Session) AwaitingJobs() bool {
 	_, awaiting := s.StatusWithJobContinuation()
 	return awaiting
+}
+
+// awaitingShellJobsOnly reports whether the session is idle and only its own
+// background shell jobs can still resume it: automatic delivery is outstanding
+// from at least one coordinator job and from no subagent run, and no wake is
+// already on its way. The work loop counts such a session as waiting rather
+// than working.
+func (s *Session) awaitingShellJobsOnly() bool {
+	s.mu.Lock()
+	st, armed, posted := s.status, s.jobWakeArmed, s.jobWakePosted
+	s.mu.Unlock()
+	if st != event.StatusIdle || !armed || posted || s.deps == nil || s.deps.Jobs == nil {
+		return false
+	}
+	pending, agent := s.deps.Jobs.PendingContinuationKinds("coordinator")
+	return pending && !agent
+}
+
+// setWakeGate installs the work loop's admission gate for automatic job
+// continuations (see wakeGate).
+func (s *Session) setWakeGate(gate func() bool, cancel func()) {
+	s.mu.Lock()
+	s.wakeGate, s.wakeCancel = gate, cancel
+	s.mu.Unlock()
+}
+
+// loopWorking reports whether a loop session that the work loop let wait has
+// woken and works again: it is mid-turn, paused, or idle awaiting a subagent
+// run. A session idle on shell jobs only, or finished, is not working.
+func (s *Session) loopWorking() bool {
+	switch st, awaiting := s.StatusWithJobContinuation(); st {
+	case event.StatusIdle, event.StatusError, event.StatusStopped:
+		return awaiting && !s.awaitingShellJobsOnly()
+	}
+	return true
 }
 
 func (s *Session) logFailure() error {
@@ -975,14 +1016,40 @@ func (s *Session) resumeForFinishedJobs() (bool, error) {
 	// Mark the continuation in flight BEFORE claiming anything: between the claim
 	// and the turn actually starting, the registry reports nothing pending, and a
 	// terminal-state observer must not read that gap as a finished session.
+	// It is also marked before asking the work loop's gate, so the loop never
+	// sees an admitted wake as a session still only waiting on its jobs.
 	s.setJobWakePosted(true)
+	// The gate is asked only when a completion is ready to deliver, so a wake
+	// with nothing to deliver never takes the slot.
+	s.mu.Lock()
+	gate, cancel := s.wakeGate, s.wakeCancel
+	s.mu.Unlock()
+	admitted := false
+	if gate != nil && s.deps.Jobs.CompletionReady("coordinator") {
+		if !gate() {
+			s.setJobWakePosted(false)
+			s.sendMu.Unlock()
+			return false, nil
+		}
+		admitted = true
+	}
 	absorbed := s.absorbBufferedIdleInputs()
-	notes, err := s.drainJobNotes()
+	// A gated session claims reports only once admitted: a completion that
+	// raced the readiness check stays queued, and its own signal wakes the
+	// session to ask the gate.
+	var notes []string
+	var err error
+	if gate == nil || admitted {
+		notes, err = s.drainJobNotes()
+	}
 	if err != nil || (!absorbed && len(notes) == 0) {
 		// Nothing to continue on: stay idle with senders still excluded, so no
 		// sender was ever classified against a run that is not going to start.
 		s.setJobWakePosted(false)
 		s.sendMu.Unlock()
+		if admitted && cancel != nil {
+			cancel()
+		}
 		return false, err
 	}
 	// Hand idle off to running while senders are still excluded. A pause request

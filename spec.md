@@ -993,6 +993,29 @@ the ready tasks. Stop is
 graceful: the current session finishes, then no next session starts. Session budget breaches and
 cumulative loop budgets still stop at the next safe decision point.
 
+A loop session that has ended its turn and for 30 seconds can be resumed only by its own
+background shell jobs, with no subagent run outstanding, counts as waiting rather than working.
+The loop then starts its next session if ready, unheld work exists. Loop sessions are told to
+end their turn with a progress report, rather than block in a long `wait`, when all that remains
+is a long-running shell job. A waiting session stays live with its task hold, file claims and
+jobs. The loop has one working slot: the foreground session holds it, and a waiting session's
+job continuation must take it, so a completion that arrives while another loop session works
+stays queued and wakes the session once the slot frees. While a woken waiting session works,
+the loop starts no new session. `[work_loop] max_waiting` in `.ycc/config.toml` caps waiting
+sessions (default 2; 0 makes the loop wait for every session to end). At the cap, while a
+waiting session works again, or when the only ready work is held by waiting sessions, the loop
+waits with wait kind `sessions_waiting` until one ends; a reached budget still stops it. When a
+waiting session ends, its commits, usage, verdicts and report count toward the digest and loop
+budgets, and its result goes through the same progress, stall, provider-retry and failure rules
+as a session that ends in the foreground. Its end interrupts a backoff wait, and no session
+starts until it is accounted for; the rest of the backoff stays owed, and stall and provider
+patience count only backoff actually served. Graceful stop and budget stops start no new session
+and leave waiting sessions and their jobs running, no longer gated by the slot. The outcome names
+them, separating any that a job has woken and that now work, and counts a session that ended as
+the loop stopped. The loop snapshot and `.ycc/workloop.json` list
+waiting sessions. A daemon shutdown stops them, and its outcome, like that of a loop restored as
+interrupted, names the sessions that were waiting.
+
 Fresh loop sessions receive bounded continuation context from the immediately preceding session
 (session id, focus, and available report). Prior reports are untrusted evidence, not instructions
 or authorization. Continuation is recorded as synthetic context for session replay, not echoed as

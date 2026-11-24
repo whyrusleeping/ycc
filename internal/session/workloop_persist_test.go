@@ -211,6 +211,30 @@ func TestWaitingWorkLoopRestoresInterrupted(t *testing.T) {
 	}
 }
 
+func TestInterruptedWorkLoopReportsWaitingSessions(t *testing.T) {
+	ws := t.TempDir()
+	since := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	old := &workLoop{
+		loopID: "loop_with_waiters", project: filepath.Base(ws), workspace: ws,
+		state: "running", startedAt: time.Now().Add(-2 * time.Hour).UTC(),
+		waiters: []*loopWaiter{{id: "s_wait", focus: "0042", since: since}, {id: "s_other", since: since}},
+	}
+	old.persist()
+
+	restarted := NewManager(workLoopPersistTestRegistry(), ws)
+	got, err := restarted.GetWorkLoop("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "loop interrupted: daemon restarted; sessions were waiting on background jobs: s_wait (0042), s_other"
+	if got == nil || got.State != "finished" || got.Outcome != want {
+		t.Fatalf("restored loop = %+v", got)
+	}
+	if len(got.Waiting) != 2 || got.Waiting[0].SessionID != "s_wait" || got.Waiting[0].Focus != "0042" || !got.Waiting[0].Since.Equal(since) {
+		t.Fatalf("restored waiting sessions = %+v", got.Waiting)
+	}
+}
+
 func TestGetWorkLoopIgnoresAbsentAndCorruptPersistence(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

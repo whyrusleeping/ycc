@@ -180,11 +180,15 @@ export function formatClock(iso: string): string | null {
   return new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** "Waiting for provider (rate_limit) — resumes 03:15", or the no-progress backoff. */
+/**
+ * "Waiting for provider (rate_limit) — resumes 03:15", the no-progress backoff,
+ * or a wait on loop sessions that wait on their background jobs.
+ */
 export function waitingLine(loop: WorkLoopInfo): string {
   let line = "Waiting for provider";
   const kind = loop.waitKind.trim();
   if (kind === "no_progress") line = "Waiting: last session made no progress";
+  else if (kind === "sessions_waiting") line = "Waiting: loop sessions are waiting on background jobs";
   else if (kind) line += ` (${kind})`;
   const at = formatClock(loop.resumeAt);
   if (at) line += ` — resumes ${at}`;

@@ -30,6 +30,7 @@ import {
   stateTitle,
   totalsLine,
   uncommittedInReviewLine,
+  waitingLine,
 } from "../src/features/workloop/model";
 
 const loop = (extra: MessageInitShape<typeof WorkLoopInfoSchema> = {}): WorkLoopInfo =>
@@ -146,6 +147,16 @@ describe("loop-owned sessions and the sidebar indicator", () => {
     const two = loopIndicator([loop(), loop({ project: "beta", state: "stopping" })]);
     expect(two?.label).toBe("2 running");
     expect(two?.title).toBe("gamma: Running · 0 sessions\nbeta: Stopping…");
+  });
+});
+
+describe("waiting line", () => {
+  it("names each wait kind", () => {
+    expect(waitingLine(loop({ state: "waiting", waitKind: "rate_limit" }))).toBe("Waiting for provider (rate_limit)");
+    expect(waitingLine(loop({ state: "waiting", waitKind: "no_progress" }))).toBe("Waiting: last session made no progress");
+    expect(waitingLine(loop({ state: "waiting", waitKind: "sessions_waiting" }))).toBe(
+      "Waiting: loop sessions are waiting on background jobs",
+    );
   });
 });
 

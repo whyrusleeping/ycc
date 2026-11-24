@@ -38,6 +38,13 @@ type specConfig struct {
 		// work: "commit" (default), "commit+push", or "ask".
 		FinishedWork string `toml:"finished_work"`
 	} `toml:"chat"`
+	// WorkLoop holds per-project work-loop settings.
+	WorkLoop struct {
+		// MaxWaiting caps the loop sessions left waiting on their own
+		// background shell jobs while the loop moves on (default 2; 0 makes
+		// the loop wait for every session to finish).
+		MaxWaiting *int `toml:"max_waiting"`
+	} `toml:"work_loop"`
 }
 
 // Policies for finished chat work ([chat] finished_work).
@@ -70,6 +77,7 @@ func loadSpecConfig(workspaceRoot string) specConfig {
 	cfg.DocGlobs = raw.DocGlobs
 	cfg.Backlog = raw.Backlog
 	cfg.Chat = raw.Chat
+	cfg.WorkLoop = raw.WorkLoop
 	return cfg
 }
 
@@ -77,6 +85,20 @@ func loadSpecConfig(workspaceRoot string) specConfig {
 // grooming ([backlog] auto_groom in .ycc/config.toml; default true).
 func (s *Store) BacklogAutoGroom() bool {
 	return s.cfg.Backlog.AutoGroom == nil || *s.cfg.Backlog.AutoGroom
+}
+
+// DefaultWorkLoopMaxWaiting is the default cap on work-loop sessions waiting
+// on their own background shell jobs.
+const DefaultWorkLoopMaxWaiting = 2
+
+// WorkLoopMaxWaiting returns the project's cap on loop sessions waiting on
+// their own background shell jobs ([work_loop] max_waiting; default
+// DefaultWorkLoopMaxWaiting). A negative value falls back to the default.
+func (s *Store) WorkLoopMaxWaiting() int {
+	if v := s.cfg.WorkLoop.MaxWaiting; v != nil && *v >= 0 {
+		return *v
+	}
+	return DefaultWorkLoopMaxWaiting
 }
 
 // ChatFinishedWork returns the project's policy for finished chat work

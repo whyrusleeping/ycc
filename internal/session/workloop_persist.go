@@ -33,6 +33,7 @@ type persistedWorkLoop struct {
 	InReview                 []persistedWorkLoopTask    `json:"in_review,omitempty"`
 	Created                  []persistedWorkLoopTask    `json:"created,omitempty"`
 	Unfinished               []persistedWorkLoopTask    `json:"unfinished,omitempty"`
+	WaitingSessions          []persistedWaitingSession  `json:"waiting_sessions,omitempty"`
 	UncommittedInReview      []persistedWorkLoopTask    `json:"uncommitted_in_review,omitempty"`
 	UncommittedPaths         int                        `json:"uncommitted_paths,omitempty"`
 	TotalTokens              int64                      `json:"total_tokens"`
@@ -60,6 +61,12 @@ type persistedWorkLoopSession struct {
 	PriceStatus    string   `json:"price_status"`
 	DurationSecs   int64    `json:"duration_secs,omitempty"`
 	CreatedTasks   []string `json:"created_tasks,omitempty"`
+}
+
+type persistedWaitingSession struct {
+	SessionID string    `json:"session_id"`
+	Focus     string    `json:"focus,omitempty"`
+	Since     time.Time `json:"since"`
 }
 
 type persistedWorkLoopTask struct {
@@ -144,6 +151,9 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 	p.InReview = persistedTasks(snapshot.InReview)
 	p.Created = persistedTasks(snapshot.Created)
 	p.Unfinished = persistedTasks(snapshot.Unfinished)
+	for _, w := range snapshot.Waiting {
+		p.WaitingSessions = append(p.WaitingSessions, persistedWaitingSession{SessionID: w.SessionID, Focus: w.Focus, Since: w.Since})
+	}
 	p.UncommittedInReview = persistedTasks(snapshot.UncommittedInReview)
 	p.UncommittedPaths = snapshot.UncommittedPaths
 	return p
@@ -263,10 +273,17 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		})
 	}
 
+	for _, w := range p.WaitingSessions {
+		wl.waiters = append(wl.waiters, &loopWaiter{id: w.SessionID, focus: w.Focus, since: w.Since})
+	}
+
 	interrupted := wl.state == "running" || wl.state == "waiting" || wl.state == "stopping"
 	if interrupted {
 		wl.state = "finished"
 		wl.outcome = "loop interrupted: daemon restarted"
+		if names := waiterNames(wl.snapshotLocked().Waiting); names != "" {
+			wl.outcome += "; sessions were waiting on background jobs: " + names
+		}
 		wl.finishedAt = time.Now()
 		wl.currentSessionID = ""
 		wl.resumeAt = time.Time{}

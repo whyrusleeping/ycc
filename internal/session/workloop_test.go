@@ -817,6 +817,8 @@ func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 	}
 
 	// The completion digest is pushed via the daemon notifier (digest kind).
+	// Finished state is published before notification; join the driver first.
+	m.loopWG.Wait()
 	m.notifier.Flush()
 	var digestPush *notifyRec
 	for _, r := range sink.all() {

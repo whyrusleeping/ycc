@@ -304,6 +304,15 @@ final class WorkLoopModelTests: XCTestCase {
         }
     }
 
+    func testWaitingLineNamesEachWaitKind() {
+        XCTAssertEqual(WorkLoopModel.waitingLine(for: loop(state: "waiting", waitKind: "rate_limit")),
+                       "Waiting for provider (rate_limit)")
+        XCTAssertEqual(WorkLoopModel.waitingLine(for: loop(state: "waiting", waitKind: "no_progress")),
+                       "Waiting: last session made no progress")
+        XCTAssertEqual(WorkLoopModel.waitingLine(for: loop(state: "waiting", waitKind: "sessions_waiting")),
+                       "Waiting: loop sessions are waiting on background jobs")
+    }
+
     func testUnknownStateDoesNotCrash() {
         XCTAssertEqual(WorkLoopState(state: "future-state"), .unknown)
         XCTAssertEqual(WorkLoopModel.state(for: loop(state: "future-state")), .unknown)

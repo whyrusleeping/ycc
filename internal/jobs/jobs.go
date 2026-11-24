@@ -749,6 +749,14 @@ func (r *Registry) collect(targets []*Job) (reports []Report, running []string) 
 // still exiting, and the single-writer guard plus the shutdown execution join
 // already keep that case safe.
 func (r *Registry) PendingContinuation(owner string) bool {
+	pending, _ := r.PendingContinuationKinds(owner)
+	return pending
+}
+
+// PendingContinuationKinds is PendingContinuation that also reports whether
+// any outstanding delivery is from an "agent" job (a subagent run) rather than
+// only from shell jobs.
+func (r *Registry) PendingContinuationKinds(owner string) (pending, agent bool) {
 	r.mu.Lock()
 	js := make([]*Job, 0, len(r.order))
 	for _, id := range r.order {
@@ -756,10 +764,34 @@ func (r *Registry) PendingContinuation(owner string) bool {
 	}
 	r.mu.Unlock()
 	for _, j := range js {
-		if j.Owner() != owner {
+		if j.Owner() != owner || !j.deliveryPending() {
 			continue
 		}
-		if j.deliveryPending() {
+		pending = true
+		if j.Kind() == "agent" {
+			return true, true
+		}
+	}
+	return pending, false
+}
+
+// CompletionReady reports, without claiming anything, whether owner has a
+// finished job whose automatic notification DrainFinished would deliver now.
+func (r *Registry) CompletionReady(owner string) bool {
+	r.mu.Lock()
+	js := make([]*Job, 0, len(r.order))
+	for _, id := range r.order {
+		js = append(js, r.jobs[id])
+	}
+	r.mu.Unlock()
+	for _, j := range js {
+		if j.Owner() != owner || !j.completionReady() {
+			continue
+		}
+		j.mu.Lock()
+		ready := !j.notified && j.status != Running
+		j.mu.Unlock()
+		if ready {
 			return true
 		}
 	}
