@@ -795,8 +795,12 @@ except for exclusive leases.
   the holder session ends (stopped or reclaimed, which also kills its jobs). A daemon restart
   releases every lease. The holder's log records `lease_acquired` (name, reason, expires_at, job,
   renewed) and `lease_released` (name, why: released, expired, job_exited or session_ended).
-  Held leases appear under their holder in `list_sessions`, the `list_backlog` footer and
-  `ListProjectNotices` sessions (as `leases`), and a held lease keeps a quiet session listed.
+  A refusal points to the `list_backlog` footer, which shows held leases under their holder, as
+  `list_sessions` and `ListProjectNotices` sessions (as `leases`) do; a held lease keeps a quiet
+  session listed. While session coordination is off, `ListProjectNotices` still lists the sessions
+  holding leases, without focus, intent or claims, and the web and iOS Live sessions views show
+  them below the coordination-off note (the web sidebar line appears only while a lease is held).
+  A stopping session's job-attached lease stays held until the job's execution has actually stopped.
 
 ### 7.4 Reasoning settings
 
