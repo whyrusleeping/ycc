@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -63,8 +64,11 @@ func (f *fakeBackend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer at" {
 		f.t.Errorf("%s: Authorization = %q", r.URL.Path, r.Header.Get("Authorization"))
 	}
-	if !strings.HasPrefix(r.Header.Get("User-Agent"), "antigravity/") {
-		f.t.Errorf("%s: User-Agent = %q", r.URL.Path, r.Header.Get("User-Agent"))
+	if ua := r.Header.Get("User-Agent"); !strings.HasPrefix(ua, "antigravity/") || !strings.Contains(ua, "auth_method=consumer") {
+		f.t.Errorf("%s: User-Agent = %q", r.URL.Path, ua)
+	}
+	if r.Header.Get("Accept") != "" {
+		f.t.Errorf("%s: unexpected Accept %q (agy sends none)", r.URL.Path, r.Header.Get("Accept"))
 	}
 	var body map[string]any
 	if r.Method == http.MethodPost {
@@ -168,11 +172,13 @@ func TestStreamToolTurnThroughEnvelope(t *testing.T) {
 	}
 
 	if sawStream["project"] != "proj-1" || sawStream["model"] != "gemini-4-neon-high" || sawStream["userAgent"] != "antigravity" ||
-		sawStream["requestType"] != "agent" || !strings.HasPrefix(fmt.Sprint(sawStream["requestId"]), "agent-") {
+		sawStream["requestType"] != "agent" || len(strings.Split(fmt.Sprint(sawStream["requestId"]), "/")) != 5 ||
+		!strings.HasPrefix(fmt.Sprint(sawStream["requestId"]), "agent/") {
 		t.Errorf("envelope = %v", sawStream)
 	}
 	inner, _ := sawStream["request"].(map[string]any)
-	if inner["sessionId"] == "" || inner["sessionId"] == nil || inner["systemInstruction"] == nil || inner["contents"] == nil {
+	sid, _ := inner["sessionId"].(string)
+	if _, err := strconv.ParseInt(sid, 10, 64); err != nil || inner["systemInstruction"] == nil || inner["contents"] == nil {
 		t.Errorf("inner request = %v", inner)
 	}
 	decl := inner["tools"].([]any)[0].(map[string]any)["functionDeclarations"].([]any)[0].(map[string]any)

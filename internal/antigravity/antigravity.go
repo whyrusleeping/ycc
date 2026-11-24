@@ -32,6 +32,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,18 +58,18 @@ const DefaultBaseURL = "https://daily-cloudcode-pa.googleapis.com"
 // rewrites every request under it.
 const clientBase = "https://antigravity.invalid/v1beta"
 
-// UserAgent is sent on every Antigravity request. It follows the format agy
-// 1.5.16 sent in an offline capture against a local mock (2026-11-24):
-// "antigravity/cli/1.5.16 (aidev_client; os_type=linux; arch=amd64;
-// cl=1028571191; auth_method=adc)". That capture used ADC auth; the value agy
-// sends for a consumer Google login was not observed, and "oauth" is a guess.
-// YCC_ANTIGRAVITY_USER_AGENT overrides it when Google's expected version
-// drifts.
+// UserAgent is sent on every Antigravity request. It is the one agy 1.5.16
+// print mode sent after a "Log in with Google" (oauth-personal) login, in an
+// offline capture of the real login flow against a local TLS mock
+// (2026-11-24): "antigravity/cli/1.5.16 (aidev_client; os_type=linux;
+// arch=amd64; cl=1028571191; auth_method=consumer)". Other agy logins send
+// other auth_method values (adc, gateway). YCC_ANTIGRAVITY_USER_AGENT
+// overrides it when Google's expected version drifts.
 var UserAgent = func() string {
 	if ua := strings.TrimSpace(os.Getenv("YCC_ANTIGRAVITY_USER_AGENT")); ua != "" {
 		return ua
 	}
-	return "antigravity/cli/1.5.16 (aidev_client; os_type=" + runtime.GOOS + "; arch=" + runtime.GOARCH + "; cl=1028571191; auth_method=oauth)"
+	return "antigravity/cli/1.5.16 (aidev_client; os_type=" + runtime.GOOS + "; arch=" + runtime.GOARCH + "; cl=1028571191; auth_method=consumer)"
 }()
 
 // TokenSource returns a live access token for the current login.
@@ -123,7 +125,8 @@ func newTransport(baseURL string, httpClient *http.Client, tokens TokenSource, s
 		baseURL:   strings.TrimRight(baseURL, "/"),
 		tokens:    tokens,
 		store:     store,
-		sessionID: randomID(),
+		sessionID: randomSessionID(),
+		cascadeID: randomID(),
 	}
 }
 
@@ -133,7 +136,8 @@ type Transport struct {
 	baseURL   string
 	tokens    TokenSource
 	store     Store
-	sessionID string
+	sessionID string // request.sessionId: a signed int64 in decimal, as agy sends
+	cascadeID string // conversation id in requestId, like agy's cascade_id
 
 	mu      sync.Mutex
 	project string          // resolved project for projectFor
@@ -151,6 +155,20 @@ func randomID() string {
 	_, _ = rand.Read(b[:])
 	h := hex.EncodeToString(b[:])
 	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+}
+
+// randomSessionID returns a random signed int64 in decimal, the form of
+// agy's request.sessionId.
+func randomSessionID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return strconv.FormatInt(int64(binary.BigEndian.Uint64(b[:])), 10)
+}
+
+// requestID builds an agent requestId in agy's form,
+// agent/<cascade>/<unix ms>/<trajectory>/<step>.
+func (t *Transport) requestID() string {
+	return "agent/" + t.cascadeID + "/" + strconv.FormatInt(time.Now().UnixMilli(), 10) + "/" + randomID() + "/1"
 }
 
 // googleError builds a response carrying a Google-style error body.
@@ -221,7 +239,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		"request":     inner,
 		"userAgent":   "antigravity",
 		"requestType": "agent",
-		"requestId":   "agent-" + randomID(),
+		"requestId":   t.requestID(),
 	})
 	if err != nil {
 		return nil, err
@@ -231,7 +249,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if stream {
 		path += "?alt=sse"
 	}
-	resp, err := t.post(ctx, tok, path, envelope, stream)
+	resp, err := t.post(ctx, tok, path, envelope)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +292,7 @@ func parseGeminiPath(path string) (model, method string, ok bool) {
 	return model, method, true
 }
 
-func (t *Transport) post(ctx context.Context, tok googleauth.Token, path string, body []byte, stream bool) (*http.Response, error) {
+func (t *Transport) post(ctx context.Context, tok googleauth.Token, path string, body []byte) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -282,11 +300,7 @@ func (t *Transport) post(ctx context.Context, tok googleauth.Token, path string,
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", UserAgent)
-	// agy sends no Accept header on unary calls; the streaming call was not
-	// captured, so it keeps the SSE Accept.
-	if stream {
-		req.Header.Set("Accept", "text/event-stream")
-	}
+	// agy sends no Accept header, streaming (alt=sse) included.
 	return t.base.RoundTrip(req)
 }
 
@@ -297,7 +311,7 @@ func (t *Transport) postJSON(ctx context.Context, tok googleauth.Token, path str
 	if err != nil {
 		return nil, err
 	}
-	resp, err := t.post(ctx, tok, path, body, false)
+	resp, err := t.post(ctx, tok, path, body)
 	if err != nil {
 		return nil, err
 	}
