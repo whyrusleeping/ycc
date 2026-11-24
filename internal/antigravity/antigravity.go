@@ -56,15 +56,18 @@ const DefaultBaseURL = "https://daily-cloudcode-pa.googleapis.com"
 // rewrites every request under it.
 const clientBase = "https://antigravity.invalid/v1beta"
 
-// UserAgent is sent on every Antigravity request. It follows the Antigravity
-// Hub format the community clients send (agy's own string was not recovered);
+// UserAgent is sent on every Antigravity request. It follows the format agy
+// 1.5.16 sent in an offline capture against a local mock (2026-11-24):
+// "antigravity/cli/1.5.16 (aidev_client; os_type=linux; arch=amd64;
+// cl=1028571191; auth_method=adc)". That capture used ADC auth; the value agy
+// sends for a consumer Google login was not observed, and "oauth" is a guess.
 // YCC_ANTIGRAVITY_USER_AGENT overrides it when Google's expected version
 // drifts.
 var UserAgent = func() string {
 	if ua := strings.TrimSpace(os.Getenv("YCC_ANTIGRAVITY_USER_AGENT")); ua != "" {
 		return ua
 	}
-	return "antigravity/hub/2.34.0 (aidev_client; os_type=" + runtime.GOOS + "; arch=" + runtime.GOARCH + "; cl=1026637980)"
+	return "antigravity/cli/1.5.16 (aidev_client; os_type=" + runtime.GOOS + "; arch=" + runtime.GOARCH + "; cl=1028571191; auth_method=oauth)"
 }()
 
 // TokenSource returns a live access token for the current login.
@@ -279,10 +282,10 @@ func (t *Transport) post(ctx context.Context, tok googleauth.Token, path string,
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", UserAgent)
+	// agy sends no Accept header on unary calls; the streaming call was not
+	// captured, so it keeps the SSE Accept.
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
-	} else {
-		req.Header.Set("Accept", "application/json")
 	}
 	return t.base.RoundTrip(req)
 }

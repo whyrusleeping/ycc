@@ -180,7 +180,6 @@ func (t *Transport) getJSON(ctx context.Context, tok googleauth.Token, path stri
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("Accept", "application/json")
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		return nil, err
