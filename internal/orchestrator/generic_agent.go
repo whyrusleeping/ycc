@@ -394,6 +394,11 @@ func startGenericAgentJob(d *Deps, h *genericAgentHandle, job *jobs.Job, prompt,
 			if report == "" {
 				report = "(subagent completed without a report)"
 			}
+			if res.Refused {
+				finish["refused"] = true
+				report += refusalRecovery(fmt.Sprintf("Recover with send_to_agent(agent_id=%q, context_mode=\"fresh\", "+
+					"prompt=\"<bounded handoff that omits or summarizes the triggering material>\"), or spawn_agent on a different model.", h.id))
+			}
 		}
 		report += subagentContextNote(mode, round, contextTokens, priorTokens)
 		d.Emitter.Emit(event.SubagentFinished, finish)

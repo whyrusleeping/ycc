@@ -378,6 +378,55 @@ func TestGenericAgentFreshRecoveryAfterContextFailure(t *testing.T) {
 	}
 }
 
+func refusal() *gollama.ResponseMessageGenerate {
+	r := text("")
+	r.StopReason = "refusal"
+	return r
+}
+
+// A provider safety refusal is sticky, so the coordinator must learn that a
+// subagent was refused and that only a fresh handoff or another model recovers,
+// rather than seeing a bare placeholder it retries with retained context.
+func TestGenericAgentRefusalReportsStickyRecovery(t *testing.T) {
+	rec := &syncRec{}
+	d, _ := bgDeps(t, rec, nil, nil)
+	turner := &scripted{resp: []*gollama.ResponseMessageGenerate{refusal()}}
+	d.ResolveAgent = func(name string) (AgentSpec, error) {
+		return AgentSpec{Name: name, Model: "m", NewClient: func() engine.Turner { return turner }}, nil
+	}
+	if res, _ := spawnAgent(d).Call(context.Background(), map[string]any{"model": "chosen", "prompt": "inspect"}); res.IsError {
+		t.Fatalf("spawn = %+v", res)
+	}
+	job, _ := d.Jobs.Get("job_1")
+	waitJobDone(t, job)
+	waitGenericIdle(t, d, "agent_1")
+	rep := job.Report()
+	for _, want := range []string{"PROVIDER SAFETY REFUSAL", `send_to_agent(agent_id="agent_1", context_mode="fresh"`, "different model", "mode=fresh round=1"} {
+		if !strings.Contains(rep.Result, want) {
+			t.Fatalf("refusal report missing %q:\n%s", want, rep.Result)
+		}
+	}
+	var refused bool
+	for _, ev := range rec.snapshot() {
+		if ev.Type == event.SubagentFinished && ev.Data["role"] == "generic" {
+			refused = ev.Data["refused"] == true
+		}
+	}
+	if !refused {
+		t.Fatal("subagent_finished does not mark the refusal")
+	}
+}
+
+func TestImplementerRefusalReportsStickyRecovery(t *testing.T) {
+	impl := &scripted{resp: []*gollama.ResponseMessageGenerate{refusal()}}
+	d, _ := bgDeps(t, &syncRec{}, impl, nil)
+	res, _ := spawnImplementer(d).Call(context.Background(), map[string]any{"task_id": "0001", "plan": "check"})
+	if !res.IsError || !strings.Contains(res.Content, "PROVIDER SAFETY REFUSAL") ||
+		!strings.Contains(res.Content, "context_mode='fresh'") || strings.Contains(res.Content, "tighter, concrete plan") {
+		t.Fatalf("implementer refusal result = %+v", res)
+	}
+}
+
 // Mutating agents may run beside other mutating work in the same tree; the
 // coordinator is told about the concurrent writer instead of being refused.
 func TestGenericMutatingAgentRunsBesideOtherWriters(t *testing.T) {

@@ -1011,6 +1011,9 @@ func runImplementer(ctx context.Context, d *Deps, loop *engine.Loop, token *work
 		return tools.ErrResult("implementer failed: %v%s\n\nSUBAGENT CONTEXT: mode=fresh round=1 approx_tokens=%d. If this was a context-length failure, retry with send_to_implementer context_mode='fresh'.", err, lifecycle.note, contextTokens)
 	}
 	fullReport := res.Report + lifecycle.note
+	if res.Refused {
+		fin["refused"] = true
+	}
 	if lifecycle.mutatingHandoff {
 		fin["background_handoffs"] = len(lifecycle.handoffs)
 		if res.Blocked {
@@ -1237,6 +1240,9 @@ func sendToImplementer(d *Deps) *gollama.Tool {
 			finishData := map[string]any{"role": "implementer", "context_mode": mode, "round": round,
 				"context_tokens_est": contextTokens}
 			addRolloverFields(finishData, rolloverReason, rolloverOldTokens, newTokens)
+			if res.Refused {
+				finishData["refused"] = true
+			}
 			if res.Blocked {
 				finishData["blocked"] = true
 			}
@@ -2032,16 +2038,36 @@ func implementerOutcome(d *Deps, id, label, before string, res *engine.Result, l
 	if noReport && changes.ID == before {
 		d.Docs.AppendWorkLog(id, label+": no progress (empty report, no new changes)")
 		msg := "implementer returned no report and made no changes to the workspace."
-		if res.Truncated {
-			msg += " Its turn was cut off at the output token limit before it could act."
+		if res.Refused {
+			msg += refusalRecovery(implementerRefusalRetry)
+		} else {
+			if res.Truncated {
+				msg += " Its turn was cut off at the output token limit before it could act."
+			}
+			msg += " Re-spawn it with a tighter, concrete plan (name the exact files and edits) or split the task into smaller steps."
 		}
-		msg += " Re-spawn it with a tighter, concrete plan (name the exact files and edits) or split the task into smaller steps."
 		msg += lifecycleNote
 		return tools.ErrResult("%s", msg)
+	}
+	if res.Refused {
+		fullReport += refusalRecovery(implementerRefusalRetry)
 	}
 	// The report is not copied into the work log: the session log keeps it
 	// whole, and the coordinator records the outcome and evidence itself.
 	return tools.OkResult(reportWithDiff(changes, fullReport))
+}
+
+const implementerRefusalRetry = "Recover with send_to_implementer context_mode='fresh' and a handoff that omits or summarizes the triggering material, or with a different implementer model."
+
+// refusalRecovery tells the coordinator that a subagent run ended on a
+// provider-side safety refusal (engine Result.Refused). Refusals are sticky:
+// the engine keeps the refused turn out of history, but whatever triggered it
+// stays in the retained context, so a retained retry is refused again however
+// the request is reworded. retry names the recovery for the subagent kind.
+func refusalRecovery(retry string) string {
+	return "\n\nPROVIDER SAFETY REFUSAL (stop_reason \"refusal\"): the provider's safety classifier stopped this turn, " +
+		"usually because of material now in the subagent's context (for example extracted credentials or security probes). " +
+		"It is sticky: a retained-context retry is refused again, even with clearer authorization. " + retry
 }
 
 func reportWithDiff(changes *git.Changeset, report string) string {

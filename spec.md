@@ -457,7 +457,10 @@ recovery also applies to unattended sessions within their ordinary budgets.
 
 Provider refusals are not replayed into model history because they can poison continuation. They
 remain visible as model/error events, reject additional input while parked, and may be retried by
-Resume or after changing the coordinator model.
+Resume or after changing the coordinator model. A refused subagent or implementer run is reported to
+the coordinator as a refusal, with `refused` on `subagent_finished`. Because what triggered it stays
+in the retained context, the report names the only recoveries: a fresh-context handoff without that
+material, or a different model.
 
 Model-facing text reads are bounded by both lines and bytes and identify the shown line range,
 whether more exists, and the next offset. A bounded source scan reports an unknown total rather than
