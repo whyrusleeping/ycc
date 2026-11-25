@@ -59,11 +59,18 @@ final class KeyboardObserver: ObservableObject {
         } else {
             return
         }
-        guard target != overlap else { return }
         let duration =
             note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-        withAnimation(.easeOut(duration: max(duration, 0.01))) {
-            overlap = target
+        // UIKit posts these notifications synchronously when first-responder
+        // status changes, which SwiftUI can trigger from inside a view update
+        // (applying a focus change, dismissing a sheet). Publishing there is
+        // "Publishing changes from within view updates", so hop one main-queue
+        // turn; the keyboard animation is still starting, so nothing visibly lags.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, target != self.overlap else { return }
+            withAnimation(.easeOut(duration: max(duration, 0.01))) {
+                self.overlap = target
+            }
         }
     }
 
