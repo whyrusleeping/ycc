@@ -258,9 +258,7 @@ func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.L
 		if !ls.InPrimary {
 			p.Worktree = ls.Workspace
 		}
-		for _, c := range ls.Claims {
-			p.Claims = append(p.Claims, &v1.ClaimedPath{Path: c.Path, Since: rfc3339OrEmpty(c.Since)})
-		}
+		p.Claims = claimedPathsProto(ls.Claims)
 		for _, l := range ls.Leases {
 			p.Leases = append(p.Leases, &v1.SessionLease{Name: l.Name, Reason: l.Reason, AcquiredAt: rfc3339OrEmpty(l.AcquiredAt),
 				ExpiresAt: rfc3339OrEmpty(l.ExpiresAt), JobId: l.JobID})
@@ -268,6 +266,16 @@ func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.L
 		resp.Sessions = append(resp.Sessions, p)
 	}
 	return connect.NewResponse(resp), nil
+}
+
+// claimedPathsProto maps a live session's claims, in order, keeping which
+// are ambiguous.
+func claimedPathsProto(claims []session.PathClaim) []*v1.ClaimedPath {
+	var out []*v1.ClaimedPath
+	for _, c := range claims {
+		out = append(out, &v1.ClaimedPath{Path: c.Path, Since: rfc3339OrEmpty(c.Since), Ambiguous: c.Ambiguous})
+	}
+	return out
 }
 
 func projectNoticeProto(n session.Notice) *v1.ProjectNotice {

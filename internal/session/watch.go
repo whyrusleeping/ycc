@@ -1486,6 +1486,8 @@ func liveSessionText(sessions []LiveSession, now time.Time, detail bool) string 
 				b.WriteString("    title: " + s.Title + "\n")
 			}
 			b.WriteString(claimLines(s.Claims, now))
+		} else {
+			b.WriteString(ambiguousClaimNote(s.Claims))
 		}
 		for jn, j := range s.Jobs {
 			if jn == 10 {
@@ -1535,11 +1537,19 @@ func sessionActivityState(s *Session, evs []event.Event) string {
 // sessions, appended to list_backlog.
 func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string {
 	primary := m.primaryTreeFor(absWS)
+	coordination := m.coordinationEnabled(primary)
 	board := ""
-	if m.coordinationEnabled(primary) {
+	if coordination {
 		board = m.boardSection(primary, now)
 	}
-	lines := m.liveSessionLines(primary, exclude, now)
+	// With coordination on, the note also flags each session's ambiguous
+	// claims (bounded); full claim lists stay in list_sessions.
+	var lines string
+	if coordination {
+		lines = liveSessionText(m.liveSessions(primary, exclude, now, true), now, false)
+	} else {
+		lines = m.liveSessionLines(primary, exclude, now)
+	}
 	if lines == "" {
 		return "Other sessions in this project: none has been active in the last hour (daemon state).\n" + board
 	}

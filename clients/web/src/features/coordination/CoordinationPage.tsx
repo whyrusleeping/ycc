@@ -5,7 +5,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ProjectLiveSession, ProjectNotice } from "../../gen/ycc/v1/ycc_pb";
+import type { ClaimedPath, ProjectLiveSession, ProjectNotice } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys, useLeaseHolders, useProjectNotices, useProjects } from "../../api/queries";
@@ -17,6 +17,7 @@ import { toast } from "../../ui/toast";
 import { relativeTime } from "../sessions/feed";
 import { TaskLink } from "../backlog/parts";
 import { activityBadge, expiresIn, EXPIRY_CHOICES, NOTICE_MAX, SUBJECT_MAX } from "./model";
+import { splitClaims } from "./claims";
 import { NoticeList, SessionLink } from "./parts";
 
 /** Claimed paths shown before "N more". */
@@ -148,7 +149,8 @@ export function CoordinationPage({ project }: { project: string }) {
 function LiveSessionCard({ project, session: s, now }: { project: string; session: ProjectLiveSession; now: number }) {
   const [allClaims, setAllClaims] = useState(false);
   const badge = activityBadge(s.activity);
-  const claims = allClaims ? s.claims : s.claims.slice(0, CLAIMS_SHOWN);
+  const { definite, ambiguous } = splitClaims(s.claims);
+  const claims = allClaims ? definite : definite.slice(0, CLAIMS_SHOWN);
   return (
     <li className="live-session" data-session-id={s.sessionId}>
       <div className="live-session-head">
@@ -203,29 +205,46 @@ function LiveSessionCard({ project, session: s, now }: { project: string; sessio
           ))}
         </p>
       )}
-      {s.claims.length > 0 && (
+      {definite.length > 0 && (
         <div className="live-session-claims">
           <span className="label">
-            Claims {s.claims.length} {s.claims.length === 1 ? "path" : "paths"}
+            Claims {definite.length} {definite.length === 1 ? "path" : "paths"}
           </span>
-          <ul>
-            {claims.map((c) => (
-              <li key={c.path}>
-                <Link to={paths.files(project, c.path, { session: s.sessionId })} className="mono">
-                  {c.path}
-                </Link>
-                {c.since && <span className="muted small"> {relativeTime(c.since, now)}</span>}
-              </li>
-            ))}
-          </ul>
-          {s.claims.length > CLAIMS_SHOWN && (
+          <ClaimList project={project} sessionId={s.sessionId} claims={claims} now={now} />
+          {definite.length > CLAIMS_SHOWN && (
             <button type="button" className="link small" data-track="coordination.toggle_claims" onClick={() => setAllClaims((v) => !v)}>
-              {allClaims ? "Show fewer" : `Show ${s.claims.length - CLAIMS_SHOWN} more`}
+              {allClaims ? "Show fewer" : `Show ${definite.length - CLAIMS_SHOWN} more`}
             </button>
           )}
         </div>
       )}
+      {ambiguous.length > 0 && (
+        <details className="live-session-claims ambiguous-claims">
+          <summary
+            className="label"
+            title="Changed while this session's shell and another session's shell both ran, so either may have written them"
+          >
+            Possibly this session’s: {ambiguous.length} {ambiguous.length === 1 ? "path" : "paths"}
+          </summary>
+          <ClaimList project={project} sessionId={s.sessionId} claims={ambiguous} now={now} />
+        </details>
+      )}
     </li>
+  );
+}
+
+function ClaimList({ project, sessionId, claims, now }: { project: string; sessionId: string; claims: ClaimedPath[]; now: number }) {
+  return (
+    <ul>
+      {claims.map((c) => (
+        <li key={c.path}>
+          <Link to={paths.files(project, c.path, { session: sessionId })} className="mono">
+            {c.path}
+          </Link>
+          {c.since && <span className="muted small"> {relativeTime(c.since, now)}</span>}
+        </li>
+      ))}
+    </ul>
   );
 }
 

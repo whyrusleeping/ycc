@@ -153,17 +153,19 @@ func renderNotices(out io.Writer, r *v1.ListProjectNoticesResponse, now time.Tim
 		if s.GetTitle() != "" {
 			fmt.Fprintf(&b, "    title: %s\n", clipLine(s.GetTitle(), 120))
 		}
-		if claims := s.GetClaims(); len(claims) > 0 {
-			const shown = 5
-			paths := make([]string, 0, shown+1)
-			for i, c := range claims {
-				if i == shown {
-					paths = append(paths, fmt.Sprintf("… %d more", len(claims)-shown))
-					break
-				}
-				paths = append(paths, c.GetPath())
+		var definite, ambiguous []string
+		for _, c := range s.GetClaims() {
+			if c.GetAmbiguous() {
+				ambiguous = append(ambiguous, c.GetPath())
+			} else {
+				definite = append(definite, c.GetPath())
 			}
-			fmt.Fprintf(&b, "    claims: %s\n", strings.Join(paths, ", "))
+		}
+		if len(definite) > 0 {
+			fmt.Fprintf(&b, "    claims: %s\n", claimPathList(definite))
+		}
+		if len(ambiguous) > 0 {
+			fmt.Fprintf(&b, "    ambiguous claims (possibly another session's): %s\n", claimPathList(ambiguous))
 		}
 	}
 	if len(r.GetNotices()) == 0 {
@@ -186,6 +188,15 @@ func renderNotices(out io.Writer, r *v1.ListProjectNoticesResponse, now time.Tim
 		fmt.Fprintf(&b, " %s\n    by %s, expires %s\n", n.GetText(), poster, expiryLabel(n.GetExpiresAt(), now))
 	}
 	fmt.Fprint(out, b.String())
+}
+
+// claimPathList joins claimed paths, the first five and a count of the rest.
+func claimPathList(paths []string) string {
+	const shown = 5
+	if len(paths) > shown {
+		return strings.Join(paths[:shown], ", ") + fmt.Sprintf(", … %d more", len(paths)-shown)
+	}
+	return strings.Join(paths, ", ")
 }
 
 func activityLabel(activity string) string {

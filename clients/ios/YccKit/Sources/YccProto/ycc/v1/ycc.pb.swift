@@ -442,6 +442,11 @@ public nonisolated struct Ycc_V1_ClaimedPath: Sendable {
   /// RFC 3339; empty when unknown
   public var since: String = String()
 
+  /// The path changed while this session's shell and another session's shell
+  /// both ran, so either may have written it; each such session holds this
+  /// ambiguous claim (spec §7.3).
+  public var ambiguous: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -6993,7 +6998,7 @@ nonisolated extension Ycc_V1_SessionIntent: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Ycc_V1_ClaimedPath: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClaimedPath"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}since\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0\u{1}since\0\u{1}ambiguous\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -7003,6 +7008,7 @@ nonisolated extension Ycc_V1_ClaimedPath: SwiftProtobuf.Message, SwiftProtobuf._
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.path) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.since) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.ambiguous) }()
       default: break
       }
     }
@@ -7015,12 +7021,16 @@ nonisolated extension Ycc_V1_ClaimedPath: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.since.isEmpty {
       try visitor.visitSingularStringField(value: self.since, fieldNumber: 2)
     }
+    if self.ambiguous != false {
+      try visitor.visitSingularBoolField(value: self.ambiguous, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_ClaimedPath, rhs: Ycc_V1_ClaimedPath) -> Bool {
     if lhs.path != rhs.path {return false}
     if lhs.since != rhs.since {return false}
+    if lhs.ambiguous != rhs.ambiguous {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

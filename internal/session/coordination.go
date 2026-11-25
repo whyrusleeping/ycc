@@ -22,6 +22,7 @@ import (
 // Bounds on list_sessions output.
 const (
 	listSessionsMaxClaims = 10        // claimed paths shown per session
+	footerMaxAmbiguous    = 3         // ambiguous paths shown per session in the list_backlog footer
 	listSessionsMaxBytes  = 24 * 1024 // whole overview
 	maxNoticeTexts        = 10        // full notices per delivery; the rest are summarized
 )
@@ -119,24 +120,62 @@ func sessionClaims(claims map[string][]workspacelease.Claim, scope string) []Pat
 	return out
 }
 
-// claimLines formats a session's claimed paths with their age, bounded.
+// claimLines formats a session's claimed paths with their age, bounded: its
+// definite claims, then its ambiguous ones on a line of their own.
 func claimLines(claims []PathClaim, now time.Time) string {
-	if len(claims) == 0 {
+	var definite, ambiguous []PathClaim
+	for _, c := range claims {
+		if c.Ambiguous {
+			ambiguous = append(ambiguous, c)
+		} else {
+			definite = append(definite, c)
+		}
+	}
+	var b strings.Builder
+	if len(definite) > 0 {
+		fmt.Fprintf(&b, "    claims %d path(s): %s\n", len(definite), claimList(definite, now))
+	}
+	if len(ambiguous) > 0 {
+		fmt.Fprintf(&b, "    ambiguous claims on %d path(s), changed while another session's shell also ran, so possibly not this session's: %s\n",
+			len(ambiguous), claimList(ambiguous, now))
+	}
+	return b.String()
+}
+
+// ambiguousClaimNote flags a session's ambiguous claims in brief listings (the
+// list_backlog footer): a count and the first few paths.
+func ambiguousClaimNote(claims []PathClaim) string {
+	var paths []string
+	for _, c := range claims {
+		if c.Ambiguous {
+			paths = append(paths, c.Path)
+		}
+	}
+	if len(paths) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, listSessionsMaxClaims)
+	shown := paths
+	if len(shown) > footerMaxAmbiguous {
+		shown = shown[:footerMaxAmbiguous]
+	}
+	list := strings.Join(shown, ", ")
+	if n := len(paths) - len(shown); n > 0 {
+		list += fmt.Sprintf(", … %d more", n)
+	}
+	return fmt.Sprintf("    ambiguous claims on %d path(s), possibly another session's (see list_sessions): %s\n", len(paths), list)
+}
+
+// claimList lists claimed paths with their age, bounded.
+func claimList(claims []PathClaim, now time.Time) string {
+	parts := make([]string, 0, listSessionsMaxClaims+1)
 	for i, c := range claims {
 		if i == listSessionsMaxClaims {
 			parts = append(parts, fmt.Sprintf("… %d more", len(claims)-i))
 			break
 		}
-		note := claimAge(c.Since, now)
-		if c.Ambiguous {
-			note = "ambiguous, " + note
-		}
-		parts = append(parts, c.Path+" ("+note+")")
+		parts = append(parts, c.Path+" ("+claimAge(c.Since, now)+")")
 	}
-	return fmt.Sprintf("    claims %d path(s): %s\n", len(claims), strings.Join(parts, ", "))
+	return strings.Join(parts, ", ")
 }
 
 // claimAge describes how long ago a claim was first recorded.

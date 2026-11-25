@@ -307,3 +307,52 @@ func TestSessionCoordinationOverlapNoticesAndListSessions(t *testing.T) {
 		t.Fatal("another project reads as enabled")
 	}
 }
+
+// list_sessions lists a session's definite claims first and its ambiguous
+// ones on a line of their own.
+func TestClaimLinesSeparatesAmbiguousClaims(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	got := claimLines([]PathClaim{
+		{Path: "gen.go", Since: now.Add(-2 * time.Minute), Ambiguous: true},
+		{Path: "mine.go", Since: now.Add(-time.Hour)},
+	}, now)
+	want := "    claims 1 path(s): mine.go (1h ago)\n" +
+		"    ambiguous claims on 1 path(s), changed while another session's shell also ran, so possibly not this session's: gen.go (2m ago)\n"
+	if got != want {
+		t.Fatalf("claimLines =\n%q\nwant\n%q", got, want)
+	}
+	if got := claimLines(nil, now); got != "" {
+		t.Fatalf("claimLines(nil) = %q, want empty", got)
+	}
+}
+
+// The list_backlog footer flags a session's ambiguous claims, bounded, while
+// coordination is on, and leaves its definite claims to list_sessions.
+func TestOtherSessionsNoteFlagsAmbiguousClaims(t *testing.T) {
+	ws := t.TempDir()
+	sessionGitAt(t, ws, "init", "-q")
+	sessionGitAt(t, ws, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "init")
+	stub, _ := writeStub(t, ws)
+	m := NewManager(stubRegistry(t, stub.URL), ws)
+	m.SetProjects(project.NewMemory())
+	if _, err := m.AddProject(ws, "proj"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.ReclaimAll)
+	a, err := m.Start(Config{Project: "proj", Mode: "chat", Prompt: "write a.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitIdleCount(t, a, 1)
+	m.ownership.RecordAmbiguous(ws, []string{"g1.go", "g2.go", "g3.go", "g4.go", "g5.go"}, []string{a.ID, "s_other"})
+	if note := m.otherSessionsNote(ws, "", time.Now()); strings.Contains(note, "ambiguous") {
+		t.Fatalf("footer with coordination off mentions claims:\n%s", note)
+	}
+	if err := m.SetSessionCoordination("proj", true); err != nil {
+		t.Fatal(err)
+	}
+	note := m.otherSessionsNote(ws, "", time.Now())
+	if !strings.Contains(note, "ambiguous claims on 5 path(s)") || !strings.Contains(note, ", … 2 more") || strings.Contains(note, "a.go") {
+		t.Fatalf("footer does not flag the ambiguous claims alone, bounded:\n%s", note)
+	}
+}

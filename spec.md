@@ -759,8 +759,12 @@ shown when the setting is off or turned off (§9.1).
   both sides once per path and session pair: the writer in its Write/Edit result, or in its Bash
   result when a shell changed a path another scope claimed before the command started (the shell
   records only an overlap claim), and the other session's live coordinator at its next safe checkpoint.
-  Ambiguous claims cause no notice; the shell's result lists the paths it left ambiguous, and
-  `list_sessions` marks ambiguous claims.
+  Ambiguous claims cause no notice; the shell's result lists the paths it left ambiguous.
+  `list_sessions`, `ycc notices` and `ListProjectNotices` (`ClaimedPath.ambiguous`) list a
+  session's ambiguous claims apart from its definite ones, the `list_backlog` footer flags each
+  session's ambiguous claims (count and first three paths) while coordination is on, and the web
+  and iOS Live sessions views show them after the definite claims in a collapsed "possibly this
+  session's" group.
   That coordinator is never woken and its `wait` does not end early; the notice simply waits for its
   next run. Each side is told only if its own session has the feature. Backlog task files and `memory.md`
   are never claimed, so they never cause one. A notice names the path, the other session, and its

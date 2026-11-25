@@ -8760,6 +8760,11 @@ button.unread-dot:focus-visible {
   text-decoration: underline;
 }
 
+.ambiguous-claims > summary {
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+
 a.held-task {
   font-family: var(--mono);
   font-size: var(--fs-xs);

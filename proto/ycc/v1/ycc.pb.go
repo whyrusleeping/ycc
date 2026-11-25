@@ -1108,9 +1108,13 @@ func (x *SessionIntent) GetSetAt() string {
 // One repository-relative path a session claims (an uncommitted write, not a
 // reservation) and when it first claimed it.
 type ClaimedPath struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Since         string                 `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"` // RFC 3339; empty when unknown
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Path  string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Since string                 `protobuf:"bytes,2,opt,name=since,proto3" json:"since,omitempty"` // RFC 3339; empty when unknown
+	// The path changed while this session's shell and another session's shell
+	// both ran, so either may have written it; each such session holds this
+	// ambiguous claim (spec §7.3).
+	Ambiguous     bool `protobuf:"varint,3,opt,name=ambiguous,proto3" json:"ambiguous,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1157,6 +1161,13 @@ func (x *ClaimedPath) GetSince() string {
 		return x.Since
 	}
 	return ""
+}
+
+func (x *ClaimedPath) GetAmbiguous() bool {
+	if x != nil {
+		return x.Ambiguous
+	}
+	return false
 }
 
 // A live session of the project as list_sessions reports it.
@@ -17722,10 +17733,11 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x15\n" +
-	"\x06set_at\x18\x03 \x01(\tR\x05setAt\"7\n" +
+	"\x06set_at\x18\x03 \x01(\tR\x05setAt\"U\n" +
 	"\vClaimedPath\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
-	"\x05since\x18\x02 \x01(\tR\x05since\"\xa9\x03\n" +
+	"\x05since\x18\x02 \x01(\tR\x05since\x12\x1c\n" +
+	"\tambiguous\x18\x03 \x01(\bR\tambiguous\"\xa9\x03\n" +
 	"\x12ProjectLiveSession\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +

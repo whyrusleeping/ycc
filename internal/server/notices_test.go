@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/whyrusleeping/ycc/internal/config"
@@ -42,5 +43,23 @@ func TestPostProjectNoticeExpiryBounds(t *testing.T) {
 	resp, err := post(3600)
 	if err != nil || resp.Msg.Notice.GetActor() != "user" || resp.Msg.Notice.GetSessionId() != "" {
 		t.Fatalf("valid post: %+v %v", resp, err)
+	}
+}
+
+// A live session's claims reach clients in order, each with its ambiguity.
+func TestClaimedPathsProtoKeepsAmbiguity(t *testing.T) {
+	since := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	got := claimedPathsProto([]session.PathClaim{
+		{Path: "gen.go", Since: since, Ambiguous: true},
+		{Path: "mine.go"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("claims = %v, want 2", got)
+	}
+	if c := got[0]; c.GetPath() != "gen.go" || c.GetSince() != "2026-11-24T10:00:00Z" || !c.GetAmbiguous() {
+		t.Fatalf("first claim = %v, want gen.go ambiguous since 10:00", c)
+	}
+	if c := got[1]; c.GetPath() != "mine.go" || c.GetSince() != "" || c.GetAmbiguous() {
+		t.Fatalf("second claim = %v, want definite mine.go of unknown age", c)
 	}
 }

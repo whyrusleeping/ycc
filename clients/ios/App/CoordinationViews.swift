@@ -295,7 +295,8 @@ struct LiveSessionsView: View {
 
 /// One live session: title and activity, then id, mode, last activity, jobs
 /// and worktree, its intent, the tasks it holds (or held earlier), and the
-/// paths it has changed but not committed.
+/// paths it has changed but not committed: definite claims, then ambiguous
+/// ones collapsed.
 private struct LiveSessionRow: View {
     let session: Ycc_V1_ProjectLiveSession
     let project: String
@@ -305,6 +306,7 @@ private struct LiveSessionRow: View {
     let openPath: (String) -> Void
 
     @State private var allClaims = false
+    @State private var showAmbiguous = false
     private static let claimsShown = 6
 
     var body: some View {
@@ -379,32 +381,16 @@ private struct LiveSessionRow: View {
                 }
             }
 
-            if !session.claims.isEmpty {
+            if !definiteClaims.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Claims \(session.claims.count) \(session.claims.count == 1 ? "path" : "paths")")
+                    Text("Claims \(definiteClaims.count) \(definiteClaims.count == 1 ? "path" : "paths")")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     ForEach(shownClaims, id: \.path) { claim in
-                        Button {
-                            openPath(claim.path)
-                        } label: {
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Text(claim.path)
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(Color.accentColor)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                if !claim.since.isEmpty {
-                                    Text(CoordinationFormat.age(claim.since, now: now))
-                                        .font(.caption2)
-                                        .foregroundStyle(Color(.tertiaryLabel))
-                                }
-                            }
-                        }
-                        .buttonStyle(.borderless)
+                        claimRow(claim)
                     }
-                    if session.claims.count > Self.claimsShown {
-                        Button(allClaims ? "Show fewer" : "Show \(session.claims.count - Self.claimsShown) more") {
+                    if definiteClaims.count > Self.claimsShown {
+                        Button(allClaims ? "Show fewer" : "Show \(definiteClaims.count - Self.claimsShown) more") {
                             withAnimation(.snappy) { allClaims.toggle() }
                         }
                         .font(.caption)
@@ -412,12 +398,62 @@ private struct LiveSessionRow: View {
                     }
                 }
             }
+
+            // Ambiguous claims: paths that changed while this session's shell
+            // and another session's shell both ran, collapsed until asked for.
+            if !ambiguousClaims.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Button {
+                        withAnimation(.snappy) { showAmbiguous.toggle() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .rotationEffect(.degrees(showAmbiguous ? 90 : 0))
+                            Text("Possibly this session\u{2019}s: \(ambiguousClaims.count) \(ambiguousClaims.count == 1 ? "path" : "paths")")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(Color.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityHint("Changed while another session's shell also ran, so either session may have written them")
+                    if showAmbiguous {
+                        ForEach(ambiguousClaims, id: \.path) { claim in
+                            claimRow(claim)
+                        }
+                    }
+                }
+            }
         }
         .padding(.vertical, 2)
     }
 
+    private var definiteClaims: [Ycc_V1_ClaimedPath] { session.claims.filter { !$0.ambiguous } }
+    private var ambiguousClaims: [Ycc_V1_ClaimedPath] { session.claims.filter(\.ambiguous) }
+
     private var shownClaims: [Ycc_V1_ClaimedPath] {
-        allClaims ? session.claims : Array(session.claims.prefix(Self.claimsShown))
+        allClaims ? definiteClaims : Array(definiteClaims.prefix(Self.claimsShown))
+    }
+
+    private func claimRow(_ claim: Ycc_V1_ClaimedPath) -> some View {
+        Button {
+            openPath(claim.path)
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(claim.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Color.accentColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !claim.since.isEmpty {
+                    Text(CoordinationFormat.age(claim.since, now: now))
+                        .font(.caption2)
+                        .foregroundStyle(Color(.tertiaryLabel))
+                }
+            }
+        }
+        .buttonStyle(.borderless)
     }
 
     private func leaseExpiry(_ lease: Ycc_V1_SessionLease) -> String {

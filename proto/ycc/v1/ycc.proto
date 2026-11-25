@@ -134,6 +134,10 @@ message SessionIntent {
 message ClaimedPath {
   string path = 1;
   string since = 2; // RFC 3339; empty when unknown
+  // The path changed while this session's shell and another session's shell
+  // both ran, so either may have written it; each such session holds this
+  // ambiguous claim (spec §7.3).
+  bool ambiguous = 3;
 }
 // A live session of the project as list_sessions reports it.
 message ProjectLiveSession {
