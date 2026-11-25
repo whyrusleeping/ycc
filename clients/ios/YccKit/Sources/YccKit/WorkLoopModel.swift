@@ -363,14 +363,30 @@ public final class WorkLoopModel {
         loop?.currentSessionID.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    private static func isDone(_ task: Ycc_V1_WorkLoopDigestTask) -> Bool {
+        task.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "done"
+    }
+
+    /// Every task that reached done during the loop: ones that existed at
+    /// start, then ones it created.
+    public static func completedTasks(for loop: Ycc_V1_WorkLoopInfo) -> [Ycc_V1_WorkLoopDigestTask] {
+        loop.completed + loop.created.filter(isDone)
+    }
+
+    /// Tasks created during the loop that are not done.
+    public static func createdOpenTasks(for loop: Ycc_V1_WorkLoopInfo) -> [Ycc_V1_WorkLoopDigestTask] {
+        loop.created.filter { !isDone($0) }
+    }
+
     /// Digest groups always appear in product order and empty groups disappear.
     public static func digestSections(for loop: Ycc_V1_WorkLoopInfo) -> [WorkLoopDigestSection] {
         [
-            WorkLoopDigestSection(title: "Completed", systemImage: "checkmark.circle", rows: loop.completed),
+            WorkLoopDigestSection(title: "Completed", systemImage: "checkmark.circle", rows: completedTasks(for: loop)),
             WorkLoopDigestSection(title: "Blocked", systemImage: "exclamationmark.octagon", rows: loop.blocked),
             WorkLoopDigestSection(title: "In review", systemImage: "eye", rows: loop.inReview),
             WorkLoopDigestSection(title: "Unfinished", systemImage: "arrow.clockwise.circle", rows: loop.unfinished),
-            WorkLoopDigestSection(title: "Created", systemImage: "plus.circle", rows: loop.created),
+            WorkLoopDigestSection(
+                title: "Created, still open", systemImage: "plus.circle", rows: createdOpenTasks(for: loop)),
             WorkLoopDigestSection(
                 title: uncommittedSectionTitle, systemImage: "tray.full", rows: loop.uncommittedInReview),
         ].filter { !$0.rows.isEmpty }
@@ -394,7 +410,9 @@ public final class WorkLoopModel {
         guard let loop else { return WorkLoopState.none.title }
         switch state(for: loop) {
         case .running:
-            return ["Running", slotsLine(for: loop), summaryLine(for: loop)].filter { !$0.isEmpty }.joined(separator: " · ")
+            let slots = slotsLine(for: loop)
+            return ["Running", slots, summaryLine(for: loop, withLive: slots.isEmpty)]
+                .filter { !$0.isEmpty }.joined(separator: " · ")
         case .waiting:
             return [waitingLine(for: loop), slotsLine(for: loop)].filter { !$0.isEmpty }.joined(separator: " · ")
         case .stopping:
@@ -416,23 +434,49 @@ public final class WorkLoopModel {
         return "\(working)/\(loop.parallel) working, \(waiting) waiting"
     }
 
-    /// A compact lifecycle/digest summary such as
-    /// "3 sessions · 2 completed, 1 blocked".
-    public static func summaryLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
-        let sessionCount = Int(loop.sessionsRun)
-        let sessionPart = "\(sessionCount) \(sessionCount == 1 ? "session" : "sessions")"
+    private static func plural(_ count: Int, _ one: String) -> String {
+        "\(count) \(count == 1 ? one : one + "s")"
+    }
+
+    /// Loop sessions running now: an active loop's slots that have a session.
+    /// A slot still starting has none yet, and a finished loop's slots are
+    /// history (a restored loop keeps its interrupted waiters).
+    private static func liveSessionCount(for loop: Ycc_V1_WorkLoopInfo) -> Int {
+        guard state(for: loop).isActive else { return 0 }
+        return loop.slots.filter { !$0.sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+    }
+
+    /// "3 sessions", or with live ones "3 sessions finished, 2 live". Without
+    /// `withLive` (the slots line beside it names them) live ones are left out.
+    private static func sessionsPart(for loop: Ycc_V1_WorkLoopInfo, withLive: Bool) -> String {
+        let finished = Int(loop.sessionsRun)
+        let live = liveSessionCount(for: loop)
+        if live == 0 { return plural(finished, "session") }
+        if !withLive { return finished > 0 ? "\(plural(finished, "session")) finished" : "" }
+        return finished > 0
+            ? "\(plural(finished, "session")) finished, \(live) live"
+            : plural(live, "live session")
+    }
+
+    /// A compact lifecycle/digest summary such as "3 sessions finished, 1 live ·
+    /// 4 completed, 1 blocked, 2 created still open, 1 other commit". Completed
+    /// counts every task that reached done, including ones the loop created.
+    public static func summaryLine(for loop: Ycc_V1_WorkLoopInfo, withLive: Bool = true) -> String {
+        let sessionPart = sessionsPart(for: loop, withLive: withLive)
         let counts: [(Int, String)] = [
-            (loop.completed.count, "completed"),
+            (completedTasks(for: loop).count, "completed"),
             (loop.blocked.count, "blocked"),
             (loop.inReview.count, "in review"),
             (loop.unfinished.count, "unfinished"),
-            (loop.created.count, "created"),
-            (loop.manualLandings.count, "landed manually"),
+            (createdOpenTasks(for: loop).count, "created still open"),
         ]
-        let digestPart = counts.compactMap { count, label in
+        var parts = counts.compactMap { count, label in
             count == 0 ? nil : "\(count) \(label)"
-        }.joined(separator: ", ")
-        return digestPart.isEmpty ? sessionPart : "\(sessionPart) · \(digestPart)"
+        }
+        if !loop.manualLandings.isEmpty {
+            parts.append(plural(loop.manualLandings.count, "other commit"))
+        }
+        return [sessionPart, parts.joined(separator: ", ")].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     public static func totalsLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
@@ -441,6 +485,12 @@ public final class WorkLoopModel {
 
     public static func totalsLine(tokens: Int64, cost: Double, priceStatus: String) -> String {
         "\(UsageModel.formatTokens(tokens)) tokens · \(formatCost(cost, status: priceStatus))"
+    }
+
+    /// A digest row's usage, or nil for a task no loop session worked (nothing to price).
+    public static func digestTotalsLine(for task: Ycc_V1_WorkLoopDigestTask) -> String? {
+        if task.attempts == 0 && task.tokens == 0 { return nil }
+        return totalsLine(tokens: task.tokens, cost: task.cost, priceStatus: task.priceStatus)
     }
 
     /// The resource envelope captured when the loop started. Zero-valued limits

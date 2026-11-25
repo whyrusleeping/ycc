@@ -433,13 +433,70 @@ final class WorkLoopModelTests: XCTestCase {
         var l = loop(state: "running")
         XCTAssertEqual(WorkLoopModel.slotsLine(for: l), "")
         l.parallel = 3
-        l.slots = ["working", "working", "waiting"].map { state in
+        l.slots = ["working", "working", "waiting"].enumerated().map { index, state in
             var slot = Ycc_V1_WorkLoopSlot()
             slot.state = state
+            slot.sessionID = "s_\(index)"
             return slot
         }
         XCTAssertEqual(WorkLoopModel.slotsLine(for: l), "2/3 working, 1 waiting")
-        XCTAssertEqual(WorkLoopModel.bannerLine(for: l), "Running · 2/3 working, 1 waiting · 0 sessions")
+        XCTAssertEqual(WorkLoopModel.bannerLine(for: l), "Running · 2/3 working, 1 waiting")
+    }
+
+    func testSummaryCountsEveryDoneTaskLiveSessionsAndOtherCommits() {
+        func status(_ id: String, _ status: String) -> Ycc_V1_WorkLoopDigestTask {
+            var value = task(id)
+            value.status = status
+            return value
+        }
+        func slot(_ state: String, _ sessionID: String = "s_live") -> Ycc_V1_WorkLoopSlot {
+            var value = Ycc_V1_WorkLoopSlot()
+            value.state = state
+            value.sessionID = sessionID
+            return value
+        }
+        var l = loop(
+            state: "running", sessionsRun: 11,
+            completed: [status("0001", "done"), status("0002", "done")],
+            blocked: [status("0003", "blocked")],
+            created: [status("0010", "done"), status("0011", "todo"), status("0012", "done"), status("0013", "proposed")])
+        l.parallel = 4
+        l.slots = [slot("working"), slot("waiting")]
+        var landing = Ycc_V1_WorkLoopLanding()
+        landing.sha = "abc"
+        l.manualLandings = [landing]
+
+        XCTAssertEqual(
+            WorkLoopModel.summaryLine(for: l),
+            "11 sessions finished, 2 live · 4 completed, 1 blocked, 2 created still open, 1 other commit")
+        // The slots line beside it already names the live sessions.
+        XCTAssertEqual(
+            WorkLoopModel.bannerLine(for: l),
+            "Running · 1/4 working, 1 waiting · 11 sessions finished · 4 completed, 1 blocked, 2 created still open, 1 other commit")
+        let sections = WorkLoopModel.digestSections(for: l)
+        XCTAssertEqual(sections[0].rows.map(\.id), ["0001", "0002", "0010", "0012"])
+        XCTAssertEqual(sections.last?.title, "Created, still open")
+        XCTAssertEqual(sections.last?.rows.map(\.id), ["0011", "0013"])
+
+        XCTAssertEqual(WorkLoopModel.summaryLine(for: loop(state: "finished", sessionsRun: 1)), "1 session")
+        var onlyLive = loop(state: "running")
+        onlyLive.slots = [slot("working")]
+        XCTAssertEqual(WorkLoopModel.summaryLine(for: onlyLive), "1 live session")
+        // A slot still starting has no session yet.
+        var starting = loop(state: "running", sessionsRun: 11)
+        starting.slots = [slot("working"), slot("working", "")]
+        XCTAssertEqual(WorkLoopModel.summaryLine(for: starting), "11 sessions finished, 1 live")
+        // A finished (restored) loop's slots are history, not live sessions.
+        var restored = loop(state: "finished", sessionsRun: 11)
+        restored.slots = [slot("waiting", "s_old")]
+        XCTAssertEqual(WorkLoopModel.summaryLine(for: restored), "11 sessions")
+    }
+
+    func testDigestTotalsOmitTasksNoSessionWorked() {
+        XCTAssertNil(WorkLoopModel.digestTotalsLine(for: task("0011")))
+        var worked = task("0001")
+        worked.attempts = 1
+        XCTAssertEqual(WorkLoopModel.digestTotalsLine(for: worked), "0 tokens · unpriced")
     }
 
     func testUnknownStateDoesNotCrash() {

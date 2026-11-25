@@ -332,7 +332,8 @@ struct BacklogView: View {
         guard let loop else { return "Work loop" }
         switch state {
         case .running:
-            return ["Work loop", WorkLoopModel.slotsLine(for: loop), WorkLoopModel.summaryLine(for: loop)]
+            let slots = WorkLoopModel.slotsLine(for: loop)
+            return ["Work loop", slots, WorkLoopModel.summaryLine(for: loop, withLive: slots.isEmpty)]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
         case .waiting:
             return [WorkLoopModel.waitingLine(for: loop), WorkLoopModel.slotsLine(for: loop)]

@@ -1746,6 +1746,12 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	wl.waitKind = ""
 	wl.outcome = outcome
 	nComplete, nBlocked, nReview, nUnfinished := len(wl.completed), len(wl.blocked), len(wl.inReview), len(wl.unfinished)
+	// Tasks the loop created and finished count as completed too.
+	for _, t := range wl.created {
+		if t.Status == string(docs.StatusDone) {
+			nComplete++
+		}
+	}
 	nUncommitted := len(wl.preflight.InReview)
 	nManual := len(wl.manual)
 	pushed := len(wl.sessions) > 0
@@ -1762,9 +1768,9 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 		}
 		switch {
 		case nManual == 1:
-			line += "; 1 manual landing"
+			line += "; 1 other commit"
 		case nManual > 1:
-			line += fmt.Sprintf("; %d manual landings", nManual)
+			line += fmt.Sprintf("; %d other commits", nManual)
 		}
 		wl.m.Notify(notify.KindDigest, label, "", line)
 	}

@@ -244,7 +244,7 @@ struct WorkLoopView: View {
                         .foregroundStyle(.primary)
                     }
                 } header: {
-                    Label("Landed manually", systemImage: "hand.raised")
+                    Label("Other commits", systemImage: "arrow.triangle.branch")
                 } footer: {
                     Text("Commits made during the loop that no loop session recorded.")
                 }
@@ -469,11 +469,9 @@ struct WorkLoopView: View {
             if !task.verdictTally.isEmpty {
                 Label(task.verdictTally, systemImage: "checkmark.seal")
             }
-            Text(WorkLoopModel.totalsLine(
-                tokens: task.tokens,
-                cost: task.cost,
-                priceStatus: task.priceStatus))
-                .monospacedDigit()
+            if let totals = WorkLoopModel.digestTotalsLine(for: task) {
+                Text(totals).monospacedDigit()
+            }
             if showReason && !task.reason.isEmpty {
                 Label(task.reason, systemImage: "exclamationmark.bubble")
                     .foregroundStyle(Theme.attention)

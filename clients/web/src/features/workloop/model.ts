@@ -69,14 +69,26 @@ export interface DigestSection {
   rows: WorkLoopDigestTask[];
 }
 
+const isDone = (t: WorkLoopDigestTask) => t.status.trim().toLowerCase() === "done";
+
+/** Every task that reached done during the loop: ones that existed at start, then ones it created. */
+export function completedTasks(loop: WorkLoopInfo): WorkLoopDigestTask[] {
+  return [...loop.completed, ...loop.created.filter(isDone)];
+}
+
+/** Tasks created during the loop that are not done. */
+export function createdOpenTasks(loop: WorkLoopInfo): WorkLoopDigestTask[] {
+  return loop.created.filter((t) => !isDone(t));
+}
+
 /** Digest groups in product order; empty groups disappear. */
 export function digestSections(loop: WorkLoopInfo): DigestSection[] {
   const all: DigestSection[] = [
-    { key: "completed", title: "Completed", rows: loop.completed },
+    { key: "completed", title: "Completed", rows: completedTasks(loop) },
     { key: "blocked", title: "Blocked", rows: loop.blocked },
     { key: "inReview", title: "In review", rows: loop.inReview },
     { key: "unfinished", title: "Unfinished", rows: loop.unfinished },
-    { key: "created", title: "Created", rows: loop.created },
+    { key: "created", title: "Created, still open", rows: createdOpenTasks(loop) },
     { key: "uncommittedInReview", title: "Uncommitted in review at start", rows: loop.uncommittedInReview },
   ];
   return all.filter((s) => s.rows.length > 0);
@@ -94,22 +106,44 @@ export function uncommittedInReviewLine(tasks: WorkLoopDigestTask[], paths: numb
   return `${subject} uncommitted changes in ${plural(paths, "file")}`;
 }
 
-/** "3 sessions · 2 completed, 1 blocked". */
-export function summaryLine(loop: WorkLoopInfo): string {
-  const sessions = plural(loop.sessionsRun, "session");
+/**
+ * Loop sessions running now: an active loop's slots that have a session. A
+ * slot still starting has none yet, and a finished loop's slots are history
+ * (a restored loop keeps its interrupted waiters).
+ */
+function liveSessionCount(loop: WorkLoopInfo): number {
+  if (!isActive(loopState(loop))) return 0;
+  return loop.slots.filter((s) => s.sessionId.trim() !== "").length;
+}
+
+/**
+ * "3 sessions", or with live ones "3 sessions finished, 2 live". Without
+ * `withLive` (the slots line beside it names them) live ones are left out.
+ */
+function sessionsPart(loop: WorkLoopInfo, withLive: boolean): string {
+  const finished = loop.sessionsRun;
+  const live = liveSessionCount(loop);
+  if (live === 0) return plural(finished, "session");
+  if (!withLive) return finished > 0 ? `${plural(finished, "session")} finished` : "";
+  return finished > 0 ? `${plural(finished, "session")} finished, ${live} live` : plural(live, "live session");
+}
+
+/**
+ * "3 sessions finished, 1 live · 4 completed, 1 blocked, 2 created still open, 1 other commit".
+ * Completed counts every task that reached done, including ones the loop created.
+ */
+export function summaryLine(loop: WorkLoopInfo, withLive = true): string {
+  const sessions = sessionsPart(loop, withLive);
   const counts = [
-    [loop.completed.length, "completed"],
+    [completedTasks(loop).length, "completed"],
     [loop.blocked.length, "blocked"],
     [loop.inReview.length, "in review"],
     [loop.unfinished.length, "unfinished"],
-    [loop.created.length, "created"],
-    [loop.manualLandings.length, "landed manually"],
+    [createdOpenTasks(loop).length, "created still open"],
   ] as const;
-  const digest = counts
-    .filter(([n]) => n > 0)
-    .map(([n, label]) => `${n} ${label}`)
-    .join(", ");
-  return digest ? `${sessions} · ${digest}` : sessions;
+  const parts = counts.filter(([n]) => n > 0).map(([n, label]) => `${n} ${label}`);
+  if (loop.manualLandings.length > 0) parts.push(plural(loop.manualLandings.length, "other commit"));
+  return [sessions, parts.join(", ")].filter(Boolean).join(" · ");
 }
 
 export function formatTokens(tokens: bigint | number): string {
@@ -131,6 +165,12 @@ export function formatCost(cost: number, status: string): string {
 
 export function totalsLine(tokens: bigint | number, cost: number, priceStatus: string): string {
   return `${formatTokens(tokens)} tokens · ${formatCost(cost, priceStatus)}`;
+}
+
+/** A digest row's usage, or null for a task no loop session worked (nothing to price). */
+export function digestTotalsLine(t: WorkLoopDigestTask): string | null {
+  if (t.attempts === 0 && Number(t.tokens) === 0) return null;
+  return totalsLine(t.tokens, t.cost, t.priceStatus);
 }
 
 export function loopTotalsLine(loop: WorkLoopInfo): string {
@@ -217,7 +257,7 @@ export function bannerLine(loop: WorkLoopInfo | null | undefined): string {
   if (!loop) return stateTitle(state);
   switch (state) {
     case "running":
-      return ["Running", slotsLine(loop), summaryLine(loop)].filter(Boolean).join(" · ");
+      return ["Running", slotsLine(loop), summaryLine(loop, !slotsLine(loop))].filter(Boolean).join(" · ");
     case "waiting":
       return [waitingLine(loop), slotsLine(loop)].filter(Boolean).join(" · ");
     case "stopping":
@@ -300,7 +340,7 @@ export function ambientLoops(
 export function recentCompleted(loop: WorkLoopInfo): WorkLoopDigestTask[] {
   const last = new Map<string, number>();
   loop.sessions.forEach((s, i) => s.focus && last.set(s.focus, i));
-  return [...loop.completed].sort((a, b) => (last.get(b.id) ?? -1) - (last.get(a.id) ?? -1));
+  return completedTasks(loop).sort((a, b) => (last.get(b.id) ?? -1) - (last.get(a.id) ?? -1));
 }
 
 /** The most loop sessions StartWorkLoop accepts at once. */

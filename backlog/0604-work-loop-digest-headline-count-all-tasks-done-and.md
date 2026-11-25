@@ -1,10 +1,10 @@
 ---
 id: "0604"
 title: 'Work-loop digest headline: count all tasks done and live sessions; reword "landed manually"'
-status: todo
+status: done
 priority: 2
 created: "2026-11-24"
-updated: "2026-11-24"
+updated: "2026-11-25"
 depends_on: []
 spec_refs:
     - spec.md#9.1
@@ -26,4 +26,8 @@ The loop summary line is built in the clients (`summaryLine` in `clients/web/src
 - Created tasks that no session worked do not show "0 tokens · unpriced".
 - Spec §9.1 wording follows if the digest terms change. Web vitest and YccKit tests cover the new summary; the iOS change is built and screenshot-checked on the Mac simulator.
 
-## Work log
+## Outcome
+
+Web and iOS count as completed every task that reached done (pre-existing plus created) in the headline, the Completed section and the web sidebar "N done"; created tasks still open have their own count and the "Created, still open" section. The headline reads "N sessions finished, M live" while an active loop has named slot sessions (starting slots and a finished loop's frozen slots are not live); the Running banner leaves live ones to the slots line. Manual landings are "other commits" in headline, section ("Other commits", explanatory line kept) and the daemon completion notification, whose completed count now includes created tasks that reached done. Digest rows no session worked omit "0 tokens · unpriced". Spec §9.1 updated. Verified: vitest (498) and typecheck, go test ./internal/session ./internal/web from HEAD+0604, YccKit WorkLoopModelTests and xcodebuild on the Mac, simulator screenshots; internal/web/dist rebuilt from HEAD+0604 only.
+
+Commit: 0604: work-loop digest counts every done task and live sessions; "other commits" wording

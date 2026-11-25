@@ -32,6 +32,7 @@ import {
   canStop,
   currentSessionId,
   digestSections,
+  digestTotalsLine,
   durationText,
   finishAnnouncement,
   isActive,
@@ -505,7 +506,7 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
       {loop.manualLandings.length > 0 && (
         <section className="loop-section" aria-labelledby="loop-manual">
           <h2 id="loop-manual">
-            Landed manually <span className="count muted">{loop.manualLandings.length}</span>
+            Other commits <span className="count muted">{loop.manualLandings.length}</span>
           </h2>
           <p className="muted small">Commits made during the loop that no loop session recorded.</p>
           <ul className="digest-list">
@@ -577,6 +578,7 @@ function DigestRow({
   reason: "error" | "note" | null;
 }) {
   const inspector = useInspector();
+  const totals = digestTotalsLine(t);
   const details = [
     t.latestEvidence && { label: "Latest evidence", text: t.latestEvidence },
     t.remainingCriteria && { label: "Remaining criteria", text: t.remainingCriteria },
@@ -602,7 +604,7 @@ function DigestRow({
       <div className="digest-meta muted small">
         {t.attempts > 0 && <span>{t.attempts === 1 ? "1 attempt" : `${t.attempts} attempts`}</span>}
         {t.verdictTally && <span>{t.verdictTally}</span>}
-        <span className="mono">{totalsLine(t.tokens, t.cost, t.priceStatus)}</span>
+        {totals && <span className="mono">{totals}</span>}
       </div>
       {reason && t.reason && <div className={reason === "error" ? "loop-error" : "muted small mono"}>{t.reason}</div>}
       {details.length > 0 && (

@@ -772,6 +772,7 @@ func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 	// stops with "no ready tasks remain".
 	var m *Manager
 	var ws string
+	var createdSide bool
 	factory := func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
 		return func(ctx context.Context) (loopSessRec, bool, error) {
 			store := docs.NewStore(ws)
@@ -781,6 +782,13 @@ func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 				return loopSessRec{}, false, nil
 			}
 			_, _ = store.Update(id, func(tk *docs.Task) { tk.Status = docs.StatusDone })
+			if !createdSide {
+				// The first session also creates a task it finishes and one left open.
+				createdSide = true
+				side, _ := store.Create("side", "", 3, nil, nil)
+				_, _ = store.Update(side.ID, func(tk *docs.Task) { tk.Status = docs.StatusDone })
+				_, _ = store.CreateWithStatus("later", "", 3, nil, nil, docs.StatusProposed)
+			}
 			return loopSessRec{id: "sess_" + id, focus: id, updated: []string{id}, tokens: 100, cost: 0.01, priceStatus: "priced"}, false, nil
 		}
 	}
@@ -830,7 +838,11 @@ func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 	if digestPush == nil {
 		t.Fatalf("expected a digest notification, got %+v", sink.all())
 	}
-	if want := "work loop finished: 2 completed, 0 blocked, 0 in review"; !strings.Contains(digestPush.body, want) {
+	if len(final.Created) != 2 {
+		t.Fatalf("created = %+v, want side and later", final.Created)
+	}
+	// The created task that reached done counts as completed.
+	if want := "work loop finished: 3 completed, 0 blocked, 0 in review"; !strings.Contains(digestPush.body, want) {
 		t.Fatalf("digest body = %q, want to contain %q", digestPush.body, want)
 	}
 }

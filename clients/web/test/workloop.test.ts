@@ -19,6 +19,7 @@ import {
   canStop,
   currentSessionId,
   digestSections,
+  digestTotalsLine,
   finishAnnouncement,
   formatCost,
   isActive,
@@ -32,6 +33,7 @@ import {
   resourceEnvelopeLines,
   slotsLine,
   stateTitle,
+  summaryLine,
   totalsLine,
   uncommittedInReviewLine,
   waitingLine,
@@ -68,10 +70,50 @@ describe("loop state", () => {
 describe("digest and lines", () => {
   it("orders digest sections and drops empty ones", () => {
     const l = loop({ created: [task("9")], completed: [task("1"), task("2")], unfinished: [task("5")], blocked: [task("3")] });
-    expect(digestSections(l).map((s) => s.title)).toEqual(["Completed", "Blocked", "Unfinished", "Created"]);
+    expect(digestSections(l).map((s) => s.title)).toEqual(["Completed", "Blocked", "Unfinished", "Created, still open"]);
     expect(digestSections(loop())).toEqual([]);
     const withUncommitted = loop({ completed: [task("1")], uncommittedInReview: [task("7")] });
     expect(digestSections(withUncommitted).map((s) => s.key)).toEqual(["completed", "uncommittedInReview"]);
+  });
+
+  it("counts every task that reached done, live sessions and other commits in the summary", () => {
+    const status = (id: string, s: string) => create(WorkLoopDigestTaskSchema, { id, title: `Task ${id}`, status: s });
+    const slot = (sessionId: string, state: string) => create(WorkLoopSlotSchema, { sessionId, state });
+    const l = loop({
+      sessionsRun: 11,
+      parallel: 4,
+      slots: [slot("s_a", "working"), slot("s_b", "waiting")],
+      completed: [status("0001", "done"), status("0002", "done")],
+      blocked: [status("0003", "blocked")],
+      created: [status("0010", "done"), status("0011", "todo"), status("0012", "done"), status("0013", "proposed")],
+      manualLandings: [{ sha: "abc", subject: "x" }],
+    });
+    expect(summaryLine(l)).toBe("11 sessions finished, 2 live · 4 completed, 1 blocked, 2 created still open, 1 other commit");
+    // The slots line beside it already names the live sessions.
+    expect(bannerLine(l)).toBe(
+      "Running · 1/4 working, 1 waiting · 11 sessions finished · 4 completed, 1 blocked, 2 created still open, 1 other commit",
+    );
+    const sections = digestSections(l);
+    expect(sections[0].rows.map((t) => t.id)).toEqual(["0001", "0002", "0010", "0012"]);
+    expect(sections.find((s) => s.key === "created")?.rows.map((t) => t.id)).toEqual(["0011", "0013"]);
+    expect(recentCompleted(l)).toHaveLength(4);
+    expect(summaryLine(loop({ sessionsRun: 1 }))).toBe("1 session");
+    expect(summaryLine(loop({ slots: [slot("s_a", "working")] }))).toBe("1 live session");
+    // A slot still starting has no session yet.
+    expect(summaryLine(loop({ sessionsRun: 11, slots: [slot("s_a", "working"), slot("", "working")] }))).toBe(
+      "11 sessions finished, 1 live",
+    );
+    // A finished (restored) loop's slots are history, not live sessions.
+    expect(summaryLine(loop({ state: "finished", sessionsRun: 11, slots: [slot("s_old", "waiting")] }))).toBe("11 sessions");
+    expect(summaryLine(loop({ sessionsRun: 2, manualLandings: [{ sha: "a" }, { sha: "b" }] }))).toBe("2 sessions · 2 other commits");
+  });
+
+  it("omits usage for digest rows no session worked", () => {
+    expect(digestTotalsLine(task("0011"))).toBeNull();
+    expect(digestTotalsLine(create(WorkLoopDigestTaskSchema, { id: "1", attempts: 1 }))).toBe("0 tokens · unpriced");
+    expect(digestTotalsLine(create(WorkLoopDigestTaskSchema, { id: "1", tokens: 1_200n, priceStatus: "partial", cost: 0.5 }))).toBe(
+      "1.2K tokens · ≈$0.5000 (partial)",
+    );
   });
 
   it("summarizes uncommitted in-review work", () => {
@@ -172,7 +214,7 @@ describe("slots", () => {
     const slot = (sessionId: string, state: string) => create(WorkLoopSlotSchema, { sessionId, state });
     const l = loop({ parallel: 3, slots: [slot("s_a", "working"), slot("", "working"), slot("s_w", "waiting")] });
     expect(slotsLine(l)).toBe("2/3 working, 1 waiting");
-    expect(bannerLine(l)).toBe("Running · 2/3 working, 1 waiting · 0 sessions");
+    expect(bannerLine(l)).toBe("Running · 2/3 working, 1 waiting");
     expect([...loopSessionIds(l)].sort()).toEqual(["s_a", "s_w"]);
     expect(slotsLine(loop())).toBe("");
   });

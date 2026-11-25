@@ -1045,8 +1045,12 @@ A reached cap, a session breaching its own budget, a non-retryable session failu
 error, a graceful stop or a daemon shutdown starts no new session; the loop shows `stopping`
 while working sessions finish, then finishes. A session's own failure outranks a stop or cap as
 the outcome. The loop snapshot lists its parallelism and slots (session, focused task, working
-or waiting); clients show "k/N working, m waiting". The digest lists, as manual landings,
-commits made since the loop started that no loop session's `commit_made` recorded.
+or waiting); clients show "k/N working, m waiting". The digest lists, as other commits,
+commits made since the loop started that no loop session's `commit_made` recorded; they may be
+loop sessions' own hand-scoped commits, a watch's or the user's. The loop's summary line and
+completion notification count as completed every task that reached done during the loop,
+including tasks it created; created tasks still open are counted apart, and the summary counts
+finished sessions apart from live ones.
 
 A loop session that has ended its turn and for 30 seconds can be resumed only by its own
 background shell jobs, with no subagent run outstanding, counts as waiting rather than working.

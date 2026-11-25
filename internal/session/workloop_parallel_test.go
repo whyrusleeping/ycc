@@ -396,7 +396,7 @@ func TestWorkLoopDigestCountsManualLandings(t *testing.T) {
 	for _, r := range sink.all() {
 		digest = r.body
 	}
-	if !strings.Contains(digest, "; 1 manual landing") {
+	if !strings.Contains(digest, "; 1 other commit") {
 		t.Fatalf("digest notification = %q", digest)
 	}
 }
