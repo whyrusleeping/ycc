@@ -8822,8 +8822,6 @@ a.held-task {
   align-self: center;
   width: calc(100% - 48px);
   max-width: 824px;
-  max-height: 28vh;
-  overflow-y: auto;
   margin: 0 auto 6px;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -8845,12 +8843,28 @@ a.held-task {
   display: none;
 }
 
+.question-notices > summary::before {
+  content: "▸";
+  font-size: var(--fs-2xs);
+  width: 8px;
+  flex: none;
+  color: var(--fg-subtle);
+  transition: transform 0.12s;
+}
+
+.question-notices[open] > summary::before {
+  transform: rotate(90deg);
+}
+
 .question-notices > summary .link {
   margin-left: auto;
 }
 
+/* The list scrolls under a fixed summary, so the fold stays reachable. */
 .question-notices .notice-list {
   margin-top: 6px;
+  max-height: 28vh;
+  overflow-y: auto;
 }
 
 .question-notices .notice-item {

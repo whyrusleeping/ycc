@@ -105,13 +105,16 @@ export function NoticeList({
   );
 }
 
-/** Active notices above a pending question, while the project's coordination is on. */
+/**
+ * Active notices above a pending question, while the project's coordination is
+ * on. Folded by default so the transcript the question refers to keeps its room.
+ */
 export function QuestionNotices({ project }: { project: string }) {
   const board = useProjectNotices(project);
   const notices = board.data?.notices ?? [];
   if (!board.on || notices.length === 0) return null;
   return (
-    <details className="question-notices" open>
+    <details className="question-notices">
       <summary>
         <span className="sum-title">Project notices</span>
         <span className="muted small">

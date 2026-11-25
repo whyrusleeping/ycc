@@ -26,12 +26,13 @@ regions:
   work-loop lines, and workstream sessions carry a branch mark linking to them. While the scoped
   project's session coordination is on, a Live sessions line below them counts live sessions and
   active notices and opens `/p/<project>/live`: live sessions with intent, held task and claimed
-  paths, and the notice board, where the user posts and clears notices. Active notices sit above a
-  pending question's answer panel, and `coordination_notice` rows (overlap notices and board
-  digests) render as their own folded kind with session ids linked. Backlog rows, cards and task
-  detail badge a task a live session holds (`held_by` on `ListBacklog` and `GetTask`, whatever
-  session coordination is set to), naming the holder (a work-loop session by its short id) and
-  linking to it; a held task reads as held, not actionable, and "Actionable only" leaves it out.
+  paths, and the notice board, where the user posts and clears notices. Active notices sit folded
+  above a pending question's answer panel (the summary counts them), and `coordination_notice` rows
+  (overlap notices and board digests) render as their own folded kind with session ids linked.
+  Backlog rows, cards and task detail badge a task a live session holds (`held_by` on `ListBacklog`
+  and `GetTask`, whatever session coordination is set to), naming the holder (a work-loop session
+  by its short id) and linking to it; a held task reads as held, not actionable, and "Actionable
+  only" leaves it out.
   Watch runs stay
   out of the inbox unless they ask a question or are flagged; they are listed on their watch. History
   pages a branch's commits (branch picker, including workstream branches) with session and task
