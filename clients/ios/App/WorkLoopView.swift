@@ -270,7 +270,7 @@ struct WorkLoopView: View {
                     .disabled(!model.canStop)
                     .workLoopStopConfirmation(
                         isPresented: $showStopConfirmation,
-                        waiting: model.state == .waiting
+                        message: WorkLoopModel.stopConfirmMessage(for: loop)
                     ) {
                         Analytics.action("loop.stop")
                         Task { await model.stop() }
@@ -293,37 +293,73 @@ struct WorkLoopView: View {
             || sessionID == WorkLoopModel.currentSessionID(for: loop)
     }
 
-    /// One live loop session: its transcript, its claimed task, and whether
-    /// it works in a slot or waits on its background jobs.
+    /// One live loop session: its task, declared intent, working or waiting
+    /// and for how long, and its latest activity. The task chip opens the
+    /// task; the rest of the row opens the session.
     private func slotRow(_ slot: Ycc_V1_WorkLoopSlot) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            if slot.sessionID.isEmpty {
-                Text("Starting…")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                Button {
-                    router.open(.session(
-                        id: slot.sessionID,
-                        project: project,
-                        live: true,
-                        title: slot.taskID.isEmpty ? "Loop session" : slot.taskID))
-                } label: {
-                    Label(String(slot.sessionID.prefix(8)), systemImage: "dot.radiowaves.left.and.right")
-                        .font(.subheadline.monospaced())
-                        .foregroundStyle(Color.primary)
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if !slot.taskID.isEmpty {
+                        taskChip(slot.taskID)
+                    }
+                    Text(slotHeadline(slot))
+                        .font(.subheadline)
+                        .foregroundStyle(slot.taskTitle.isEmpty ? .secondary : .primary)
+                        .lineLimit(2)
+                    Spacer(minLength: 4)
+                    Text(WorkLoopModel.slotStateText(slot, now: context.date))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(slot.state == "waiting" ? Theme.info : Theme.live)
+                        .fixedSize()
                 }
-                .buttonStyle(.borderless)
-                .accessibilityHint("Opens the session")
+                if !slot.sessionID.isEmpty {
+                    Button {
+                        router.open(.session(
+                            id: slot.sessionID,
+                            project: project,
+                            live: true,
+                            title: slot.taskTitle.isEmpty ? (slot.taskID.isEmpty ? "Loop session" : slot.taskID) : slot.taskTitle))
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            if !slot.intent.isEmpty {
+                                Text(slot.intent)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            HStack(spacing: 6) {
+                                Text("\(Image(systemName: "dot.radiowaves.left.and.right")) \(String(slot.sessionID.prefix(8)))")
+                                    .font(.caption.monospaced())
+                                if let last = WorkLoopModel.lastActivityDate(for: slot) {
+                                    Text("· active \(last.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))")
+                                        .font(.caption)
+                                }
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                        .multilineTextAlignment(.leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Color.primary)
+                    .accessibilityHint("Opens the session")
+                }
             }
-            if !slot.taskID.isEmpty {
-                taskChip(slot.taskID)
-            }
-            Spacer(minLength: 4)
-            Text(slot.state)
-                .font(.caption)
-                .foregroundStyle(slot.state == "waiting" ? Theme.info : Theme.live)
+            .padding(.vertical, 2)
         }
+    }
+
+    /// The task title, or what the slot's session is doing before it has one.
+    private func slotHeadline(_ slot: Ycc_V1_WorkLoopSlot) -> String {
+        if !slot.taskTitle.isEmpty { return slot.taskTitle }
+        if !slot.taskID.isEmpty { return "" }
+        return slot.sessionID.isEmpty ? "Starting…" : "Choosing a task…"
     }
 
     /// The session's created tasks; the chips scroll sideways when they
@@ -537,7 +573,7 @@ extension View {
     /// to the view it modifies.
     func workLoopStopConfirmation(
         isPresented: Binding<Bool>,
-        waiting: Bool,
+        message: String,
         onStop: @escaping () -> Void
     ) -> some View {
         confirmationDialog(
@@ -548,11 +584,7 @@ extension View {
             Button("Stop loop", role: .destructive, action: onStop)
             Button("Cancel", role: .cancel) {}
         } message: {
-            if waiting {
-                Text("The loop is waiting for the provider; stopping ends the wait immediately. The daemon will not pick another backlog task.")
-            } else {
-                Text("The current session will finish. The daemon will not pick another backlog task.")
-            }
+            Text(message)
         }
     }
 }

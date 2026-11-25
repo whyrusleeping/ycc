@@ -5128,8 +5128,21 @@ public nonisolated struct Ycc_V1_WorkLoopSlot: Sendable {
   /// working | waiting
   public var state: String = String()
 
-  /// RFC3339
+  /// RFC3339; when the session entered state
   public var since: String = String()
+
+  /// Filled by GetWorkLoop, StartWorkLoop and StopWorkLoop for loop views.
+  public var taskTitle: String = String()
+
+  /// the session's declared intent line
+  public var intent: String = String()
+
+  /// RFC3339; the session's latest event
+  public var lastActivity: String = String()
+
+  /// The loop let the session wait on its background jobs. A stop leaves it
+  /// running, even once a job has woken it (state working).
+  public var detached: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -15786,7 +15799,7 @@ nonisolated extension Ycc_V1_WorkLoopInfo: SwiftProtobuf.Message, SwiftProtobuf.
 
 nonisolated extension Ycc_V1_WorkLoopSlot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkLoopSlot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}slot\0\u{3}session_id\0\u{3}task_id\0\u{1}state\0\u{1}since\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}slot\0\u{3}session_id\0\u{3}task_id\0\u{1}state\0\u{1}since\0\u{3}task_title\0\u{1}intent\0\u{3}last_activity\0\u{1}detached\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -15799,6 +15812,10 @@ nonisolated extension Ycc_V1_WorkLoopSlot: SwiftProtobuf.Message, SwiftProtobuf.
       case 3: try { try decoder.decodeSingularStringField(value: &self.taskID) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.state) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.since) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.taskTitle) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.intent) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.lastActivity) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.detached) }()
       default: break
       }
     }
@@ -15820,6 +15837,18 @@ nonisolated extension Ycc_V1_WorkLoopSlot: SwiftProtobuf.Message, SwiftProtobuf.
     if !self.since.isEmpty {
       try visitor.visitSingularStringField(value: self.since, fieldNumber: 5)
     }
+    if !self.taskTitle.isEmpty {
+      try visitor.visitSingularStringField(value: self.taskTitle, fieldNumber: 6)
+    }
+    if !self.intent.isEmpty {
+      try visitor.visitSingularStringField(value: self.intent, fieldNumber: 7)
+    }
+    if !self.lastActivity.isEmpty {
+      try visitor.visitSingularStringField(value: self.lastActivity, fieldNumber: 8)
+    }
+    if self.detached != false {
+      try visitor.visitSingularBoolField(value: self.detached, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -15829,6 +15858,10 @@ nonisolated extension Ycc_V1_WorkLoopSlot: SwiftProtobuf.Message, SwiftProtobuf.
     if lhs.taskID != rhs.taskID {return false}
     if lhs.state != rhs.state {return false}
     if lhs.since != rhs.since {return false}
+    if lhs.taskTitle != rhs.taskTitle {return false}
+    if lhs.intent != rhs.intent {return false}
+    if lhs.lastActivity != rhs.lastActivity {return false}
+    if lhs.detached != rhs.detached {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

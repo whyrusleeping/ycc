@@ -13,8 +13,10 @@ import {
   currentSessionId,
   isActive,
   isFailureOutcome,
+  isParallel,
   loopState,
   recentCompleted,
+  slotsLine,
   stateTitle,
   waitingLine,
 } from "./model";
@@ -64,6 +66,8 @@ export function LoopStatus({ scope }: { scope: string | null }) {
         const outcome = loop.outcome.trim();
         const failed = state === "finished" && !!outcome && isFailureOutcome(outcome);
         const name = scope === null ? `${project} loop` : "Work loop";
+        // A parallel loop is described by its slots, not one session.
+        const slots = isActive(state) && isParallel(loop) ? slotsLine(loop) : "";
         return (
           <section key={loop.loopId} className={`loop-status-card state-${state}`} aria-label={`Work loop${scope === null ? ` in ${project}` : ""}`}>
             <div className="loop-status-head">
@@ -110,7 +114,14 @@ export function LoopStatus({ scope }: { scope: string | null }) {
             </div>
             {state === "waiting" && <div className="loop-status-line muted">{waitingLine(loop)}</div>}
             {failed && <div className="loop-status-line error">{outcome}</div>}
-            {current && (
+            {slots && (
+              <div className="loop-status-line">
+                <Link to={paths.loop(project)} className="loop-status-session" data-track="sidebar.loop_status.slots">
+                  {slots}
+                </Link>
+              </div>
+            )}
+            {current && !slots && (
               <div className="loop-status-line">
                 {currentTask && <TaskLink project={project} id={currentTask} className="row-task" inInspector />}
                 <Link to={paths.session(project, current)} className="loop-status-session" data-track="sidebar.loop_status.follow">
@@ -118,7 +129,7 @@ export function LoopStatus({ scope }: { scope: string | null }) {
                 </Link>
               </div>
             )}
-            {isActive(state) && !current && state !== "waiting" && <div className="loop-status-line muted">Between sessions…</div>}
+            {isActive(state) && !current && !slots && state !== "waiting" && <div className="loop-status-line muted">Between sessions…</div>}
           </section>
         );
       })}

@@ -2,7 +2,7 @@
 // lines, the captured resource envelope, completion announcements, and the
 // sessions a loop owns. Mirrors YccKit's WorkLoopModel so the web and iOS
 // clients label a loop alike.
-import type { GetBudgetResponse, WorkLoopDigestTask, WorkLoopInfo } from "../../gen/ycc/v1/ycc_pb";
+import type { GetBudgetResponse, WorkLoopDigestTask, WorkLoopInfo, WorkLoopSlot } from "../../gen/ycc/v1/ycc_pb";
 import { compactTokenCount } from "../sessions/feed";
 
 export type LoopState = "running" | "waiting" | "stopping" | "finished" | "none" | "unknown";
@@ -249,6 +249,52 @@ export function slotsLine(loop: WorkLoopInfo): string {
   const working = loop.slots.filter((s) => s.state === "working").length;
   const waiting = loop.slots.filter((s) => s.state === "waiting").length;
   return `${working}/${loop.parallel} working, ${waiting} waiting`;
+}
+
+/**
+ * Whether the loop may run more than one session at once. Its single
+ * "now running" session then does not describe it; the slots do.
+ */
+export function isParallel(loop: WorkLoopInfo): boolean {
+  return loop.parallel > 1 || loop.slots.length > 1;
+}
+
+/** "working 12m 3s", "waiting 3h 20m": a slot's state and how long it has been in it. */
+export function slotStateText(slot: WorkLoopSlot, now: number = Date.now()): string {
+  const state = slot.state.trim() || "working";
+  const since = Date.parse(slot.since);
+  if (Number.isNaN(since)) return state;
+  const secs = Math.floor((now - since) / 1000);
+  return secs < 1 ? state : `${state} ${durationText(secs)}`;
+}
+
+/**
+ * The Stop confirmation: how many working sessions finish, and that sessions
+ * the loop let wait on their background jobs keep running, even ones a job
+ * has woken. Snapshots without slots (older daemons) keep the one-session wording.
+ */
+export function stopConfirmBody(loop: WorkLoopInfo | null | undefined): string {
+  const providerWait = loopState(loop) === "waiting" && loop?.waitKind.trim() !== "sessions_waiting";
+  const noMore = "The daemon will not pick another backlog task.";
+  if (!loop || loop.parallel <= 0) {
+    return providerWait
+      ? `The loop is waiting for the provider; stopping ends the wait at once. ${noMore}`
+      : "The current session finishes its work; the daemon will not pick another backlog task.";
+  }
+  const detached = loop.slots.filter((s) => s.detached || s.state === "waiting");
+  const working = loop.slots.filter((s) => !s.detached && s.state === "working").length;
+  const woken = detached.filter((s) => s.state === "working").length;
+  const parts: string[] = [];
+  if (providerWait) parts.push("The loop is waiting for the provider; stopping ends the wait at once.");
+  if (working > 0) parts.push(`${working === 1 ? "1 working session finishes its" : `${working} working sessions finish their`} work.`);
+  const n = detached.length;
+  if (n > 0 && woken === 0) {
+    parts.push(n === 1 ? "1 session waiting on its background jobs keeps running." : `${n} sessions waiting on their background jobs keep running.`);
+  } else if (n > 0) {
+    parts.push(`${n === 1 ? "1 session" : `${n} sessions`} let wait on background jobs ${n === 1 ? "keeps" : "keep"} running (${woken} working again).`);
+  }
+  parts.push(noMore);
+  return parts.join(" ");
 }
 
 /** A compact status line for banners and the sidebar tooltip. */

@@ -1,16 +1,17 @@
 ---
 id: "0605"
 title: 'Parallel-aware work-loop view: live slots as cards with task, intent and time in state (web + iOS)'
-status: todo
+status: done
 priority: 2
 created: "2026-11-24"
-updated: "2026-11-24"
+updated: "2026-11-25"
 depends_on: []
 spec_refs:
     - spec.md#9.1
 ---
 
 ## Description
+
 Current state: todo. Accepted by the user 2026-11-24 in session s_5a6bb9c25a12632a (UX review of the live wheeler work loop).
 
 The loop views were shaped for one session at a time. Observed 2026-11-24 on wheeler loop `loop_d074bc58` (4 slots, 4 working and 1 waiting):
@@ -25,6 +26,7 @@ The loop views were shaped for one session at a time. Observed 2026-11-24 on whe
 iOS layout items outside the live-slot rows (Stop placement, section order, markdown) are in 0607 (iOS work-loop screen pass, filed from the same review).
 
 ## Acceptance criteria
+
 - Web and iOS loop views show each live slot as a row or card with the task id and title, the session's intent when set, working/waiting, how long it has been in that state, and its last activity time. The session and the task both open from it.
 - The single-session "Now running … Follow live session" line is gone when the loop has more than one slot.
 - The web sidebar loop line shows "k/N working, m waiting" for a parallel loop.
@@ -33,4 +35,8 @@ iOS layout items outside the live-slot rows (Stop placement, section order, mark
 - If the snapshot lacks a needed field (intent, last activity), the proto change and its test are part of this task.
 - Web typecheck and vitest pass; iOS is built and screenshot-checked on the Mac simulator against a daemon running a loop with parallel > 1.
 
-## Work log
+## Outcome
+
+Loop slots now carry task_title, intent, last_activity and detached, filled by GetWorkLoop/Start/Stop. Since is the time the session entered its state, including a wake. The web and iOS loop views show each live slot as a row with the task id and title, intent, working or waiting with elapsed time, and last activity, and the row opens both the task and the session. Parallel loops drop the single "Now running" line, and the web sidebar shows "k/N working, m waiting". The Stop confirmation in both clients and the web toast count the working sessions that finish, apart from detached sessions that keep running. The web session header wraps its metadata instead of clipping it. Spec §9.1 is updated. Verified with Go, web (502 tests) and YccKit (695 tests), plus web and iOS simulator shots against a parallel=3 scratch loop.
+
+Commit: 0605: parallel-aware work-loop view — slot cards with task, intent, time in state and last activity; detached-aware Stop copy (web + iOS)

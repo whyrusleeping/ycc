@@ -299,7 +299,7 @@ struct BacklogView: View {
                 .accessibilityLabel("Stop work loop")
                 .workLoopStopConfirmation(
                     isPresented: $showLoopStopConfirmation,
-                    waiting: state == .waiting
+                    message: WorkLoopModel.stopConfirmMessage(for: loopModel?.loop)
                 ) {
                     guard let loopModel = scopedLoopModel else { return }
                     Task { await loopModel.stop() }

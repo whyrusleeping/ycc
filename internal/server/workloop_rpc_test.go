@@ -78,6 +78,9 @@ func TestWorkLoopToProto(t *testing.T) {
 		LoopCostLimit:            5,
 		CostLimitsPricedOnly:     true,
 		ResourceEnvelopeCaptured: true,
+		Slots: []session.WorkLoopSlot{
+			{Slot: 1, SessionID: "s2", Task: "0004", State: "waiting", Since: started, TaskTitle: "Fourth", Intent: "backfill", LastActivity: resume, Detached: true},
+		},
 	}
 	info := workLoopToProto(wl)
 	if info.LoopId != "loop_abcd" || info.State != "finished" || info.CurrentSessionId != "s1" {
@@ -110,5 +113,9 @@ func TestWorkLoopToProto(t *testing.T) {
 	if len(info.Unfinished) != 1 || info.Unfinished[0].Attempts != 3 || info.Unfinished[0].LatestEvidence != "ruled out cache" ||
 		info.Unfinished[0].RemainingCriteria != "reproduce" || info.Unfinished[0].NextStep != "inspect trace" {
 		t.Fatalf("unfinished digest wrong: %+v", info.Unfinished)
+	}
+	if len(info.Slots) != 1 || info.Slots[0].TaskTitle != "Fourth" || info.Slots[0].Intent != "backfill" ||
+		info.Slots[0].Since != "2026-07-15T10:00:00Z" || info.Slots[0].LastActivity != "2026-07-15T10:30:00Z" || !info.Slots[0].Detached {
+		t.Fatalf("slots wrong: %+v", info.Slots)
 	}
 }

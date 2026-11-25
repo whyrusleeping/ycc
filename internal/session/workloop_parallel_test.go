@@ -724,3 +724,65 @@ func TestEndingWokenWaiterHoldsAdmissionBack(t *testing.T) {
 		t.Fatalf("final loop = %+v", final)
 	}
 }
+
+// A waiting slot's Since is when it entered its shown state: a wake that
+// takes a working slot restarts it, and so does going back to waiting.
+func TestWaitingSlotSinceTracksItsState(t *testing.T) {
+	t0 := time.Now().Add(-time.Hour)
+	w := &loopWaiter{id: "s", since: t0, shown: "waiting", shownAt: t0}
+	wl := &workLoop{workspace: t.TempDir(), parallel: 1, waiters: []*loopWaiter{w}}
+	slot := func() WorkLoopSlot {
+		t.Helper()
+		snap := wl.snapshot()
+		if len(snap.Slots) != 1 {
+			t.Fatalf("slots = %+v", snap.Slots)
+		}
+		return snap.Slots[0]
+	}
+	if s := slot(); s.State != "waiting" || !s.Since.Equal(t0) || !s.Detached {
+		t.Fatalf("waiting slot = %+v, want since %v", s, t0)
+	}
+	if !wl.admitWake("s") {
+		t.Fatal("wake refused")
+	}
+	woke := slot()
+	if woke.State != "working" || !woke.Since.After(t0) || !woke.Detached {
+		t.Fatalf("woken slot = %+v, want working since the wake", woke)
+	}
+	time.Sleep(2 * time.Millisecond)
+	wl.applySlotState("s", false, true, wl.wakeSeq)
+	if s := slot(); s.State != "waiting" || !s.Since.After(woke.Since) {
+		t.Fatalf("slot after the wake = %+v, want waiting since after %v", s, woke.Since)
+	}
+}
+
+// AnnotateWorkLoopSlots names each slot's task and gives its live session's
+// intent and latest event time.
+func TestAnnotateWorkLoopSlots(t *testing.T) {
+	ws := t.TempDir()
+	m := NewManager(testRegistry(), "")
+	defer m.ReclaimAll()
+	task, err := docs.NewStore(ws).Create("Slot cards", "", 2, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _, _ := jobSession(t, "live", ws, task.ID, "bash")
+	s.intentText = "editing the loop page"
+	m.mu.Lock()
+	m.sessions[s.ID] = s
+	m.mu.Unlock()
+	last, _ := s.Log().Last()
+	wl := &WorkLoop{Workspace: ws, Slots: []WorkLoopSlot{
+		{SessionID: "live", Task: task.ID, State: "waiting"},
+		{SessionID: "gone", Task: "9999", State: "working"},
+		{State: "working"},
+	}}
+	m.AnnotateWorkLoopSlots(wl)
+	got := wl.Slots[0]
+	if got.TaskTitle != "Slot cards" || got.Intent != "editing the loop page" || last.TS.IsZero() || !got.LastActivity.Equal(last.TS) {
+		t.Fatalf("live slot = %+v, want title, intent and last activity %v", got, last.TS)
+	}
+	if gone := wl.Slots[1]; gone.TaskTitle != "" || gone.Intent != "" || !gone.LastActivity.IsZero() {
+		t.Fatalf("slot of an unknown task and ended session = %+v", gone)
+	}
+}

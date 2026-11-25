@@ -153,11 +153,18 @@ type WorkLoopWaitingSession struct {
 
 // WorkLoopSlot is one live loop session.
 type WorkLoopSlot struct {
-	Slot      int    // slot the session started in
-	SessionID string // empty while the session starts
-	Task      string // focused task; empty until it claims one
-	State     string // working | waiting
-	Since     time.Time
+	Slot      int       // slot the session started in
+	SessionID string    // empty while the session starts
+	Task      string    // focused task; empty until it claims one
+	State     string    // working | waiting
+	Since     time.Time // when the session entered State
+	// Detached marks a session the loop let wait on its background jobs: a
+	// stop leaves it running, even once a job has woken it.
+	Detached bool
+	// Filled by AnnotateWorkLoopSlots for loop views.
+	TaskTitle    string
+	Intent       string
+	LastActivity time.Time
 }
 
 // WorkLoopLanding is a commit made during a loop that no loop session recorded.
@@ -221,6 +228,11 @@ type loopWaiter struct {
 	// awake caches whether the session last looked woken, and ending marks
 	// that it ended with its record on its way (both under the loop's mu).
 	awake, ending bool
+	// shown is the state the snapshot shows (working once it holds a slot or
+	// works again, else waiting) and shownAt when it last changed; see
+	// noteWaiterLocked.
+	shown   string
+	shownAt time.Time
 	// working reports whether the session has woken and works again.
 	working func() bool
 	// usage reports the session's usage so far; nil for none.
@@ -443,11 +455,11 @@ func (wl *workLoop) snapshotLocked() *WorkLoop {
 		}
 	}
 	for _, w := range wl.waiters {
-		state := "waiting"
-		if _, held := wl.holders[w.id]; held || w.awake {
-			state = "working"
+		state, since := wl.waiterStateLocked(w), w.since
+		if state == w.shown && !w.shownAt.IsZero() {
+			since = w.shownAt
 		}
-		out.Slots = append(out.Slots, WorkLoopSlot{Slot: w.lane, SessionID: w.id, Task: w.focus, State: state, Since: w.since})
+		out.Slots = append(out.Slots, WorkLoopSlot{Slot: w.lane, SessionID: w.id, Task: w.focus, State: state, Since: since, Detached: true})
 	}
 	out.ManualLandings = append(out.ManualLandings, wl.manual...)
 	out.UncommittedInReview = append(out.UncommittedInReview, wl.preflight.InReview...)
@@ -642,6 +654,38 @@ func (m *Manager) GetWorkLoop(project string) (*WorkLoop, error) {
 		return nil, nil
 	}
 	return wl.snapshot(), nil
+}
+
+// AnnotateWorkLoopSlots fills each of a snapshot's slots with its task's
+// title and its live session's intent and latest event time, for loop views.
+func (m *Manager) AnnotateWorkLoopSlots(wl *WorkLoop) {
+	if wl == nil {
+		return
+	}
+	var titles map[string]string
+	for i := range wl.Slots {
+		slot := &wl.Slots[i]
+		if slot.Task != "" {
+			if titles == nil {
+				titles = map[string]string{}
+				if tasks, err := m.backlogStore(wl.Workspace).ListMetadata(); err == nil {
+					for _, t := range tasks {
+						titles[t.ID] = t.Title
+					}
+				}
+			}
+			slot.TaskTitle = titles[docs.NormalizeID(slot.Task)]
+		}
+		if slot.SessionID == "" {
+			continue
+		}
+		if s, ok := m.Get(slot.SessionID); ok {
+			slot.Intent, _ = s.intent()
+			if ev, ok := s.Log().Last(); ok {
+				slot.LastActivity = ev.TS
+			}
+		}
+	}
 }
 
 // resolveWorkspace resolves a project label to its absolute workspace and human
@@ -1045,6 +1089,7 @@ func (wl *workLoop) addWaiter(w *loopWaiter, run *loopRun) {
 		wl.waitReserved = max(wl.waitReserved-1, 0)
 	}
 	wl.waiters = append(wl.waiters, w)
+	w.shown, w.shownAt = wl.waiterStateLocked(w), w.since
 	wl.mu.Unlock()
 	wl.persist()
 	wl.m.loopWG.Add(1)
@@ -1084,10 +1129,34 @@ func (wl *workLoop) holdLocked(id string) {
 		wl.holders = map[string]struct{}{}
 	}
 	wl.holders[id] = struct{}{}
+	wl.noteWaiterLocked(id)
 }
 
 func (wl *workLoop) releaseLocked(id string) {
 	delete(wl.holders, id)
+	wl.noteWaiterLocked(id)
+}
+
+// waiterStateLocked is the state a waiting session shows: working once a
+// wake holds a slot for it or it works again, else waiting. Caller holds wl.mu.
+func (wl *workLoop) waiterStateLocked(w *loopWaiter) string {
+	if _, held := wl.holders[w.id]; held || w.awake {
+		return "working"
+	}
+	return "waiting"
+}
+
+// noteWaiterLocked records when waiter id's shown state changes, for the
+// snapshot's time in state. Caller holds wl.mu.
+func (wl *workLoop) noteWaiterLocked(id string) {
+	for _, w := range wl.waiters {
+		if w.id != id {
+			continue
+		}
+		if state := wl.waiterStateLocked(w); state != w.shown {
+			w.shown, w.shownAt = state, time.Now()
+		}
+	}
 }
 
 // refreshCurrentLocked points CurrentSessionID at the most recently started
@@ -1197,6 +1266,7 @@ func (wl *workLoop) applySlotState(id string, working, shellOnly bool, wakes int
 	for _, w := range wl.waiters {
 		if w.id == id && w.awake != working {
 			w.awake, changed = working, true
+			wl.noteWaiterLocked(id)
 		}
 	}
 	freed := false
@@ -1699,6 +1769,9 @@ func (wl *workLoop) finish(outcome string, final []*docs.Task) {
 	// deliver any wake it held back.
 	wl.mu.Lock()
 	wl.ungated, wl.holders = true, nil
+	for _, w := range wl.waiters {
+		wl.noteWaiterLocked(w.id)
+	}
 	wl.mu.Unlock()
 	wl.slotFreed()
 	if ends := wl.collectEnded(store); len(ends) > 0 {

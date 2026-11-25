@@ -2159,7 +2159,7 @@ func (s *Server) StartWorkLoop(_ context.Context, req *connect.Request[v1.StartW
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 	}
-	return connect.NewResponse(&v1.StartWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
+	return connect.NewResponse(&v1.StartWorkLoopResponse{Loop: s.workLoopProto(wl)}), nil
 }
 
 // StopWorkLoop gracefully stops a running loop (working sessions finish, no
@@ -2173,7 +2173,7 @@ func (s *Server) StopWorkLoop(_ context.Context, req *connect.Request[v1.StopWor
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&v1.StopWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
+	return connect.NewResponse(&v1.StopWorkLoopResponse{Loop: s.workLoopProto(wl)}), nil
 }
 
 // GetWorkLoop returns the current loop snapshot so a reconnecting client can
@@ -2187,7 +2187,7 @@ func (s *Server) GetWorkLoop(_ context.Context, req *connect.Request[v1.GetWorkL
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&v1.GetWorkLoopResponse{Loop: workLoopToProto(wl)}), nil
+	return connect.NewResponse(&v1.GetWorkLoopResponse{Loop: s.workLoopProto(wl)}), nil
 }
 
 // GetWorkLoopPreflight reports in_review tasks whose work is uncommitted in the
@@ -2205,6 +2205,13 @@ func (s *Server) GetWorkLoopPreflight(_ context.Context, req *connect.Request[v1
 		UncommittedPaths:    int32(pre.Paths),
 		ConfiguredParallel:  int32(pre.Parallel),
 	}), nil
+}
+
+// workLoopProto marshals a work-loop snapshot for loop views, its slots
+// annotated with task titles, intents and latest activity.
+func (s *Server) workLoopProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
+	s.mgr.AnnotateWorkLoopSlots(wl)
+	return workLoopToProto(wl)
 }
 
 // workLoopToProto marshals a work-loop snapshot to its proto form (nil-safe → nil).
@@ -2271,6 +2278,8 @@ func workLoopToProto(wl *session.WorkLoop) *v1.WorkLoopInfo {
 		}
 		info.Slots = append(info.Slots, &v1.WorkLoopSlot{
 			Slot: int32(slot.Slot), SessionId: slot.SessionID, TaskId: slot.Task, State: slot.State, Since: since,
+			TaskTitle: slot.TaskTitle, Intent: slot.Intent, LastActivity: rfc3339OrEmpty(slot.LastActivity),
+			Detached: slot.Detached,
 		})
 	}
 	for _, l := range wl.ManualLandings {

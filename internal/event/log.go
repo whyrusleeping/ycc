@@ -346,6 +346,16 @@ func (l *Log) Snapshot() []Event {
 	return out
 }
 
+// Last returns the log's most recent persisted event, if any.
+func (l *Log) Last() (Event, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.events) == 0 {
+		return Event{}, false
+	}
+	return l.events[len(l.events)-1], true
+}
+
 // SnapshotFrom returns the persisted events at or after cursor and the cursor to
 // use for the next call. Cursors are event indexes, not sequence numbers. Since
 // events become visible only after their append and sync succeed, callers can

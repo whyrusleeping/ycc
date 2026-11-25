@@ -1061,9 +1061,12 @@ checked before each start against accounted usage plus the usage so far of live 
 A reached cap, a session breaching its own budget, a non-retryable session failure, a runner
 error, a graceful stop or a daemon shutdown starts no new session; the loop shows `stopping`
 while working sessions finish, then finishes. A session's own failure outranks a stop or cap as
-the outcome. The loop snapshot lists its parallelism and slots (session, focused task, working
-or waiting); clients show "k/N working, m waiting". The digest lists, as other commits,
-commits made since the loop started that no loop session's `commit_made` recorded; they may be
+the outcome. The loop snapshot lists its parallelism and slots (session, focused task and its
+title, working or waiting and since when, the session's intent and latest activity); clients
+show "k/N working, m waiting" and each slot as a row that opens its session and its task, and
+their Stop confirmation counts the working sessions that finish and the sessions it let wait
+(marked detached, including any a job has woken) that keep running. The digest lists, as other
+commits, commits made since the loop started that no loop session's `commit_made` recorded; they may be
 loop sessions' own hand-scoped commits, a watch's or the user's. The loop's summary line and
 completion notification count as completed every task that reached done during the loop,
 including tasks it created; created tasks still open are counted apart, and the summary counts

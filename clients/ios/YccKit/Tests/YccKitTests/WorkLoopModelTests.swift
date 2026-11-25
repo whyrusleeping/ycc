@@ -443,6 +443,58 @@ final class WorkLoopModelTests: XCTestCase {
         XCTAssertEqual(WorkLoopModel.bannerLine(for: l), "Running · 2/3 working, 1 waiting")
     }
 
+    func testSlotStateTextTimesTheSlotInItsState() {
+        let now = ISO8601DateFormatter().date(from: "2026-11-25T10:00:00Z")!
+        func slot(_ state: String, _ since: String) -> Ycc_V1_WorkLoopSlot {
+            var s = Ycc_V1_WorkLoopSlot()
+            s.state = state
+            s.since = since
+            return s
+        }
+        XCTAssertEqual(WorkLoopModel.slotStateText(slot("waiting", "2026-11-25T06:40:00Z"), now: now), "waiting 3h 20m")
+        XCTAssertEqual(WorkLoopModel.slotStateText(slot("working", "2026-11-25T09:58:30Z"), now: now), "working 1m 30s")
+        XCTAssertEqual(WorkLoopModel.slotStateText(slot("working", ""), now: now), "working")
+        var single = loop(state: "running")
+        single.parallel = 1
+        single.slots = [slot("working", "")]
+        XCTAssertFalse(WorkLoopModel.isParallel(single))
+        single.parallel = 3
+        XCTAssertTrue(WorkLoopModel.isParallel(single))
+    }
+
+    func testStopConfirmationCountsWorkingAndWaitingSessions() {
+        func slots(_ states: [String]) -> [Ycc_V1_WorkLoopSlot] {
+            states.map { state in
+                var s = Ycc_V1_WorkLoopSlot()
+                s.state = state
+                s.sessionID = "s"
+                return s
+            }
+        }
+        var l = loop(state: "running")
+        XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: l),
+                       "The current session finishes its work; the daemon will not pick another backlog task.")
+        l.parallel = 4
+        l.slots = slots(["working", "working", "working", "waiting"])
+        XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: l),
+                       "3 working sessions finish their work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.")
+        var waiting = loop(state: "waiting", waitKind: "sessions_waiting")
+        waiting.parallel = 2
+        waiting.slots = slots(["waiting", "waiting"])
+        XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: waiting),
+                       "2 sessions waiting on their background jobs keep running. The daemon will not pick another backlog task.")
+        var mixed = loop(state: "running")
+        mixed.parallel = 2
+        mixed.slots = slots(["working", "working", "waiting"])
+        mixed.slots[1].detached = true
+        XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: mixed),
+                       "1 working session finishes its work. 2 sessions let wait on background jobs keep running (1 working again). The daemon will not pick another backlog task.")
+        var provider = loop(state: "waiting", waitKind: "rate_limit")
+        provider.parallel = 2
+        XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: provider),
+                       "The loop is waiting for the provider; stopping ends the wait at once. The daemon will not pick another backlog task.")
+    }
+
     func testSummaryCountsEveryDoneTaskLiveSessionsAndOtherCommits() {
         func status(_ id: String, _ status: String) -> Ycc_V1_WorkLoopDigestTask {
             var value = task(id)

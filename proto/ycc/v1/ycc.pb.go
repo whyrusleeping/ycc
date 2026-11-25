@@ -14327,12 +14327,19 @@ func (x *WorkLoopInfo) GetManualLandings() []*WorkLoopLanding {
 
 // WorkLoopSlot is one live loop session.
 type WorkLoopSlot struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Slot          int32                  `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`                           // slot the session started in
-	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // empty while the session starts
-	TaskId        string                 `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`          // focused task; empty until it claims one
-	State         string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`                          // working | waiting
-	Since         string                 `protobuf:"bytes,5,opt,name=since,proto3" json:"since,omitempty"`                          // RFC3339
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Slot      int32                  `protobuf:"varint,1,opt,name=slot,proto3" json:"slot,omitempty"`                           // slot the session started in
+	SessionId string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // empty while the session starts
+	TaskId    string                 `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`          // focused task; empty until it claims one
+	State     string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`                          // working | waiting
+	Since     string                 `protobuf:"bytes,5,opt,name=since,proto3" json:"since,omitempty"`                          // RFC3339; when the session entered state
+	// Filled by GetWorkLoop, StartWorkLoop and StopWorkLoop for loop views.
+	TaskTitle    string `protobuf:"bytes,6,opt,name=task_title,json=taskTitle,proto3" json:"task_title,omitempty"`          // the focused task's title; empty without one
+	Intent       string `protobuf:"bytes,7,opt,name=intent,proto3" json:"intent,omitempty"`                                 // the session's declared intent line
+	LastActivity string `protobuf:"bytes,8,opt,name=last_activity,json=lastActivity,proto3" json:"last_activity,omitempty"` // RFC3339; the session's latest event
+	// The loop let the session wait on its background jobs. A stop leaves it
+	// running, even once a job has woken it (state working).
+	Detached      bool `protobuf:"varint,9,opt,name=detached,proto3" json:"detached,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -14400,6 +14407,34 @@ func (x *WorkLoopSlot) GetSince() string {
 		return x.Since
 	}
 	return ""
+}
+
+func (x *WorkLoopSlot) GetTaskTitle() string {
+	if x != nil {
+		return x.TaskTitle
+	}
+	return ""
+}
+
+func (x *WorkLoopSlot) GetIntent() string {
+	if x != nil {
+		return x.Intent
+	}
+	return ""
+}
+
+func (x *WorkLoopSlot) GetLastActivity() string {
+	if x != nil {
+		return x.LastActivity
+	}
+	return ""
+}
+
+func (x *WorkLoopSlot) GetDetached() bool {
+	if x != nil {
+		return x.Detached
+	}
+	return false
 }
 
 // WorkLoopLanding is a commit made during a loop that no loop session recorded.
@@ -18749,14 +18784,19 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x11uncommitted_paths\x18\x1d \x01(\x05R\x10uncommittedPaths\x12\x1a\n" +
 	"\bparallel\x18\x1e \x01(\x05R\bparallel\x12*\n" +
 	"\x05slots\x18\x1f \x03(\v2\x14.ycc.v1.WorkLoopSlotR\x05slots\x12@\n" +
-	"\x0fmanual_landings\x18  \x03(\v2\x17.ycc.v1.WorkLoopLandingR\x0emanualLandings\"\x86\x01\n" +
+	"\x0fmanual_landings\x18  \x03(\v2\x17.ycc.v1.WorkLoopLandingR\x0emanualLandings\"\xfe\x01\n" +
 	"\fWorkLoopSlot\x12\x12\n" +
 	"\x04slot\x18\x01 \x01(\x05R\x04slot\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x17\n" +
 	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05state\x18\x04 \x01(\tR\x05state\x12\x14\n" +
-	"\x05since\x18\x05 \x01(\tR\x05since\"=\n" +
+	"\x05since\x18\x05 \x01(\tR\x05since\x12\x1d\n" +
+	"\n" +
+	"task_title\x18\x06 \x01(\tR\ttaskTitle\x12\x16\n" +
+	"\x06intent\x18\a \x01(\tR\x06intent\x12#\n" +
+	"\rlast_activity\x18\b \x01(\tR\flastActivity\x12\x1a\n" +
+	"\bdetached\x18\t \x01(\bR\bdetached\"=\n" +
 	"\x0fWorkLoopLanding\x12\x10\n" +
 	"\x03sha\x18\x01 \x01(\tR\x03sha\x12\x18\n" +
 	"\asubject\x18\x02 \x01(\tR\asubject\"L\n" +

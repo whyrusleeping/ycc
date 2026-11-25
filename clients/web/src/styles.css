@@ -1324,10 +1324,12 @@ a.row-task:hover {
   text-overflow: ellipsis;
 }
 
+/* Items that do not fit wrap to a second line rather than being cut mid-token. */
 .session-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 2px 12px;
   margin-top: 2px;
   font-family: var(--mono);
   font-size: var(--fs-2xs);
@@ -5189,6 +5191,18 @@ th[aria-sort="descending"] .sort-btn {
 
 .digest-detail {
   margin: 6px 0 0 12px;
+}
+
+/* A live loop session: its declared intent under the task line. */
+.loop-slot-intent {
+  margin-top: 3px;
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.loop-slot.slot-waiting .loop-slot-state {
+  color: var(--warn);
 }
 
 /* Workstreams */

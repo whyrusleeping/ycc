@@ -24,6 +24,7 @@ import {
   formatCost,
   isActive,
   isFailureOutcome,
+  isParallel,
   loopIndicator,
   loopSessionIds,
   loopState,
@@ -32,7 +33,9 @@ import {
   recentCompleted,
   resourceEnvelopeLines,
   slotsLine,
+  slotStateText,
   stateTitle,
+  stopConfirmBody,
   summaryLine,
   totalsLine,
   uncommittedInReviewLine,
@@ -217,6 +220,39 @@ describe("slots", () => {
     expect(bannerLine(l)).toBe("Running · 2/3 working, 1 waiting");
     expect([...loopSessionIds(l)].sort()).toEqual(["s_a", "s_w"]);
     expect(slotsLine(loop())).toBe("");
+  });
+
+  it("tells a parallel loop apart and times each slot in its state", () => {
+    const now = Date.parse("2026-11-25T10:00:00Z");
+    expect(isParallel(loop({ parallel: 1, slots: [create(WorkLoopSlotSchema, { state: "working" })] }))).toBe(false);
+    expect(isParallel(loop({ parallel: 3 }))).toBe(true);
+    const at = (state: string, since: string) => create(WorkLoopSlotSchema, { sessionId: "s", state, since });
+    expect(slotStateText(at("waiting", "2026-11-25T06:40:00Z"), now)).toBe("waiting 3h 20m");
+    expect(slotStateText(at("working", "2026-11-25T09:58:30Z"), now)).toBe("working 1m 30s");
+    expect(slotStateText(at("working", ""), now)).toBe("working");
+  });
+
+  it("states in the stop confirmation which sessions finish and which keep running", () => {
+    const slot = (state: string) => create(WorkLoopSlotSchema, { sessionId: "s", state });
+    expect(stopConfirmBody(loop({ parallel: 4, slots: [slot("working"), slot("working"), slot("working"), slot("waiting")] }))).toBe(
+      "3 working sessions finish their work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.",
+    );
+    expect(stopConfirmBody(loop({ parallel: 1, slots: [slot("working")] }))).toBe(
+      "1 working session finishes its work. The daemon will not pick another backlog task.",
+    );
+    expect(
+      stopConfirmBody(loop({ state: "waiting", waitKind: "sessions_waiting", parallel: 2, slots: [slot("waiting"), slot("waiting")] })),
+    ).toBe("2 sessions waiting on their background jobs keep running. The daemon will not pick another backlog task.");
+    expect(stopConfirmBody(loop({ state: "waiting", waitKind: "rate_limit", parallel: 2 }))).toBe(
+      "The loop is waiting for the provider; stopping ends the wait at once. The daemon will not pick another backlog task.",
+    );
+    // A session the loop let wait that a job woke works, but a stop leaves it running.
+    const woken = create(WorkLoopSlotSchema, { sessionId: "w", state: "working", detached: true });
+    expect(stopConfirmBody(loop({ parallel: 2, slots: [slot("working"), woken, slot("waiting")] }))).toBe(
+      "1 working session finishes its work. 2 sessions let wait on background jobs keep running (1 working again). The daemon will not pick another backlog task.",
+    );
+    // Snapshots without slots (older daemons) keep the one-session wording.
+    expect(stopConfirmBody(loop())).toBe("The current session finishes its work; the daemon will not pick another backlog task.");
   });
 
   it("sends 0 for the project default and clamps explicit counts", () => {

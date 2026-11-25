@@ -1639,7 +1639,14 @@ message WorkLoopSlot {
   string session_id = 2; // empty while the session starts
   string task_id = 3;    // focused task; empty until it claims one
   string state = 4;      // working | waiting
-  string since = 5;      // RFC3339
+  string since = 5;      // RFC3339; when the session entered state
+  // Filled by GetWorkLoop, StartWorkLoop and StopWorkLoop for loop views.
+  string task_title = 6;    // the focused task's title; empty without one
+  string intent = 7;        // the session's declared intent line
+  string last_activity = 8; // RFC3339; the session's latest event
+  // The loop let the session wait on its background jobs. A stop leaves it
+  // running, even once a job has woken it (state working).
+  bool detached = 9;
 }
 
 // WorkLoopLanding is a commit made during a loop that no loop session recorded.

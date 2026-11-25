@@ -434,6 +434,61 @@ public final class WorkLoopModel {
         return "\(working)/\(loop.parallel) working, \(waiting) waiting"
     }
 
+    /// Whether the loop may run more than one session at once: its single
+    /// current session then does not describe it; the slots do.
+    public static func isParallel(_ loop: Ycc_V1_WorkLoopInfo) -> Bool {
+        loop.parallel > 1 || loop.slots.count > 1
+    }
+
+    /// "working 12m 3s", "waiting 3h 20m": a slot's state and how long it
+    /// has been in it; the state alone when its start is unknown.
+    public static func slotStateText(_ slot: Ycc_V1_WorkLoopSlot, now: Date = Date()) -> String {
+        let state = slot.state.isEmpty ? "working" : slot.state
+        guard let since = parseTimestamp(slot.since),
+              let elapsed = durationText(secs: Int64(now.timeIntervalSince(since)))
+        else { return state }
+        return "\(state) \(elapsed)"
+    }
+
+    /// When a slot's session last did anything; nil when unknown.
+    public static func lastActivityDate(for slot: Ycc_V1_WorkLoopSlot) -> Date? {
+        parseTimestamp(slot.lastActivity)
+    }
+
+    /// The Stop confirmation: how many working sessions finish, and that
+    /// sessions the loop let wait on their background jobs keep running, even
+    /// ones a job has woken. Snapshots without slots (older daemons) keep the
+    /// one-session wording.
+    public static func stopConfirmMessage(for loop: Ycc_V1_WorkLoopInfo?) -> String {
+        let providerWait = loop.map { WorkLoopState(state: $0.state) == .waiting && $0.waitKind != "sessions_waiting" } ?? false
+        let noMore = "The daemon will not pick another backlog task."
+        guard let loop, loop.parallel > 0 else {
+            return providerWait
+                ? "The loop is waiting for the provider; stopping ends the wait at once. \(noMore)"
+                : "The current session finishes its work; the daemon will not pick another backlog task."
+        }
+        let detached = loop.slots.filter { $0.detached || $0.state == "waiting" }
+        let working = loop.slots.filter { !$0.detached && $0.state == "working" }.count
+        let woken = detached.filter { $0.state == "working" }.count
+        var parts: [String] = []
+        if providerWait {
+            parts.append("The loop is waiting for the provider; stopping ends the wait at once.")
+        }
+        if working > 0 {
+            parts.append(working == 1 ? "1 working session finishes its work." : "\(working) working sessions finish their work.")
+        }
+        let n = detached.count
+        if n > 0 && woken == 0 {
+            parts.append(n == 1
+                ? "1 session waiting on its background jobs keeps running."
+                : "\(n) sessions waiting on their background jobs keep running.")
+        } else if n > 0 {
+            parts.append("\(n == 1 ? "1 session" : "\(n) sessions") let wait on background jobs \(n == 1 ? "keeps" : "keep") running (\(woken) working again).")
+        }
+        parts.append(noMore)
+        return parts.joined(separator: " ")
+    }
+
     private static func plural(_ count: Int, _ one: String) -> String {
         "\(count) \(count == 1 ? one : one + "s")"
     }

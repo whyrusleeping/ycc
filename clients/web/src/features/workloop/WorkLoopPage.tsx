@@ -5,9 +5,9 @@
 // the incremental/final digest. Mirrors iOS WorkLoopView.
 import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import type { WorkLoopDigestTask, WorkLoopInfo, WorkLoopSession } from "../../gen/ycc/v1/ycc_pb";
+import type { WorkLoopDigestTask, WorkLoopInfo, WorkLoopSession, WorkLoopSlot } from "../../gen/ycc/v1/ycc_pb";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
 import { queryKeys, useBacklog, useBudget, useModels, useWorkLoop, useWorkLoopPreflight } from "../../api/queries";
@@ -21,6 +21,7 @@ import { useInspector } from "../inspector/inspector";
 import { Markdown } from "../markdown/Markdown";
 import { StatusPill, TaskLink } from "../backlog/parts";
 import { relativeTime } from "../sessions/feed";
+import { shortSessionId } from "../coordination/model";
 import { spawnableTasks } from "../workstreams/model";
 import { loopNeedsAnthropicReconnect } from "../settings/anthropic";
 import { openAnthropicLogin } from "../settings/AnthropicLogin";
@@ -37,6 +38,7 @@ import {
   finishAnnouncement,
   isActive,
   isFailureOutcome,
+  isParallel,
   loopState,
   MAX_LOOP_PARALLEL,
   parallelExplanation,
@@ -45,6 +47,8 @@ import {
   resourceEnvelopeLines,
   stateTitle,
   slotsLine,
+  slotStateText,
+  stopConfirmBody,
   summaryLine,
   totalsLine,
   uncommittedInReviewLine,
@@ -136,7 +140,15 @@ export function WorkLoopPage({ project }: { project: string }) {
     try {
       const resp = await client.stopWorkLoop({ project });
       install(resp.loop ?? null);
-      toast(resp.loop && loopState(resp.loop) === "finished" ? "Work loop stopped." : "Stopping after the current session…", "info");
+      const next = resp.loop;
+      // Sessions the loop let wait keep running and do not delay the stop.
+      const draining = !next || next.parallel <= 0 || next.slots.some((s) => !s.detached && s.state === "working");
+      const pending = !draining
+        ? "Stopping…"
+        : next && isParallel(next)
+          ? "Stopping once the loop’s working sessions finish…"
+          : "Stopping after the current session…";
+      toast(next && loopState(next) === "finished" ? "Work loop stopped." : pending, "info");
     } catch (err) {
       handleError(err, "Couldn’t stop the work loop", "loop.stop");
     } finally {
@@ -204,11 +216,7 @@ export function WorkLoopPage({ project }: { project: string }) {
       <ConfirmDialog
         open={stopOpen}
         title="Stop the work loop gracefully?"
-        body={
-          state === "waiting"
-            ? "The loop is waiting for the provider; stopping ends the wait at once. The daemon will not pick another backlog task."
-            : "The current session finishes its work; the daemon will not pick another backlog task."
-        }
+        body={stopConfirmBody(loop)}
         confirmLabel="Stop loop"
         danger
         action="loop.stop"
@@ -439,7 +447,7 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
           </div>
         )}
         {refreshError && <div className="warn small">Couldn’t refresh: {refreshError}</div>}
-        {current && (
+        {current && !isParallel(loop) && (
           <div className="loop-current">
             <span className="live-dot" aria-hidden="true" /> Now running{" "}
             <Link to={paths.session(project, current)} className="mono">
@@ -450,7 +458,9 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
             </Link>
           </div>
         )}
-        {isActive(state) && !current && state !== "waiting" && <div className="muted small">Between sessions…</div>}
+        {isActive(state) && !current && state !== "waiting" && !isParallel(loop) && (
+          <div className="muted small">Between sessions…</div>
+        )}
       </section>
 
       {loop.slots.length > 0 && (
@@ -458,17 +468,7 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
           <h2 id="loop-slots">Live sessions</h2>
           <ul className="digest-list">
             {loop.slots.map((slot, i) => (
-              <li key={slot.sessionId || `starting-${i}`}>
-                {slot.sessionId ? (
-                  <Link to={paths.session(project, slot.sessionId)} className="mono">
-                    {slot.sessionId}
-                  </Link>
-                ) : (
-                  <span className="muted">starting…</span>
-                )}{" "}
-                {slot.taskId && <TaskLink project={project} id={slot.taskId} className="task-chip" />}{" "}
-                <span className="tag">{slot.state}</span>
-              </li>
+              <SlotRow key={slot.sessionId || `starting-${i}`} project={project} slot={slot} />
             ))}
           </ul>
         </section>
@@ -528,6 +528,55 @@ function LoopDetail({ project, loop, refreshError }: { project: string; loop: Wo
         </ul>
       </section>
     </div>
+  );
+}
+
+/** Re-render every `ms` so elapsed times stay current between polls. */
+function useNow(ms: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(t);
+  }, [ms]);
+  return now;
+}
+
+/**
+ * One live loop session: its task, declared intent, working or waiting and
+ * for how long, and its latest activity. The task and the session open from it.
+ */
+function SlotRow({ project, slot }: { project: string; slot: WorkLoopSlot }) {
+  const now = useNow(15_000);
+  const active = slot.lastActivity ? relativeTime(slot.lastActivity, now) : "";
+  return (
+    <li className={`digest-row loop-slot slot-${slot.state}`}>
+      <div className="digest-head">
+        {slot.taskId ? (
+          <>
+            <TaskLink project={project} id={slot.taskId} className="task-chip" />
+            {slot.taskTitle && <span className="digest-title">{slot.taskTitle}</span>}
+          </>
+        ) : (
+          <span className="muted">{slot.sessionId ? "Choosing a task…" : "Starting…"}</span>
+        )}
+        <span className="tag loop-slot-state" title={slot.since ? `Since ${new Date(Date.parse(slot.since)).toLocaleString()}` : undefined}>
+          {slotStateText(slot, now)}
+        </span>
+      </div>
+      {slot.intent && <div className="loop-slot-intent">{slot.intent}</div>}
+      {slot.sessionId && (
+        <div className="digest-meta muted small">
+          <Link to={paths.session(project, slot.sessionId)} className="mono" title={`Open session ${slot.sessionId}`}>
+            {shortSessionId(slot.sessionId)}
+          </Link>
+          {active && (
+            <span title={new Date(Date.parse(slot.lastActivity)).toLocaleString()}>
+              {active === "now" ? "active now" : `last active ${active}`}
+            </span>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 
