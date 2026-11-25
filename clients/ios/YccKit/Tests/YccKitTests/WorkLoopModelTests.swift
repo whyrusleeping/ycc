@@ -418,6 +418,49 @@ final class WorkLoopModelTests: XCTestCase {
         for line in unbounded.prefix(2) {
             XCTAssertTrue(line.contains("tokens unbounded") && line.contains("cost unbounded"), line)
         }
+        XCTAssertNotNil(WorkLoopModel.unboundedEnvelopeLine(for: value), "every limit unbounded collapses to one line")
+        value.loopTimeLimitSecs = 3600
+        XCTAssertNil(WorkLoopModel.unboundedEnvelopeLine(for: value), "any limit keeps the full envelope")
+        XCTAssertNil(WorkLoopModel.unboundedEnvelopeLine(for: loop(state: "running")),
+                     "a pre-upgrade snapshot keeps its unavailable line")
+    }
+
+    func testTaskTitleLooksUpDigestGroupsThenSlots() {
+        var l = loop(state: "running")
+        var created = Ycc_V1_WorkLoopDigestTask()
+        created.id = "0007"
+        created.title = "Created task"
+        l.created = [created]
+        var slot = Ycc_V1_WorkLoopSlot()
+        slot.taskID = "0009"
+        slot.taskTitle = "Slot task"
+        l.slots = [slot]
+        XCTAssertEqual(WorkLoopModel.taskTitle("0007", in: l), "Created task")
+        XCTAssertEqual(WorkLoopModel.taskTitle("7", in: l), "Created task", "a short-form focus finds the padded digest id")
+        XCTAssertEqual(WorkLoopModel.taskTitle("0009", in: l), "Slot task")
+        XCTAssertEqual(WorkLoopModel.taskTitle("0001", in: l), "")
+        XCTAssertEqual(WorkLoopModel.taskTitle("", in: l), "")
+    }
+
+    func testAttemptLabelOnlyForRetriedTasks() {
+        func session(_ id: String, focus: String, attempt: Int32) -> Ycc_V1_WorkLoopSession {
+            var s = Ycc_V1_WorkLoopSession()
+            s.sessionID = id
+            s.focus = focus
+            s.attempt = attempt
+            return s
+        }
+        var l = loop(state: "running")
+        l.sessions = [
+            session("s_a", focus: "0007", attempt: 1),
+            session("s_b", focus: "0003", attempt: 1),
+            session("s_c", focus: "7", attempt: 1),
+            session("s_d", focus: "", attempt: 0),
+        ]
+        XCTAssertEqual(WorkLoopModel.attemptLabel(for: l.sessions[0], in: l), "attempt 1")
+        XCTAssertNil(WorkLoopModel.attemptLabel(for: l.sessions[1], in: l), "a task's only attempt is unlabeled")
+        XCTAssertEqual(WorkLoopModel.attemptLabel(for: l.sessions[2], in: l), "attempt 2", "ids compare canonically")
+        XCTAssertNil(WorkLoopModel.attemptLabel(for: l.sessions[3], in: l))
     }
 
     func testWaitingLineNamesEachWaitKind() {

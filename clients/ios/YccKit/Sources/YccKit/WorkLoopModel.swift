@@ -571,6 +571,42 @@ public final class WorkLoopModel {
         return [session, wholeLoop, pricing, attempts]
     }
 
+    /// One line standing in for the envelope when the loop set no token, cost
+    /// or wall-time limit at all; nil when any limit is set or the snapshot
+    /// predates the envelope.
+    public static func unboundedEnvelopeLine(for loop: Ycc_V1_WorkLoopInfo) -> String? {
+        guard loop.resourceEnvelopeCaptured,
+              loop.sessionTokenLimit <= 0, loop.sessionCostLimit <= 0, loop.sessionTimeLimitSecs <= 0,
+              loop.loopTokenLimit <= 0, loop.loopCostLimit <= 0, loop.loopTimeLimitSecs <= 0
+        else { return nil }
+        return "No limits: tokens, cost and wall time unbounded"
+    }
+
+    /// The title of a task the loop knows about (its digest groups and live
+    /// slots), or "" when the snapshot does not name it. Ids compare in
+    /// canonical form, so a focus recorded as "7" finds digest row "0007".
+    public static func taskTitle(_ taskID: String, in loop: Ycc_V1_WorkLoopInfo) -> String {
+        let id = CoordinationFormat.normalizeTaskID(taskID)
+        guard !id.isEmpty else { return "" }
+        let same = { (other: String) in CoordinationFormat.normalizeTaskID(other) == id }
+        let groups = [loop.completed, loop.blocked, loop.inReview, loop.unfinished, loop.created, loop.uncommittedInReview]
+        for group in groups {
+            if let task = group.first(where: { same($0.id) }), !task.title.isEmpty { return task.title }
+        }
+        return loop.slots.first { same($0.taskID) && !$0.taskTitle.isEmpty }?.taskTitle ?? ""
+    }
+
+    /// "attempt N" for a finished session whose task the loop attempted more
+    /// than once; nil for a task's only attempt or a session without a task.
+    public static func attemptLabel(for session: Ycc_V1_WorkLoopSession, in loop: Ycc_V1_WorkLoopInfo) -> String? {
+        let id = CoordinationFormat.normalizeTaskID(session.focus)
+        guard !id.isEmpty else { return nil }
+        let attempts = loop.sessions.filter { CoordinationFormat.normalizeTaskID($0.focus) == id }
+        guard attempts.count > 1 else { return nil }
+        let number = attempts.firstIndex { $0.sessionID == session.sessionID }.map { $0 + 1 } ?? Int(session.attempt)
+        return "attempt \(number)"
+    }
+
     private static func resourceLimitLine(scope: String, tokens: Int64, cost: Double, timeSecs: Int64) -> String {
         let tokenText = tokens > 0 ? "\(UsageModel.formatTokens(tokens)) tokens" : "tokens unbounded"
         let costText = cost > 0 ? String(format: "$%.2f priced cost", cost) : "cost unbounded"

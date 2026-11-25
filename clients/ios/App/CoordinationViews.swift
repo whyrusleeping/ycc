@@ -127,7 +127,6 @@ struct LiveSessionsView: View {
                         .font(.callout)
                 }
             }
-            postSection
             Section {
                 if model.board == nil {
                     HStack { Spacer(); ProgressView(); Spacer() }
@@ -178,6 +177,8 @@ struct LiveSessionsView: View {
             } footer: {
                 Text("Live sessions of this project; those quiet for over an hour without an intent are left out.")
             }
+            // The form comes last so the board opens on what sessions are doing.
+            postSection
         }
         .refreshable {
             Analytics.action("refresh", via: .pull)
