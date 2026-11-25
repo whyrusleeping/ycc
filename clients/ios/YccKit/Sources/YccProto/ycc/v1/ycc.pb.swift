@@ -2045,58 +2045,115 @@ public nonisolated struct Ycc_V1_SessionViewQuestion: Sendable {
   public init() {}
 }
 
-public nonisolated struct Ycc_V1_SessionViewState: Sendable {
+public nonisolated struct Ycc_V1_SessionViewState: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var indexedThroughSeq: Int64 = 0
+  public var indexedThroughSeq: Int64 {
+    get {_storage._indexedThroughSeq}
+    set {_uniqueStorage()._indexedThroughSeq = newValue}
+  }
 
-  public var lastEventTimestamp: String = String()
+  public var lastEventTimestamp: String {
+    get {_storage._lastEventTimestamp}
+    set {_uniqueStorage()._lastEventTimestamp = newValue}
+  }
 
   /// running | paused | idle | error | stopped
-  public var phase: String = String()
+  public var phase: String {
+    get {_storage._phase}
+    set {_uniqueStorage()._phase = newValue}
+  }
 
-  public var errorMessage: String = String()
+  public var errorMessage: String {
+    get {_storage._errorMessage}
+    set {_uniqueStorage()._errorMessage = newValue}
+  }
 
-  public var errorRetryable: Bool = false
+  public var errorRetryable: Bool {
+    get {_storage._errorRetryable}
+    set {_uniqueStorage()._errorRetryable = newValue}
+  }
 
-  public var coordinatorModel: String = String()
+  public var coordinatorModel: String {
+    get {_storage._coordinatorModel}
+    set {_uniqueStorage()._coordinatorModel = newValue}
+  }
 
-  public var contextTokens: Int64 = 0
+  public var contextTokens: Int64 {
+    get {_storage._contextTokens}
+    set {_uniqueStorage()._contextTokens = newValue}
+  }
 
-  public var hasContextTokens_p: Bool = false
+  public var hasContextTokens_p: Bool {
+    get {_storage._hasContextTokens_p}
+    set {_uniqueStorage()._hasContextTokens_p = newValue}
+  }
 
-  public var rolloverAvailable: Bool = false
+  public var rolloverAvailable: Bool {
+    get {_storage._rolloverAvailable}
+    set {_uniqueStorage()._rolloverAvailable = newValue}
+  }
 
-  public var pendingQuestions: [Ycc_V1_SessionViewQuestion] = []
+  public var pendingQuestions: [Ycc_V1_SessionViewQuestion] {
+    get {_storage._pendingQuestions}
+    set {_uniqueStorage()._pendingQuestions = newValue}
+  }
 
-  public var pendingRowID: String = String()
+  public var pendingRowID: String {
+    get {_storage._pendingRowID}
+    set {_uniqueStorage()._pendingRowID = newValue}
+  }
 
   /// True when bounded state contains only a prefix; fetch pending_row_id detail.
-  public var pendingQuestionsTruncated: Bool = false
+  public var pendingQuestionsTruncated: Bool {
+    get {_storage._pendingQuestionsTruncated}
+    set {_uniqueStorage()._pendingQuestionsTruncated = newValue}
+  }
 
   /// acknowledged request; interrupted alone means paused
-  public var pauseRequested: Bool = false
+  public var pauseRequested: Bool {
+    get {_storage._pauseRequested}
+    set {_uniqueStorage()._pauseRequested = newValue}
+  }
 
   /// With phase "idle": the coordinator's last report left delegated work running
   /// that will resume it (session_idle.awaiting_jobs); present as active, not
   /// finished. Cleared by the next coordinator activity/lifecycle event, and
   /// false for sessions that are no longer live.
-  public var awaitingJobs: Bool = false
+  public var awaitingJobs: Bool {
+    get {_storage._awaitingJobs}
+    set {_uniqueStorage()._awaitingJobs = newValue}
+  }
 
   /// Identifies the daemon's current build of this session's index: zero until
   /// the index is first rebuilt (its log was replaced, truncated, or rewritten),
   /// then a new value per rebuild. Rows from another generation are not
   /// comparable; pass it to SubscribeSessionView as index_generation.
-  public var indexGeneration: Int64 = 0
+  public var indexGeneration: Int64 {
+    get {_storage._indexGeneration}
+    set {_uniqueStorage()._indexGeneration = newValue}
+  }
 
   /// A chat session's plan-only guardrail is on (see SetPlanOnly).
-  public var planOnly: Bool = false
+  public var planOnly: Bool {
+    get {_storage._planOnly}
+    set {_uniqueStorage()._planOnly = newValue}
+  }
+
+  /// Distinct backlog task ids the session focused (task_focus), first seen
+  /// first, as in SessionSummary.focus_tasks; at most 32.
+  public var focusTasks: [String] {
+    get {_storage._focusTasks}
+    set {_uniqueStorage()._focusTasks = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct Ycc_V1_GetSessionViewRequest: Sendable {
@@ -2119,36 +2176,30 @@ public nonisolated struct Ycc_V1_GetSessionViewRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Ycc_V1_GetSessionViewResponse: @unchecked Sendable {
+public nonisolated struct Ycc_V1_GetSessionViewResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var state: Ycc_V1_SessionViewState {
-    get {_storage._state ?? Ycc_V1_SessionViewState()}
-    set {_uniqueStorage()._state = newValue}
+    get {_state ?? Ycc_V1_SessionViewState()}
+    set {_state = newValue}
   }
   /// Returns true if `state` has been explicitly set.
-  public var hasState: Bool {_storage._state != nil}
+  public var hasState: Bool {self._state != nil}
   /// Clears the value of `state`. Subsequent reads from it will return its default value.
-  public mutating func clearState() {_uniqueStorage()._state = nil}
+  public mutating func clearState() {self._state = nil}
 
-  public var rows: [Ycc_V1_SessionPresentationRow] {
-    get {_storage._rows}
-    set {_uniqueStorage()._rows = newValue}
-  }
+  public var rows: [Ycc_V1_SessionPresentationRow] = []
 
   /// opaque, empty when all earlier rows are included
-  public var earlierCursor: String {
-    get {_storage._earlierCursor}
-    set {_uniqueStorage()._earlierCursor = newValue}
-  }
+  public var earlierCursor: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _storage = _StorageClass.defaultInstance
+  fileprivate var _state: Ycc_V1_SessionViewState? = nil
 }
 
 public nonisolated struct Ycc_V1_GetSessionViewPageRequest: Sendable {
@@ -2253,56 +2304,45 @@ public nonisolated struct Ycc_V1_SubscribeSessionViewRequest: Sendable {
   fileprivate var _indexGeneration: Int64? = nil
 }
 
-public nonisolated struct Ycc_V1_SessionViewUpdate: @unchecked Sendable {
+public nonisolated struct Ycc_V1_SessionViewUpdate: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var seq: Int64 {
-    get {_storage._seq}
-    set {_uniqueStorage()._seq = newValue}
-  }
+  public var seq: Int64 = 0
 
   public var state: Ycc_V1_SessionViewState {
-    get {_storage._state ?? Ycc_V1_SessionViewState()}
-    set {_uniqueStorage()._state = newValue}
+    get {_state ?? Ycc_V1_SessionViewState()}
+    set {_state = newValue}
   }
   /// Returns true if `state` has been explicitly set.
-  public var hasState: Bool {_storage._state != nil}
+  public var hasState: Bool {self._state != nil}
   /// Clears the value of `state`. Subsequent reads from it will return its default value.
-  public mutating func clearState() {_uniqueStorage()._state = nil}
+  public mutating func clearState() {self._state = nil}
 
-  public var upsertedRows: [Ycc_V1_SessionPresentationRow] {
-    get {_storage._upsertedRows}
-    set {_uniqueStorage()._upsertedRows = newValue}
-  }
+  public var upsertedRows: [Ycc_V1_SessionPresentationRow] = []
 
-  public var deletedRowIds: [String] {
-    get {_storage._deletedRowIds}
-    set {_uniqueStorage()._deletedRowIds = newValue}
-  }
+  public var deletedRowIds: [String] = []
 
   public var transientEvent: Ycc_V1_Event {
-    get {_storage._transientEvent ?? Ycc_V1_Event()}
-    set {_uniqueStorage()._transientEvent = newValue}
+    get {_transientEvent ?? Ycc_V1_Event()}
+    set {_transientEvent = newValue}
   }
   /// Returns true if `transientEvent` has been explicitly set.
-  public var hasTransientEvent: Bool {_storage._transientEvent != nil}
+  public var hasTransientEvent: Bool {self._transientEvent != nil}
   /// Clears the value of `transientEvent`. Subsequent reads from it will return its default value.
-  public mutating func clearTransientEvent() {_uniqueStorage()._transientEvent = nil}
+  public mutating func clearTransientEvent() {self._transientEvent = nil}
 
   /// The index was rebuilt: discard every row and resubscribe after installing
   /// a fresh GetSessionView snapshot. Only sent when index_generation was set.
-  public var indexRebuilt: Bool {
-    get {_storage._indexRebuilt}
-    set {_uniqueStorage()._indexRebuilt = newValue}
-  }
+  public var indexRebuilt: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _storage = _StorageClass.defaultInstance
+  fileprivate var _state: Ycc_V1_SessionViewState? = nil
+  fileprivate var _transientEvent: Ycc_V1_Event? = nil
 }
 
 /// Session activity graph: the coordinator root, one node per subagent actor
@@ -10114,104 +10154,177 @@ nonisolated extension Ycc_V1_SessionViewQuestion: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Ycc_V1_SessionViewState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionViewState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0\u{3}index_generation\0\u{3}plan_only\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}indexed_through_seq\0\u{3}last_event_timestamp\0\u{1}phase\0\u{3}error_message\0\u{3}error_retryable\0\u{3}coordinator_model\0\u{3}context_tokens\0\u{3}has_context_tokens\0\u{3}rollover_available\0\u{3}pending_questions\0\u{3}pending_row_id\0\u{3}pending_questions_truncated\0\u{3}pause_requested\0\u{3}awaiting_jobs\0\u{3}index_generation\0\u{3}plan_only\0\u{3}focus_tasks\0")
+
+  fileprivate class _StorageClass {
+    var _indexedThroughSeq: Int64 = 0
+    var _lastEventTimestamp: String = String()
+    var _phase: String = String()
+    var _errorMessage: String = String()
+    var _errorRetryable: Bool = false
+    var _coordinatorModel: String = String()
+    var _contextTokens: Int64 = 0
+    var _hasContextTokens_p: Bool = false
+    var _rolloverAvailable: Bool = false
+    var _pendingQuestions: [Ycc_V1_SessionViewQuestion] = []
+    var _pendingRowID: String = String()
+    var _pendingQuestionsTruncated: Bool = false
+    var _pauseRequested: Bool = false
+    var _awaitingJobs: Bool = false
+    var _indexGeneration: Int64 = 0
+    var _planOnly: Bool = false
+    var _focusTasks: [String] = []
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _indexedThroughSeq = source._indexedThroughSeq
+      _lastEventTimestamp = source._lastEventTimestamp
+      _phase = source._phase
+      _errorMessage = source._errorMessage
+      _errorRetryable = source._errorRetryable
+      _coordinatorModel = source._coordinatorModel
+      _contextTokens = source._contextTokens
+      _hasContextTokens_p = source._hasContextTokens_p
+      _rolloverAvailable = source._rolloverAvailable
+      _pendingQuestions = source._pendingQuestions
+      _pendingRowID = source._pendingRowID
+      _pendingQuestionsTruncated = source._pendingQuestionsTruncated
+      _pauseRequested = source._pauseRequested
+      _awaitingJobs = source._awaitingJobs
+      _indexGeneration = source._indexGeneration
+      _planOnly = source._planOnly
+      _focusTasks = source._focusTasks
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularInt64Field(value: &self.indexedThroughSeq) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.lastEventTimestamp) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.phase) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.errorMessage) }()
-      case 5: try { try decoder.decodeSingularBoolField(value: &self.errorRetryable) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.coordinatorModel) }()
-      case 7: try { try decoder.decodeSingularInt64Field(value: &self.contextTokens) }()
-      case 8: try { try decoder.decodeSingularBoolField(value: &self.hasContextTokens_p) }()
-      case 9: try { try decoder.decodeSingularBoolField(value: &self.rolloverAvailable) }()
-      case 10: try { try decoder.decodeRepeatedMessageField(value: &self.pendingQuestions) }()
-      case 11: try { try decoder.decodeSingularStringField(value: &self.pendingRowID) }()
-      case 12: try { try decoder.decodeSingularBoolField(value: &self.pendingQuestionsTruncated) }()
-      case 13: try { try decoder.decodeSingularBoolField(value: &self.pauseRequested) }()
-      case 14: try { try decoder.decodeSingularBoolField(value: &self.awaitingJobs) }()
-      case 15: try { try decoder.decodeSingularInt64Field(value: &self.indexGeneration) }()
-      case 16: try { try decoder.decodeSingularBoolField(value: &self.planOnly) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularInt64Field(value: &_storage._indexedThroughSeq) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._lastEventTimestamp) }()
+        case 3: try { try decoder.decodeSingularStringField(value: &_storage._phase) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._errorMessage) }()
+        case 5: try { try decoder.decodeSingularBoolField(value: &_storage._errorRetryable) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._coordinatorModel) }()
+        case 7: try { try decoder.decodeSingularInt64Field(value: &_storage._contextTokens) }()
+        case 8: try { try decoder.decodeSingularBoolField(value: &_storage._hasContextTokens_p) }()
+        case 9: try { try decoder.decodeSingularBoolField(value: &_storage._rolloverAvailable) }()
+        case 10: try { try decoder.decodeRepeatedMessageField(value: &_storage._pendingQuestions) }()
+        case 11: try { try decoder.decodeSingularStringField(value: &_storage._pendingRowID) }()
+        case 12: try { try decoder.decodeSingularBoolField(value: &_storage._pendingQuestionsTruncated) }()
+        case 13: try { try decoder.decodeSingularBoolField(value: &_storage._pauseRequested) }()
+        case 14: try { try decoder.decodeSingularBoolField(value: &_storage._awaitingJobs) }()
+        case 15: try { try decoder.decodeSingularInt64Field(value: &_storage._indexGeneration) }()
+        case 16: try { try decoder.decodeSingularBoolField(value: &_storage._planOnly) }()
+        case 17: try { try decoder.decodeRepeatedStringField(value: &_storage._focusTasks) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.indexedThroughSeq != 0 {
-      try visitor.visitSingularInt64Field(value: self.indexedThroughSeq, fieldNumber: 1)
-    }
-    if !self.lastEventTimestamp.isEmpty {
-      try visitor.visitSingularStringField(value: self.lastEventTimestamp, fieldNumber: 2)
-    }
-    if !self.phase.isEmpty {
-      try visitor.visitSingularStringField(value: self.phase, fieldNumber: 3)
-    }
-    if !self.errorMessage.isEmpty {
-      try visitor.visitSingularStringField(value: self.errorMessage, fieldNumber: 4)
-    }
-    if self.errorRetryable != false {
-      try visitor.visitSingularBoolField(value: self.errorRetryable, fieldNumber: 5)
-    }
-    if !self.coordinatorModel.isEmpty {
-      try visitor.visitSingularStringField(value: self.coordinatorModel, fieldNumber: 6)
-    }
-    if self.contextTokens != 0 {
-      try visitor.visitSingularInt64Field(value: self.contextTokens, fieldNumber: 7)
-    }
-    if self.hasContextTokens_p != false {
-      try visitor.visitSingularBoolField(value: self.hasContextTokens_p, fieldNumber: 8)
-    }
-    if self.rolloverAvailable != false {
-      try visitor.visitSingularBoolField(value: self.rolloverAvailable, fieldNumber: 9)
-    }
-    if !self.pendingQuestions.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.pendingQuestions, fieldNumber: 10)
-    }
-    if !self.pendingRowID.isEmpty {
-      try visitor.visitSingularStringField(value: self.pendingRowID, fieldNumber: 11)
-    }
-    if self.pendingQuestionsTruncated != false {
-      try visitor.visitSingularBoolField(value: self.pendingQuestionsTruncated, fieldNumber: 12)
-    }
-    if self.pauseRequested != false {
-      try visitor.visitSingularBoolField(value: self.pauseRequested, fieldNumber: 13)
-    }
-    if self.awaitingJobs != false {
-      try visitor.visitSingularBoolField(value: self.awaitingJobs, fieldNumber: 14)
-    }
-    if self.indexGeneration != 0 {
-      try visitor.visitSingularInt64Field(value: self.indexGeneration, fieldNumber: 15)
-    }
-    if self.planOnly != false {
-      try visitor.visitSingularBoolField(value: self.planOnly, fieldNumber: 16)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      if _storage._indexedThroughSeq != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._indexedThroughSeq, fieldNumber: 1)
+      }
+      if !_storage._lastEventTimestamp.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._lastEventTimestamp, fieldNumber: 2)
+      }
+      if !_storage._phase.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._phase, fieldNumber: 3)
+      }
+      if !_storage._errorMessage.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._errorMessage, fieldNumber: 4)
+      }
+      if _storage._errorRetryable != false {
+        try visitor.visitSingularBoolField(value: _storage._errorRetryable, fieldNumber: 5)
+      }
+      if !_storage._coordinatorModel.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._coordinatorModel, fieldNumber: 6)
+      }
+      if _storage._contextTokens != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._contextTokens, fieldNumber: 7)
+      }
+      if _storage._hasContextTokens_p != false {
+        try visitor.visitSingularBoolField(value: _storage._hasContextTokens_p, fieldNumber: 8)
+      }
+      if _storage._rolloverAvailable != false {
+        try visitor.visitSingularBoolField(value: _storage._rolloverAvailable, fieldNumber: 9)
+      }
+      if !_storage._pendingQuestions.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._pendingQuestions, fieldNumber: 10)
+      }
+      if !_storage._pendingRowID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._pendingRowID, fieldNumber: 11)
+      }
+      if _storage._pendingQuestionsTruncated != false {
+        try visitor.visitSingularBoolField(value: _storage._pendingQuestionsTruncated, fieldNumber: 12)
+      }
+      if _storage._pauseRequested != false {
+        try visitor.visitSingularBoolField(value: _storage._pauseRequested, fieldNumber: 13)
+      }
+      if _storage._awaitingJobs != false {
+        try visitor.visitSingularBoolField(value: _storage._awaitingJobs, fieldNumber: 14)
+      }
+      if _storage._indexGeneration != 0 {
+        try visitor.visitSingularInt64Field(value: _storage._indexGeneration, fieldNumber: 15)
+      }
+      if _storage._planOnly != false {
+        try visitor.visitSingularBoolField(value: _storage._planOnly, fieldNumber: 16)
+      }
+      if !_storage._focusTasks.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._focusTasks, fieldNumber: 17)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SessionViewState, rhs: Ycc_V1_SessionViewState) -> Bool {
-    if lhs.indexedThroughSeq != rhs.indexedThroughSeq {return false}
-    if lhs.lastEventTimestamp != rhs.lastEventTimestamp {return false}
-    if lhs.phase != rhs.phase {return false}
-    if lhs.errorMessage != rhs.errorMessage {return false}
-    if lhs.errorRetryable != rhs.errorRetryable {return false}
-    if lhs.coordinatorModel != rhs.coordinatorModel {return false}
-    if lhs.contextTokens != rhs.contextTokens {return false}
-    if lhs.hasContextTokens_p != rhs.hasContextTokens_p {return false}
-    if lhs.rolloverAvailable != rhs.rolloverAvailable {return false}
-    if lhs.pendingQuestions != rhs.pendingQuestions {return false}
-    if lhs.pendingRowID != rhs.pendingRowID {return false}
-    if lhs.pendingQuestionsTruncated != rhs.pendingQuestionsTruncated {return false}
-    if lhs.pauseRequested != rhs.pauseRequested {return false}
-    if lhs.awaitingJobs != rhs.awaitingJobs {return false}
-    if lhs.indexGeneration != rhs.indexGeneration {return false}
-    if lhs.planOnly != rhs.planOnly {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._indexedThroughSeq != rhs_storage._indexedThroughSeq {return false}
+        if _storage._lastEventTimestamp != rhs_storage._lastEventTimestamp {return false}
+        if _storage._phase != rhs_storage._phase {return false}
+        if _storage._errorMessage != rhs_storage._errorMessage {return false}
+        if _storage._errorRetryable != rhs_storage._errorRetryable {return false}
+        if _storage._coordinatorModel != rhs_storage._coordinatorModel {return false}
+        if _storage._contextTokens != rhs_storage._contextTokens {return false}
+        if _storage._hasContextTokens_p != rhs_storage._hasContextTokens_p {return false}
+        if _storage._rolloverAvailable != rhs_storage._rolloverAvailable {return false}
+        if _storage._pendingQuestions != rhs_storage._pendingQuestions {return false}
+        if _storage._pendingRowID != rhs_storage._pendingRowID {return false}
+        if _storage._pendingQuestionsTruncated != rhs_storage._pendingQuestionsTruncated {return false}
+        if _storage._pauseRequested != rhs_storage._pauseRequested {return false}
+        if _storage._awaitingJobs != rhs_storage._awaitingJobs {return false}
+        if _storage._indexGeneration != rhs_storage._indexGeneration {return false}
+        if _storage._planOnly != rhs_storage._planOnly {return false}
+        if _storage._focusTasks != rhs_storage._focusTasks {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10266,81 +10379,41 @@ nonisolated extension Ycc_V1_GetSessionViewResponse: SwiftProtobuf.Message, Swif
   public static let protoMessageName: String = _protobuf_package + ".GetSessionViewResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}rows\0\u{3}earlier_cursor\0")
 
-  fileprivate class _StorageClass {
-    var _state: Ycc_V1_SessionViewState? = nil
-    var _rows: [Ycc_V1_SessionPresentationRow] = []
-    var _earlierCursor: String = String()
-
-      // This property is used as the initial default value for new instances of the type.
-      // The type itself is protecting the reference to its storage via CoW semantics.
-      // This will force a copy to be made of this reference when the first mutation occurs;
-      // hence, it is safe to mark this as `nonisolated(unsafe)`.
-      static nonisolated(unsafe) let defaultInstance = _StorageClass()
-
-    private init() {}
-
-    init(copying source: _StorageClass) {
-      _state = source._state
-      _rows = source._rows
-      _earlierCursor = source._earlierCursor
-    }
-  }
-
-  fileprivate mutating func _uniqueStorage() -> _StorageClass {
-    if !isKnownUniquelyReferenced(&_storage) {
-      _storage = _StorageClass(copying: _storage)
-    }
-    return _storage
-  }
-
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    _ = _uniqueStorage()
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      while let fieldNumber = try decoder.nextFieldNumber() {
-        // The use of inline closures is to circumvent an issue where the compiler
-        // allocates stack space for every case branch when no optimizations are
-        // enabled. https://github.com/apple/swift-protobuf/issues/1034
-        switch fieldNumber {
-        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._state) }()
-        case 2: try { try decoder.decodeRepeatedMessageField(value: &_storage._rows) }()
-        case 3: try { try decoder.decodeSingularStringField(value: &_storage._earlierCursor) }()
-        default: break
-        }
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._state) }()
+      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.rows) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.earlierCursor) }()
+      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every if/case branch local when no optimizations
-      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-      // https://github.com/apple/swift-protobuf/issues/1182
-      try { if let v = _storage._state {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-      } }()
-      if !_storage._rows.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._rows, fieldNumber: 2)
-      }
-      if !_storage._earlierCursor.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._earlierCursor, fieldNumber: 3)
-      }
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._state {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if !self.rows.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.rows, fieldNumber: 2)
+    }
+    if !self.earlierCursor.isEmpty {
+      try visitor.visitSingularStringField(value: self.earlierCursor, fieldNumber: 3)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_GetSessionViewResponse, rhs: Ycc_V1_GetSessionViewResponse) -> Bool {
-    if lhs._storage !== rhs._storage {
-      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
-        let _storage = _args.0
-        let rhs_storage = _args.1
-        if _storage._state != rhs_storage._state {return false}
-        if _storage._rows != rhs_storage._rows {return false}
-        if _storage._earlierCursor != rhs_storage._earlierCursor {return false}
-        return true
-      }
-      if !storagesAreEqual {return false}
-    }
+    if lhs._state != rhs._state {return false}
+    if lhs.rows != rhs.rows {return false}
+    if lhs.earlierCursor != rhs.earlierCursor {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -10558,102 +10631,56 @@ nonisolated extension Ycc_V1_SessionViewUpdate: SwiftProtobuf.Message, SwiftProt
   public static let protoMessageName: String = _protobuf_package + ".SessionViewUpdate"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{1}state\0\u{3}upserted_rows\0\u{3}deleted_row_ids\0\u{3}transient_event\0\u{3}index_rebuilt\0")
 
-  fileprivate class _StorageClass {
-    var _seq: Int64 = 0
-    var _state: Ycc_V1_SessionViewState? = nil
-    var _upsertedRows: [Ycc_V1_SessionPresentationRow] = []
-    var _deletedRowIds: [String] = []
-    var _transientEvent: Ycc_V1_Event? = nil
-    var _indexRebuilt: Bool = false
-
-      // This property is used as the initial default value for new instances of the type.
-      // The type itself is protecting the reference to its storage via CoW semantics.
-      // This will force a copy to be made of this reference when the first mutation occurs;
-      // hence, it is safe to mark this as `nonisolated(unsafe)`.
-      static nonisolated(unsafe) let defaultInstance = _StorageClass()
-
-    private init() {}
-
-    init(copying source: _StorageClass) {
-      _seq = source._seq
-      _state = source._state
-      _upsertedRows = source._upsertedRows
-      _deletedRowIds = source._deletedRowIds
-      _transientEvent = source._transientEvent
-      _indexRebuilt = source._indexRebuilt
-    }
-  }
-
-  fileprivate mutating func _uniqueStorage() -> _StorageClass {
-    if !isKnownUniquelyReferenced(&_storage) {
-      _storage = _StorageClass(copying: _storage)
-    }
-    return _storage
-  }
-
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    _ = _uniqueStorage()
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      while let fieldNumber = try decoder.nextFieldNumber() {
-        // The use of inline closures is to circumvent an issue where the compiler
-        // allocates stack space for every case branch when no optimizations are
-        // enabled. https://github.com/apple/swift-protobuf/issues/1034
-        switch fieldNumber {
-        case 1: try { try decoder.decodeSingularInt64Field(value: &_storage._seq) }()
-        case 2: try { try decoder.decodeSingularMessageField(value: &_storage._state) }()
-        case 3: try { try decoder.decodeRepeatedMessageField(value: &_storage._upsertedRows) }()
-        case 4: try { try decoder.decodeRepeatedStringField(value: &_storage._deletedRowIds) }()
-        case 5: try { try decoder.decodeSingularMessageField(value: &_storage._transientEvent) }()
-        case 6: try { try decoder.decodeSingularBoolField(value: &_storage._indexRebuilt) }()
-        default: break
-        }
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.seq) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._state) }()
+      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.upsertedRows) }()
+      case 4: try { try decoder.decodeRepeatedStringField(value: &self.deletedRowIds) }()
+      case 5: try { try decoder.decodeSingularMessageField(value: &self._transientEvent) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.indexRebuilt) }()
+      default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every if/case branch local when no optimizations
-      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-      // https://github.com/apple/swift-protobuf/issues/1182
-      if _storage._seq != 0 {
-        try visitor.visitSingularInt64Field(value: _storage._seq, fieldNumber: 1)
-      }
-      try { if let v = _storage._state {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
-      } }()
-      if !_storage._upsertedRows.isEmpty {
-        try visitor.visitRepeatedMessageField(value: _storage._upsertedRows, fieldNumber: 3)
-      }
-      if !_storage._deletedRowIds.isEmpty {
-        try visitor.visitRepeatedStringField(value: _storage._deletedRowIds, fieldNumber: 4)
-      }
-      try { if let v = _storage._transientEvent {
-        try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
-      } }()
-      if _storage._indexRebuilt != false {
-        try visitor.visitSingularBoolField(value: _storage._indexRebuilt, fieldNumber: 6)
-      }
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.seq != 0 {
+      try visitor.visitSingularInt64Field(value: self.seq, fieldNumber: 1)
+    }
+    try { if let v = self._state {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    if !self.upsertedRows.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.upsertedRows, fieldNumber: 3)
+    }
+    if !self.deletedRowIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.deletedRowIds, fieldNumber: 4)
+    }
+    try { if let v = self._transientEvent {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    } }()
+    if self.indexRebuilt != false {
+      try visitor.visitSingularBoolField(value: self.indexRebuilt, fieldNumber: 6)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Ycc_V1_SessionViewUpdate, rhs: Ycc_V1_SessionViewUpdate) -> Bool {
-    if lhs._storage !== rhs._storage {
-      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
-        let _storage = _args.0
-        let rhs_storage = _args.1
-        if _storage._seq != rhs_storage._seq {return false}
-        if _storage._state != rhs_storage._state {return false}
-        if _storage._upsertedRows != rhs_storage._upsertedRows {return false}
-        if _storage._deletedRowIds != rhs_storage._deletedRowIds {return false}
-        if _storage._transientEvent != rhs_storage._transientEvent {return false}
-        if _storage._indexRebuilt != rhs_storage._indexRebuilt {return false}
-        return true
-      }
-      if !storagesAreEqual {return false}
-    }
+    if lhs.seq != rhs.seq {return false}
+    if lhs._state != rhs._state {return false}
+    if lhs.upsertedRows != rhs.upsertedRows {return false}
+    if lhs.deletedRowIds != rhs.deletedRowIds {return false}
+    if lhs._transientEvent != rhs._transientEvent {return false}
+    if lhs.indexRebuilt != rhs.indexRebuilt {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

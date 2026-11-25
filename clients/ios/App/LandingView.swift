@@ -65,7 +65,9 @@ struct LandingView: View {
     /// field; created with the list model for the same connection.
     @State private var search: SessionSearchModel?
     @State private var searchText = ""
-
+    /// The scoped project's work loop, behind the status line atop its
+    /// session list while the loop is active.
+    @State private var projectLoop: WorkLoopModel?
     // Split into shell → presentations → observers because a single modifier
     // chain of this length makes the type checker give up ("unable to
     // type-check this expression in reasonable time").
@@ -308,6 +310,13 @@ struct LandingView: View {
                 Task { await health?.refresh() }
             }
         }
+        // The scoped project's loop line: polled only while the home list is
+        // on screen and the app is active.
+        .task(id: ProjectLoopKey(
+            project: model?.selectedProject,
+            polling: router.path.isEmpty && scenePhase == .active)) {
+            await pollProjectLoop()
+        }
     }
 
     /// Analytics, auth, search and scope observers.
@@ -549,11 +558,12 @@ struct LandingView: View {
         // but never force-unwrap in a lazily-built destination.
         if let client = app.client {
             switch destination {
-            case let .session(id, project, live, title, focusRow):
+            case let .session(id, project, live, title, focusRow, tasks):
                 SessionView(
                     client: client, project: project, sessionID: id,
                     live: live, title: title,
                     focusRowID: focusRow.isEmpty ? nil : focusRow,
+                    focusTasks: tasks,
                     models: app.dataCache.sessionModels, sessionList: model)
                     // A lateral session → session move (a session id linked
                     // in a coordination notice) swaps this screen in place:
@@ -701,7 +711,8 @@ struct LandingView: View {
                                 id: hit.session.sessionID, project: project,
                                 live: hit.session.live,
                                 title: SessionListModel.displayTitle(for: hit.session),
-                                focusRow: hit.rowID))
+                                focusRow: hit.rowID,
+                                tasks: SessionListModel.taskIDs(for: hit.session)))
                         } label: {
                             MessageHitRow(hit: hit)
                         }
@@ -744,14 +755,25 @@ struct LandingView: View {
                     // A broken model login matters most before any session
                     // exists, so the empty screen keeps the health alert too.
                     .overlay(alignment: .top) {
-                        if let health, !health.alerting.isEmpty {
-                            HealthBanner(alerting: health.alerting) { showHealth = true }
-                                .padding(12)
-                                .background(
-                                    Color(.secondarySystemBackground),
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .padding()
+                        VStack(spacing: 12) {
+                            if let health, !health.alerting.isEmpty {
+                                HealthBanner(alerting: health.alerting) { showHealth = true }
+                                    .padding(12)
+                                    .background(
+                                        Color(.secondarySystemBackground),
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            // A project's first loop runs before it has rows.
+                            if let loop = activeProjectLoop(model) {
+                                ProjectLoopStatusLine(model: loop, standalone: true)
+                                    .buttonStyle(.plain)
+                                    .padding(12)
+                                    .background(
+                                        Color(.secondarySystemBackground),
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
                         }
+                        .padding()
                     }
             }
         }
@@ -759,8 +781,16 @@ struct LandingView: View {
     }
 
     /// Pull-to-refresh reloads the sessions and, alongside, the health checks.
+    /// The scoped project's loop while it is active, for its status line.
+    private func activeProjectLoop(_ model: SessionListModel) -> WorkLoopModel? {
+        guard let projectLoop, projectLoop.state.isActive,
+              projectLoop.project == model.selectedProject else { return nil }
+        return projectLoop
+    }
+
     private func refreshAll(_ model: SessionListModel) async {
         Task { await health?.refresh() }
+        Task { await projectLoop?.refresh() }
         await model.refresh()
     }
 
@@ -771,6 +801,12 @@ struct LandingView: View {
             if let health, !health.alerting.isEmpty {
                 Section {
                     HealthBanner(alerting: health.alerting) { showHealth = true }
+                }
+            }
+            // The scoped project's running loop, one tap from its screen.
+            if let loop = activeProjectLoop(model) {
+                Section {
+                    ProjectLoopStatusLine(model: loop)
                 }
             }
             if let warning = model.partialWarning {
@@ -1041,6 +1077,27 @@ struct LandingView: View {
         }
         model.selectedProject = name
     }
+
+    /// Load the scoped project's loop for its status line, then keep it
+    /// current while the home list is on screen. Leaving the project drops it.
+    private func pollProjectLoop() async {
+        guard let project = model?.selectedProject, !project.isEmpty, let client = app.client else {
+            projectLoop = nil
+            return
+        }
+        if projectLoop?.project != project {
+            projectLoop = WorkLoopModel(source: client, project: project, cache: app.dataCache)
+        }
+        guard router.path.isEmpty, scenePhase == .active, let loop = projectLoop else { return }
+        await ProjectLoopStatusLine.poll(loop)
+    }
+}
+
+/// What the scoped project's loop line polls for: the project, and whether
+/// the home list is on screen with the app active.
+private struct ProjectLoopKey: Equatable {
+    let project: String?
+    let polling: Bool
 }
 
 /// What the message search runs for: the scoped project and the field's text.

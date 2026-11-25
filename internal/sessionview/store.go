@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -34,7 +35,7 @@ import (
 // 7: activity lifecycle and subagent progress rows are indexed for the activity graph.
 // 9: activity progress rows keep each model turn's context estimate.
 // 10: a session_forked marker ends the awaiting_jobs qualifier.
-const schemaVersion = 10
+const schemaVersion = 11
 
 // Bounds are deliberately below Connect's normal message limits. MaxBytes is a
 // budget for the complete encoded response, not merely the row payloads. The
@@ -69,7 +70,11 @@ type State struct {
 	// delegated work that will resume it (session_idle.awaiting_jobs).
 	AwaitingJobs bool `json:"awaiting_jobs,omitempty"`
 	// PlanOnly is a chat session's plan-only guardrail (plan_only_changed).
-	PlanOnly     bool       `json:"plan_only,omitempty"`
+	PlanOnly bool `json:"plan_only,omitempty"`
+	// FocusTasks are the distinct backlog task ids of the session's task_focus
+	// events, first seen first: the listed summary's focus_tasks, without
+	// paging back through the transcript.
+	FocusTasks   []string   `json:"focus_tasks,omitempty"`
 	Pending      []Question `json:"pending,omitempty"`
 	PendingRowID string     `json:"pending_row_id,omitempty"`
 	// Generation identifies the current build of this session's index: zero
@@ -534,6 +539,10 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 		st.PendingRowID = ""
 	case event.PlanOnlyChanged:
 		st.PlanOnly, _ = ev.Data["plan_only"].(bool)
+	case event.TaskFocus:
+		if task := str("task"); task != "" && !slices.Contains(st.FocusTasks, task) {
+			st.FocusTasks = append(st.FocusTasks, task)
+		}
 	}
 
 	if ev.Type == event.SessionIdle {

@@ -65,7 +65,7 @@ extension HomeDestination {
     /// reaching the same place.
     var screenID: String {
         switch self {
-        case .session(let id, _, _, _, _): return "session:\(id)"
+        case .session(let id, _, _, _, _, _): return "session:\(id)"
         case .taskDetail(let project, let taskID, _): return "task:\(project):\(taskID)"
         case .backlog(let project): return "backlog:\(project)"
         case .workLoop(let project): return "workLoop:\(project)"
@@ -94,8 +94,8 @@ extension HomeDestination {
     /// ``screenID``) already on the stack: this destination's parameters, but
     /// never trading useful context for an empty one.
     func merging(into existing: HomeDestination) -> HomeDestination {
-        guard case let .session(id, project, live, title, focusRow) = self,
-              case let .session(_, oldProject, _, oldTitle, _) = existing else {
+        guard case let .session(id, project, live, title, focusRow, tasks) = self,
+              case let .session(_, oldProject, _, oldTitle, _, oldTasks) = existing else {
             return self
         }
         return .session(
@@ -103,6 +103,7 @@ extension HomeDestination {
             project: project.isEmpty ? oldProject : project,
             live: live,
             title: title.isEmpty ? oldTitle : title,
-            focusRow: focusRow)
+            focusRow: focusRow,
+            tasks: tasks.isEmpty ? oldTasks : tasks)
     }
 }

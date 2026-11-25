@@ -762,6 +762,31 @@ func TestPlanOnlyStateAndRows(t *testing.T) {
 	}
 }
 
+// task_focus events fold into state.focus_tasks: distinct, first seen first,
+// whichever transcript page they fall on.
+func TestFocusTasksState(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	store, err := Open(filepath.Join(dir, "view.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	events := []event.Event{
+		ev(1, event.SessionStarted, map[string]any{"mode": "work"}),
+		ev(2, event.TaskFocus, map[string]any{"task": "0466", "title": "A"}),
+		ev(3, event.TaskFocus, map[string]any{"task": ""}),
+		ev(4, event.TaskFocus, map[string]any{"task": "0470"}),
+		ev(5, event.TaskFocus, map[string]any{"task": "0466"}),
+	}
+	writeLog(t, path, events)
+	state, err := store.CatchUp(ctx, "s", path, -1)
+	if err != nil || !reflect.DeepEqual(state.FocusTasks, []string{"0466", "0470"}) {
+		t.Fatalf("state.FocusTasks = %v, %v", state.FocusTasks, err)
+	}
+}
+
 // A fork's marker leaves it idle with no gate, whatever its copied prefix was
 // doing, and keeps the parent link for its row.
 func TestSessionForkedMarkerIdlesAndDropsQuestion(t *testing.T) {

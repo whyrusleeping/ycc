@@ -292,6 +292,12 @@ public struct SessionProjection: Sendable, Equatable {
     /// overflowed; clients should direct the user to a larger model instead of
     /// advertising another identical rollover.
     public private(set) var rolloverAvailable: Bool = true
+    /// Backlog task ids the session focused (`task_focus`), distinct, in the
+    /// order seen. Like the listed summary's `focus_tasks` the set only grows.
+    /// Indexed state carries the whole session's list
+    /// (`SessionViewState.focus_tasks`), so a claim beyond the loaded pages
+    /// or after the session list was loaded still reaches the header.
+    public private(set) var focusTasks: [String] = []
     public init() {}
 
     /// A derived, coarse lifecycle phase for chrome (banners, toolbar). Folded
@@ -386,6 +392,7 @@ public struct SessionProjection: Sendable, Equatable {
         foldPhase(type: event.type, actor: event.actor, data: data)
         foldCoordinatorModel(type: event.type, actor: event.actor, data: data)
         foldCurrentContext(type: event.type, actor: event.actor, data: data)
+        if event.type == "task_focus" { foldFocusTask(data["task"] as? String) }
 
         switch event.type {
         case "user_input":
@@ -778,6 +785,25 @@ public struct SessionProjection: Sendable, Equatable {
         }
     }
 
+    // MARK: - Task focus folding
+
+    private mutating func foldFocusTask(_ raw: String?) {
+        let id = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !id.isEmpty, !focusTasks.contains(id) { focusTasks.append(id) }
+    }
+
+    /// Fold the `task_focus` events an indexed page carries. An earlier page's
+    /// new ids go before the ones already known, keeping first-seen order.
+    private mutating func foldFocusTasks(in rows: [Ycc_V1_SessionPresentationRow], earlier: Bool = false) {
+        var page = SessionProjection()
+        for event in rows.lazy.flatMap(\.events) where event.type == "task_focus" {
+            page.foldFocusTask(Self.parse(event.dataJson)["task"] as? String)
+        }
+        let added = page.focusTasks.filter { !focusTasks.contains($0) }
+        guard !added.isEmpty else { return }
+        focusTasks = earlier ? added + focusTasks : focusTasks + added
+    }
+
     // MARK: - Coordinator model folding
 
     /// Track which logical model is producing the session's top-level turns.
@@ -957,6 +983,7 @@ public struct SessionProjection: Sendable, Equatable {
             subagentEmojiByActor[Self.normalizedActor(row.actor)] = row.actorEmoji
         }
         liveTails.removeAll(keepingCapacity: true)
+        foldFocusTasks(in: rows)
     }
 
     /// Prepend an earlier page with a sequence-aware merge. Versions learned from
@@ -998,6 +1025,7 @@ public struct SessionProjection: Sendable, Equatable {
             }
         }
         durableRows.insert(contentsOf: prepended, at: 0)
+        foldFocusTasks(in: rows, earlier: true)
     }
 
     /// Apply one coalesced, gap-free indexed update. The daemon guarantees that
@@ -1010,6 +1038,7 @@ public struct SessionProjection: Sendable, Equatable {
         guard state.indexedThroughSeq > lastPersistedSeq else { return }
         applyIndexedTailRetirement(state: state, rows: upserts)
         applyIndexedState(state)
+        foldFocusTasks(in: upserts)
         if !deletedIDs.isEmpty {
             let deleted = Set(deletedIDs)
             for id in deletedIDs {
@@ -1111,6 +1140,9 @@ public struct SessionProjection: Sendable, Equatable {
         lastPersistedSeq = state.indexedThroughSeq
         lastEventTimestamp = state.lastEventTimestamp
         coordinatorModel = state.coordinatorModel
+        // The daemon's whole-session list; older daemons send none and the
+        // pages' own task_focus events still contribute.
+        for task in state.focusTasks { foldFocusTask(task) }
         currentContextTokensEstimate = state.hasContextTokens_p ? Int(state.contextTokens) : nil
         rolloverAvailable = state.rolloverAvailable
         pauseRequested = state.pauseRequested

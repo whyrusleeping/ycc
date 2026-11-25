@@ -124,6 +124,8 @@ func TestIndexedSessionViewPagesAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An early claim, outside the first page: state still names it.
+	log.Record("coordinator", event.TaskFocus, map[string]any{"task": "0607", "title": "Header"})
 	for i := 0; i < 8; i++ {
 		log.Record("coordinator", event.ModelTurn, map[string]any{"text": fmt.Sprintf("message-%d", i)})
 	}
@@ -142,8 +144,11 @@ func TestIndexedSessionViewPagesAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Msg.State.IndexedThroughSeq != 10 || len(first.Msg.Rows) != 3 || first.Msg.EarlierCursor == "" {
+	if first.Msg.State.IndexedThroughSeq != 11 || len(first.Msg.Rows) != 3 || first.Msg.EarlierCursor == "" {
 		t.Fatalf("first=%+v", first.Msg)
+	}
+	if got := first.Msg.State.FocusTasks; len(got) != 1 || got[0] != "0607" {
+		t.Fatalf("state focus_tasks=%v", got)
 	}
 	if total := proto.Size(first.Msg); total > 64<<10 {
 		t.Fatalf("encoded response=%d", total)
@@ -188,7 +193,7 @@ func TestIndexedSessionViewPagesAndDetail(t *testing.T) {
 		}
 		cursor = older.Msg.EarlierCursor
 	}
-	if len(seen) != 9 {
+	if len(seen) != 10 { // eight turns, the tool row, and the focus row
 		t.Fatalf("missing indexed rows: %v", seen)
 	}
 }

@@ -1,16 +1,17 @@
 ---
 id: "0607"
-title: 'iOS work-loop screen: Stop in the toolbar, live sessions first, rendered summaries, task-headed rows, loop status on the project home'
-status: todo
+title: 'iOS: work-loop status line on the project home; focused task ids in the session header'
+status: done
 priority: 3
 created: "2026-11-24"
-updated: "2026-11-24"
+updated: "2026-11-25"
 depends_on: []
 spec_refs:
     - spec.md#9.1
 ---
 
 ## Description
+
 Current state: todo. Accepted by the user 2026-11-24 in session s_5a6bb9c25a12632a (UX review of the live wheeler work loop).
 
 Observed 2026-11-24 with the HEAD iOS app on an iPhone 18 Pro simulator against wheeler loop `loop_d074bc58` (11 finished sessions, 5 live, 19 created tasks):
@@ -26,15 +27,16 @@ Observed 2026-11-24 with the HEAD iOS app on an iPhone 18 Pro simulator against 
 
 The live-slot rows and the stop confirmation copy belong to 0605 (parallel-aware work-loop view, web + iOS); the "0 tokens · unpriced" text on created rows belongs to 0604 (work-loop digest headline counts). Both were filed from the same review.
 
+Split 2026-11-25: the `WorkLoopView` items (Stop placement, section order, markdown, sessions-run and created rows) and the Live sessions post form moved to 0611, because 0605 and 0603 were editing those screens in parallel. This task keeps the project-home loop line and the session header task ids.
+
 ## Acceptance criteria
-- Stop is reachable without scrolling while a loop runs (toolbar or pinned), with the existing confirmation.
-- Live sessions come before the resource envelope; the envelope collapses to one line when every limit is unbounded.
-- Session summaries and evidence render markdown.
-- Sessions-run rows lead with the task id and title; the session id is secondary. "attempt 1" is shown only when a task had more than one attempt.
-- Created rows show status.
+
 - A project's home shows a compact loop status line while a loop runs, opening the loop screen.
 - The session header shows the focused task id(s).
-- On Live sessions, notices and sessions come before the post form, or the form is collapsed until asked for.
 - Built and screenshot-checked on the Mac simulator in light and dark; YccKit `swift test` passes for any model change.
 
-## Work log
+## Outcome
+
+A project's iOS home shows a one-line work-loop status (state, slots, progress) while its loop is active, including on an empty project home, opening the loop screen; polled only while the home list is on screen. The session header names focused task ids ("wheeler · 0002 · mock · 7m live"), from the list row, navigation (search hits) and the new daemon SessionViewState.focus_tasks (sessionview fold, schema 11), so claims outside loaded pages show. WorkLoopView items and the Live sessions form split to 0611. Verified: go tests, web-build, Mac build, YccKit 696 tests, sim light/dark. sol accepted (round 5).
+
+Commit: 0607: iOS project-home work-loop line; session header names focused tasks (SessionViewState.focus_tasks); split WorkLoopView items to 0611

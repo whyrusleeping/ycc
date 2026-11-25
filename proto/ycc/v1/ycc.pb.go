@@ -5938,7 +5938,10 @@ type SessionViewState struct {
 	// comparable; pass it to SubscribeSessionView as index_generation.
 	IndexGeneration int64 `protobuf:"varint,15,opt,name=index_generation,json=indexGeneration,proto3" json:"index_generation,omitempty"`
 	// A chat session's plan-only guardrail is on (see SetPlanOnly).
-	PlanOnly      bool `protobuf:"varint,16,opt,name=plan_only,json=planOnly,proto3" json:"plan_only,omitempty"`
+	PlanOnly bool `protobuf:"varint,16,opt,name=plan_only,json=planOnly,proto3" json:"plan_only,omitempty"`
+	// Distinct backlog task ids the session focused (task_focus), first seen
+	// first, as in SessionSummary.focus_tasks; at most 32.
+	FocusTasks    []string `protobuf:"bytes,17,rep,name=focus_tasks,json=focusTasks,proto3" json:"focus_tasks,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6083,6 +6086,13 @@ func (x *SessionViewState) GetPlanOnly() bool {
 		return x.PlanOnly
 	}
 	return false
+}
+
+func (x *SessionViewState) GetFocusTasks() []string {
+	if x != nil {
+		return x.FocusTasks
+	}
+	return nil
 }
 
 type GetSessionViewRequest struct {
@@ -18086,7 +18096,7 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"has_detail\x18\x05 \x01(\bR\thasDetail\"G\n" +
 	"\x13SessionViewQuestion\x12\x16\n" +
 	"\x06prompt\x18\x01 \x01(\tR\x06prompt\x12\x18\n" +
-	"\aoptions\x18\x02 \x03(\tR\aoptions\"\xcf\x05\n" +
+	"\aoptions\x18\x02 \x03(\tR\aoptions\"\xf0\x05\n" +
 	"\x10SessionViewState\x12.\n" +
 	"\x13indexed_through_seq\x18\x01 \x01(\x03R\x11indexedThroughSeq\x120\n" +
 	"\x14last_event_timestamp\x18\x02 \x01(\tR\x12lastEventTimestamp\x12\x14\n" +
@@ -18104,7 +18114,9 @@ const file_ycc_v1_ycc_proto_rawDesc = "" +
 	"\x0fpause_requested\x18\r \x01(\bR\x0epauseRequested\x12#\n" +
 	"\rawaiting_jobs\x18\x0e \x01(\bR\fawaitingJobs\x12)\n" +
 	"\x10index_generation\x18\x0f \x01(\x03R\x0findexGeneration\x12\x1b\n" +
-	"\tplan_only\x18\x10 \x01(\bR\bplanOnly\"\x88\x01\n" +
+	"\tplan_only\x18\x10 \x01(\bR\bplanOnly\x12\x1f\n" +
+	"\vfocus_tasks\x18\x11 \x03(\tR\n" +
+	"focusTasks\"\x88\x01\n" +
 	"\x15GetSessionViewRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1d\n" +
 	"\n" +

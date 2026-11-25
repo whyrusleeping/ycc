@@ -633,6 +633,12 @@ func presentationState(st sessionview.State) *v1.SessionViewState {
 		CoordinatorModel: truncatePresentationString(st.Coordinator, 256), ContextTokens: st.ContextTokens, HasContextTokens: st.HasContext,
 		RolloverAvailable: st.Rollover, PendingRowId: truncatePresentationString(st.PendingRowID, 256), PauseRequested: st.PauseRequested,
 		AwaitingJobs: st.Phase == "idle" && st.AwaitingJobs, IndexGeneration: st.Generation, PlanOnly: st.PlanOnly}
+	for _, task := range st.FocusTasks {
+		if len(out.FocusTasks) == 32 {
+			break
+		}
+		out.FocusTasks = append(out.FocusTasks, truncatePresentationString(task, 64))
+	}
 	pending := st.Pending
 	if len(pending) > 8 {
 		out.PendingQuestionsTruncated = true

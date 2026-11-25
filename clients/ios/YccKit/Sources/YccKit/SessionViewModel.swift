@@ -68,6 +68,7 @@ public final class SessionViewModel {
         public var coordinatorModel = ""
         public var currentContextTokensEstimate: Int?
         public var rolloverAvailable = true
+        public var focusTasks: [String] = []
 
         public init() {}
 
@@ -79,6 +80,7 @@ public final class SessionViewModel {
             coordinatorModel = projection.coordinatorModel
             currentContextTokensEstimate = projection.currentContextTokensEstimate
             rolloverAvailable = projection.rolloverAvailable
+            focusTasks = projection.focusTasks
         }
     }
 
@@ -628,6 +630,9 @@ public final class SessionViewModel {
     /// doing the work" — `ListModels` cannot, since it reports only the daemon's
     /// global role defaults.
     public var coordinatorModel: String { chrome.coordinatorModel }
+    /// Backlog task ids the session focused, folded from the `task_focus`
+    /// events this model has seen (see ``SessionProjection/focusTasks``).
+    public var focusTasks: [String] { chrome.focusTasks }
     /// Approximate prompt size at the coordinator's latest completed model turn,
     /// kept separate from cumulative session usage.
     public var currentContextTokensEstimate: Int? {

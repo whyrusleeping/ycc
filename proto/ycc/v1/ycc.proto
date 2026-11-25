@@ -720,6 +720,9 @@ message SessionViewState {
   int64 index_generation = 15;
   // A chat session's plan-only guardrail is on (see SetPlanOnly).
   bool plan_only = 16;
+  // Distinct backlog task ids the session focused (task_focus), first seen
+  // first, as in SessionSummary.focus_tasks; at most 32.
+  repeated string focus_tasks = 17;
 }
 message GetSessionViewRequest {
   string project = 1;

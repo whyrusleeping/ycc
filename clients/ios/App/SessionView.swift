@@ -195,6 +195,8 @@ struct SessionView: View {
     private let title: String
     /// A row to open at instead of the latest one (a session search hit).
     private let focusRowID: String?
+    /// Focused task ids the navigation source already knew (a search hit).
+    private let focusTasks: [String]
     private static let bottomAnchor = "transcript-bottom"
     private static let transcriptCoordinateSpace = "transcript-scroll"
     private static let dragQuietPeriod: TimeInterval = 0.35
@@ -206,11 +208,12 @@ struct SessionView: View {
     private static let autoLoadEarlierReach: CGFloat = 80
     init(
         client: YccClient, project: String = "", sessionID: String, live: Bool, title: String = "",
-        focusRowID: String? = nil,
+        focusRowID: String? = nil, focusTasks: [String] = [],
         models: SessionModelCache? = nil, sessionList: SessionListModel? = nil
     ) {
         self.client = client
         self.focusRowID = focusRowID
+        self.focusTasks = focusTasks
         self.sessionList = sessionList
         self.project = project
         self.sessionID = sessionID
@@ -1503,11 +1506,21 @@ struct SessionView: View {
                     if !project.isEmpty {
                         Text(project)
                     }
+                    // The task(s) the session focuses, as the web header's
+                    // task chips: "wheeler · 0466 · opus".
+                    if !headerTasks.isEmpty {
+                        if !project.isEmpty { Text("·") }
+                        Text(headerTasks)
+                            .monospacedDigit()
+                            .accessibilityLabel(
+                                (headerTaskIDs.count == 1 ? "task " : "tasks ")
+                                    + headerTaskIDs.joined(separator: ", "))
+                    }
                     // Which model is doing the work. Folded from the event log,
                     // so a per-session model override (or a mid-session role
                     // change) is reflected rather than the global default.
                     if !model.coordinatorModel.isEmpty {
-                        if !project.isEmpty { Text("·") }
+                        if !project.isEmpty || !headerTasks.isEmpty { Text("·") }
                         Text(model.coordinatorModel)
                     }
                     sessionDuration
@@ -1522,6 +1535,23 @@ struct SessionView: View {
         }
     }
 
+    /// The session's focused task ids: its listed summary's, then any the
+    /// navigation source carried or the transcript's `task_focus` events add
+    /// (a claim made after the list loaded, or a session the list has no row for).
+    private var headerTaskIDs: [String] {
+        var ids = sessionList?.session(sessionID: sessionID).map(SessionListModel.taskIDs(for:)) ?? []
+        for id in focusTasks + model.focusTasks where !ids.contains(id) { ids.append(id) }
+        return ids
+    }
+
+    /// The header's task text: "0466", "0466, 0470", or "0466, 0470, +2" as
+    /// in the list rows' chips; VoiceOver reads every id.
+    private var headerTasks: String {
+        let ids = headerTaskIDs
+        let shown = ids.count > 2 ? Array(ids.prefix(2)) + ["+\(ids.count - 2)"] : ids
+        return shown.joined(separator: ", ")
+    }
+
     /// How long the session has been running ("· 2h 05m"), from its listed
     /// summary. Ticks every 30s so a live session's figure keeps up; absent
     /// when the list model has no row for this session.
@@ -1532,7 +1562,9 @@ struct SessionView: View {
             TimelineView(.periodic(from: .now, by: 30)) { context in
                 if let seconds = SessionListModel.sessionDuration(summary, now: context.date) {
                     HStack(spacing: 4) {
-                        if !project.isEmpty || !model.coordinatorModel.isEmpty { Text("·") }
+                        if !project.isEmpty || !headerTasks.isEmpty || !model.coordinatorModel.isEmpty {
+                            Text("·")
+                        }
                         Text(SessionListModel.durationText(seconds))
                             .monospacedDigit()
                     }

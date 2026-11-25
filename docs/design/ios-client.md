@@ -196,7 +196,11 @@ send/start control, avoiding accidental sends while composing multiline messages
 While a live session runs, a stop control sits beside send (which still steers): a tap opens the
 confirmed hard stop, and a long-press also offers the graceful pause at the next checkpoint.
 Daemon work loops remain daemon-owned because iOS background execution cannot reliably host
-long-running work.
+long-running work. While a project's loop is active, that project's home list leads with a one-line
+loop status that opens the loop screen; it polls only while the list is on screen. A session's
+header names its focused task ids between the project and the model, from the session list row
+and the session view state (`SessionViewState.focus_tasks`), so a claim outside the loaded pages
+still shows.
 
 Usage analytics (`docs/design/usage-analytics.md`) are recorded by YccKit's `UsageAnalytics`
 (thread-safe, unit-tested off-device) and wired in `App/Analytics.swift`: the home router's top

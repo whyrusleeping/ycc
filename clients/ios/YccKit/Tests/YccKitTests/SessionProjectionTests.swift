@@ -1117,6 +1117,42 @@ final class SessionProjectionTests: XCTestCase {
         return state
     }
 
+    func testFocusTasksFoldFromStreamedAndIndexedEvents() {
+        var streamed = SessionProjection()
+        streamed.apply([
+            makeEvent(seq: 1, type: "task_focus", dataJson: #"{"task":"0466"}"#),
+            makeEvent(seq: 2, type: "task_focus", dataJson: #"{"task":" 0466 "}"#),
+            makeEvent(seq: 3, type: "task_focus", dataJson: #"{"task":""}"#),
+            makeEvent(seq: 4, type: "task_focus", dataJson: #"{"task":"0470"}"#),
+        ])
+        XCTAssertEqual(streamed.focusTasks, ["0466", "0470"])
+
+        func focusRow(_ seq: Int64, _ task: String) -> Ycc_V1_SessionPresentationRow {
+            indexedRow(
+                id: "seq-\(seq)", position: seq, updated: seq,
+                events: [makeEvent(seq: seq, type: "task_focus", dataJson: #"{"task":"\#(task)"}"#)])
+        }
+        var indexed = SessionProjection()
+        indexed.installIndexed(state: indexedState(10), rows: [focusRow(10, "0470")])
+        XCTAssertEqual(indexed.focusTasks, ["0470"])
+        // A claim streamed after the page loaded.
+        indexed.applyIndexed(state: indexedState(11), upserts: [focusRow(11, "0471")], deletedIDs: [])
+        XCTAssertEqual(indexed.focusTasks, ["0470", "0471"])
+        // An earlier page's focus goes first; repeats are not duplicated.
+        indexed.prependIndexed([focusRow(2, "0466"), focusRow(3, "0470")], indexedThroughSeq: 11)
+        XCTAssertEqual(indexed.focusTasks, ["0466", "0470", "0471"])
+        // A reinstall (reconnect) keeps what was already known.
+        indexed.installIndexed(state: indexedState(12), rows: [focusRow(12, "0472")])
+        XCTAssertEqual(indexed.focusTasks, ["0466", "0470", "0471", "0472"])
+
+        // The daemon's whole-session list covers a claim outside every loaded page.
+        var state = indexedState(20)
+        state.focusTasks = ["0401", "0402"]
+        var fromState = SessionProjection()
+        fromState.installIndexed(state: state, rows: [focusRow(20, "0402")])
+        XCTAssertEqual(fromState.focusTasks, ["0401", "0402"])
+    }
+
     func testIndexedAutomaticQuestionInstallAndUpdateNeverRestoresGate() {
         let ask = makeEvent(seq: 4, type: "question_asked", dataJson: #"{"question":"Proceed?","auto":true}"#)
         let answer = makeEvent(seq: 5, type: "question_answered", dataJson: #"{"answer":"yes","auto":true}"#)
