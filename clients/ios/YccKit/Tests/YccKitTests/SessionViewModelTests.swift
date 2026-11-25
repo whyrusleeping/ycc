@@ -642,6 +642,118 @@ final class SessionViewModelTests: XCTestCase {
         XCTAssertEqual(source.cursors, ["c20"])
     }
 
+    func testSeekOpeningPromptLoadsBackToTheStartAndFindsTheFirstUserMessage() async {
+        func row(_ seq: Int64, _ type: String, _ json: String, actor: String) -> Ycc_V1_SessionPresentationRow {
+            var r = Ycc_V1_SessionPresentationRow()
+            r.id = "seq-\(seq)"
+            r.positionSeq = seq
+            r.updatedSeq = seq
+            r.events = [event(seq, type, json, actor: actor)]
+            return r
+        }
+        func user(_ seq: Int64) -> Ycc_V1_SessionPresentationRow {
+            row(seq, "user_input", #"{"text":"m\#(seq)"}"#, actor: "user")
+        }
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 30
+        view.earlierCursor = "c20"
+        view.rows = [user(30)]
+        var page20 = Ycc_V1_GetSessionViewPageResponse()
+        page20.indexedThroughSeq = 30
+        page20.rows = [user(20)]
+        page20.earlierCursor = "c10"
+        var page10 = Ycc_V1_GetSessionViewPageResponse()
+        page10.indexedThroughSeq = 30
+        // A lifecycle row precedes the opening prompt.
+        page10.rows = [
+            row(5, "session_started", #"{"mode":"chat"}"#, actor: "daemon"),
+            user(10),
+        ]
+        let source = CursorPageSource(view: view, pages: ["c20": page20, "c10": page10])
+        let vm = SessionViewModel(source: source, sessionID: "start", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        XCTAssertFalse(vm.hasLoadedStart)
+
+        // A later user message is already loaded; only the start decides.
+        let seek = await vm.seekOpeningPrompt()
+        XCTAssertEqual(seek.result, .found)
+        XCTAssertEqual(seek.rowID, "seq-10")
+        XCTAssertTrue(vm.hasLoadedStart)
+        XCTAssertEqual(vm.visibleDurableRows.map(\.id), ["seq-5", "seq-10", "seq-20", "seq-30"])
+        XCTAssertEqual(source.cursors, ["c20", "c10"])
+
+        let again = await vm.seekOpeningPrompt()
+        XCTAssertEqual(again.rowID, "seq-10")
+        XCTAssertEqual(source.cursors.count, 2, "a loaded start needs no fetch")
+
+        let cancelled = await vm.seekOpeningPrompt(while: { false })
+        XCTAssertEqual(cancelled.result, .cancelled)
+        XCTAssertNil(cancelled.rowID)
+    }
+
+    func testSeekOpeningPromptFallsBackToTheFirstRowAndReportsPageFailure() async {
+        var system = Ycc_V1_SessionPresentationRow()
+        system.id = "seq-1"
+        system.positionSeq = 1
+        system.updatedSeq = 1
+        system.events = [event(1, "session_started", #"{"mode":"work"}"#, actor: "daemon")]
+        var view = Ycc_V1_GetSessionViewResponse()
+        view.state.indexedThroughSeq = 1
+        view.rows = [system]
+        let vm = SessionViewModel(
+            source: CursorPageSource(view: view, pages: [:]), sessionID: "no-prompt", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        let seek = await vm.seekOpeningPrompt()
+        XCTAssertEqual(seek.result, .found)
+        XCTAssertEqual(seek.rowID, "seq-1")
+
+        func userRow(_ seq: Int64) -> Ycc_V1_SessionPresentationRow {
+            var r = Ycc_V1_SessionPresentationRow()
+            r.id = "seq-\(seq)"
+            r.positionSeq = seq
+            r.updatedSeq = seq
+            r.events = [event(seq, "user_input", #"{"text":"m\#(seq)"}"#, actor: "user")]
+            return r
+        }
+        var paged = Ycc_V1_GetSessionViewResponse()
+        paged.state.indexedThroughSeq = 30
+        paged.earlierCursor = "c20"
+        paged.rows = [userRow(30)]
+        var page20 = Ycc_V1_GetSessionViewPageResponse()
+        page20.indexedThroughSeq = 30
+        page20.rows = [userRow(20)]
+        page20.earlierCursor = "c10"
+        // The page before it fails: nothing is installed, so nothing moves.
+        let failing = CursorPageSource(view: paged, pages: ["c20": page20])
+        let failingVM = SessionViewModel(source: failing, sessionID: "fail", mode: .persisted)
+        failingVM.start()
+        await waitUntil { failingVM.state == .finished }
+        let failed = await failingVM.seekOpeningPrompt()
+        XCTAssertEqual(failed.result, .failed)
+        XCTAssertNil(failed.rowID)
+        XCTAssertNotNil(failingVM.actionError)
+        XCTAssertEqual(failing.cursors, ["c20", "c10"])
+        XCTAssertEqual(failingVM.durableRows.map(\.id), ["seq-30"], "a partial history is not installed")
+        XCTAssertFalse(failingVM.hasLoadedStart)
+    }
+
+    func testSeekOpeningPromptMountsTheStartOfALegacyTranscript() async {
+        let source = MockSource()
+        source.transcript = [event(1, "session_started", #"{"mode":"chat"}"#, actor: "daemon")]
+            + (2...401).map { event(Int64($0), "user_input", #"{"text":"m\#($0)"}"#, actor: "user") }
+        let vm = SessionViewModel(source: source, sessionID: "legacy", mode: .persisted)
+        vm.start()
+        await waitUntil { vm.state == .finished }
+        XCTAssertEqual(vm.visibleDurableRows.count, 200, "only the recent page is mounted")
+        let seek = await vm.seekOpeningPrompt()
+        XCTAssertEqual(seek.result, .found)
+        let first = vm.durableRows.first { if case .userMessage = $0.kind { return true }; return false }
+        XCTAssertEqual(seek.rowID, first?.id)
+        XCTAssertEqual(vm.visibleDurableRows.first?.id, first?.id, "mounted from the opening prompt")
+    }
+
     func testInitialReplayReadinessWaitsForInstalledHistory() async {
         let source = SuspendedTranscriptSource()
         let vm = SessionViewModel(source: source, sessionID: "delayed", mode: .persisted)

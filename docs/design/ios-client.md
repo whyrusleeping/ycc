@@ -200,7 +200,9 @@ long-running work. While a project's loop is active, that project's home list le
 loop status that opens the loop screen; it polls only while the list is on screen. A session's
 header names its focused task ids between the project and the model, from the session list row
 and the session view state (`SessionViewState.focus_tasks`), so a claim outside the loaded pages
-still shows.
+still shows. Tapping the header jumps to the opening prompt its title comes from, paging earlier
+history in first and leaving follow-latest off as other scrollback does; a long-press also offers
+each focused task's detail.
 
 Usage analytics (`docs/design/usage-analytics.md`) are recorded by YccKit's `UsageAnalytics`
 (thread-safe, unit-tested off-device) and wired in `App/Analytics.swift`: the home router's top

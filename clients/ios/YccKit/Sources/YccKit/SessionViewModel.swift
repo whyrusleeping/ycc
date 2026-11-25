@@ -548,7 +548,9 @@ public final class SessionViewModel {
         }
     }
 
-    private func installEarlierPage(_ page: Ycc_V1_GetSessionViewPageResponse, decoded: [TranscriptRow?]) {
+    private func installEarlierPage(
+        _ page: Ycc_V1_GetSessionViewPageResponse, decoded: [TranscriptRow?], prefetchNext: Bool = true
+    ) {
         projection.prependIndexed(
             page.rows, indexedThroughSeq: page.indexedThroughSeq, decoded: decoded)
         earlierCursor = page.earlierCursor
@@ -557,7 +559,94 @@ public final class SessionViewModel {
         transcriptRevision &+= 1
         // The reader is paging back through history (the view loads pages
         // automatically as they scroll up): have the next page ready too.
-        prefetchEarlierPage(followOn: true)
+        if prefetchNext { prefetchEarlierPage(followOn: true) }
+    }
+
+    /// Whether the session's first row is loaded (no earlier page remains).
+    public var hasLoadedStart: Bool {
+        !source.supportsIndexedSessionView || earlierCursor.isEmpty
+    }
+
+    /// Load the rest of the history and report the session's opening prompt:
+    /// its first user message, or its first row when it has none (the
+    /// header's jump to the prompt its title comes from). Unlike
+    /// ``seekRow(_:while:)``, every remaining earlier page is fetched before
+    /// any is installed, so the transcript does not move under the reader
+    /// while pages load, nor at all if one fails or `shouldContinue` turns
+    /// false (``RowSeekResult/cancelled``). `rowID` is set only for
+    /// ``RowSeekResult/found``.
+    public func seekOpeningPrompt(
+        while shouldContinue: () -> Bool = { true }
+    ) async -> (result: RowSeekResult, rowID: String?) {
+        var catchUpWaited: UInt64 = 0
+        while true {
+            if Task.isCancelled || !shouldContinue() { return (.cancelled, nil) }
+            if hasLoadedStart {
+                guard !durableRows.isEmpty else {
+                    // A cached transcript shown again may still be catching up.
+                    if isParked || isCatchingUpAfterResume, catchUpWaited < Self.seekCatchUpWait {
+                        try? await Task.sleep(nanoseconds: Self.seekCatchUpPoll)
+                        catchUpWaited += Self.seekCatchUpPoll
+                        continue
+                    }
+                    return (.missing, nil)
+                }
+                let index = durableRows.firstIndex(where: {
+                    if case .userMessage = $0.kind { return true }
+                    return false
+                }) ?? durableRows.startIndex
+                // The legacy source holds every row and mounts a suffix.
+                if !source.supportsIndexedSessionView, index < earlierRowCount {
+                    earlierRowCount = index
+                }
+                return (.found, durableRows[index].id)
+            }
+            // A parked model is about to be resumed by the screen presenting
+            // it, which would discard pages fetched against the old stream.
+            if isParked, catchUpWaited < Self.seekCatchUpWait {
+                try? await Task.sleep(nanoseconds: Self.seekCatchUpPoll)
+                catchUpWaited += Self.seekCatchUpPoll
+                continue
+            }
+            let cursor = earlierCursor
+            let epoch = snapshotEpoch
+            let generation = streamGeneration
+            var pages: [(page: Ycc_V1_GetSessionViewPageResponse, decoded: [TranscriptRow?])] = []
+            var next = cursor
+            if let prefetched = prefetchedEarlier, prefetched.cursor == cursor, prefetched.epoch == epoch {
+                pages.append((prefetched.page, prefetched.decoded))
+                next = prefetched.page.earlierCursor
+            }
+            do {
+                while !next.isEmpty, generation == streamGeneration {
+                    if Task.isCancelled || !shouldContinue() { return (.cancelled, nil) }
+                    let page = try await source.getSessionViewPage(
+                        project: project, sessionId: sessionID, cursor: next)
+                    let decoded = try await Self.decodeIndexedRows(page.rows)
+                    pages.append((page, decoded))
+                    next = page.earlierCursor
+                }
+            } catch {
+                if Task.isCancelled || !shouldContinue() { return (.cancelled, nil) }
+                // A reconnect, resume, revalidation or other page install
+                // overtook the fetch: start over from the current rows.
+                guard cursor == earlierCursor, epoch == snapshotEpoch,
+                      generation == streamGeneration else { continue }
+                actionError = Self.actionMessage("load earlier", error)
+                return (.failed, nil)
+            }
+            if Task.isCancelled || !shouldContinue() { return (.cancelled, nil) }
+            // Something else installed a page or a snapshot meanwhile: the
+            // fetched run no longer joins the loaded rows, so start over.
+            guard cursor == earlierCursor, epoch == snapshotEpoch,
+                  generation == streamGeneration else { continue }
+            cancelEarlierPrefetch()
+            prefetchedEarlier = nil
+            // All at once, so the view lays the whole history out in one pass.
+            for (page, decoded) in pages {
+                installEarlierPage(page, decoded: decoded, prefetchNext: false)
+            }
+        }
     }
 
     /// Fetch and decode the next earlier page in the background, holding it
