@@ -2669,8 +2669,9 @@ export type ProjectSessionPage = Message<"ycc.v1.ProjectSessionPage"> & {
   nextCursor: string;
 
   /**
-   * Sessions owned by the project's daemon work loop (its recorded sessions
-   * plus the current one), for "via loop" badges.
+   * Sessions owned by the project's daemon work loop (its recorded sessions,
+   * every slot's live session, working or waiting, and the current one), for
+   * "via loop" badges.
    *
    * @generated from field: repeated string loop_session_ids = 5;
    */

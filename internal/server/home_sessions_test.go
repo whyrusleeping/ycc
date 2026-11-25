@@ -121,6 +121,35 @@ func TestListHomeSessionsMatchesPerProjectFanOut(t *testing.T) {
 	}
 }
 
+// A parallel loop's slot sessions, working or waiting, carry the loop badge
+// alongside its recorded and current sessions, each once.
+func TestListHomeSessionsLoopIDsIncludeSlots(t *testing.T) {
+	ws := t.TempDir()
+	writeHistoryLogs(t, ws, "s_done", "s_w1", "s_w2", "s_cur", "s_other")
+	loop := fmt.Sprintf(`{"version":1,"loop_id":"wl_1","project":"p","workspace":%q,"state":"finished",`+
+		`"current_session_id":"s_cur","parallel":3,"started_at":"2026-01-01T00:00:00Z",`+
+		`"sessions":[{"session_id":"s_done"}],"slots":[`+
+		`{"slot":0,"session_id":"s_w1","task":"0001","state":"waiting","since":"2026-01-01T00:01:00Z"},`+
+		`{"slot":1,"session_id":"s_w2","task":"0002","state":"waiting","since":"2026-01-01T00:02:00Z"},`+
+		`{"slot":2,"session_id":"s_done","state":"waiting","since":"2026-01-01T00:03:00Z"}]}`, ws)
+	if err := os.WriteFile(filepath.Join(ws, ".ycc", "workloop.json"), []byte(loop), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr := session.NewManager(config.NewRegistry(nil), ws)
+	defer mgr.ReclaimAll()
+	resp, err := New(mgr).ListHomeSessions(context.Background(), connect.NewRequest(&v1.ListHomeSessionsRequest{}))
+	if err != nil || len(resp.Msg.Pages) != 1 {
+		t.Fatalf("home: %+v %v", resp, err)
+	}
+	if wl, err := mgr.GetWorkLoop(resp.Msg.Pages[0].Project); err != nil || wl == nil || len(wl.Slots) != 3 {
+		t.Fatalf("restored loop %+v %v", wl, err)
+	}
+	got := resp.Msg.Pages[0].LoopSessionIds
+	if want := []string{"s_done", "s_w1", "s_w2", "s_cur"}; !slices.Equal(got, want) {
+		t.Fatalf("loop ids %v, want %v", got, want)
+	}
+}
+
 // No registered project is an empty home, not an error.
 func TestListHomeSessionsWithoutProjects(t *testing.T) {
 	mgr := session.NewManager(config.NewRegistry(nil), "")

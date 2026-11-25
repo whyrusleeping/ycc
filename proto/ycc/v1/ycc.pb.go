@@ -4969,8 +4969,9 @@ type ProjectSessionPage struct {
 	Pinned   []*SessionSummary `protobuf:"bytes,3,rep,name=pinned,proto3" json:"pinned,omitempty"`
 	// Continue with ListSessionHistory(project, cursor); empty when complete.
 	NextCursor string `protobuf:"bytes,4,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
-	// Sessions owned by the project's daemon work loop (its recorded sessions
-	// plus the current one), for "via loop" badges.
+	// Sessions owned by the project's daemon work loop (its recorded sessions,
+	// every slot's live session, working or waiting, and the current one), for
+	// "via loop" badges.
 	LoopSessionIds []string `protobuf:"bytes,5,rep,name=loop_session_ids,json=loopSessionIds,proto3" json:"loop_session_ids,omitempty"`
 	// Non-empty when this project's history could not be listed; the other
 	// fields are then empty. Other projects are unaffected.

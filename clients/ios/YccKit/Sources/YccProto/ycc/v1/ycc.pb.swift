@@ -1767,8 +1767,9 @@ public nonisolated struct Ycc_V1_ProjectSessionPage: Sendable {
   /// Continue with ListSessionHistory(project, cursor); empty when complete.
   public var nextCursor: String = String()
 
-  /// Sessions owned by the project's daemon work loop (its recorded sessions
-  /// plus the current one), for "via loop" badges.
+  /// Sessions owned by the project's daemon work loop (its recorded sessions,
+  /// every slot's live session, working or waiting, and the current one), for
+  /// "via loop" badges.
   public var loopSessionIds: [String] = []
 
   /// Non-empty when this project's history could not be listed; the other

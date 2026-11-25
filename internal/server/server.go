@@ -430,6 +430,10 @@ func (s *Server) homePage(name string, limit int) *v1.ProjectSessionPage {
 		for _, sn := range wl.Sessions {
 			add(sn.SessionID)
 		}
+		// Every slot's live session, working or waiting (parallel loops).
+		for _, slot := range wl.Slots {
+			add(slot.SessionID)
+		}
 		add(wl.CurrentSessionID)
 	}
 	return page
