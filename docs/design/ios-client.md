@@ -129,14 +129,18 @@ marked; the checked-out branch is requested as HEAD. A row pushes the commit's d
 (`GetCommitDiff`), and a commit a ycc session recorded carries task and session badges that push
 the task or the session, so Back returns to the history.
 
+Backlog cards and rows and task detail badge a task a live session holds (`held_by` on
+`ListBacklog` and `GetTask`, re-read every 20 seconds, whatever session coordination is set to),
+naming the holder (a work-loop session by its short id) and opening it on tap; a held task shows
+no Ready mark.
+
 While a project's session coordination is on (spec §7.3; switched per project under Settings ›
 Session coordination through `SetProjectSettings`), its overflow menu also opens **Live sessions**
 (`ListProjectNotices`, re-read every 20 seconds): each live session with its activity, intent, the
 tasks it holds (or held earlier) and the paths it has changed but not committed, and the active
 notices with subject, poster, age and expiry. A form posts a notice (text, optional subject, 30
 minutes to 24 hours), and a swipe clears one with an optional reason; turned off meanwhile, the
-screen says so and points to Settings. Backlog cards and rows and task detail badge a task a live
-session holds, the badge opening that session; the question sheet lists the active notices below
+screen says so and points to Settings. The question sheet lists the active notices below
 the answers; and `coordination_notice` events (overlap notices and board digests) render as their
 own folded transcript rows. Session ids in notice text link to their session through the deep-link
 router, which resolves the project. Notice and intent text is untrusted peer content, shown as plain

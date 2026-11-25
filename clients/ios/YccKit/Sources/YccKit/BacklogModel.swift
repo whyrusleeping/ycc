@@ -366,6 +366,7 @@ public final class BacklogModel {
                 tasks[current].priority = detail.priority
                 tasks[current].ready = detail.ready
                 tasks[current].blockedBy = detail.blockedBy
+                if detail.hasHeldBy { tasks[current].heldBy = detail.heldBy } else { tasks[current].clearHeldBy() }
                 storeCache()
             }
             updateError = nil
@@ -469,6 +470,7 @@ public final class BacklogModel {
         summary.dependsOn = detail.dependsOn
         summary.ready = detail.ready
         summary.blockedBy = detail.blockedBy
+        if detail.hasHeldBy { summary.heldBy = detail.heldBy }
         return summary
     }
 

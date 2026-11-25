@@ -1,14 +1,14 @@
-// Session coordination helpers: held-task lookup, session-id linking in notice
+// Session coordination helpers: held-task holder labels, session-id linking in notice
 // text, coordination_notice rows, and notice expiry labels.
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { ProjectLiveSessionSchema, ProjectNoticeSchema } from "../src/gen/ycc/v1/ycc_pb";
+import { ProjectNoticeSchema, TaskHolderSchema } from "../src/gen/ycc/v1/ycc_pb";
 import {
   activityBadge,
   coordinationHeadline,
   coordinationVariant,
   expiresIn,
-  heldTasks,
+  holderLabel,
   posterLabel,
   splitSessionIds,
 } from "../src/features/coordination/model";
@@ -18,16 +18,11 @@ import { rowSearchText } from "../src/features/session/search";
 const A = "s_0123456789abcdef";
 const B = "s_fedcba9876543210";
 
-describe("heldTasks", () => {
-  it("maps held focus tasks (normalized) to their live sessions, ignoring earlier focus", () => {
-    const held = heldTasks([
-      create(ProjectLiveSessionSchema, { sessionId: A, focusTasks: ["583", "0584"], held: true }),
-      create(ProjectLiveSessionSchema, { sessionId: B, focusTasks: ["0583"], held: true }),
-      create(ProjectLiveSessionSchema, { sessionId: "s_1111111111111111", focusTasks: ["0590"], held: false }),
-    ]);
-    expect([...held.keys()].sort()).toEqual(["0583", "0584"]);
-    expect(held.get("0583")?.map((s) => s.sessionId)).toEqual([A, B]);
-    expect(held.has("0590")).toBe(false);
+describe("holderLabel", () => {
+  it("names a holder: loop sessions by short id, others by title", () => {
+    expect(holderLabel(create(TaskHolderSchema, { sessionId: A, loop: true, title: "Work on the backlog" }))).toBe("loop s_01234567…");
+    expect(holderLabel(create(TaskHolderSchema, { sessionId: A, title: "Fix the login flow" }))).toBe("Fix the login flow");
+    expect(holderLabel(create(TaskHolderSchema, { sessionId: A }))).toBe("s_01234567…");
   });
 });
 

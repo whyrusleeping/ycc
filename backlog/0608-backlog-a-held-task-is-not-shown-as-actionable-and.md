@@ -1,10 +1,10 @@
 ---
 id: "0608"
 title: 'Backlog: a held task is not shown as actionable, and the Held chip names the holder (web + iOS)'
-status: todo
+status: done
 priority: 3
 created: "2026-11-24"
-updated: "2026-11-24"
+updated: "2026-11-25"
 depends_on: []
 spec_refs:
     - spec.md#9.1
@@ -23,4 +23,8 @@ Observed 2026-11-24 on wheeler's backlog during loop `loop_d074bc58`: in the web
 - If the backlog response lacks the holder's session id, the proto change and its test are part of this task.
 - Web typecheck and vitest pass; the iOS change is built and screenshot-checked on the Mac simulator.
 
-## Work log
+## Outcome
+
+ListBacklog rows and GetTask/UpdateTask details carry `held_by` (TaskHolder: session id, title, loop flag) from the work loop's heldTasks rule (exact workspace, independent of session coordination) via Manager.TaskHolders. Web and iOS backlog table/list, board and task detail read it: a held task shows "held" instead of actionable/Ready, is left out of "Actionable only" and the actionable sort, and its chip names the holder ("loop s_…" for loop sessions, else the title) and opens it; the open web pane follows the polled backlog row. The notice-board-derived holder lookups were removed. Tests: TestTaskHoldersFollowHeldTasksRule, e2e TestE2EBacklogHeldBy (claim, hold while waiting, release), web backlog/coordination/heldTaskDetail tests; Mac xcodebuild and YccKit tests pass, simulator and Playwright screenshots checked. Bindings and internal/web/dist regenerated from HEAD + 0608 only.
+
+Commit: 0608: backlog held_by — held tasks are not actionable and the Held chip names its holder (web + iOS)

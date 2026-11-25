@@ -3,11 +3,11 @@
 // and the held-task badge (backlog board, table and task detail).
 import { Link } from "react-router";
 import type { ReactNode } from "react";
-import type { ProjectLiveSession, ProjectNotice } from "../../gen/ycc/v1/ycc_pb";
+import type { ProjectNotice, TaskHolder } from "../../gen/ycc/v1/ycc_pb";
 import { paths } from "../../app/paths";
 import { relativeTime } from "../sessions/feed";
 import { useProjectNotices } from "../../api/queries";
-import { expiresIn, heldTasks, posterLabel, shortSessionId, splitSessionIds } from "./model";
+import { expiresIn, holderLabel, posterLabel, shortSessionId, splitSessionIds } from "./model";
 
 /** Plain text whose session ids link to that session. */
 export function SessionLinkedText({ project, text }: { project: string; text: string }) {
@@ -126,28 +126,14 @@ export function QuestionNotices({ project }: { project: string }) {
   );
 }
 
-/** Live sessions holding each task of the project (empty while coordination is off). */
-export function useHeldTasks(project: string): Map<string, ProjectLiveSession[]> {
-  const board = useProjectNotices(project);
-  const sessions = board.data?.sessions;
-  // heldTasks is cheap; the backlog re-renders on its own poll anyway.
-  return sessions ? heldTasks(sessions) : EMPTY;
-}
-
-const EMPTY = new Map<string, ProjectLiveSession[]>();
-
-/** "held" badge linking to the live session working on the task. */
-export function HeldBadge({ project, holders }: { project: string; holders: readonly ProjectLiveSession[] | undefined }) {
-  if (!holders || holders.length === 0) return null;
-  const first = holders[0];
-  const more = holders.length - 1;
+/** "held by <holder>" badge linking to the live session working on the task. */
+export function HeldBadge({ project, holder }: { project: string; holder: TaskHolder | undefined }) {
+  if (!holder) return null;
   const title =
-    `Held by live session ${first.sessionId}` +
-    (first.title ? ` (${first.title})` : "") +
-    (more > 0 ? ` and ${more} more` : "");
+    `Held by ${holder.loop ? "work-loop session" : "live session"} ${holder.sessionId}` + (holder.title ? ` (${holder.title})` : "");
   return (
     <Link
-      to={paths.session(project, first.sessionId)}
+      to={paths.session(project, holder.sessionId)}
       className="held-badge"
       title={title}
       aria-label={title}
@@ -155,7 +141,7 @@ export function HeldBadge({ project, holders }: { project: string; holders: read
       data-track="backlog.open_holder"
       onClick={(e) => e.stopPropagation()}
     >
-      held{more > 0 ? ` +${more}` : ""}
+      held by <span className="held-by">{holderLabel(holder)}</span>
     </Link>
   );
 }

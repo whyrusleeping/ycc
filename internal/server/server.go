@@ -1676,15 +1676,31 @@ func (s *Server) ListBacklog(_ context.Context, req *connect.Request[v1.ListBack
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	byID := docs.StatusByID(tasks)
+	held := s.taskHolders(req.Msg.Project)
 	var out []*v1.BacklogTaskSummary
 	for _, t := range tasks {
 		blocking := docs.BlockingDeps(t, byID)
 		out = append(out, &v1.BacklogTaskSummary{
 			Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
-			DependsOn: t.DependsOn, Ready: len(blocking) == 0, BlockedBy: blocking,
+			DependsOn: t.DependsOn, Ready: len(blocking) == 0, BlockedBy: blocking, HeldBy: held[t.ID],
 		})
 	}
 	return connect.NewResponse(&v1.ListBacklogResponse{Tasks: out}), nil
+}
+
+// taskHolders maps the project's held tasks to their holding live session
+// (spec §9.1); nil when the holders cannot be read, which the backlog read
+// that resolved the project already rules out.
+func (s *Server) taskHolders(project string) map[string]*v1.TaskHolder {
+	held, err := s.mgr.TaskHolders(project)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]*v1.TaskHolder, len(held))
+	for id, h := range held {
+		out[id] = &v1.TaskHolder{SessionId: h.SessionID, Title: h.Title, Loop: h.Loop}
+	}
+	return out
 }
 
 // GetTask returns one task's full detail for the backlog browser.
@@ -1706,6 +1722,7 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
 		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+		HeldBy: s.taskHolders(req.Msg.Project)[t.ID],
 	}}), nil
 }
 
@@ -1827,6 +1844,7 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
 		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+		HeldBy: s.taskHolders(req.Msg.Project)[t.ID],
 	}}), nil
 }
 

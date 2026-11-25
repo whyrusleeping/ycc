@@ -122,6 +122,7 @@ public final class TaskDetailModel {
         detail.priority = summary.priority
         detail.ready = summary.ready
         detail.blockedBy = summary.blockedBy
+        if summary.hasHeldBy { detail.heldBy = summary.heldBy } else { detail.clearHeldBy() }
     }
 
     private func install(_ detail: Ycc_V1_TaskDetail) {

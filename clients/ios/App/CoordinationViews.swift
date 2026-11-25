@@ -574,41 +574,32 @@ struct QuestionNoticesSection: View {
 
 // MARK: - Held badge
 
-/// Marks a task a live session is working on; taps open that session (a
-/// menu picks one when several hold it).
+/// Marks a task a live session is working on, naming that session; a tap
+/// opens it.
 struct HeldBadge: View {
-    let holders: [Ycc_V1_ProjectLiveSession]
-    let open: (Ycc_V1_ProjectLiveSession) -> Void
+    let holder: Ycc_V1_TaskHolder?
+    let open: (Ycc_V1_TaskHolder) -> Void
 
     var body: some View {
-        if let first = holders.first {
-            if holders.count == 1 {
-                Button { open(first) } label: { label }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Held by \(CoordinationFormat.title(first))")
-                    .accessibilityHint("Opens the session")
-            } else {
-                Menu {
-                    ForEach(holders, id: \.sessionID) { session in
-                        Button(CoordinationFormat.title(session)) { open(session) }
-                    }
-                } label: { label }
-                    .accessibilityLabel("Held by \(holders.count) sessions")
+        if let holder {
+            Button { open(holder) } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "person.badge.clock")
+                    Text("Held by " + CoordinationFormat.holderLabel(holder))
+                        .lineLimit(1)
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Theme.info)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Theme.info.opacity(0.12), in: Capsule())
+                .fixedSize()
             }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Held by \(holder.loop ? "work-loop session" : "session") "
+                + (holder.title.isEmpty ? holder.sessionID : holder.title))
+            .accessibilityHint("Opens the session")
         }
-    }
-
-    private var label: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "person.badge.clock")
-            Text(holders.count > 1 ? "Held ×\(holders.count)" : "Held")
-        }
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(Theme.info)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Theme.info.opacity(0.12), in: Capsule())
-        .fixedSize()
     }
 }
 

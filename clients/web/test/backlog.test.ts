@@ -6,6 +6,7 @@ import {
   BacklogTaskSummarySchema,
   GetBacklogGroomResponseSchema,
   TaskDetailSchema,
+  TaskHolderSchema,
   type BacklogTaskSummary,
 } from "../src/gen/ycc/v1/ycc_pb";
 import {
@@ -66,6 +67,19 @@ describe("backlog model", () => {
     expect(label("0006")).toMatchObject({ kind: "gated", label: "on hold" });
     expect(label("0010")).toMatchObject({ kind: "gated", label: "awaiting review" });
     expect(label("0001")).toMatchObject({ kind: "none", label: "" });
+  });
+
+  it("shows a held actionable task as held and leaves it out of actionable filters and ranks", () => {
+    const heldBy = create(TaskHolderSchema, { sessionId: "s_0123456789abcdef", loop: true });
+    const rows = tasks.map((x) => (x.id === "0002" || x.id === "0004" ? t(x.id, { ...x, heldBy }) : x));
+    const row = (id: string) => rows.find((x) => x.id === id)!;
+    expect(isActionable(row("0002"))).toBe(false);
+    expect(readiness(row("0002"))).toMatchObject({ kind: "held", label: "held" });
+    // Only otherwise-actionable work turns held; gates and blockers still show.
+    expect(readiness(row("0004"))).toMatchObject({ kind: "blocked" });
+    expect(ids(filterTasks(rows, { ...DEFAULT_FILTER, actionableOnly: true }))).toEqual(["0005"]);
+    expect(boardColumns(rows, { ...DEFAULT_FILTER, actionableOnly: true }).flatMap((c) => ids(c.tasks))).toEqual(["0005"]);
+    expect(ids(sortTasks(filterTasks(rows, DEFAULT_FILTER), { key: "actionable", dir: "asc" }))[0]).toBe("0005");
   });
 
   it("annotates blocked rows but never done ones", () => {

@@ -3907,7 +3907,8 @@ kbd {
   color: var(--warn);
 }
 
-.flag.gated {
+.flag.gated,
+.flag.held {
   color: var(--fg-muted);
 }
 
@@ -8778,6 +8779,15 @@ a.held-task {
 
 .held-badge:hover {
   background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+/* The holder's name: a long session title ends in an ellipsis. */
+.held-badge .held-by {
+  display: inline-block;
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
 .board-card-top .held-badge {

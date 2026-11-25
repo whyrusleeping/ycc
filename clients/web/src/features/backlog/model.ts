@@ -8,6 +8,7 @@ import {
   type BacklogTaskSummary,
   type GetBacklogGroomResponse,
   type TaskDetail,
+  type TaskHolder,
 } from "../../gen/ycc/v1/ycc_pb";
 import { relativeTime } from "../sessions/feed";
 
@@ -56,29 +57,48 @@ export function statusRank(status: string): number {
   }
 }
 
-/**
- * Work-loop eligibility (docs.EligibilityFor): accepted active work — todo or
- * in progress — whose dependencies are all done. Proposed tasks never are.
- */
-export function isActionable(t: { status: string; ready: boolean }): boolean {
+/** Task fields readiness reads (a backlog row or a task's detail). */
+interface ReadinessFields {
+  status: string;
+  ready: boolean;
+  blockedBy: readonly string[];
+  /** The live session holding the task; the work loop skips it (spec §9.1). */
+  heldBy?: TaskHolder;
+}
+
+/** Accepted active work — todo or in progress — whose dependencies are all done. */
+function eligible(t: { status: string; ready: boolean }): boolean {
   const s = t.status.toLowerCase();
   return t.ready && (s === "todo" || s === "in_progress");
 }
 
+/**
+ * Work-loop eligibility (docs.EligibilityFor plus the held-task rule): accepted
+ * active work whose dependencies are all done and that no live session holds.
+ * Proposed tasks never are.
+ */
+export function isActionable(t: { status: string; ready: boolean; heldBy?: TaskHolder }): boolean {
+  return eligible(t) && !t.heldBy;
+}
+
 export interface Readiness {
-  kind: "actionable" | "blocked" | "gated" | "none";
+  kind: "actionable" | "held" | "blocked" | "gated" | "none";
   label: string;
   title: string;
 }
 
 /**
- * The Ready column: actionable work, dependency-blocked work, or the
- * lifecycle gate that keeps a dependency-ready task from being picked.
+ * The Ready column: actionable work, work a live session holds,
+ * dependency-blocked work, or the lifecycle gate that keeps a
+ * dependency-ready task from being picked.
  */
-export function readiness(t: { status: string; ready: boolean; blockedBy: readonly string[] }): Readiness {
+export function readiness(t: ReadinessFields): Readiness {
   const s = t.status.toLowerCase();
   if (s === "done") return { kind: "none", label: "", title: "" };
-  if (isActionable(t)) {
+  if (eligible(t)) {
+    if (t.heldBy) {
+      return { kind: "held", label: "held", title: "A live session is working on it: the work loop leaves it to that session" };
+    }
     return { kind: "actionable", label: "✓ actionable", title: "Accepted work whose dependencies are done: the work loop may pick it" };
   }
   if (!t.ready) {
@@ -157,7 +177,7 @@ function primary(a: BacklogTaskSummary, b: BacklogTaskSummary, key: SortKey): nu
     case "deps":
       return a.blockedBy.length - b.blockedBy.length || a.dependsOn.length - b.dependsOn.length;
     case "actionable":
-      // Actionable first, then ready-but-gated, then blocked.
+      // Actionable first, then held or ready-but-gated, then blocked.
       return rankActionable(a) - rankActionable(b);
   }
 }
@@ -194,7 +214,7 @@ export interface BacklogFilter {
   statuses: TaskStatus[];
   /** Include done tasks when no status filter names done explicitly. */
   showDone: boolean;
-  /** Only work-loop eligible tasks. */
+  /** Only work-loop eligible tasks (not held by a live session). */
   actionableOnly: boolean;
 }
 
@@ -406,6 +426,7 @@ export function summaryFromDetail(d: TaskDetail): BacklogTaskSummary {
     dependsOn: [...d.dependsOn],
     ready: d.ready,
     blockedBy: [...d.blockedBy],
+    heldBy: d.heldBy,
   });
 }
 

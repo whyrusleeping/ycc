@@ -110,16 +110,6 @@ public final class CoordinationModel {
     public var notices: [Ycc_V1_ProjectNotice] { board?.notices ?? [] }
     public var sessions: [Ycc_V1_ProjectLiveSession] { board?.sessions ?? [] }
 
-    /// Live sessions holding each task, keyed by normalized task id.
-    public var heldTasks: [String: [Ycc_V1_ProjectLiveSession]] {
-        CoordinationFormat.heldTasks(sessions)
-    }
-
-    /// The live sessions holding `taskID` (any id spelling), in board order.
-    public func holders(of taskID: String) -> [Ycc_V1_ProjectLiveSession] {
-        heldTasks[CoordinationFormat.normalizeTaskID(taskID)] ?? []
-    }
-
     /// Re-read the board (and, with `reloadsProjects`, whether coordination
     /// is on; off, the board holds only lease holders).
     public func refresh() async {
@@ -303,22 +293,6 @@ public enum CoordinationFormat {
         return digits.count >= 4 ? digits : String(repeating: "0", count: 4 - digits.count) + digits
     }
 
-    /// Live sessions holding each task (normalized id); a session's earlier
-    /// focus (`held` false) does not count.
-    public static func heldTasks(
-        _ sessions: [Ycc_V1_ProjectLiveSession]
-    ) -> [String: [Ycc_V1_ProjectLiveSession]] {
-        var out: [String: [Ycc_V1_ProjectLiveSession]] = [:]
-        for session in sessions where session.held {
-            for raw in session.focusTasks {
-                let id = normalizeTaskID(raw)
-                if out[id]?.contains(where: { $0.sessionID == session.sessionID }) == true { continue }
-                out[id, default: []].append(session)
-            }
-        }
-        return out
-    }
-
     /// A run of plain text or a session id inside notice text.
     public enum TextPart: Equatable, Sendable {
         case text(String)
@@ -428,6 +402,18 @@ public enum CoordinationFormat {
     /// The display name of a live session: its title, else its id.
     public static func title(_ session: Ycc_V1_ProjectLiveSession) -> String {
         session.title.isEmpty ? session.sessionID : session.title
+    }
+
+    /// Who holds a task, for the Held badge: a work-loop session by its short
+    /// id (loop sessions share one opening prompt, so their titles do not tell
+    /// them apart), any other session by its title cut to `limit` characters,
+    /// else its short id.
+    public static func holderLabel(_ holder: Ycc_V1_TaskHolder, limit: Int = 24) -> String {
+        if holder.loop { return "loop " + shortSessionID(holder.sessionID) }
+        let title = holder.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty { return shortSessionID(holder.sessionID) }
+        guard title.count > limit else { return title }
+        return title.prefix(max(limit - 1, 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     /// The last path component of a worktree path.

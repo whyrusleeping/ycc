@@ -115,14 +115,19 @@ final class CoordinationFormatTests: XCTestCase {
         XCTAssertEqual(CoordinationFormat.normalizeTaskID("abc-1"), "abc-1")
     }
 
-    func testHeldTasksSkipsEarlierFocusAndDuplicates() {
-        let a = live("s_a", focus: ["584", "0584", "0583"])
-        let b = live("s_b", focus: ["0584"], held: false)
-        let c = live("s_c", focus: ["0584"])
-        let held = CoordinationFormat.heldTasks([a, b, c])
-        XCTAssertEqual(held["0584"]?.map(\.sessionID), ["s_a", "s_c"])
-        XCTAssertEqual(held["0583"]?.map(\.sessionID), ["s_a"])
-        XCTAssertNil(held["584"])
+    func testHolderLabel() {
+        var loop = Ycc_V1_TaskHolder()
+        loop.sessionID = "s_0123456789abcdef"
+        loop.title = "Work on the backlog as one session"
+        loop.loop = true
+        XCTAssertEqual(CoordinationFormat.holderLabel(loop), "loop s_01234567…")
+        var chat = Ycc_V1_TaskHolder()
+        chat.sessionID = "s_0123456789abcdef"
+        XCTAssertEqual(CoordinationFormat.holderLabel(chat), "s_01234567…")
+        chat.title = "Fix login"
+        XCTAssertEqual(CoordinationFormat.holderLabel(chat), "Fix login")
+        chat.title = "Add per-session subagent model choices"
+        XCTAssertEqual(CoordinationFormat.holderLabel(chat, limit: 12), "Add per-ses…")
     }
 
     func testSplitSessionIDs() {
@@ -186,7 +191,7 @@ final class CoordinationModelTests: XCTestCase {
         XCTAssertTrue(page.notices.isEmpty)
         let badges = CoordinationModel(source: source, project: "app")
         await badges.refresh()
-        XCTAssertTrue(badges.holders(of: "0001").isEmpty)
+        XCTAssertTrue(badges.sessions.isEmpty)
     }
 
     func testOffProjectListsLeaseHolders() async {
@@ -203,8 +208,6 @@ final class CoordinationModelTests: XCTestCase {
         XCTAssertEqual(page.isOn, false)
         XCTAssertEqual(page.sessions.map(\.sessionID), ["s_a"])
         XCTAssertEqual(page.sessions.first?.leases.map(\.name), ["deploy-staging"])
-        // Lease holders never become held-task badges while coordination is off.
-        XCTAssertTrue(page.holders(of: "0001").isEmpty)
     }
 
     func testOnProjectLoadsBoardAndHolders() async {
@@ -217,14 +220,14 @@ final class CoordinationModelTests: XCTestCase {
         await page.refresh()
         XCTAssertEqual(page.isOn, true)
         XCTAssertEqual(page.notices.map(\.id), ["n1"])
-        XCTAssertEqual(page.holders(of: "0001").map(\.sessionID), ["s_a"])
+        XCTAssertEqual(page.sessions.map(\.sessionID), ["s_a"])
         // The page's fresh project list warms the shared cache.
         XCTAssertEqual(cache.projects?.map(\.name), ["app"])
         // Badge surfaces only read the board.
         let badges = CoordinationModel(source: source, project: "app", cache: cache)
         XCTAssertEqual(badges.isOn, true)
         await badges.refresh()
-        XCTAssertEqual(badges.holders(of: "0001").map(\.sessionID), ["s_a"])
+        XCTAssertEqual(badges.sessions.map(\.sessionID), ["s_a"])
         XCTAssertEqual(source.listProjectsCalls, 1)
         XCTAssertEqual(source.listNoticesCalls, 2)
     }
@@ -237,11 +240,11 @@ final class CoordinationModelTests: XCTestCase {
         cache.updateProjects(source.projects)
         let badges = CoordinationModel(source: source, project: "app", cache: cache)
         await badges.refresh()
-        XCTAssertTrue(badges.holders(of: "0001").isEmpty)
+        XCTAssertTrue(badges.sessions.isEmpty)
         // Another client turns it on; the shared list still says off.
         source.projects = [project("app", coordination: true)]
         await badges.refresh()
-        XCTAssertEqual(badges.holders(of: "0001").map(\.sessionID), ["s_a"])
+        XCTAssertEqual(badges.sessions.map(\.sessionID), ["s_a"])
     }
 
     func testTurningOffDropsTheBoard() async {
@@ -253,7 +256,7 @@ final class CoordinationModelTests: XCTestCase {
         let model = CoordinationModel(source: source, project: "app", cache: cache)
         XCTAssertEqual(model.isOn, true)
         await model.refresh()
-        XCTAssertFalse(model.holders(of: "0001").isEmpty)
+        XCTAssertFalse(model.sessions.isEmpty)
 
         // Settings turns it off: the shared list changes, and the next
         // refresh hides what was loaded before.
@@ -264,7 +267,7 @@ final class CoordinationModelTests: XCTestCase {
         await model.refresh()
         XCTAssertEqual(model.isOn, false)
         XCTAssertTrue(model.sessions.isEmpty)
-        XCTAssertTrue(model.holders(of: "0001").isEmpty)
+        XCTAssertTrue(model.sessions.isEmpty)
     }
 
     func testReloadingModelNoticesTurnedOffElsewhere() async {

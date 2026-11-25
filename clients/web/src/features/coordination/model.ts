@@ -1,25 +1,8 @@
 // Session coordination (spec §7.3): pure helpers over ListProjectNotices for
-// the live sessions view, held-task badges, the question screen's notices,
+// the live sessions view, held-task badge labels, the question screen's notices,
 // and coordination_notice transcript rows. Notice and intent text is
 // untrusted peer content: it renders as plain text, never markup.
-import type { ProjectLiveSession, ProjectNotice } from "../../gen/ycc/v1/ycc_pb";
-import { normalizeTaskId } from "../backlog/model";
-
-/** Live sessions holding each task (normalized id), in the response's order. */
-export function heldTasks(sessions: readonly ProjectLiveSession[]): Map<string, ProjectLiveSession[]> {
-  const out = new Map<string, ProjectLiveSession[]>();
-  for (const s of sessions) {
-    if (!s.held) continue;
-    for (const raw of s.focusTasks) {
-      const id = normalizeTaskId(raw);
-      const list = out.get(id);
-      if (list) {
-        if (!list.includes(s)) list.push(s);
-      } else out.set(id, [s]);
-    }
-  }
-  return out;
-}
+import type { ProjectNotice, TaskHolder } from "../../gen/ycc/v1/ycc_pb";
 
 /** Daemon session ids ("s_" and 16 hex digits) as they appear in notice text. */
 const SESSION_ID = /\bs_[0-9a-f]{16}\b/g;
@@ -105,4 +88,14 @@ export function activityBadge(activity: string): { label: string; tone: string }
 /** A short form of a session id for compact links ("s_1a2b3c4d…"). */
 export function shortSessionId(id: string): string {
   return id.length > 10 ? `${id.slice(0, 10)}…` : id;
+}
+
+/**
+ * Who holds a task, for the held badge: a work-loop session by its short id
+ * (loop sessions share one opening prompt, so their titles do not tell them
+ * apart), any other session by its title, else its short id.
+ */
+export function holderLabel(s: TaskHolder): string {
+  if (s.loop) return `loop ${shortSessionId(s.sessionId)}`;
+  return s.title.trim() || shortSessionId(s.sessionId);
 }

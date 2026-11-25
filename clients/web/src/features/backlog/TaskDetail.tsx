@@ -43,7 +43,7 @@ import {
   type TaskDraft,
 } from "./draft";
 import { PriorityBadge, StatusPill, TaskLink } from "./parts";
-import { HeldBadge, useHeldTasks } from "../coordination/parts";
+import { HeldBadge } from "../coordination/parts";
 
 function handleAuth(err: unknown): boolean {
   if (isUnauthorized(err)) {
@@ -95,7 +95,6 @@ export function TaskDetailView({
   const [deleting, setDeleting] = useState(false);
 
   const summary = backlog.data?.find((t) => t.id === id);
-  const holders = useHeldTasks(project).get(id);
   const task = q.data;
   const inInspector = variant === "inspector";
 
@@ -239,7 +238,10 @@ export function TaskDetailView({
   }
   const status = header.status.toLowerCase();
   const blocked = blockedLabel(header);
-  const actionable = isActionable(header);
+  // The holder follows the polled backlog row (as the table and board do), so
+  // an open pane notices a claim or release; the detail's covers a row not yet loaded.
+  const holder = summary ? summary.heldBy : header.heldBy;
+  const actionable = isActionable({ status: header.status, ready: header.ready, heldBy: holder });
 
   return (
     <div className={`task-detail variant-${variant}`}>
@@ -290,7 +292,7 @@ export function TaskDetailView({
       <div className="task-status-row">
         <StatusPill status={header.status} />
         <PriorityBadge priority={header.priority} />
-        <HeldBadge project={project} holders={holders} />
+        <HeldBadge project={project} holder={holder} />
         {actionable && (
           <span className="tag ok" title="Accepted work whose dependencies are done: the work loop may pick it">
             actionable

@@ -3431,6 +3431,37 @@ public nonisolated struct Ycc_V1_BacklogTaskSummary: Sendable {
   /// ids of not-yet-done dependencies
   public var blockedBy: [String] = []
 
+  /// The live session in the project's workspace holding the task (whatever
+  /// session coordination is set to); the work loop skips it (spec §9.1).
+  public var heldBy: Ycc_V1_TaskHolder {
+    get {_heldBy ?? Ycc_V1_TaskHolder()}
+    set {_heldBy = newValue}
+  }
+  /// Returns true if `heldBy` has been explicitly set.
+  public var hasHeldBy: Bool {self._heldBy != nil}
+  /// Clears the value of `heldBy`. Subsequent reads from it will return its default value.
+  public mutating func clearHeldBy() {self._heldBy = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _heldBy: Ycc_V1_TaskHolder? = nil
+}
+
+/// A live session holding a backlog task.
+public nonisolated struct Ycc_V1_TaskHolder: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sessionID: String = String()
+
+  public var title: String = String()
+
+  /// started by the project's daemon work loop
+  public var loop: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3494,9 +3525,21 @@ public nonisolated struct Ycc_V1_TaskDetail: Sendable {
   /// absolute task file path; lets a local client open it in $EDITOR
   public var path: String = String()
 
+  /// as BacklogTaskSummary.held_by
+  public var heldBy: Ycc_V1_TaskHolder {
+    get {_heldBy ?? Ycc_V1_TaskHolder()}
+    set {_heldBy = newValue}
+  }
+  /// Returns true if `heldBy` has been explicitly set.
+  public var hasHeldBy: Bool {self._heldBy != nil}
+  /// Clears the value of `heldBy`. Subsequent reads from it will return its default value.
+  public mutating func clearHeldBy() {self._heldBy = nil}
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _heldBy: Ycc_V1_TaskHolder? = nil
 }
 
 public nonisolated struct Ycc_V1_GetTaskResponse: Sendable {
@@ -12548,7 +12591,7 @@ nonisolated extension Ycc_V1_ListBacklogRequest: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Ycc_V1_BacklogTaskSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BacklogTaskSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}status\0\u{1}priority\0\u{3}depends_on\0\u{1}ready\0\u{3}blocked_by\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}status\0\u{1}priority\0\u{3}depends_on\0\u{1}ready\0\u{3}blocked_by\0\u{3}held_by\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12563,12 +12606,17 @@ nonisolated extension Ycc_V1_BacklogTaskSummary: SwiftProtobuf.Message, SwiftPro
       case 5: try { try decoder.decodeRepeatedStringField(value: &self.dependsOn) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.ready) }()
       case 7: try { try decoder.decodeRepeatedStringField(value: &self.blockedBy) }()
+      case 8: try { try decoder.decodeSingularMessageField(value: &self._heldBy) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.id.isEmpty {
       try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
@@ -12590,6 +12638,9 @@ nonisolated extension Ycc_V1_BacklogTaskSummary: SwiftProtobuf.Message, SwiftPro
     if !self.blockedBy.isEmpty {
       try visitor.visitRepeatedStringField(value: self.blockedBy, fieldNumber: 7)
     }
+    try { if let v = self._heldBy {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12601,6 +12652,47 @@ nonisolated extension Ycc_V1_BacklogTaskSummary: SwiftProtobuf.Message, SwiftPro
     if lhs.dependsOn != rhs.dependsOn {return false}
     if lhs.ready != rhs.ready {return false}
     if lhs.blockedBy != rhs.blockedBy {return false}
+    if lhs._heldBy != rhs._heldBy {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_TaskHolder: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TaskHolder"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}title\0\u{1}loop\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.sessionID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.title) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.loop) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.sessionID.isEmpty {
+      try visitor.visitSingularStringField(value: self.sessionID, fieldNumber: 1)
+    }
+    if !self.title.isEmpty {
+      try visitor.visitSingularStringField(value: self.title, fieldNumber: 2)
+    }
+    if self.loop != false {
+      try visitor.visitSingularBoolField(value: self.loop, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_TaskHolder, rhs: Ycc_V1_TaskHolder) -> Bool {
+    if lhs.sessionID != rhs.sessionID {return false}
+    if lhs.title != rhs.title {return false}
+    if lhs.loop != rhs.loop {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -12673,7 +12765,7 @@ nonisolated extension Ycc_V1_GetTaskRequest: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Ycc_V1_TaskDetail: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TaskDetail"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}status\0\u{1}priority\0\u{3}depends_on\0\u{3}spec_refs\0\u{1}created\0\u{1}updated\0\u{1}body\0\u{1}ready\0\u{3}blocked_by\0\u{1}path\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}title\0\u{1}status\0\u{1}priority\0\u{3}depends_on\0\u{3}spec_refs\0\u{1}created\0\u{1}updated\0\u{1}body\0\u{1}ready\0\u{3}blocked_by\0\u{1}path\0\u{3}held_by\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -12693,12 +12785,17 @@ nonisolated extension Ycc_V1_TaskDetail: SwiftProtobuf.Message, SwiftProtobuf._M
       case 10: try { try decoder.decodeSingularBoolField(value: &self.ready) }()
       case 11: try { try decoder.decodeRepeatedStringField(value: &self.blockedBy) }()
       case 12: try { try decoder.decodeSingularStringField(value: &self.path) }()
+      case 13: try { try decoder.decodeSingularMessageField(value: &self._heldBy) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.id.isEmpty {
       try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
     }
@@ -12735,6 +12832,9 @@ nonisolated extension Ycc_V1_TaskDetail: SwiftProtobuf.Message, SwiftProtobuf._M
     if !self.path.isEmpty {
       try visitor.visitSingularStringField(value: self.path, fieldNumber: 12)
     }
+    try { if let v = self._heldBy {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -12751,6 +12851,7 @@ nonisolated extension Ycc_V1_TaskDetail: SwiftProtobuf.Message, SwiftProtobuf._M
     if lhs.ready != rhs.ready {return false}
     if lhs.blockedBy != rhs.blockedBy {return false}
     if lhs.path != rhs.path {return false}
+    if lhs._heldBy != rhs._heldBy {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
