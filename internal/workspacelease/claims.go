@@ -24,8 +24,8 @@ import (
 // While shells of two scopes overlap in one worktree, a path that changed has
 // no single likely writer, so it gets an ambiguous claim for each of them
 // (RecordAmbiguous): it is in both scopes' changesets, listed as ambiguous,
-// until one of them writes it definitely, releases it (Disown), or a commit
-// retires it.
+// until one of them writes it definitely, releases it (Disown), a commit
+// retires it, or its session ends (EndScope).
 
 // claimSet maps a scope to its claim on a path.
 type claimSet map[string]claimEntry
@@ -40,6 +40,10 @@ type claimEntry struct {
 	since     time.Time
 	overlap   bool
 	ambiguous bool
+	// incarnation is the session instance an ambiguous claim was recorded
+	// for (RecordShellAmbiguous); 0 when unknown. It is not persisted, since
+	// token ids restart with the daemon.
+	incarnation uint64
 }
 
 // Claim is one scope's claim on a path, for display. Gen is the claim
@@ -267,9 +271,22 @@ func (s *Service) RecordOverlaps(root string, paths []string, token *Token) {
 // claim is kept; its overlap claim becomes ambiguous. A scope that released
 // the path (Disown) keeps it released: an ambiguous change is no evidence that
 // it wrote. A later file-tool or lone shell write (RecordWrite, RecordWrites)
-// makes the writer's claim ordinary and clears its release.
+// makes the writer's claim ordinary and clears its release. The session
+// instance of these claims is unknown (RecordShellAmbiguous).
 func (s *Service) RecordAmbiguous(root string, paths, scopes []string) {
-	if s == nil || len(paths) == 0 || len(scopes) == 0 {
+	claimants := make([]ShellClaimant, 0, len(scopes))
+	for _, scope := range scopes {
+		claimants = append(claimants, ShellClaimant{Scope: scope})
+	}
+	s.RecordShellAmbiguous(root, paths, claimants)
+}
+
+// RecordShellAmbiguous is RecordAmbiguous for shell claimants, each with the
+// session instance whose shell ran: an instance that has ended (EndScope)
+// gets no claim, and the claim records the instance so that only its end
+// releases it.
+func (s *Service) RecordShellAmbiguous(root string, paths []string, claimants []ShellClaimant) {
+	if s == nil || len(paths) == 0 || len(claimants) == 0 {
 		return
 	}
 	key, err := Canonical(root)
@@ -283,8 +300,9 @@ func (s *Service) RecordAmbiguous(root string, paths, scopes []string) {
 	now := time.Now()
 	for _, rel := range paths {
 		set := byPath[rel]
-		for _, scope := range scopes {
-			if scope == "" {
+		for _, claimant := range claimants {
+			scope := claimant.Scope
+			if scope == "" || (claimant.Incarnation != 0 && s.ended[claimant.Incarnation]) {
 				continue
 			}
 			if _, released := s.disowned[key][rel][scope]; released {
@@ -297,7 +315,10 @@ func (s *Service) RecordAmbiguous(root string, paths, scopes []string) {
 			if !ok {
 				entry.since = now
 			}
-			entry.gen, entry.overlap, entry.ambiguous = s.gen, false, true
+			if entry.ambiguous && entry.incarnation > claimant.Incarnation {
+				claimant.Incarnation = entry.incarnation // keep the later instance's claim
+			}
+			entry.gen, entry.overlap, entry.ambiguous, entry.incarnation = s.gen, false, true, claimant.Incarnation
 			if set == nil {
 				set = make(claimSet)
 				byPath[rel] = set
@@ -618,6 +639,48 @@ func (s *Service) ReleaseAll(root string, paths []string, before uint64) {
 	}
 	if changed {
 		s.saveLocked(key)
+	}
+}
+
+// EndScope ends the session instance token works for (Token.Incarnation): it
+// drops the scope's ambiguous claims recorded for that instance or of unknown
+// instance (RecordAmbiguous, or loaded from disk) in the worktrees containing
+// roots (loading their persisted claims) and in every other loaded worktree,
+// and records no new ones for the instance (a shell that overlapped it may
+// still be attributing). Its definite claims stay, so its uncommitted work
+// remains attributed to it. Another instance of the scope (the session
+// reopened) keeps the claims recorded for it.
+func (s *Service) EndScope(token *Token, roots ...string) {
+	if s == nil || token.Scope() == "" || token.Incarnation() == 0 {
+		return
+	}
+	scope, incarnation := token.scope, token.incarnation
+	var keys []string
+	for _, root := range roots {
+		if key, err := Canonical(root); err == nil {
+			keys = append(keys, key)
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended[incarnation] = true
+	for _, key := range keys {
+		s.claimsLocked(key)
+	}
+	for key, byPath := range s.claims {
+		changed := false
+		for path, set := range byPath {
+			if entry, ok := set[scope]; ok && entry.ambiguous && (entry.incarnation == 0 || entry.incarnation == incarnation) {
+				delete(set, scope)
+				changed = true
+			}
+			if len(set) == 0 {
+				delete(byPath, path)
+			}
+		}
+		if changed {
+			s.saveLocked(key)
+		}
 	}
 }
 

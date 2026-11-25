@@ -174,7 +174,9 @@ func releaseClaim(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "release_claim",
 		Description: "Release this session's claim on files it did not write: a path a shell recorded as ambiguous (another " +
-			"session's shell ran at the same time), or one wrongly attributed to this session. Released paths leave this " +
+			"session's shell ran at the same time), or one wrongly attributed to this session, such as a file another session's " +
+			"background job wrote during this session's short command (release it before that job exits, and the job's exit " +
+			"claims it for its session). Released paths leave this " +
 			"session's changeset until it writes them again or they are committed or reverted, so another session's claim " +
 			"no longer refuses its commit. Do not release files this session changed.",
 		Params: tools.Obj(map[string]any{

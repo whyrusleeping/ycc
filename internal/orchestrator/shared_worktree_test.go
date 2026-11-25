@@ -13,6 +13,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
 )
 
@@ -602,5 +603,41 @@ func TestLoneShellSettlesAmbiguousClaimBesideDefiniteOne(t *testing.T) {
 	claims := ownership.ClaimDetails(ws)["gen.txt"]
 	if len(claims) != 2 || !claims[0].Definite() || !claims[1].Definite() {
 		t.Fatalf("gen.txt claims = %+v", claims)
+	}
+}
+
+// Another session's background job does not count against a short foreground
+// command: the command's write is definite for its session, and that
+// session's commit takes it while the job still runs.
+func TestShortShellWriteCommitsWhileAnotherSessionsJobRuns(t *testing.T) {
+	ws, ownership, open := claimLifecycleFixture(t)
+	_, a := open("s_a")
+	repo, err := git.Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dB := finalizationDeps(ws, repo, repo.OpenBaseline(), docs.NewStore(ws), &captureRec{})
+	dB.Asker, dB.Ownership, dB.CoordinatorToken = noopAsker{}, ownership, ownership.NewScopedToken("s_b", "s_b")
+	dB.Jobs = jobs.NewRegistry()
+	defer dB.Jobs.KillAll()
+	regB, _ := BuildMode("chat", dB, false)
+	started, stop := filepath.Join(ws, ".git", "job-started"), filepath.Join(ws, ".git", "job-stop")
+	defer os.WriteFile(stop, nil, 0o644)
+	if got := regB.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "Bash",
+		Arguments: `{"command":"touch .git/job-started; while test ! -f .git/job-stop; do sleep 0.02; done","run_in_background":true}`}}); got.IsError {
+		t.Fatalf("B background Bash: %s", got.Content)
+	}
+	waitFor(t, func() bool { _, err := os.Stat(started); return err == nil })
+	if got := a("Bash", `{"command":"echo a > a.txt"}`); got.IsError || strings.Contains(got.Content, "[shell attribution]") {
+		t.Fatalf("A Bash: %s", got.Content)
+	}
+	if claims := ownership.ClaimDetails(ws)["a.txt"]; len(claims) != 1 || claims[0].Scope != "s_a" || !claims[0].Definite() {
+		t.Fatalf("a.txt claims = %+v", claims)
+	}
+	if got := a("commit", `{"message":"A work"}`); got.IsError {
+		t.Fatalf("A's commit while B's job runs: %s", got.Content)
+	}
+	if got := gitRun(t, ws, "show", "--name-only", "--format=", "HEAD"); strings.TrimSpace(got) != "a.txt" {
+		t.Fatalf("A committed %q", got)
 	}
 }

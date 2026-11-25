@@ -32,7 +32,13 @@ type Service struct {
 	// scope's Disown of the path (claims.go).
 	disowned map[string]map[string]map[string]uint64
 	// shells are the running shell commands of scoped sessions (shells.go).
-	shells    map[*ShellRun]struct{}
+	shells map[*ShellRun]struct{}
+	// ended are the session incarnations (Token.Incarnation) that ended
+	// (EndScope): no new ambiguous claim is recorded for them.
+	ended map[uint64]bool
+	// attrMu serializes shell attributions (AttributeShell); it is taken
+	// before mu.
+	attrMu    sync.Mutex
 	gen       uint64
 	persist   bool
 	onOverlap func(Overlap) string
@@ -61,6 +67,18 @@ type Token struct {
 	id      uint64
 	owner   string
 	scope   string
+	// incarnation identifies the session instance the token works for: the
+	// id of its NewScopedToken, shared by Child tokens (0 when unscoped).
+	incarnation uint64
+}
+
+// Incarnation returns the id of the session instance t works for, 0 for an
+// unscoped or nil token.
+func (t *Token) Incarnation() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.incarnation
 }
 
 // Lease is one retained claim on a worktree. Release is idempotent.
@@ -88,6 +106,7 @@ func NewService() *Service {
 		claims:   make(map[string]map[string]claimSet),
 		disowned: make(map[string]map[string]map[string]uint64),
 		shells:   make(map[*ShellRun]struct{}),
+		ended:    make(map[uint64]bool),
 	}
 }
 
@@ -98,23 +117,30 @@ func (s *Service) NewToken(owner string) *Token {
 }
 
 // NewScopedToken creates an execution token whose writes are attributed to
-// scope (normally a session id).
+// scope (normally a session id, whose session starts or reopens).
 func (s *Service) NewScopedToken(scope, owner string) *Token {
 	if s == nil {
 		return nil
 	}
-	return &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope}
+	token := &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope}
+	if scope != "" {
+		token.incarnation = token.id
+	}
+	return token
 }
 
 // Child creates a distinct token for a delegated worker that shares parent's
 // attribution scope.
 func (s *Service) Child(parent *Token, owner string) *Token {
-	scope := ""
+	scope, incarnation := "", uint64(0)
 	if parent != nil {
-		scope = parent.scope
+		scope, incarnation = parent.scope, parent.incarnation
 		owner = parent.owner + " / " + owner
 	}
-	return s.NewScopedToken(scope, owner)
+	if s == nil {
+		return nil
+	}
+	return &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope, incarnation: incarnation}
 }
 
 // Owner returns the token's human-readable owner.

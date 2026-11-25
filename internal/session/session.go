@@ -3976,8 +3976,20 @@ func (m *Manager) Stop(id string) error {
 	// Write claims deliberately outlive the session: its uncommitted edits stay
 	// attributed to it (other sessions' changesets exclude and list them) until
 	// they are committed or reverted, and reopening the session resumes them.
+	// Only its ambiguous claims go (endClaims).
+	m.endClaims(s)
 	m.waitWorkstreamWatcher(id)
 	return nil
+}
+
+// endClaims releases an ended session's ambiguous claims (spec §7.3): its shell
+// only possibly wrote those paths, and no coordinator is left to release them.
+// Call it after the session's jobs have exited. A replacement that reopened
+// the session meanwhile has its own token and keeps its claims.
+func (m *Manager) endClaims(s *Session) {
+	if s.deps != nil {
+		m.ownership.EndScope(s.deps.CoordinatorToken, s.Workspace)
+	}
 }
 
 // waitWorkstreamWatcher joins a watcher after its session log has been closed so
@@ -4010,6 +4022,7 @@ func (m *Manager) reclaimIfCurrent(s *Session) bool {
 		return false
 	}
 	s.reap()
+	m.endClaims(s)
 	m.waitWorkstreamWatcher(s.ID)
 	return true
 }

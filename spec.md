@@ -607,16 +607,33 @@ delegates to) is an attribution scope. Writes record a claim on the path for tha
   it stays out of the shell session's changeset but counts as that session's claim for every other
   scope, so the earlier claimant's commit sees it (below). Background shells claim when they exit.
 - Running shells are registered per worktree, so a command knows which other scopes' shells ran
-  there while it did. Then a changed path that no scope claims definitely (ambiguous and overlap
-  claims do not count) has no single likely writer: it gets an ambiguous claim for this scope and
-  each of those scopes, rather than going to whichever shell finished first. An ambiguous claim
-  counts as each holder's own and as another scope's claim for everyone else, so the path is in
-  every holder's changeset, listed as ambiguous, and a commit refuses it while another holder is
-  live (below). A scope's file-tool write, its shell write while no other scope's shell runs, or
-  its commit taking the path makes its claim definite; other holders keep theirs until they release
-  it or the path is retired. A path that another scope claims definitely, changed while that
-  scope's shell also ran, is left to that scope with no overlap claim or notice: the change is as
-  likely that scope's own shell write, and this command may only have read.
+  there while it did, and which of them count as concurrent with it. The narrowest window wins:
+  another scope's background job does not count as concurrent with a foreground command shorter than
+  one minute, nor such a command with a job, since a job that runs for hours would otherwise overlap
+  every command and no shell write could settle. Two foreground commands, two background jobs, or a
+  job and a foreground command of a minute or more do count. A changed path that no scope claims
+  definitely (ambiguous and overlap claims do not count) is claimed definitely for the command's
+  scope when no concurrent shell ran. Otherwise it has no single likely writer: it gets an ambiguous
+  claim for this scope and each concurrent scope, unless the session instance whose shell ran has
+  ended (a reopened session is a new instance), rather than going to whichever shell finished first.
+  So a short foreground write is definite for its scope while other sessions' jobs run, and a job,
+  when it exits, claims the unclaimed paths that changed during its run, ambiguously between the
+  jobs' scopes when another scope's job overlapped. A job that exits while another scope's short
+  command still runs leaves the paths whose state differs from that command's starting snapshot for
+  the command to attribute, so the command's window wins in either exit order; shells attribute one
+  at a time, so one that ends sees another either still running or with its claims recorded. An
+  ambiguous claim counts as each holder's own and as another scope's claim for everyone else, so the
+  path is in every holder's changeset, listed as ambiguous, and a commit refuses it while another
+  holder is live (below). A scope's file-tool write, its shell write while no concurrent shell of
+  another scope runs, or its commit taking the path makes its claim definite; other holders keep
+  theirs until they release it, the path is retired, or their session ends (a session instance's
+  ambiguous claims are released when it ends, in memory and in `claims.json`; a reopened instance
+  keeps its own). A path that another scope claims definitely, changed while any shell of that scope
+  also ran, is left to that scope with no overlap claim or notice: the change is as likely that
+  scope's own shell write, and this command may only have read.
+- The cost of the rule: a file a background job writes during another session's short command is
+  claimed definitely by that session. If it releases the path (below) before the job exits, the
+  path has no definite claimant and the job's exit claims it.
 
 A coordinator can release its claims on paths it did not write with `release_claim`, which records
 a `claim_released` event (paths, the ones it held a claim on, and a reason) in its log. Released
