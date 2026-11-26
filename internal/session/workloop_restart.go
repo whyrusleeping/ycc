@@ -547,7 +547,9 @@ func (m *Manager) resumedWorkLoop(p persistedWorkLoop, project string) *workLoop
 func (wl *workLoop) readopt(restartID, project string, slot persistedLoopSlot) {
 	m := wl.m
 	id := slot.SessionID
+	wl.mu.Lock()
 	lane := wl.lanes[min(max(slot.Lane, 0), len(wl.lanes)-1)]
+	wl.mu.Unlock()
 	settle := func(events []event.Event) {
 		rec := wl.recordFromEvents(id, events, loopEndedWithError(events), time.Since(slot.Started))
 		res := loopWaitResult{rec: rec, breach: budgetBreachedInLog(events)}
@@ -600,7 +602,7 @@ func (wl *workLoop) readopt(restartID, project string, slot persistedLoopSlot) {
 		// A waiting session its job had woken goes on working as soon as
 		// execution is released: it takes its working slot back now, before
 		// a downtime completion can wake another into it.
-		if kind != restartKindIdle && len(wl.holders) < wl.capacity() {
+		if kind != restartKindIdle {
 			w.awake = true
 			wl.holdLocked(id)
 		}

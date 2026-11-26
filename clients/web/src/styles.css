@@ -5050,8 +5050,8 @@ th[aria-sort="descending"] .sort-btn {
   margin: 6px 0 0;
 }
 
-/* One start-dialog option: label and control on a row, a short note below. */
-.loop-start-option {
+/* One loop dialog option: label and control on a row, a short note below. */
+.loop-option {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5059,7 +5059,7 @@ th[aria-sort="descending"] .sort-btn {
   gap: 4px 12px;
 }
 
-.loop-start-option > p {
+.loop-option > p {
   flex-basis: 100%;
   margin: 0;
 }

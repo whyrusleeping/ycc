@@ -138,6 +138,10 @@ struct WorkLoopView: View {
                 header(model, loop)
             }
 
+            if model.showsResize {
+                resizeSection(model, loop)
+            }
+
             if needsAnthropicReconnect(model, loop) {
                 Section {
                     Button("Reconnect Anthropic") { showAnthropicLogin = true }
@@ -289,6 +293,30 @@ struct WorkLoopView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// How many sessions the running loop may work at once. Picking a count
+    /// resizes this loop only; lowering it interrupts no working session.
+    private func resizeSection(_ model: WorkLoopModel, _ loop: Ycc_V1_WorkLoopInfo) -> some View {
+        Section {
+            Picker(selection: Binding(
+                get: { model.displayedParallel },
+                set: { count in
+                    Analytics.action("loop.resize", attrs: ["parallel": String(count)])
+                    Task { await model.resize(to: count) }
+                })
+            ) {
+                ForEach(1...WorkLoopModel.maxParallel, id: \.self) { count in
+                    Text("\(count)").tag(count)
+                }
+            } label: {
+                Label("Sessions at once", systemImage: "slider.horizontal.3")
+            }
+            .pickerStyle(.menu)
+            .disabled(!model.canResize)
+        } footer: {
+            Text(WorkLoopModel.resizeFooter(for: loop))
         }
     }
 

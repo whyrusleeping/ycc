@@ -429,13 +429,13 @@ func TestWorkLoopResumesSlotBlockedInWait(t *testing.T) {
 	}
 }
 
-// A waiting session its job had woken, and that works mid-turn at shutdown,
-// takes its working slot back as it is re-adopted, before execution is
-// released, so no downtime completion can wake another session into it.
+// Both waiting sessions are working again when the target shrinks. On
+// restart each must take its slot back before execution is released, even
+// though readopting the second puts the loop over its persisted target.
 func TestWorkLoopReadoptedWokenWaiterHoldsItsSlot(t *testing.T) {
 	launcher := supervisedTestLauncher(t)
 	m, ws, path, _, task := restartLoopManager(t, []*[2]string{
-		{"Bash", `{"command":"sleep 1; echo woke","run_in_background":true}`},
+		{"Bash", `{"command":"while [ ! -f trigger ]; do sleep 0.05; done; echo woke","run_in_background":true}`},
 		{"", "waiting on the job"},
 		nil,
 	})
@@ -444,25 +444,39 @@ func TestWorkLoopReadoptedWokenWaiterHoldsItsSlot(t *testing.T) {
 		wl.waitGrace = 0
 		return wl.realRunSession
 	}
-	if _, err := m.StartWorkLoop("proj"); err != nil {
+	if _, err := m.StartWorkLoopWith("proj", WorkLoopOptions{Parallel: 2}); err != nil {
 		t.Fatal(err)
 	}
-	sid := loopSlotSession(t, m, loopSlotWaiting)
-	s, _ := m.Get(sid)
-	waitLong(t, "the job to wake the waiting session", func() bool {
-		return len(eventsOf(s, event.JobNotified)) == 1 && s.Status() == event.StatusRunning
+	var waiters []WorkLoopWaitingSession
+	waitLong(t, "two detached sessions", func() bool {
+		s, _ := m.GetWorkLoop("proj")
+		waiters = s.Waiting
+		return len(waiters) == 2
 	})
-	m.ShutdownForRestart()
-	// The loop may have started a second session on the task meanwhile.
-	p, _ := readPersistedWorkLoop(ws)
-	kept := map[string]string{}
-	if p.Restart != nil {
-		for _, slot := range p.Restart.Slots {
-			kept[slot.SessionID] = slot.Kind
-		}
+	if err := os.WriteFile(filepath.Join(ws, "trigger"), nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if kept[sid] != loopSlotWaiting {
-		t.Fatalf("checkpoint = %+v", p.Restart)
+	waitLong(t, "both jobs to wake their sessions", func() bool {
+		for _, w := range waiters {
+			s, ok := m.Get(w.SessionID)
+			if !ok || len(eventsOf(s, event.JobNotified)) != 1 || s.Status() != event.StatusRunning {
+				return false
+			}
+		}
+		return true
+	})
+	if _, err := m.ResizeWorkLoop("proj", "", 1); err != nil {
+		t.Fatal(err)
+	}
+	m.ShutdownForRestart()
+	p, _ := readPersistedWorkLoop(ws)
+	if p.Parallel != 1 || p.Restart == nil || len(p.Restart.Slots) != 2 {
+		t.Fatalf("checkpoint = %+v", p)
+	}
+	for _, slot := range p.Restart.Slots {
+		if slot.Kind != loopSlotWaiting {
+			t.Fatalf("non-waiter in checkpoint: %+v", slot)
+		}
 	}
 	markTask(t, ws, task.ID, docs.StatusDone)
 
@@ -471,11 +485,12 @@ func TestWorkLoopReadoptedWokenWaiterHoldsItsSlot(t *testing.T) {
 	wl := m2.workLoops[ws]
 	m2.loopMu.Unlock()
 	wl.mu.Lock()
-	_, held := wl.holders[sid]
-	wl.mu.Unlock()
-	if !held {
-		t.Fatal("the woken waiting session did not take its working slot back before release")
+	for _, w := range waiters {
+		if _, held := wl.holders[w.SessionID]; !held || wl.parallel != 1 {
+			t.Errorf("restored holders %v at target %d; missing %s or wrong target", wl.holders, wl.parallel, w.SessionID)
+		}
 	}
+	wl.mu.Unlock()
 	if wl.admitWake("another-session") {
 		t.Fatal("a wake was admitted into the slot the woken session holds")
 	}
@@ -485,8 +500,8 @@ func TestWorkLoopReadoptedWokenWaiterHoldsItsSlot(t *testing.T) {
 	for _, rec := range final.Sessions {
 		seen[rec.SessionID]++
 	}
-	if final.SessionsRun != len(kept) || seen[sid] != 1 {
-		t.Fatalf("final loop = %+v, want each of %v once", final, kept)
+	if final.SessionsRun != 2 || seen[waiters[0].SessionID] != 1 || seen[waiters[1].SessionID] != 1 {
+		t.Fatalf("final loop = %+v, want each of %v once", final, waiters)
 	}
 }
 

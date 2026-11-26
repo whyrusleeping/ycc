@@ -287,6 +287,9 @@ const (
 	// SessionServiceStartWorkLoopProcedure is the fully-qualified name of the SessionService's
 	// StartWorkLoop RPC.
 	SessionServiceStartWorkLoopProcedure = "/ycc.v1.SessionService/StartWorkLoop"
+	// SessionServiceResizeWorkLoopProcedure is the fully-qualified name of the SessionService's
+	// ResizeWorkLoop RPC.
+	SessionServiceResizeWorkLoopProcedure = "/ycc.v1.SessionService/ResizeWorkLoop"
 	// SessionServiceStopWorkLoopProcedure is the fully-qualified name of the SessionService's
 	// StopWorkLoop RPC.
 	SessionServiceStopWorkLoopProcedure = "/ycc.v1.SessionService/StopWorkLoop"
@@ -515,6 +518,7 @@ type SessionServiceClient interface {
 	// client disconnects; any client can start it, poll GetWorkLoop for state +
 	// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
 	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
+	ResizeWorkLoop(context.Context, *connect.Request[v1.ResizeWorkLoopRequest]) (*connect.Response[v1.ResizeWorkLoopResponse], error)
 	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
 	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
 	GetWorkLoopPreflight(context.Context, *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error)
@@ -1074,6 +1078,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("StartWorkLoop")),
 			connect.WithClientOptions(opts...),
 		),
+		resizeWorkLoop: connect.NewClient[v1.ResizeWorkLoopRequest, v1.ResizeWorkLoopResponse](
+			httpClient,
+			baseURL+SessionServiceResizeWorkLoopProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("ResizeWorkLoop")),
+			connect.WithClientOptions(opts...),
+		),
 		stopWorkLoop: connect.NewClient[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse](
 			httpClient,
 			baseURL+SessionServiceStopWorkLoopProcedure,
@@ -1262,6 +1272,7 @@ type sessionServiceClient struct {
 	recordUiEvents         *connect.Client[v1.RecordUiEventsRequest, v1.RecordUiEventsResponse]
 	getUiAnalytics         *connect.Client[v1.GetUiAnalyticsRequest, v1.GetUiAnalyticsResponse]
 	startWorkLoop          *connect.Client[v1.StartWorkLoopRequest, v1.StartWorkLoopResponse]
+	resizeWorkLoop         *connect.Client[v1.ResizeWorkLoopRequest, v1.ResizeWorkLoopResponse]
 	stopWorkLoop           *connect.Client[v1.StopWorkLoopRequest, v1.StopWorkLoopResponse]
 	getWorkLoop            *connect.Client[v1.GetWorkLoopRequest, v1.GetWorkLoopResponse]
 	getWorkLoopPreflight   *connect.Client[v1.GetWorkLoopPreflightRequest, v1.GetWorkLoopPreflightResponse]
@@ -1715,6 +1726,11 @@ func (c *sessionServiceClient) StartWorkLoop(ctx context.Context, req *connect.R
 	return c.startWorkLoop.CallUnary(ctx, req)
 }
 
+// ResizeWorkLoop calls ycc.v1.SessionService.ResizeWorkLoop.
+func (c *sessionServiceClient) ResizeWorkLoop(ctx context.Context, req *connect.Request[v1.ResizeWorkLoopRequest]) (*connect.Response[v1.ResizeWorkLoopResponse], error) {
+	return c.resizeWorkLoop.CallUnary(ctx, req)
+}
+
 // StopWorkLoop calls ycc.v1.SessionService.StopWorkLoop.
 func (c *sessionServiceClient) StopWorkLoop(ctx context.Context, req *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {
 	return c.stopWorkLoop.CallUnary(ctx, req)
@@ -1974,6 +1990,7 @@ type SessionServiceHandler interface {
 	// client disconnects; any client can start it, poll GetWorkLoop for state +
 	// digest, Subscribe to the current session, and gracefully StopWorkLoop it.
 	StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error)
+	ResizeWorkLoop(context.Context, *connect.Request[v1.ResizeWorkLoopRequest]) (*connect.Response[v1.ResizeWorkLoopResponse], error)
 	StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error)
 	GetWorkLoop(context.Context, *connect.Request[v1.GetWorkLoopRequest]) (*connect.Response[v1.GetWorkLoopResponse], error)
 	GetWorkLoopPreflight(context.Context, *connect.Request[v1.GetWorkLoopPreflightRequest]) (*connect.Response[v1.GetWorkLoopPreflightResponse], error)
@@ -2529,6 +2546,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("StartWorkLoop")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceResizeWorkLoopHandler := connect.NewUnaryHandler(
+		SessionServiceResizeWorkLoopProcedure,
+		svc.ResizeWorkLoop,
+		connect.WithSchema(sessionServiceMethods.ByName("ResizeWorkLoop")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceStopWorkLoopHandler := connect.NewUnaryHandler(
 		SessionServiceStopWorkLoopProcedure,
 		svc.StopWorkLoop,
@@ -2801,6 +2824,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceGetUiAnalyticsHandler.ServeHTTP(w, r)
 		case SessionServiceStartWorkLoopProcedure:
 			sessionServiceStartWorkLoopHandler.ServeHTTP(w, r)
+		case SessionServiceResizeWorkLoopProcedure:
+			sessionServiceResizeWorkLoopHandler.ServeHTTP(w, r)
 		case SessionServiceStopWorkLoopProcedure:
 			sessionServiceStopWorkLoopHandler.ServeHTTP(w, r)
 		case SessionServiceGetWorkLoopProcedure:
@@ -3188,6 +3213,10 @@ func (UnimplementedSessionServiceHandler) GetUiAnalytics(context.Context, *conne
 
 func (UnimplementedSessionServiceHandler) StartWorkLoop(context.Context, *connect.Request[v1.StartWorkLoopRequest]) (*connect.Response[v1.StartWorkLoopResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.StartWorkLoop is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) ResizeWorkLoop(context.Context, *connect.Request[v1.ResizeWorkLoopRequest]) (*connect.Response[v1.ResizeWorkLoopResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.ResizeWorkLoop is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) StopWorkLoop(context.Context, *connect.Request[v1.StopWorkLoopRequest]) (*connect.Response[v1.StopWorkLoopResponse], error) {

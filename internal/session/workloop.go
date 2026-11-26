@@ -346,8 +346,9 @@ type workLoop struct {
 	created    []WorkLoopDigestTask
 	unfinished []WorkLoopDigestTask
 
-	// Slots. parallel is captured at loop start. Each slot's runner, and each
-	// waiting session's watcher, appends its record to ended (under mu) and
+	// Slots. parallel is the live admission target (under mu); lanes remain
+	// allocated after a shrink so active runs and waiters keep their identity.
+	// Each runner and waiting-session watcher appends its record to ended and
 	// signals endedCh; lastRun is the most recently started run, whose claim
 	// gates the next start until claimTimeout.
 	parallel     int
@@ -507,6 +508,16 @@ func (wl *workLoop) waitForRetry(delay time.Duration) bool {
 			return false
 		case <-wl.m.loopSuspend:
 			return false
+		case <-wl.slotCh:
+			// A new lane can bypass a lane-local stall. A provider wait
+			// still gates every lane: keep the original timer unless a
+			// shrink left only lanes that gave up and the loop should end.
+			wl.mu.Lock()
+			recheck := wl.waitKind == waitKindNoProgress || wl.allEligibleLanesGaveUpLocked()
+			wl.mu.Unlock()
+			if recheck {
+				return false
+			}
 		case <-wl.endedCh:
 		}
 	}
@@ -618,6 +629,74 @@ func (m *Manager) StartWorkLoopWith(project string, opts WorkLoopOptions) (*Work
 		wl.run()
 	}()
 	return wl.snapshot(), nil
+}
+
+var (
+	ErrInvalidLoopParallel = fmt.Errorf("work loop parallel must be in 1..%d", docs.MaxWorkLoopParallel)
+	ErrLoopNotLive         = errors.New("no live work loop")
+	ErrLoopStopping        = errors.New("work loop is stopping")
+)
+
+// ResizeWorkLoop changes only the running or waiting loop's admission target.
+// Existing sessions keep working, even when they outnumber the new target.
+func (m *Manager) ResizeWorkLoop(project, expectedLoopID string, parallel int) (*WorkLoop, error) {
+	if parallel < 1 || parallel > docs.MaxWorkLoopParallel {
+		return nil, ErrInvalidLoopParallel
+	}
+	ws, _, err := m.resolveWorkspace(project)
+	if err != nil {
+		return nil, err
+	}
+	m.loopMu.Lock()
+	wl := m.workLoops[ws]
+	m.loopMu.Unlock()
+	if wl == nil {
+		return nil, ErrLoopNotLive
+	}
+	// Operate on this instance, never a replacement started after the lookup.
+	if expectedLoopID != "" && expectedLoopID != wl.loopID {
+		return nil, fmt.Errorf("%w with ID %s; refresh the work loop", ErrLoopNotLive, expectedLoopID)
+	}
+	snap, grew, err := wl.resize(parallel)
+	if grew {
+		wl.slotFreed() // also re-arm denied job wakes
+	}
+	return snap, err
+}
+
+func (wl *workLoop) resize(parallel int) (*WorkLoop, bool, error) {
+	// Serialize with finish (and the restart checkpoint) before checking state:
+	// a late resize must not overwrite a finished or replacement loop's file.
+	wl.persistMu.Lock()
+	defer wl.persistMu.Unlock()
+	wl.mu.Lock()
+	switch wl.state {
+	case "running", "waiting":
+		if wl.stopReq || wl.m.shuttingDown.Load() || wl.suspending() {
+			wl.mu.Unlock()
+			return nil, false, ErrLoopStopping
+		}
+	case "stopping":
+		wl.mu.Unlock()
+		return nil, false, ErrLoopStopping
+	default:
+		wl.mu.Unlock()
+		return nil, false, ErrLoopNotLive
+	}
+	old := wl.parallel
+	wl.parallel = parallel
+	for len(wl.lanes) < parallel {
+		wl.lanes = append(wl.lanes, &loopLane{index: len(wl.lanes)})
+	}
+	snap := wl.snapshotLocked()
+	wl.mu.Unlock()
+	if parallel != old {
+		if parallel < old {
+			wl.signalSlot() // growth also nudges waiting sessions via slotFreed
+		}
+		wl.persistSnapshot(snap)
+	}
+	return snap, parallel > old, nil
 }
 
 // StopWorkLoop gracefully stops a live loop for a project: working sessions
@@ -862,11 +941,7 @@ func (wl *workLoop) run() {
 		// actually served. Provider backoff holds every slot; stall backoff
 		// only its own slot.
 		if wl.pace.retryDelay > 0 {
-			served, halt := wl.waitBeforeNext(wl.pace.retryDelay, wl.pace.retryKind)
-			if halt {
-				wl.stop.soft("loop stopped: requested")
-				continue
-			}
+			served := wl.waitBeforeNext(wl.pace.retryDelay, wl.pace.retryKind)
 			wl.pace.outageWait += served
 			if wl.pace.retryDelay -= served; wl.pace.retryDelay <= 0 {
 				wl.pace.retryDelay, wl.pace.retryKind = 0, ""
@@ -880,11 +955,7 @@ func (wl *workLoop) run() {
 			continue
 		}
 		if lane.pace.stallDelay > 0 {
-			served, halt := wl.waitBeforeNext(lane.pace.stallDelay, waitKindNoProgress)
-			if halt {
-				wl.stop.soft("loop stopped: requested")
-				continue
-			}
+			served := wl.waitBeforeNext(lane.pace.stallDelay, waitKindNoProgress)
 			wl.ageStalls(served)
 			continue
 		}
@@ -908,6 +979,8 @@ func (wl *workLoop) run() {
 // session event reports. Only the scheduler (or the restart suspension, once
 // it has stopped) calls it.
 func (wl *workLoop) applyEnds(ends []loopEnd, tasks []*docs.Task) (startupErrs []string) {
+	wl.mu.Lock()
+	defer wl.mu.Unlock()
 	for _, end := range ends {
 		switch {
 		case end.err != nil:
@@ -933,14 +1006,17 @@ func (wl *workLoop) applyEnds(ends []loopEnd, tasks []*docs.Task) (startupErrs [
 			lane := wl.lanes[min(max(end.lane, 0), len(wl.lanes)-1)]
 			if outcome, _ := lane.pace.settled(end.rec, end.progressed, tasks); outcome != "" {
 				lane.gaveUp = true
-				if wl.allLanesGaveUp() {
-					if len(wl.lanes) > 1 {
-						outcome = fmt.Sprintf("loop stalled: all %d slots made no progress for 12h (ready: %s)",
-							len(wl.lanes), strings.Join(readyTaskIDs(tasks), ", "))
-					}
-					wl.stop.soft(outcome)
-				}
 			}
+		}
+	}
+	// A shrink may retire the only lane that had not yet given up, even
+	// when this iteration collected no results.
+	if wl.allEligibleLanesGaveUpLocked() {
+		eligible := wl.eligibleLanesLocked()
+		if len(eligible) == 1 {
+			wl.stop.soft(eligible[0].pace.stallOutcome(tasks))
+		} else {
+			wl.stop.soft(fmt.Sprintf("loop stalled: all %d slots made no progress for 12h (ready: %s)", len(eligible), strings.Join(readyTaskIDs(tasks), ", ")))
 		}
 	}
 	return startupErrs
@@ -953,7 +1029,7 @@ func (wl *workLoop) applyEnds(ends []loopEnd, tasks []*docs.Task) (startupErrs [
 func (wl *workLoop) admit(lane *loopLane, before map[string]string) *loopRun {
 	wl.mu.Lock()
 	defer wl.mu.Unlock()
-	if wl.stopReq || wl.suspending() || len(wl.ended) > 0 || lane.run != nil || wl.endingLocked() || len(wl.holders) >= wl.capacity() {
+	if wl.stopReq || wl.suspending() || len(wl.ended) > 0 || lane.index >= wl.capacity() || lane.run != nil || wl.endingLocked() || len(wl.holders) >= wl.capacity() {
 		return nil
 	}
 	wl.runSeq++
@@ -1067,8 +1143,7 @@ func (p *loopPacing) settled(rec loopSessRec, progressed bool, tasks []*docs.Tas
 		p.stallSessions++
 		remaining := workLoopStallPatience - p.stallWait
 		if remaining <= 0 {
-			return fmt.Sprintf("loop stalled: %d consecutive sessions made no progress (ready: %s); gave up after 12h",
-				p.stallSessions, strings.Join(readyTaskIDs(tasks), ", ")), 0
+			return p.stallOutcome(tasks), 0
 		}
 		p.stallDelay = min(workLoopStallSchedule[min(p.stallSessions, len(workLoopStallSchedule))-1], remaining)
 		return "", 0
@@ -1085,14 +1160,21 @@ func (p *loopPacing) settled(rec loopSessRec, progressed bool, tasks []*docs.Tas
 	return "", delay
 }
 
+func (p *loopPacing) stallOutcome(tasks []*docs.Task) string {
+	return fmt.Sprintf("loop stalled: %d consecutive sessions made no progress (ready: %s); gave up after 12h", p.stallSessions, strings.Join(readyTaskIDs(tasks), ", "))
+}
+
 // waitBeforeNext holds the loop in the waiting state for delay before the next
 // session and returns how much of it was served: all of it, or less when a
-// session ended and interrupted it. halt reports a wait that ended for no
-// such reason, which counts as a stop request; a stop or shutdown is left to
-// the caller's next check.
-func (wl *workLoop) waitBeforeNext(delay time.Duration, kind string) (served time.Duration, halt bool) {
+// session ended or the target changed. The next iteration rechecks all gates,
+// including a stop request or shutdown.
+func (wl *workLoop) waitBeforeNext(delay time.Duration, kind string) time.Duration {
 	start := time.Now()
 	wl.mu.Lock()
+	if wl.stopReq {
+		wl.mu.Unlock()
+		return 0
+	}
 	wl.state = "waiting"
 	wl.resumeAt = start.Add(delay)
 	wl.waitKind = kind
@@ -1104,31 +1186,28 @@ func (wl *workLoop) waitBeforeNext(delay time.Duration, kind string) (served tim
 		// Suspended for a restart: what was served counts, and the rest of
 		// the delay stays owed in the checkpoint.
 		if elapsed {
-			return delay, false
+			return delay
 		}
-		return min(time.Since(start), delay), false
+		return min(time.Since(start), delay)
 	}
 	if wl.m.loopCtx.Err() != nil || wl.stopRequested() {
-		return 0, false
+		return 0
 	}
-	if !elapsed && !wl.hasEnded() {
-		return 0, true
-	}
-	served = delay
+	served := delay
 	if !elapsed {
 		served = min(time.Since(start), delay)
 	}
 	wl.mu.Lock()
 	if wl.stopReq {
 		wl.mu.Unlock()
-		return 0, false
+		return 0
 	}
 	wl.state = "running"
 	wl.resumeAt = time.Time{}
 	wl.waitKind = ""
 	wl.mu.Unlock()
 	wl.persist()
-	return served, false
+	return served
 }
 
 // setDraining shows the loop stopping while its working sessions finish.
@@ -1327,7 +1406,7 @@ func (wl *workLoop) cancelWake(id string) {
 }
 
 // syncSlot keeps a waiting session's hold on a working slot in step with its
-// state: it takes a free slot while working (a user message is not gated) and
+// state: it counts as working (even above target for an ungated user message) and
 // frees it once it waits on its shell jobs again. An ended session keeps the
 // slot until its watcher publishes its record.
 func (wl *workLoop) syncSlot(sess *Session) {
@@ -1354,7 +1433,9 @@ func (wl *workLoop) applySlotState(id string, working, shellOnly bool, wakes int
 	if !wl.ungated {
 		_, held := wl.holders[id]
 		if working {
-			if !held && len(wl.holders) < wl.capacity() {
+			// A user can wake a session without the automatic wake gate.
+			// Count it even above target; it is already working.
+			if !held {
 				wl.holdLocked(id)
 			}
 		} else if held && shellOnly && wl.wakeSeq == wakes {
@@ -1447,13 +1528,20 @@ func (wl *workLoop) hasForegroundLocked() bool {
 	return false
 }
 
-func (wl *workLoop) allLanesGaveUp() bool {
-	for _, lane := range wl.lanes {
+// eligibleLanesLocked excludes lanes retired by a shrink from new starts.
+// Their sessions still count against the global capacity, whichever ends first.
+func (wl *workLoop) eligibleLanesLocked() []*loopLane {
+	return wl.lanes[:min(len(wl.lanes), wl.capacity())]
+}
+
+func (wl *workLoop) allEligibleLanesGaveUpLocked() bool {
+	eligible := wl.eligibleLanesLocked()
+	for _, lane := range eligible {
 		if !lane.gaveUp {
 			return false
 		}
 	}
-	return true
+	return len(eligible) > 0
 }
 
 // ageStalls charges d of waiting to every free slot that owes no-progress
@@ -1463,6 +1551,8 @@ func (wl *workLoop) ageStalls(d time.Duration) {
 	if d <= 0 {
 		return
 	}
+	wl.mu.Lock()
+	defer wl.mu.Unlock()
 	for _, lane := range wl.lanes {
 		if lane.run != nil || lane.pace.stallDelay <= 0 {
 			continue
@@ -1479,7 +1569,7 @@ func (wl *workLoop) pickLane() *loopLane {
 	wl.mu.Lock()
 	defer wl.mu.Unlock()
 	var best *loopLane
-	for _, lane := range wl.lanes {
+	for _, lane := range wl.eligibleLanesLocked() {
 		if lane.run != nil || lane.gaveUp {
 			continue
 		}
@@ -1504,7 +1594,7 @@ func (wl *workLoop) startBlocked() (blocked bool, until time.Time) {
 	}
 	limit, slots := wl.maxWaiting, wl.capacity()
 	free := false
-	for _, lane := range wl.lanes {
+	for _, lane := range wl.eligibleLanesLocked() {
 		if lane.run == nil && !lane.gaveUp {
 			free = true
 		}

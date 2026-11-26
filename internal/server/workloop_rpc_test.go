@@ -22,6 +22,25 @@ func TestStartWorkLoopUnknownProject(t *testing.T) {
 	}
 }
 
+func TestResizeWorkLoopErrors(t *testing.T) {
+	srv := New(session.NewManager(testRegistry(), t.TempDir()))
+	for _, tc := range []struct {
+		project  string
+		parallel int32
+		want     connect.Code
+	}{
+		{"", 0, connect.CodeInvalidArgument},
+		{"", 17, connect.CodeInvalidArgument},
+		{"nope", 2, connect.CodeInvalidArgument},
+		{"", 2, connect.CodeFailedPrecondition},
+	} {
+		_, err := srv.ResizeWorkLoop(context.Background(), connect.NewRequest(&v1.ResizeWorkLoopRequest{Project: tc.project, Parallel: tc.parallel}))
+		if got := connect.CodeOf(err); got != tc.want {
+			t.Errorf("ResizeWorkLoop(%q, %d): got %v, want %v (err: %v)", tc.project, tc.parallel, got, tc.want, err)
+		}
+	}
+}
+
 func TestGetWorkLoopPreflightUnknownProject(t *testing.T) {
 	srv := New(session.NewManager(testRegistry(), t.TempDir()))
 	_, err := srv.GetWorkLoopPreflight(context.Background(), connect.NewRequest(&v1.GetWorkLoopPreflightRequest{Project: "nope"}))

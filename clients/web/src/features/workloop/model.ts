@@ -41,6 +41,7 @@ export function stateTitle(state: LoopState): string {
 
 export const canStart = (s: LoopState) => s === "none" || s === "finished";
 export const canStop = (s: LoopState) => s === "running" || s === "waiting";
+export const canResize = (s: LoopState) => s === "running" || s === "waiting";
 export const isActive = (s: LoopState) => s === "running" || s === "waiting" || s === "stopping";
 
 /** Poll quickly while a loop is live; otherwise refresh slowly (another client may start one). */
@@ -241,14 +242,16 @@ export function waitingLine(loop: WorkLoopInfo): string {
 }
 
 /**
- * "2/3 working, 1 waiting": the loop's slots in use out of its parallelism,
- * and its sessions waiting on background jobs. Empty for snapshots without slots.
+ * "2/3 working, 1 waiting": actual working slots and the worker target,
+ * plus sessions waiting on background jobs. The target is not a hard cap:
+ * lowering it leaves existing sessions working. Empty for pre-slot snapshots.
  */
 export function slotsLine(loop: WorkLoopInfo): string {
   if (loop.parallel <= 0) return "";
   const working = loop.slots.filter((s) => s.state === "working").length;
   const waiting = loop.slots.filter((s) => s.state === "waiting").length;
-  return `${working}/${loop.parallel} working, ${waiting} waiting`;
+  const workers = working > loop.parallel ? `${working} working (target ${loop.parallel})` : `${working}/${loop.parallel} working`;
+  return `${workers}, ${waiting} waiting`;
 }
 
 /**
@@ -389,8 +392,11 @@ export function recentCompleted(loop: WorkLoopInfo): WorkLoopDigestTask[] {
   return completedTasks(loop).sort((a, b) => (last.get(b.id) ?? -1) - (last.get(a.id) ?? -1));
 }
 
-/** The most loop sessions StartWorkLoop accepts at once. */
+/** The highest worker target accepted by StartWorkLoop and ResizeWorkLoop. */
 export const MAX_LOOP_PARALLEL = 16;
+
+/** Unlike Start, Resize requires an explicit worker target; 0 is not a default. */
+export const isResizeTarget = (n: number) => Number.isInteger(n) && n >= 1 && n <= MAX_LOOP_PARALLEL;
 
 /**
  * The slot count Start sends as StartWorkLoopRequest.parallel: 0 (the

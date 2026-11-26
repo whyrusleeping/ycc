@@ -1179,8 +1179,12 @@ cumulative loop budgets still stop at the next safe decision point.
 `StartWorkLoop`, sets how many loop sessions may work at once, all in the shared tree. Values
 above 1 are experimental until commits use a candidate tree of HEAD plus the session's own
 changes. Client Start flows offer a count of 1..16, defaulting to the configured value that
-`GetWorkLoopPreflight` reports, and send 0 when it is left unchanged. Each slot runs one session
-at a time. A new session starts only once the most recently
+`GetWorkLoopPreflight` reports, and send 0 when it is left unchanged. While a loop is running
+or waiting, clients can set a new target of 1..16 with `ResizeWorkLoop` without changing the
+project default. Raising the target makes room for new sessions under the usual admission
+rules; lowering it interrupts none and admits no replacements until fewer than the target
+are working. The working count may therefore temporarily exceed the target. Each slot runs
+one session at a time. A new session starts only once the most recently
 started loop session has claimed a task (its first `task_focus`) or ended, or after 10 minutes,
 so each session chooses with its predecessor's claim visible. No-progress backoff and stall
 patience are per slot: a slot past patience starts no more sessions, and the loop stalls only

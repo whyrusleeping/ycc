@@ -10,6 +10,10 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
     var refreshError: Error?
     var startErrors: [Error] = []
     var stopError: Error?
+    var resizeSnapshot: Ycc_V1_WorkLoopInfo?
+    var resizeError: Error?
+    private(set) var resizeParallels: [Int32] = []
+    private(set) var resizeLoopIDs: [String] = []
     var preflight: Ycc_V1_GetWorkLoopPreflightResponse?
     var preflightError: Error?
     var backlog: [Ycc_V1_BacklogTaskSummary]?
@@ -64,6 +68,47 @@ private final class MockWorkLoopSource: WorkLoopSource, @unchecked Sendable {
         if let stopError { throw stopError }
         return stopSnapshot
     }
+
+    func resizeWorkLoop(project: String, loopID: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo? {
+        resizeParallels.append(parallel)
+        resizeLoopIDs.append(loopID)
+        if let resizeError { throw resizeError }
+        return resizeSnapshot
+    }
+}
+
+/// Holds each GetWorkLoop until the test releases it with a snapshot.
+@MainActor
+private final class GatedLoadSource: WorkLoopSource, @unchecked Sendable {
+    var pending: CheckedContinuation<Ycc_V1_WorkLoopInfo?, Never>?
+    var resizeSnapshot: Ycc_V1_WorkLoopInfo?
+
+    nonisolated func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo {
+        Ycc_V1_WorkLoopInfo()
+    }
+    nonisolated func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? { nil }
+    nonisolated func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? {
+        await withCheckedContinuation { continuation in
+            Task { @MainActor in self.pending = continuation }
+        }
+    }
+    nonisolated func resizeWorkLoop(project: String, loopID: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo? {
+        await MainActor.run { resizeSnapshot }
+    }
+
+    func release(_ snapshot: Ycc_V1_WorkLoopInfo?) async {
+        while pending == nil { await Task.yield() }
+        pending?.resume(returning: snapshot)
+        pending = nil
+    }
+}
+
+/// A source from before ResizeWorkLoop: it keeps the protocol's default.
+private struct NoResizeSource: WorkLoopSource {
+    var snapshot: Ycc_V1_WorkLoopInfo
+    func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo { snapshot }
+    func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? { snapshot }
+    func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo? { snapshot }
 }
 
 @MainActor
@@ -484,6 +529,154 @@ final class WorkLoopModelTests: XCTestCase {
         }
         XCTAssertEqual(WorkLoopModel.slotsLine(for: l), "2/3 working, 1 waiting")
         XCTAssertEqual(WorkLoopModel.bannerLine(for: l), "Running · 2/3 working, 1 waiting")
+    }
+
+    private func slots(_ states: [String]) -> [Ycc_V1_WorkLoopSlot] {
+        states.enumerated().map { index, state in
+            var slot = Ycc_V1_WorkLoopSlot()
+            slot.state = state
+            slot.sessionID = "s_\(index)"
+            return slot
+        }
+    }
+
+    private func sized(_ state: String, parallel: Int32, slots states: [String] = []) -> Ycc_V1_WorkLoopInfo {
+        var value = loop(state: state)
+        value.parallel = parallel
+        value.slots = slots(states)
+        return value
+    }
+
+    func testResizeSendsTheNewCountAndAppliesTheSnapshot() async {
+        let source = MockWorkLoopSource()
+        source.snapshot = sized("running", parallel: 2, slots: ["working", "working"])
+        source.snapshot?.loopID = "wl_shown"
+        source.resizeSnapshot = sized("running", parallel: 4, slots: ["working", "working"])
+        let model = WorkLoopModel(source: source, project: "demo")
+        await model.refresh()
+        XCTAssertTrue(model.showsResize)
+        XCTAssertTrue(model.canResize)
+        XCTAssertEqual(model.displayedParallel, 2)
+
+        await model.resize(to: 4)
+
+        XCTAssertEqual(source.resizeParallels, [4])
+        XCTAssertEqual(source.resizeLoopIDs, ["wl_shown"], "the displayed loop's id guards against a replacement")
+        XCTAssertEqual(model.loop?.parallel, 4)
+        XCTAssertEqual(model.displayedParallel, 4)
+        XCTAssertNil(model.resizeTarget)
+        XCTAssertFalse(model.isBusy)
+        XCTAssertEqual(model.state, .running, "resizing never stops the loop")
+        XCTAssertNil(model.actionError)
+    }
+
+    func testALoadInFlightDuringAResizeDoesNotRestoreTheOldCount() async {
+        let source = GatedLoadSource()
+        let before = sized("running", parallel: 3, slots: ["working", "working", "working"])
+        let after = sized("running", parallel: 1, slots: ["working", "working", "working"])
+        let model = WorkLoopModel(source: source, project: "demo")
+        let first = Task { await model.refresh() }
+        await source.release(before)
+        await first.value
+        XCTAssertEqual(model.loop?.parallel, 3)
+
+        let poll = Task { await model.refresh() }
+        while source.pending == nil { await Task.yield() }
+        source.resizeSnapshot = after
+        await model.resize(to: 1)
+        XCTAssertEqual(model.loop?.parallel, 1)
+        await source.release(before) // the poll read the loop before the resize
+        await poll.value
+
+        XCTAssertEqual(model.loop?.parallel, 1, "the stale load is dropped")
+        XCTAssertNotNil(WorkLoopModel.drainLine(for: model.loop!))
+    }
+
+    func testResizeToTheCurrentCountSendsNothingAndCountsAreClamped() async {
+        let source = MockWorkLoopSource()
+        source.snapshot = sized("waiting", parallel: 3)
+        source.resizeSnapshot = sized("waiting", parallel: 3)
+        let model = WorkLoopModel(source: source, project: "demo")
+        await model.refresh()
+
+        await model.resize(to: 3)
+        XCTAssertEqual(source.resizeParallels, [], "an unchanged count is no request")
+        await model.resize(to: 40)
+        await model.resize(to: 0)
+        XCTAssertEqual(source.resizeParallels, [Int32(WorkLoopModel.maxParallel), 1])
+    }
+
+    func testStoppingFinishedAndSlotlessLoopsCannotResize() async {
+        for snapshot in [
+            sized("stopping", parallel: 2, slots: ["working"]),
+            sized("finished", parallel: 2),
+            sized("running", parallel: 0), // recorded before slots
+        ] {
+            let source = MockWorkLoopSource()
+            source.snapshot = snapshot
+            let model = WorkLoopModel(source: source, project: "demo")
+            await model.refresh()
+            XCTAssertFalse(model.showsResize, snapshot.state)
+            XCTAssertFalse(model.canResize, snapshot.state)
+            await model.resize(to: 1)
+            XCTAssertEqual(source.resizeParallels, [], snapshot.state)
+        }
+        XCTAssertFalse(WorkLoopState.stopping.canResize)
+        XCTAssertFalse(WorkLoopState.finished.canResize)
+        XCTAssertFalse(WorkLoopState.none.canResize)
+        XCTAssertTrue(WorkLoopState.running.canResize)
+        XCTAssertTrue(WorkLoopState.waiting.canResize)
+    }
+
+    func testResizeFailureKeepsTheLoopAndReportsTheError() async {
+        let source = MockWorkLoopSource()
+        let running = sized("running", parallel: 2, slots: ["working"])
+        source.snapshot = running
+        source.resizeError = YccError.failedPrecondition(message: "work loop is stopping")
+        let model = WorkLoopModel(source: source, project: "demo")
+        await model.refresh()
+
+        await model.resize(to: 1)
+
+        XCTAssertEqual(model.actionError, "work loop is stopping")
+        XCTAssertEqual(model.loop, running)
+        XCTAssertEqual(model.displayedParallel, 2, "the control falls back to the loop's count")
+        XCTAssertTrue(model.canResize)
+    }
+
+    func testResizeAgainstASourceWithoutTheRPCExplains() async {
+        let model = WorkLoopModel(
+            source: NoResizeSource(snapshot: sized("running", parallel: 1)), project: "demo")
+        await model.refresh()
+
+        await model.resize(to: 2)
+
+        XCTAssertEqual(model.actionError, WorkLoopModel.resizeUnsupportedMessage)
+        XCTAssertEqual(model.loop?.parallel, 1)
+    }
+
+    func testLoweredBelowTheWorkingSessionsDrains() {
+        let over = sized("running", parallel: 2, slots: ["working", "working", "working", "waiting"])
+        XCTAssertEqual(WorkLoopModel.slotsLine(for: over), "3 working (target 2), 1 waiting")
+        XCTAssertEqual(WorkLoopModel.bannerLine(for: over), "Running · 3 working (target 2), 1 waiting")
+        XCTAssertEqual(
+            WorkLoopModel.drainLine(for: over),
+            "Lowered to 2: the 3 working sessions finish undisturbed, and no new one starts until fewer than 2 are working.")
+        XCTAssertEqual(WorkLoopModel.resizeFooter(for: over), WorkLoopModel.drainLine(for: over))
+
+        let toOne = sized("waiting", parallel: 1, slots: ["working", "working"])
+        XCTAssertEqual(
+            WorkLoopModel.drainLine(for: toOne),
+            "Lowered to 1: the 2 working sessions finish undisturbed, and no new one starts until none is working.")
+
+        // At or under the count, and once the loop is stopping, nothing drains.
+        let full = sized("running", parallel: 2, slots: ["working", "working", "waiting"])
+        XCTAssertNil(WorkLoopModel.drainLine(for: full))
+        XCTAssertEqual(WorkLoopModel.slotsLine(for: full), "2/2 working, 1 waiting")
+        XCTAssertEqual(
+            WorkLoopModel.resizeFooter(for: full),
+            "Applies to this loop only, not the project default. Lowering it interrupts no working session; it only holds back new ones.")
+        XCTAssertNil(WorkLoopModel.drainLine(for: sized("stopping", parallel: 1, slots: ["working", "working"])))
     }
 
     func testSlotStateTextTimesTheSlotInItsState() {

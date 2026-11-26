@@ -363,6 +363,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     func `startWorkLoop`(request: Ycc_V1_StartWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_StartWorkLoopResponse>
 
     @available(iOS 13, *)
+    func `resizeWorkLoop`(request: Ycc_V1_ResizeWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_ResizeWorkLoopResponse>
+
+    @available(iOS 13, *)
     func `stopWorkLoop`(request: Ycc_V1_StopWorkLoopRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_StopWorkLoopResponse>
 
     @available(iOS 13, *)
@@ -863,6 +866,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `resizeWorkLoop`(request: Ycc_V1_ResizeWorkLoopRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_ResizeWorkLoopResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/ResizeWorkLoop", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `stopWorkLoop`(request: Ycc_V1_StopWorkLoopRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_StopWorkLoopResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/StopWorkLoop", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -1031,6 +1039,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let recordUiEvents = Connect.MethodSpec(name: "RecordUiEvents", service: "ycc.v1.SessionService", type: .unary)
             public static let getUiAnalytics = Connect.MethodSpec(name: "GetUiAnalytics", service: "ycc.v1.SessionService", type: .unary)
             public static let startWorkLoop = Connect.MethodSpec(name: "StartWorkLoop", service: "ycc.v1.SessionService", type: .unary)
+            public static let resizeWorkLoop = Connect.MethodSpec(name: "ResizeWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let stopWorkLoop = Connect.MethodSpec(name: "StopWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkLoop = Connect.MethodSpec(name: "GetWorkLoop", service: "ycc.v1.SessionService", type: .unary)
             public static let getWorkLoopPreflight = Connect.MethodSpec(name: "GetWorkLoopPreflight", service: "ycc.v1.SessionService", type: .unary)

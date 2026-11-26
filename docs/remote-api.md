@@ -325,7 +325,7 @@ JSON="Content-Type: application/json"
 | [`Notify`](#notify) | route a push notification through the daemon-side notifier |
 | [`GetHealth`](#gethealth) | latest dependency health checks (models, Exa, disk) |
 | [`RecordUiEvents` / `GetUiAnalytics`](#recorduievents--getuianalytics) | report client usage analytics / read the summary |
-| [`StartWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / graceful stop / observe (plus `GetWorkLoopPreflight`) |
+| [`StartWorkLoop` / `ResizeWorkLoop` / `StopWorkLoop` / `GetWorkLoop`](#startworkloop--resizeworkloop--stopworkloop--getworkloop) | daemon-side unattended work loop: start / resize / graceful stop / observe (plus `GetWorkLoopPreflight`) |
 
 ### ListProjects
 
@@ -1387,26 +1387,31 @@ session list with an alert rather than a dead view.
 
 ---
 
-### StartWorkLoop / StopWorkLoop / GetWorkLoop
+### StartWorkLoop / ResizeWorkLoop / StopWorkLoop / GetWorkLoop
 
 Drive the daemon-side unattended **work loop** (spec §9, §20.6; task 0179). The
-loop starts fresh unattended `work` sessions one after another, re-reading the
-live backlog before each pick and continuing while ready work remains, even when
-prior sessions leave task metadata unchanged (spec §9.1). A session that neither
-commits nor changes the backlog puts the loop in `waiting` with `wait_kind`
-`no_progress` and an escalating `resume_at` (2m, 5m, 15m, 30m, then hourly);
-after 12h of such waiting it finishes with a `loop stalled: …` outcome. Session and per-loop
+loop starts fresh unattended `work` sessions up to its worker target, re-reading
+the live backlog before each pick. A session that neither commits nor changes the
+backlog puts its slot into no-progress backoff (2m, 5m, 15m, 30m, then hourly).
+When all slots have exhausted 12h of patience, the loop finishes as stalled. Session and per-loop
 budget caps remain daemon-enforced; every session rolls up into an incremental/final digest
 with bounded continuation evidence.
 Because it lives in the daemon, a loop **survives client disconnects**: any client
-can start it, poll `GetWorkLoop`, `Subscribe` to `currentSessionId`, and later stop
-it gracefully. All three take a single `project` (empty is accepted only when the
-daemon has exactly one project) and return a `WorkLoopInfo` (unset `loop` ⇒ no loop
-for that workspace).
+can start it, poll `GetWorkLoop`, `Subscribe` to `currentSessionId`, resize it, or stop
+it gracefully. These RPCs take a `project` (empty is accepted only when the daemon
+has exactly one project) and return a `WorkLoopInfo`.
 
 - **`StartWorkLoop`** starts a loop. `failed_precondition` when one is already
   `running`/`stopping` for that workspace; `invalid_argument` for an unknown
   project.
+- **`ResizeWorkLoop`** sets `parallel` (1..16) on a running or waiting loop. For
+  example, `{"project":"myrepo","parallel":2}` targets two workers. Increasing the
+  target admits more sessions under the normal claim and budget gates. Decreasing
+  it leaves existing sessions alone; no new ones start until room opens under
+  the new target. Clients displaying a particular loop send its `loopId` to avoid
+  changing a replacement loop from a stale screen. Returns `invalid_argument`
+  for an invalid target or unknown project, or `failed_precondition` for a
+  mismatched ID or when no resizable loop exists.
 - **`StopWorkLoop`** requests a *graceful* stop: the current session finishes and
   no next session is picked. A missing loop returns an empty response (no error).
 - **`GetWorkLoop`** returns the current snapshot so a reconnecting client can
@@ -1434,7 +1439,8 @@ curl -sS -H "$AUTH" -H "$JSON" -d '{"project":"myrepo"}' \
 | `loopId` | string | stable id (`loop_<8-hex>`) |
 | `project` | string | human project label |
 | `state` | string | `running` \| `waiting` \| `stopping` \| `finished` |
-| `currentSessionId` | string | session being driven now (Subscribe target); empty between sessions |
+| `parallel` | int32 | worker target; lowering it can temporarily leave more sessions working than the target |
+| `currentSessionId` | string | most recently started session still working (Subscribe target); empty between sessions |
 | `outcome` | string | human outcome line once finished |
 | `startedAt` | string | RFC3339 |
 | `sessionsRun` | int32 | number of sessions the loop drove |

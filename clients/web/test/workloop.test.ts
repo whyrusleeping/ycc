@@ -15,6 +15,7 @@ import {
   ambientLoops,
   bannerLine,
   budgetLine,
+  canResize,
   canStart,
   canStop,
   currentSessionId,
@@ -25,6 +26,7 @@ import {
   isActive,
   isFailureOutcome,
   isParallel,
+  isResizeTarget,
   loopIndicator,
   loopSessionIds,
   loopState,
@@ -67,6 +69,23 @@ describe("loop state", () => {
     expect(pollInterval(loop())).toBe(3_000);
     expect(pollInterval(loop({ state: "finished" }))).toBe(30_000);
     expect(pollInterval(null)).toBe(30_000);
+  });
+});
+
+describe("live resize", () => {
+  it("is allowed only while running or waiting", () => {
+    expect(canResize("running")).toBe(true);
+    expect(canResize("waiting")).toBe(true);
+    expect(canResize("stopping")).toBe(false);
+    expect(canResize("finished")).toBe(false);
+    expect(canResize("none")).toBe(false);
+    expect(canResize("unknown")).toBe(false);
+  });
+
+  it("requires an explicit integer target from 1 through 16", () => {
+    expect(isResizeTarget(1)).toBe(true);
+    expect(isResizeTarget(16)).toBe(true);
+    for (const invalid of [0, -1, 17, 2.5, NaN]) expect(isResizeTarget(invalid)).toBe(false);
   });
 });
 
@@ -220,6 +239,17 @@ describe("slots", () => {
     expect(bannerLine(l)).toBe("Running · 2/3 working, 1 waiting");
     expect([...loopSessionIds(l)].sort()).toEqual(["s_a", "s_w"]);
     expect(slotsLine(loop())).toBe("");
+  });
+
+  it("reports all working slots when the target drops below the actual count", () => {
+    const l = loop({ parallel: 1, slots: [
+      { sessionId: "s_a", state: "working" },
+      { sessionId: "s_b", state: "working", detached: true },
+      { sessionId: "s_w", state: "waiting" },
+    ] });
+    expect(slotsLine(l)).toBe("2 working (target 1), 1 waiting");
+    expect(bannerLine(l)).toBe("Running · 2 working (target 1), 1 waiting");
+    expect(isParallel(l)).toBe(true);
   });
 
   it("tells a parallel loop apart and times each slot in its state", () => {

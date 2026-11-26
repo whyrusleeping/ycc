@@ -2216,6 +2216,22 @@ func (s *Server) StartWorkLoop(_ context.Context, req *connect.Request[v1.StartW
 	return connect.NewResponse(&v1.StartWorkLoopResponse{Loop: s.workLoopProto(wl)}), nil
 }
 
+// ResizeWorkLoop changes the live target without interrupting working sessions.
+func (s *Server) ResizeWorkLoop(_ context.Context, req *connect.Request[v1.ResizeWorkLoopRequest]) (*connect.Response[v1.ResizeWorkLoopResponse], error) {
+	wl, err := s.mgr.ResizeWorkLoop(req.Msg.Project, req.Msg.LoopId, int(req.Msg.Parallel))
+	if err != nil {
+		switch {
+		case errors.Is(err, session.ErrUnknownProject), errors.Is(err, session.ErrInvalidLoopParallel):
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		case errors.Is(err, session.ErrLoopNotLive), errors.Is(err, session.ErrLoopStopping):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	return connect.NewResponse(&v1.ResizeWorkLoopResponse{Loop: s.workLoopProto(wl)}), nil
+}
+
 // StopWorkLoop gracefully stops a running loop (working sessions finish, no
 // next session is picked). A missing loop is not an error — it returns an empty
 // response (nil loop).

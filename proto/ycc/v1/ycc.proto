@@ -1653,7 +1653,7 @@ message WorkLoopInfo {
   // started; reason names the files. Loop sessions leave that work to its owner.
   repeated WorkLoopDigestTask uncommitted_in_review = 28;
   int32 uncommitted_paths = 29; // distinct uncommitted paths attributed to uncommitted_in_review
-  int32 parallel = 30; // loop sessions that may work at once (0 for loops recorded before slots)
+  int32 parallel = 30; // worker target; working count may exceed it while draining (0 for loops recorded before slots)
   // The loop's live sessions: working in its slots (including waiting sessions
   // a job has woken) or waiting on their background shell jobs.
   repeated WorkLoopSlot slots = 31;
@@ -1692,6 +1692,15 @@ message StartWorkLoopRequest {
   int32 parallel = 2;
 }
 message StartWorkLoopResponse { WorkLoopInfo loop = 1; }
+
+// ResizeWorkLoop changes a live loop's worker target. Existing sessions finish
+// normally even if more are working than the new target. Does not change config.
+message ResizeWorkLoopRequest {
+  string project = 1;
+  int32 parallel = 2; // required, 1..16
+  string loop_id = 3; // if set, reject the request if another loop replaced this one
+}
+message ResizeWorkLoopResponse { WorkLoopInfo loop = 1; }
 
 // StopWorkLoop gracefully stops a live loop: the current session finishes and no
 // next session is picked, or a provider wait wakes immediately. Returns the loop
@@ -2187,6 +2196,7 @@ service SessionService {
   // client disconnects; any client can start it, poll GetWorkLoop for state +
   // digest, Subscribe to the current session, and gracefully StopWorkLoop it.
   rpc StartWorkLoop(StartWorkLoopRequest) returns (StartWorkLoopResponse);
+  rpc ResizeWorkLoop(ResizeWorkLoopRequest) returns (ResizeWorkLoopResponse);
   rpc StopWorkLoop(StopWorkLoopRequest) returns (StopWorkLoopResponse);
   rpc GetWorkLoop(GetWorkLoopRequest) returns (GetWorkLoopResponse);
   rpc GetWorkLoopPreflight(GetWorkLoopPreflightRequest) returns (GetWorkLoopPreflightResponse);

@@ -425,6 +425,28 @@ public final class YccClient: Sendable {
         }
     }
 
+    /// Change how many sessions a running or waiting loop may work at once.
+    /// Lowering it interrupts no session; the daemon starts no replacement
+    /// until fewer than `parallel` are working. A non-empty `loopID` makes
+    /// the daemon refuse the change if another loop replaced that one. `nil`
+    /// means the workspace has no loop snapshot. A daemon without the RPC
+    /// throws ``WorkLoopModel/resizeUnsupportedMessage``.
+    public func resizeWorkLoop(project: String, loopID: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo? {
+        var request = Ycc_V1_ResizeWorkLoopRequest()
+        request.project = project
+        request.loopID = loopID
+        request.parallel = parallel
+        let response = await generatedBulk.resizeWorkLoop(request: request)
+        switch response.result {
+        case .success(let message):
+            return message.hasLoop ? message.loop : nil
+        case .failure(let error) where error.code == .unimplemented:
+            throw YccError.rpc(message: WorkLoopModel.resizeUnsupportedMessage)
+        case .failure(let error):
+            throw Self.map(error)
+        }
+    }
+
     /// Set the daemon-wide work implementation (`direct` or `delegate`); it
     /// applies from the next work session, including a loop's.
     public func setWorkImplementation(_ implementation: String) async throws {

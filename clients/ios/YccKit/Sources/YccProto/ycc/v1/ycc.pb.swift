@@ -5193,7 +5193,7 @@ public nonisolated struct Ycc_V1_WorkLoopInfo: @unchecked Sendable {
     set {_uniqueStorage()._uncommittedPaths = newValue}
   }
 
-  /// loop sessions that may work at once (0 for loops recorded before slots)
+  /// worker target; working count may exceed it while draining (0 for loops recorded before slots)
   public var parallel: Int32 {
     get {_storage._parallel}
     set {_uniqueStorage()._parallel = newValue}
@@ -5292,6 +5292,47 @@ public nonisolated struct Ycc_V1_StartWorkLoopRequest: Sendable {
 }
 
 public nonisolated struct Ycc_V1_StartWorkLoopResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var loop: Ycc_V1_WorkLoopInfo {
+    get {_loop ?? Ycc_V1_WorkLoopInfo()}
+    set {_loop = newValue}
+  }
+  /// Returns true if `loop` has been explicitly set.
+  public var hasLoop: Bool {self._loop != nil}
+  /// Clears the value of `loop`. Subsequent reads from it will return its default value.
+  public mutating func clearLoop() {self._loop = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _loop: Ycc_V1_WorkLoopInfo? = nil
+}
+
+/// ResizeWorkLoop changes a live loop's worker target. Existing sessions finish
+/// normally even if more are working than the new target. Does not change config.
+public nonisolated struct Ycc_V1_ResizeWorkLoopRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var project: String = String()
+
+  /// required, 1..16
+  public var parallel: Int32 = 0
+
+  /// if set, reject the request if another loop replaced this one
+  public var loopID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_ResizeWorkLoopResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -16191,6 +16232,80 @@ nonisolated extension Ycc_V1_StartWorkLoopResponse: SwiftProtobuf.Message, Swift
   }
 
   public static func ==(lhs: Ycc_V1_StartWorkLoopResponse, rhs: Ycc_V1_StartWorkLoopResponse) -> Bool {
+    if lhs._loop != rhs._loop {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ResizeWorkLoopRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResizeWorkLoopRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}parallel\0\u{3}loop_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularInt32Field(value: &self.parallel) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.loopID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if self.parallel != 0 {
+      try visitor.visitSingularInt32Field(value: self.parallel, fieldNumber: 2)
+    }
+    if !self.loopID.isEmpty {
+      try visitor.visitSingularStringField(value: self.loopID, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ResizeWorkLoopRequest, rhs: Ycc_V1_ResizeWorkLoopRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.parallel != rhs.parallel {return false}
+    if lhs.loopID != rhs.loopID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_ResizeWorkLoopResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ResizeWorkLoopResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}loop\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._loop) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._loop {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_ResizeWorkLoopResponse, rhs: Ycc_V1_ResizeWorkLoopResponse) -> Bool {
     if lhs._loop != rhs._loop {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

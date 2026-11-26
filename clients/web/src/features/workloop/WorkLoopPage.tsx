@@ -1,8 +1,8 @@
 // The work-loop surface (`/p/<project>/loop`): the daemon-owned unattended
 // backlog drain. GetWorkLoop status (polled while live), Start with its
 // options (work implementation, the budget envelope it captures) and a
-// graceful Stop, links to the sessions it ran and the tasks it touched, and
-// the incremental/final digest. Mirrors iOS WorkLoopView.
+// graceful Stop, a live worker target, links to the sessions it ran and the
+// tasks it touched, and the incremental/final digest. Mirrors iOS WorkLoopView.
 import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -29,6 +29,7 @@ import {
   WORK_IMPLEMENTATIONS,
   bannerLine,
   budgetLine,
+  canResize,
   canStart,
   canStop,
   currentSessionId,
@@ -39,6 +40,7 @@ import {
   isActive,
   isFailureOutcome,
   isParallel,
+  isResizeTarget,
   loopState,
   MAX_LOOP_PARALLEL,
   parallelExplanation,
@@ -85,6 +87,7 @@ export function WorkLoopPage({ project }: { project: string }) {
   const qc = useQueryClient();
   const [startOpen, setStartOpen] = useState(false);
   const [stopOpen, setStopOpen] = useState(false);
+  const [resizeLoopId, setResizeLoopId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const loop = q.data ?? null;
   const state = loopState(loop);
@@ -156,6 +159,29 @@ export function WorkLoopPage({ project }: { project: string }) {
     }
   };
 
+  const resize = async (parallel: number) => {
+    const queryKey = queryKeys.workLoop(project);
+    const current = qc.getQueryData<WorkLoopInfo | null>(queryKey);
+    if (busy || !current || current.loopId !== resizeLoopId || !canResize(loopState(current))) return;
+    if (!isResizeTarget(parallel) || parallel === current.parallel) return;
+    setBusy(true);
+    try {
+      // The server also checks the loop ID in case it changed since the last poll.
+      const resp = await client.resizeWorkLoop({ project, parallel, loopId: current.loopId });
+      // A status poll started before the resize could otherwise overwrite its snapshot.
+      await qc.cancelQueries({ queryKey, exact: true });
+      install(resp.loop ?? null);
+      track.submit("loop_resize", { parallel });
+      setResizeLoopId(null);
+      toast("Work loop resized.", "info");
+    } catch (err) {
+      handleError(err, "Couldn’t resize the work loop", "loop.resize");
+      void q.refetch();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="page loop-page">
       <header className="page-head">
@@ -174,6 +200,17 @@ export function WorkLoopPage({ project }: { project: string }) {
           >
             <Icon name="refresh" size={15} />
           </button>
+          {loop && canResize(state) && (
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              data-track="loop.resize"
+              onClick={() => setResizeLoopId(loop.loopId)}
+            >
+              Resize loop…
+            </button>
+          )}
           {isActive(state) ? (
             <button
               type="button"
@@ -213,6 +250,22 @@ export function WorkLoopPage({ project }: { project: string }) {
         onCancel={() => setStartOpen(false)}
         onStart={(impl, parallel) => void start(impl, parallel)}
       />
+      <Modal
+        open={loop !== null && loop.loopId === resizeLoopId && canResize(state)}
+        onClose={() => !busy && setResizeLoopId(null)}
+        title={`Resize the work loop${project ? ` · ${project}` : ""}`}
+        view="loop_resize"
+        flow="loop_resize"
+      >
+        {loop && (
+          <ResizeLoopForm
+            current={loop.parallel}
+            busy={busy}
+            onCancel={() => setResizeLoopId(null)}
+            onResize={(parallel) => void resize(parallel)}
+          />
+        )}
+      </Modal>
       <ConfirmDialog
         open={stopOpen}
         title="Stop the work loop gracefully?"
@@ -354,7 +407,7 @@ function StartLoopDialog({
         ) : (
           <UncommittedReviewWarning project={project} tasks={uncommitted} paths={preflight.data?.uncommittedPaths ?? 0} />
         )}
-        <div className="loop-start-option">
+        <div className="loop-option">
           <label htmlFor="loop-start-slots">Sessions at once</label>
           <select id="loop-start-slots" value={slots} disabled={checking} onChange={(e) => setSlotChoice(Number(e.target.value))}>
             {Array.from({ length: MAX_LOOP_PARALLEL }, (_, i) => i + 1).map((n) => (
@@ -369,7 +422,7 @@ function StartLoopDialog({
             {defaultNote}
           </p>
         </div>
-        <div className="loop-start-option">
+        <div className="loop-option">
           <span id="loop-start-impl">Who writes the code</span>
           <span className="segmented inline" role="group" aria-labelledby="loop-start-impl">
             {WORK_IMPLEMENTATIONS.map((o) => (
@@ -404,6 +457,50 @@ function StartLoopDialog({
         </div>
       </form>
     </Modal>
+  );
+}
+
+function ResizeLoopForm({ current, busy, onCancel, onResize }: {
+  current: number;
+  busy: boolean;
+  onCancel: () => void;
+  onResize: (parallel: number) => void;
+}) {
+  const [choice, setChoice] = useState<number | null>(null);
+  const target = choice ?? current;
+  const valid = isResizeTarget(target);
+  const canSubmit = !busy && valid && target !== current;
+  return (
+    <form className="task-editor" onSubmit={(e) => {
+      e.preventDefault();
+      if (canSubmit) onResize(target);
+    }}>
+      <div className="loop-option">
+        <label htmlFor="loop-resize-slots">Worker target</label>
+        <select
+          id="loop-resize-slots"
+          value={valid ? target : ""}
+          disabled={busy}
+          aria-describedby="loop-resize-help"
+          onChange={(e) => setChoice(Number(e.target.value))}
+        >
+          {!isResizeTarget(current) && <option value="" disabled>Select a target</option>}
+          {Array.from({ length: MAX_LOOP_PARALLEL }, (_, i) => i + 1).map((n) => (
+            <option key={n} value={n}>{n}{n === current ? " (current)" : ""}</option>
+          ))}
+        </select>
+        <p id="loop-resize-help" className="muted small">
+          This changes only the current loop, not the project default. Lowering the target won’t interrupt sessions;
+          the loop waits until the working count is below the target before starting more.
+        </p>
+      </div>
+      <div className="editor-actions">
+        <button type="button" className="btn" disabled={busy} onClick={onCancel}>Cancel</button>
+        <button type="submit" className="btn primary" disabled={!canSubmit}>
+          {busy ? "Resizing…" : "Resize loop"}
+        </button>
+      </div>
+    </form>
   );
 }
 

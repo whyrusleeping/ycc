@@ -9,6 +9,11 @@ public protocol WorkLoopSource: Sendable {
     /// `parallel` 0 uses the project's configured slot count.
     func startWorkLoop(project: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo
     func stopWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
+    /// Change how many sessions a running loop may work at once (1...16).
+    /// Applies to that loop only, not the project's `[work_loop] parallel`.
+    /// A non-empty `loopID` makes the daemon refuse the change once another
+    /// loop has replaced that one.
+    func resizeWorkLoop(project: String, loopID: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoop(project: String) async throws -> Ycc_V1_WorkLoopInfo?
     func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse?
     /// The start sheet's context: ready tasks, the work implementation, and
@@ -23,6 +28,9 @@ public protocol WorkLoopSource: Sendable {
 struct WorkLoopSourceUnsupported: Error {}
 
 extension WorkLoopSource {
+    public func resizeWorkLoop(project: String, loopID: String, parallel: Int32) async throws -> Ycc_V1_WorkLoopInfo? {
+        throw WorkLoopSourceUnsupported()
+    }
     /// Sources without a preflight report nothing to warn about.
     public func getWorkLoopPreflight(project: String) async throws -> Ycc_V1_GetWorkLoopPreflightResponse? { nil }
     public func listBacklog(project: String) async throws -> [Ycc_V1_BacklogTaskSummary] {
@@ -82,6 +90,9 @@ public enum WorkLoopState: String, Sendable, CaseIterable, Equatable {
 
     public var canStart: Bool { self == .none || self == .finished }
     public var canStop: Bool { self == .running || self == .waiting }
+    /// A stopping loop starts no more sessions and a finished one none at
+    /// all, so only a running or waiting loop takes a new session count.
+    public var canResize: Bool { canStop }
     public var isActive: Bool { self == .running || self == .waiting || self == .stopping }
     public var shouldPoll: Bool { isActive }
 }
@@ -132,6 +143,8 @@ public final class WorkLoopModel {
     /// The budget caps a loop started now captures; nil until loaded.
     public private(set) var budget: Ycc_V1_GetBudgetResponse?
     public private(set) var isLoadingStartOptions = false
+    /// The session count a resize in flight asks for; nil otherwise.
+    public private(set) var resizeTarget: Int?
 
     private let source: WorkLoopSource
     private let cache: AppDataCache?
@@ -140,6 +153,9 @@ public final class WorkLoopModel {
     /// When the current snapshot was last confirmed by the daemon (a load or an
     /// action response). A cache-seeded snapshot is unconfirmed (nil).
     private var confirmedAt: Date?
+    /// Counts action responses applied, so a load that was already in flight
+    /// when an action landed does not put back the snapshot it replaced.
+    private var actionsApplied = 0
 
     /// The last snapshot a loop screen saw for a project. Wrapped so a cached
     /// "no loop yet" is distinguishable from "never loaded".
@@ -270,6 +286,12 @@ public final class WorkLoopModel {
 
     public var canStart: Bool { state.canStart && !isBusy }
     public var canStop: Bool { state.canStop && !isBusy }
+    /// Whether the session-count control shows: a running or waiting loop
+    /// that reports its count (loops recorded before slots report 0).
+    public var showsResize: Bool { state.canResize && (loop?.parallel ?? 0) > 0 }
+    public var canResize: Bool { showsResize && !isBusy }
+    /// The session count the control shows: a resize in flight, else the loop's.
+    public var displayedParallel: Int { resizeTarget ?? Int(loop?.parallel ?? 0) }
     public var shouldPoll: Bool { state.shouldPoll }
 
     /// Reload the persisted daemon snapshot. A load failure preserves the last
@@ -278,8 +300,11 @@ public final class WorkLoopModel {
         guard !isBusy else { return }
         isLoading = true
         defer { isLoading = false }
+        let actions = actionsApplied
         do {
-            apply(try await source.getWorkLoop(project: project))
+            let snapshot = try await source.getWorkLoop(project: project)
+            guard actions == actionsApplied else { return }
+            apply(snapshot)
             errorMessage = nil
         } catch YccError.unauthorized {
             unauthorized = true
@@ -303,7 +328,7 @@ public final class WorkLoopModel {
             }
             implementationChoice = nil
             let parallel = Self.parallelToSend(choice: parallelChoice, configured: configuredParallel)
-            apply(try await source.startWorkLoop(project: project, parallel: parallel), fromStart: true)
+            apply(try await source.startWorkLoop(project: project, parallel: parallel), fromStart: true, fromAction: true)
             parallelChoice = nil
             actionError = nil
             errorMessage = nil
@@ -318,7 +343,7 @@ public final class WorkLoopModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            apply(try await source.stopWorkLoop(project: project))
+            apply(try await source.stopWorkLoop(project: project), fromAction: true)
             actionError = nil
             errorMessage = nil
         } catch {
@@ -326,7 +351,41 @@ public final class WorkLoopModel {
         }
     }
 
-    private func apply(_ snapshot: Ycc_V1_WorkLoopInfo?, fromStart: Bool = false) {
+    /// Change how many sessions the running loop may work at once and apply
+    /// the returned snapshot. Raising it starts more sessions as tasks are
+    /// ready; lowering it interrupts none, and no replacement starts until
+    /// fewer than the new count are working.
+    public func resize(to parallel: Int) async {
+        guard canResize else { return }
+        let target = min(max(parallel, 1), Self.maxParallel)
+        guard target != Int(loop?.parallel ?? 0) else { return }
+        isBusy = true
+        resizeTarget = target
+        defer {
+            isBusy = false
+            resizeTarget = nil
+        }
+        do {
+            // The displayed loop's id, so a screen showing a cached or
+            // replaced loop cannot resize its successor.
+            let loopID = loop?.loopID ?? ""
+            apply(
+                try await source.resizeWorkLoop(project: project, loopID: loopID, parallel: Int32(target)),
+                fromAction: true)
+            actionError = nil
+            errorMessage = nil
+        } catch is WorkLoopSourceUnsupported {
+            actionError = Self.resizeUnsupportedMessage
+        } catch {
+            handleAction(error)
+        }
+    }
+
+    public nonisolated static let resizeUnsupportedMessage =
+        "This daemon cannot change a running loop's session count. Update the daemon, or stop the loop and start it again."
+
+    private func apply(_ snapshot: Ycc_V1_WorkLoopInfo?, fromStart: Bool = false, fromAction: Bool = false) {
+        if fromAction { actionsApplied += 1 }
         let next = Self.state(for: snapshot)
         // Start can return an already-finished snapshot if setup failed quickly.
         // Otherwise surface the first active -> finished transition, not every
@@ -425,13 +484,41 @@ public final class WorkLoopModel {
     }
 
     /// "2/3 working, 1 waiting": the loop's slots in use out of its
-    /// parallelism, and its sessions waiting on background jobs. Empty for
-    /// snapshots without slots.
+    /// parallelism, and its sessions waiting on background jobs. After the
+    /// count was lowered below the sessions still working, "3 working
+    /// (target 2), 1 waiting". Empty for snapshots without slots.
     public static func slotsLine(for loop: Ycc_V1_WorkLoopInfo) -> String {
         guard loop.parallel > 0 else { return "" }
-        let working = loop.slots.filter { $0.state == "working" }.count
+        let working = workingCount(for: loop)
         let waiting = loop.slots.filter { $0.state == "waiting" }.count
-        return "\(working)/\(loop.parallel) working, \(waiting) waiting"
+        let workingPart = working > Int(loop.parallel)
+            ? "\(working) working (target \(loop.parallel))"
+            : "\(working)/\(loop.parallel) working"
+        return "\(workingPart), \(waiting) waiting"
+    }
+
+    /// The loop's slots whose sessions are working, the ones its session
+    /// count limits.
+    public static func workingCount(for loop: Ycc_V1_WorkLoopInfo) -> Int {
+        loop.slots.filter { $0.state == "working" }.count
+    }
+
+    /// While a running or waiting loop has more sessions working than its
+    /// lowered count: they finish undisturbed and no replacement starts until
+    /// fewer than the count are working. Nil otherwise.
+    public static func drainLine(for loop: Ycc_V1_WorkLoopInfo) -> String? {
+        let target = Int(loop.parallel)
+        let working = workingCount(for: loop)
+        guard state(for: loop).canResize, target > 0, working > target else { return nil }
+        let until = target == 1 ? "none is working" : "fewer than \(target) are working"
+        return "Lowered to \(target): the \(working) working sessions finish undisturbed, and no new one starts until \(until)."
+    }
+
+    /// The session-count control's footer: the drain while it lasts, else
+    /// what changing the count does.
+    public static func resizeFooter(for loop: Ycc_V1_WorkLoopInfo) -> String {
+        drainLine(for: loop)
+            ?? "Applies to this loop only, not the project default. Lowering it interrupts no working session; it only holds back new ones."
     }
 
     /// Whether the loop may run more than one session at once: its single
