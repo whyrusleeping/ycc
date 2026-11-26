@@ -399,12 +399,13 @@ On graceful shutdown, after detaching sessions and closing logs, the daemon writ
 - `waiting_sessions`: sessions with an unresolved `wait_started` (regardless of whether all
   targets were already `job_claimed` before `tool_result`) **or** `StatusWithJobContinuation() ==
   (StatusIdle, true)`, each recording `(project, session_id, kind, last_seq)`.
-- `interrupted_sessions`: non-loop sessions (until Slice 5) whose coordinator turn was cut short
+- `interrupted_sessions`: non-loop sessions (a loop's sessions are carried by its checkpoint) whose coordinator turn was cut short
   at drain expiry, recording `(project, session_id, last_seq)`.
 - `unbound_leases`: unexpired unbound leases held at shutdown (including those held by closed
   `ask_user` or idle sessions), restored passively with original `expires_at` and canonical
   primary workspace.
-- `suspended_loops`: projects with a matching `restart_id` scheduler checkpoint (Slice 5).
+- `suspended_loops`: projects (`project`, `workspace`) with a matching `restart_id` scheduler
+  checkpoint (Slice 5).
 
 Idempotency across repeated crashes during recovery:
 
@@ -581,3 +582,29 @@ and client projections as its behavior lands:
    (`"suspended_restart"`), convert stale/unmatched checkpoints to interrupted in
    `restoreWorkLoopLocked`, preserve unattended session semantics on re-adoption, and keep crashed
    loops visibly interrupted.
+   0617 implements it (`internal/session/workloop_restart.go`) for a daemon that keeps a restart
+   manifest; the one-shot daemon still ends its loops as interrupted. `BeginShutdown` does not
+   cancel the loops' context there: schedulers stop admitting, and slot runners and
+   waiting-session watchers let go of their sessions at once (a runner returns
+   `errLoopSuspended`, never reclaiming), so a session that ends during the drain is settled from
+   its closed log rather than from a status published before its final report (a follower that
+   reaches terminal cleanup as the restart begins yields it too, `reclaimCurrent` reporting that
+   it reclaimed nothing). `admitWake` admits no job wake while suspending, and the scheduler
+   claims finishing under the manager's `mu` against `BeginShutdown` (`claimFinish`), so a loop
+   either finished before the restart began or is checkpointed. A settled session's failure is
+   read from its closed log as well. `ReclaimAll`'s
+   restart branch first runs `suspendLoopsForRestart`, which closes a suspend channel the
+   schedulers wait on, joins every loop goroutine, and sorts each live loop's sessions into
+   working and waiting slots. After the sessions are suspended, the manifest writer generates the
+   `restart_id`, classifies each slot from its closed log (`restartDisposition`, shared with
+   manifest entries; focus comes from the log too), settles ended ones through the scheduler's own
+   `collectEnded` and `applyEnds`, and writes the checkpoint before the manifest. `RecoverRestart` then calls `resumeSuspendedLoop` per listed loop: the
+   checkpoint must carry the manifest's `restart_id`; it is consumed (the live state written, or
+   else the loop restores as interrupted) before the loop is published or any session reopens, so a cut-off startup restores the loop as interrupted rather than
+   resuming it twice. Slot sessions reopen through `reopen(..., unattended)` (which, like a start,
+   now records `Session.unattended`, so a loop session's budget breach halts gracefully instead
+   of asking), are prepared with `prepareRestartReopen`, get the wake gate, and are followed by
+   `followSession` or a waiter watcher (a waiting session its job had woken takes its working
+   slot back synchronously); the scheduler starts at once, and any session it starts
+   is held until execution is released. Backoff owed at suspension stays owed; the downtime does
+   not count as served.

@@ -2390,6 +2390,16 @@ type Manager struct {
 	loopCancel context.CancelFunc
 	loopWG     sync.WaitGroup
 	loopStop   bool
+	// loopRestart marks a graceful shutdown that suspends work loops for the
+	// restart (workloop_restart.go) instead of cancelling them: set by
+	// BeginShutdown when a restart manifest is kept. loopSuspend is closed when
+	// the loops' schedulers, runners and watchers are to let go of their
+	// sessions; suspendedLoops are the loops suspendLoopsForRestart captured,
+	// for the manifest.
+	loopRestart     atomic.Bool
+	loopSuspend     chan struct{}
+	loopSuspendOnce sync.Once
+	suspendedLoops  []*loopSuspension
 	// newRunSession, when non-nil, overrides the loop's session runner (the test
 	// seam that drives control logic without a live model). Nil => the real runner.
 	newRunSession func(*workLoop) func(context.Context) (loopSessRec, bool, error)
@@ -2537,6 +2547,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		workLoops:         map[string]*workLoop{},
 		loopCtx:           loopCtx,
 		loopCancel:        loopCancel,
+		loopSuspend:       make(chan struct{}),
 		gitSyncCache:      map[string]gitFetchState{},
 		gitSyncInterval:   defaultGitSyncInterval,
 		gitSyncWake:       make(chan struct{}, 1),
@@ -3505,6 +3516,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		ID:             id,
 		Workspace:      absWS,
 		Mode:           mode,
+		unattended:     unattended,
 		log:            log,
 		emitter:        emitter,
 		inter:          inter,
@@ -3727,6 +3739,13 @@ func firstLine(s string) string {
 // the daemon's sole project; an unknown/ambiguous project is ErrUnknownProject;
 // a session with no persisted log is ErrUnknownSession.
 func (m *Manager) Reopen(project, id string) (*Session, error) {
+	return m.reopen(project, id, false)
+}
+
+// reopen is Reopen; unattended reopens the session in unattended execution,
+// as the work loop that started it ran it (a planned restart re-adopting a
+// loop session, workloop_restart.go).
+func (m *Manager) reopen(project, id string, unattended bool) (*Session, error) {
 	// One preparation per session id at a time, so concurrent callers never open
 	// duplicate writers on the same log or attach duplicate watchers.
 	unlock := m.lockSessionID(id)
@@ -3797,7 +3816,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	} else if coord != "" && !m.reg.Has(coord) {
 		coord = ""
 	}
-	s, err := m.newSession(absWS, id, mode, false, "", log, true, coord)
+	s, err := m.newSession(absWS, id, mode, unattended, "", log, true, coord)
 	if err != nil {
 		log.Close()
 		return nil, err
@@ -4406,18 +4425,25 @@ func (m *Manager) stopWorkstreamWatcher(id string) {
 // stopped/reclaimed session can be reopened with the same id, so callers doing
 // delayed cleanup must never act on id alone.
 func (m *Manager) reclaimIfCurrent(s *Session) bool {
+	current, _ := m.reclaimCurrent(s)
+	return current
+}
+
+// reclaimCurrent is reclaimIfCurrent, also reporting whether it reclaimed s:
+// once shutdown began it leaves a current session live (reclaimed false).
+func (m *Manager) reclaimCurrent(s *Session) (current, reclaimed bool) {
 	m.mu.Lock()
-	current, ok := m.sessions[s.ID]
-	if !ok || current != s {
+	live, ok := m.sessions[s.ID]
+	if !ok || live != s {
 		m.mu.Unlock()
-		return false
+		return false, false
 	}
 	// Decided under mu, where BeginShutdown flips the phase: once shutdown
 	// began, ShutdownForRestart owns teardown, so leave the session live for the
 	// drain and the final suspension.
 	if m.shuttingDown.Load() {
 		m.mu.Unlock()
-		return true
+		return true, false
 	}
 	delete(m.sessions, s.ID)
 	ended := m.endingLocked(s.ID)
@@ -4426,7 +4452,7 @@ func (m *Manager) reclaimIfCurrent(s *Session) bool {
 	s.reap()
 	m.endClaims(s)
 	m.waitWorkstreamWatcher(s.ID)
-	return true
+	return true, true
 }
 
 // endingLocked records, until the returned func runs, that an instance of id
@@ -4474,6 +4500,12 @@ func (m *Manager) ReclaimAll() {
 		m.mu.Unlock()
 		m.cancelBackground()
 		m.gitSyncCancel()
+		// Work loops let go of their sessions before the sessions are
+		// suspended, so none of them is reclaimed or replaced. Unlike the
+		// other workers they are joined first: their runners let go when the
+		// shutdown began, and what a scheduler still does is short (backlog
+		// reads, a local git log).
+		m.suspendLoopsForRestart()
 		m.suspendAll()
 		// Workers were cancelled at BeginShutdown; join them only now, so a
 		// non-interruptible worker step (a rebase, a fetch) cannot hold sessions
@@ -4528,7 +4560,9 @@ func (m *Manager) stopBackground() {
 // and shutdown must not wait behind it. New work is refused meanwhile by
 // shuttingDown; joinBackground later sets the workers' stop flags.
 func (m *Manager) cancelBackground() {
-	m.loopCancel()
+	if !m.loopRestart.Load() {
+		m.loopCancel()
+	}
 	m.integrationCancel()
 	m.groomCancel()
 	m.watchRunning.Store(false)

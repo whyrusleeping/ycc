@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -223,6 +224,8 @@ type loopSessRec struct {
 type loopWaiter struct {
 	id, focus string
 	since     time.Time
+	started   time.Time         // when the session started, for its duration
+	sess      *Session          // the session; nil in tests
 	before    map[string]string // backlog task hashes when the session started
 	lane      int               // slot the session started in
 	// awake caches whether the session last looked woken, and ending marks
@@ -269,6 +272,7 @@ type loopRun struct {
 	started     time.Time
 	before      map[string]string // backlog task hashes at start
 	usage       func() (int64, float64)
+	sess        *Session // the session, once started
 }
 
 // loopLane is one of the loop's slots. Its stall pacing is the scheduler's own.
@@ -375,6 +379,15 @@ type workLoop struct {
 	wakeSeq int // counts admitted wakes, so syncSlot drops stale observations
 	slotCh  chan struct{}
 	ungated bool
+
+	// pace and stop are the scheduler's provider-outage pacing and the reason
+	// it stops starting sessions, once there is one. Only the scheduler
+	// goroutine touches them, and the restart suspension once it has joined
+	// the scheduler. resumed marks a loop a planned restart resumed from its
+	// checkpoint (workloop_restart.go).
+	pace    loopPacing
+	stop    loopStop
+	resumed bool
 
 	// runSession is the injectable seam: the default runs a real unattended work
 	// session; tests substitute a fake returning canned records.
@@ -492,6 +505,8 @@ func (wl *workLoop) waitForRetry(delay time.Duration) bool {
 			return false
 		case <-wl.m.loopCtx.Done():
 			return false
+		case <-wl.m.loopSuspend:
+			return false
 		case <-wl.endedCh:
 		}
 	}
@@ -531,7 +546,7 @@ func (m *Manager) StartWorkLoopWith(project string, opts WorkLoopOptions) (*Work
 		startHead, _ = repo.HeadCommit()
 	}
 	m.loopMu.Lock()
-	if m.loopStop {
+	if m.loopStop || m.shuttingDown.Load() {
 		m.loopMu.Unlock()
 		return nil, fmt.Errorf("session manager is shutting down")
 	}
@@ -736,81 +751,78 @@ func (s *loopStop) failed(outcome string) {
 func (wl *workLoop) run() {
 	store, err := wl.m.Backlog(wl.projectArg)
 	if err != nil {
-		wl.finish("loop stopped: "+err.Error(), nil)
+		if wl.claimFinish() {
+			wl.finish("loop stopped: "+err.Error(), nil)
+		}
 		return
 	}
 	tasks, err := store.ListMetadata()
 	if err != nil {
-		wl.finish("loop stopped: "+err.Error(), nil)
+		if wl.claimFinish() {
+			wl.finish("loop stopped: "+err.Error(), nil)
+		}
 		return
 	}
 	wl.mu.Lock()
-	for _, t := range tasks {
-		wl.baseline[t.ID] = t.Status
+	// A loop resumed after a restart keeps the baseline it started with.
+	if !wl.resumed {
+		for _, t := range tasks {
+			wl.baseline[t.ID] = t.Status
+		}
 	}
 	if len(wl.lanes) == 0 {
 		wl.lanes = []*loopLane{{}}
 	}
 	wl.mu.Unlock()
 
-	var pace loopPacing // provider outages, shared by every slot
-	var stop loopStop
 	var startupErrs []string
 	for {
-		if wl.m.loopCtx.Err() != nil {
-			stop.soft("loop interrupted: daemon shutting down")
-		} else if wl.stopRequested() {
-			stop.soft("loop stopped: requested")
+		// Once a graceful restart began, the loop starts nothing more and
+		// never finishes: its runners let go of their sessions, which are
+		// settled from their closed logs as the loop is suspended with them
+		// (workloop_restart.go).
+		suspending := wl.suspending()
+		if suspending && wl.m.loopSuspended() {
+			return
+		}
+		switch {
+		case suspending:
+		case wl.m.loopCtx.Err() != nil:
+			wl.stop.soft("loop interrupted: daemon shutting down")
+		case wl.stopRequested():
+			wl.stop.soft("loop stopped: requested")
 		}
 		// Sessions that ended, in a slot or while waiting, go through one
 		// result policy.
 		ends := wl.collectEnded(store)
 		if latest, lerr := store.ListMetadata(); lerr == nil {
 			tasks = latest
-		} else {
-			stop.failed("loop stopped: " + lerr.Error())
+		} else if !suspending {
+			wl.stop.failed("loop stopped: " + lerr.Error())
 		}
+		// A session a restart kept from starting is no failure: Start refuses
+		// with ErrShuttingDown only once the restart is suspending the loop.
+		kept := ends[:0]
 		for _, end := range ends {
-			switch {
-			case end.err != nil:
-				stop.failed("loop stopped: " + end.err.Error())
-				// Startup failures have no session_error event (or session
-				// watcher) to notify the user; do not drop them silently.
-				if end.rec.id == "" {
-					startupErrs = append(startupErrs, end.err.Error())
-				}
-			case end.rec.errKind != "":
-				outcome, retry := pace.settled(end.rec, end.progressed, tasks)
-				if outcome != "" {
-					stop.failed(outcome)
-				}
-				if retry > 0 {
-					// Served before the next start; a stop requested meanwhile
-					// ends the loop at the top instead.
-					pace.retryDelay, pace.retryKind = retry, end.rec.errKind
-				}
-			default:
-				// Any successful session ends the consecutive provider outage.
-				pace.outageFailures, pace.outageWait = 0, 0
-				lane := wl.lanes[min(max(end.lane, 0), len(wl.lanes)-1)]
-				if outcome, _ := lane.pace.settled(end.rec, end.progressed, tasks); outcome != "" {
-					lane.gaveUp = true
-					if wl.allLanesGaveUp() {
-						if len(wl.lanes) > 1 {
-							outcome = fmt.Sprintf("loop stalled: all %d slots made no progress for 12h (ready: %s)",
-								len(wl.lanes), strings.Join(readyTaskIDs(tasks), ", "))
-						}
-						stop.soft(outcome)
-					}
-				}
+			if end.rec.id == "" && errors.Is(end.err, ErrShuttingDown) && wl.suspending() {
+				continue
 			}
+			kept = append(kept, end)
+		}
+		startupErrs = append(startupErrs, wl.applyEnds(kept, tasks)...)
+		if suspending || wl.suspending() {
+			wl.awaitSuspend()
+			continue
 		}
 
-		if stop.outcome != "" {
+		if wl.stop.outcome != "" {
 			// Start nothing more; working sessions finish first. Waiting
 			// sessions are left live by finish.
 			if !wl.hasForeground() {
-				wl.finish(stop.outcome, tasks)
+				if !wl.claimFinish() {
+					continue // a restart began meanwhile: suspend instead
+				}
+				wl.finish(wl.stop.outcome, tasks)
 				for _, msg := range startupErrs {
 					wl.m.Notify(notify.KindError, wl.project, "", "work loop stopped: "+msg)
 				}
@@ -829,13 +841,13 @@ func (wl *workLoop) run() {
 			// reached budget still stops the loop at once.
 			if next == "" && (wl.hasWaiters() || wl.hasForeground()) {
 				if budget := budgetDecision(in); budget.stop {
-					stop.soft(budget.outcome)
+					wl.stop.soft(budget.outcome)
 					continue
 				}
 				wl.awaitEvent(time.Time{}, false)
 				continue
 			}
-			stop.soft(dec.outcome)
+			wl.stop.soft(dec.outcome)
 			continue
 		}
 		// Only working loop sessions count against the slots; waiting
@@ -849,15 +861,15 @@ func (wl *workLoop) run() {
 		// may have changed during the wait. Patience counts only backoff
 		// actually served. Provider backoff holds every slot; stall backoff
 		// only its own slot.
-		if pace.retryDelay > 0 {
-			served, halt := wl.waitBeforeNext(pace.retryDelay, pace.retryKind)
+		if wl.pace.retryDelay > 0 {
+			served, halt := wl.waitBeforeNext(wl.pace.retryDelay, wl.pace.retryKind)
 			if halt {
-				stop.soft("loop stopped: requested")
+				wl.stop.soft("loop stopped: requested")
 				continue
 			}
-			pace.outageWait += served
-			if pace.retryDelay -= served; pace.retryDelay <= 0 {
-				pace.retryDelay, pace.retryKind = 0, ""
+			wl.pace.outageWait += served
+			if wl.pace.retryDelay -= served; wl.pace.retryDelay <= 0 {
+				wl.pace.retryDelay, wl.pace.retryKind = 0, ""
 			}
 			wl.ageStalls(served)
 			continue
@@ -870,7 +882,7 @@ func (wl *workLoop) run() {
 		if lane.pace.stallDelay > 0 {
 			served, halt := wl.waitBeforeNext(lane.pace.stallDelay, waitKindNoProgress)
 			if halt {
-				stop.soft("loop stopped: requested")
+				wl.stop.soft("loop stopped: requested")
 				continue
 			}
 			wl.ageStalls(served)
@@ -889,6 +901,51 @@ func (wl *workLoop) run() {
 	}
 }
 
+// applyEnds applies the loop's result policy to sessions that ended: a
+// runner error or a failure the loop cannot retry stops it, a retryable
+// failure owes provider backoff, and a slot that keeps making no progress
+// backs off and finally gives up. It returns the startup failures, which no
+// session event reports. Only the scheduler (or the restart suspension, once
+// it has stopped) calls it.
+func (wl *workLoop) applyEnds(ends []loopEnd, tasks []*docs.Task) (startupErrs []string) {
+	for _, end := range ends {
+		switch {
+		case end.err != nil:
+			wl.stop.failed("loop stopped: " + end.err.Error())
+			// Startup failures have no session_error event (or session
+			// watcher) to notify the user; do not drop them silently.
+			if end.rec.id == "" {
+				startupErrs = append(startupErrs, end.err.Error())
+			}
+		case end.rec.errKind != "":
+			outcome, retry := wl.pace.settled(end.rec, end.progressed, tasks)
+			if outcome != "" {
+				wl.stop.failed(outcome)
+			}
+			if retry > 0 {
+				// Served before the next start; a stop requested meanwhile
+				// ends the loop at the top instead.
+				wl.pace.retryDelay, wl.pace.retryKind = retry, end.rec.errKind
+			}
+		default:
+			// Any successful session ends the consecutive provider outage.
+			wl.pace.outageFailures, wl.pace.outageWait = 0, 0
+			lane := wl.lanes[min(max(end.lane, 0), len(wl.lanes)-1)]
+			if outcome, _ := lane.pace.settled(end.rec, end.progressed, tasks); outcome != "" {
+				lane.gaveUp = true
+				if wl.allLanesGaveUp() {
+					if len(wl.lanes) > 1 {
+						outcome = fmt.Sprintf("loop stalled: all %d slots made no progress for 12h (ready: %s)",
+							len(wl.lanes), strings.Join(readyTaskIDs(tasks), ", "))
+					}
+					wl.stop.soft(outcome)
+				}
+			}
+		}
+	}
+	return startupErrs
+}
+
 // admit starts a run in lane unless, under the same lock, a stop was
 // requested, a session's record awaits accounting, a slot or waiting session
 // has ended with its record on its way, or a waiting session's wake took the last
@@ -896,7 +953,7 @@ func (wl *workLoop) run() {
 func (wl *workLoop) admit(lane *loopLane, before map[string]string) *loopRun {
 	wl.mu.Lock()
 	defer wl.mu.Unlock()
-	if wl.stopReq || len(wl.ended) > 0 || lane.run != nil || wl.endingLocked() || len(wl.holders) >= wl.capacity() {
+	if wl.stopReq || wl.suspending() || len(wl.ended) > 0 || lane.run != nil || wl.endingLocked() || len(wl.holders) >= wl.capacity() {
 		return nil
 	}
 	wl.runSeq++
@@ -912,10 +969,15 @@ func (wl *workLoop) admit(lane *loopLane, before map[string]string) *loopRun {
 // launch runs one slot session in its own goroutine and posts what the runner
 // returned for the scheduler to collect.
 func (wl *workLoop) launch(run *loopRun) {
+	wl.launchWith(run, wl.runSession)
+}
+
+// launchWith is launch with runner as the session runner.
+func (wl *workLoop) launchWith(run *loopRun, runner func(context.Context) (loopSessRec, bool, error)) {
 	wl.m.loopWG.Add(1)
 	go func() {
 		defer wl.m.loopWG.Done()
-		rec, breach, err := wl.runSession(context.WithValue(wl.m.loopCtx, loopRunKey{}, run))
+		rec, breach, err := runner(context.WithValue(wl.m.loopCtx, loopRunKey{}, run))
 		// Publish the record and free the slot together, so the loop never
 		// sees a free slot before the record of the session that held it.
 		wl.mu.Lock()
@@ -1038,6 +1100,14 @@ func (wl *workLoop) waitBeforeNext(delay time.Duration, kind string) (served tim
 	wl.persist()
 
 	elapsed := wl.waitFn(delay)
+	if wl.suspending() {
+		// Suspended for a restart: what was served counts, and the rest of
+		// the delay stays owed in the checkpoint.
+		if elapsed {
+			return delay, false
+		}
+		return min(time.Since(start), delay), false
+	}
 	if wl.m.loopCtx.Err() != nil || wl.stopRequested() {
 		return 0, false
 	}
@@ -1092,6 +1162,12 @@ func (wl *workLoop) addWaiter(w *loopWaiter, run *loopRun) {
 	w.shown, w.shownAt = wl.waiterStateLocked(w), w.since
 	wl.mu.Unlock()
 	wl.persist()
+	wl.watchWaiter(w)
+}
+
+// watchWaiter follows waiting session w until it ends, and publishes its
+// final record, or until the loop finishes or is suspended for a restart.
+func (wl *workLoop) watchWaiter(w *loopWaiter) {
 	wl.m.loopWG.Add(1)
 	wl.watchers.Add(1)
 	go func() {
@@ -1222,6 +1298,11 @@ func (wl *workLoop) admitWake(id string) bool {
 	defer wl.mu.Unlock()
 	if wl.ungated {
 		return true
+	}
+	// A restart is suspending the loop: the completion stays queued for the
+	// session reopened after it.
+	if wl.suspending() {
+		return false
 	}
 	if _, held := wl.holders[id]; !held {
 		if len(wl.holders) >= wl.capacity() {
@@ -1520,6 +1601,7 @@ func (wl *workLoop) awaitEvent(until time.Time, draining bool) {
 	case <-timer.C:
 	case <-stopCh:
 	case <-done:
+	case <-wl.m.loopSuspend:
 	}
 }
 
@@ -1536,8 +1618,17 @@ type loopEnd struct {
 // session its runner let wait becomes a waiting session instead.
 func (wl *workLoop) collectEnded(store *docs.Store) []loopEnd {
 	wl.mu.Lock()
-	results := wl.ended
-	wl.ended = nil
+	// A slot run its runner let go for a restart stays put: the restart
+	// suspension takes it into the checkpoint as a working slot.
+	var results, suspended []loopWaitResult
+	for _, res := range wl.ended {
+		if errors.Is(res.err, errLoopSuspended) {
+			suspended = append(suspended, res)
+		} else {
+			results = append(results, res)
+		}
+	}
+	wl.ended = suspended
 	for _, res := range results {
 		if res.run != nil {
 			for _, lane := range wl.lanes {
@@ -2084,13 +2175,24 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	if err != nil {
 		return loopSessRec{}, false, err
 	}
+	return wl.followSession(ctx, run, slotRun, sess, start)
+}
+
+// errLoopSuspended is what a slot's runner returns when a graceful restart
+// suspends the loop: the session stays live, for the restart checkpoint.
+var errLoopSuspended = errors.New("work loop suspended for a daemon restart")
+
+// followSession follows a loop session working in run's slot (started at
+// start) until it ends, is let wait on its shell jobs, or a restart
+// suspends the loop (errLoopSuspended).
+func (wl *workLoop) followSession(ctx context.Context, run *loopRun, slotRun bool, sess *Session, start time.Time) (loopSessRec, bool, error) {
 	// The session holds a working slot while it works; once it is let wait,
 	// its job continuations must take a slot again.
 	sess.setWakeGate(func() bool { return wl.admitWake(sess.ID) }, func() { wl.cancelWake(sess.ID) })
-	usageSoFar := func() (int64, float64) {
-		total := usage.Aggregate(usage.ReduceEvents(sess.ID, sess.Log().Snapshot()), wl.m.reg, usage.Options{}).Total
-		return int64(total.Tokens.Total), total.Cost
-	}
+	usageSoFar := wl.usageOf(sess)
+	wl.mu.Lock()
+	run.sess = sess
+	wl.mu.Unlock()
 	wl.nameRun(run, sess.ID, usageSoFar)
 
 	// Watch the session's events for the tasks it focuses: its first claim
@@ -2114,7 +2216,10 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 		run.ending = true
 		wl.mu.Unlock()
 	}
-	detached, _, terminalErr := wl.awaitSession(ctx, sess, func() bool { return wl.reserveWaiting(run) }, nil, claims, ending)
+	detached, released, terminalErr := wl.awaitSession(ctx, sess, func() bool { return wl.reserveWaiting(run) }, nil, claims, ending)
+	if released {
+		return loopSessRec{id: sess.ID}, false, errLoopSuspended
+	}
 	// A slot run's slot is freed only as its record is published (launch).
 	if !slotRun {
 		// A session its job woke just as it was let wait keeps its slot.
@@ -2131,30 +2236,47 @@ func (wl *workLoop) realRunSession(ctx context.Context) (loopSessRec, bool, erro
 	if detached {
 		var seen loopSessRec
 		seen.addEvents(sess.Log().Snapshot())
-		w := &loopWaiter{id: sess.ID, focus: seen.focus, since: time.Now(), working: sess.loopWorking, usage: usageSoFar, nudge: sess.rearmJobWake}
-		w.resume = func(release <-chan struct{}) loopWaitResult {
-			_, released, err := wl.awaitSession(wl.m.loopCtx, sess, nil, release, func() { wl.syncSlot(sess) }, func() {
-				wl.mu.Lock()
-				w.ending = true
-				wl.mu.Unlock()
-			})
-			if released {
-				return loopWaitResult{released: true}
-			}
-			rec, breach := wl.sessionRecord(sess, start)
-			return loopWaitResult{rec: rec, breach: breach, err: err}
-		}
+		w := wl.newWaiter(sess, start, seen.focus)
 		return loopSessRec{id: sess.ID, focus: seen.focus, waiter: w}, false, nil
 	}
 	rec, breach := wl.sessionRecord(sess, start)
 	return rec, breach, terminalErr
 }
 
+// usageOf reports a loop session's usage so far.
+func (wl *workLoop) usageOf(sess *Session) func() (int64, float64) {
+	return func() (int64, float64) {
+		total := usage.Aggregate(usage.ReduceEvents(sess.ID, sess.Log().Snapshot()), wl.m.reg, usage.Options{}).Total
+		return int64(total.Tokens.Total), total.Cost
+	}
+}
+
+// newWaiter is the waiting-session record of a loop session (started at
+// start, focused on focus) the loop lets wait on its own shell jobs; its
+// watcher (addWaiter) reports the final record once the session ends.
+func (wl *workLoop) newWaiter(sess *Session, start time.Time, focus string) *loopWaiter {
+	w := &loopWaiter{id: sess.ID, focus: focus, since: time.Now(), started: start, sess: sess,
+		working: sess.loopWorking, usage: wl.usageOf(sess), nudge: sess.rearmJobWake}
+	w.resume = func(release <-chan struct{}) loopWaitResult {
+		_, released, err := wl.awaitSession(wl.m.loopCtx, sess, nil, release, func() { wl.syncSlot(sess) }, func() {
+			wl.mu.Lock()
+			w.ending = true
+			wl.mu.Unlock()
+		})
+		if released {
+			return loopWaitResult{released: true}
+		}
+		rec, breach := wl.sessionRecord(sess, start)
+		return loopWaitResult{rec: rec, breach: breach, err: err}
+	}
+	return w
+}
+
 // awaitSession polls a loop session until it ends, then reclaims it. With
 // detach it instead returns detached once the session has waited only on its
 // own background shell jobs for the loop's grace period and detach grants it
-// a waiting place. Closing release returns released and leaves the session
-// live.
+// a waiting place. Closing release, or a graceful restart beginning, returns
+// released and leaves the session live.
 //
 // An unattended work session reaches Idle only after `finish` or a final turn
 // (it then blocks on input), so Idle == done here; Error is also terminal. A
@@ -2175,6 +2297,13 @@ func (wl *workLoop) awaitSession(ctx context.Context, sess *Session, detach func
 	var shellOnlySince time.Time
 	releasing := false
 	for {
+		// A graceful restart lets go of the session at once, like a release
+		// but without the last status check: a session that ends meanwhile
+		// is settled from its closed log, which is complete only once the
+		// session is suspended (workloop_restart.go).
+		if wl.suspending() {
+			return false, true, nil
+		}
 		status, awaitingJobs := sess.StatusWithJobContinuation()
 		switch status {
 		case event.StatusIdle, event.StatusError, event.StatusStopped:
@@ -2195,8 +2324,14 @@ func (wl *workLoop) awaitSession(ctx context.Context, sess *Session, detach func
 			// another remover won, even a normal-looking Idle/Error is an external
 			// terminal outcome for this batch, not permission to restart work.
 			ending()
-			if !wl.m.reclaimIfCurrent(sess) {
+			current, reclaimed := wl.m.reclaimCurrent(sess)
+			if !current {
 				return false, false, fmt.Errorf("work session %s disappeared or was reclaimed", sess.ID)
+			}
+			if !reclaimed && wl.suspending() {
+				// A graceful restart began first and owns the session's
+				// teardown: its record is settled from its closed log.
+				return false, true, nil
 			}
 			if status == event.StatusStopped {
 				return false, false, fmt.Errorf("work session %s was stopped externally", sess.ID)
@@ -2234,8 +2369,12 @@ func (wl *workLoop) awaitSession(ctx context.Context, sess *Session, detach func
 // sessionRecord snapshots and prices an ended loop session.
 func (wl *workLoop) sessionRecord(sess *Session, start time.Time) (loopSessRec, bool) {
 	endedWithError := sess.Status() == event.StatusError
-	events := sess.Log().Snapshot()
-	rec := loopSessRec{id: sess.ID, report: loopSessionReport(events), priceStatus: string(usage.StatusUnpriced)}
+	return wl.recordFromEvents(sess.ID, sess.Log().Snapshot(), endedWithError, time.Since(start)), sess.BudgetBreached()
+}
+
+// recordFromEvents is the record of loop session id from its events.
+func (wl *workLoop) recordFromEvents(id string, events []event.Event, endedWithError bool, duration time.Duration) loopSessRec {
+	rec := loopSessRec{id: id, report: loopSessionReport(events), priceStatus: string(usage.StatusUnpriced)}
 	rec.addEvents(events)
 	if endedWithError {
 		var action string
@@ -2244,15 +2383,15 @@ func (wl *workLoop) sessionRecord(sess *Session, start time.Time) (loopSessRec, 
 			rec.report = loopFailureReport(rec.errKind, rec.errMessage, action)
 		}
 	}
-	res := usage.Aggregate(usage.ReduceEvents(sess.ID, events), wl.m.reg, usage.Options{})
+	res := usage.Aggregate(usage.ReduceEvents(id, events), wl.m.reg, usage.Options{})
 	rec.tokens = int64(res.Total.Tokens.Total)
 	rec.cost = res.Total.Cost
 	rec.priceStatus = string(res.Total.Status)
 	if rec.priceStatus == "" {
 		rec.priceStatus = string(usage.StatusUnpriced)
 	}
-	rec.duration = time.Since(start)
-	return rec, sess.BudgetBreached()
+	rec.duration = duration
+	return rec
 }
 
 // --- pure helpers (ported from the client driver) ---

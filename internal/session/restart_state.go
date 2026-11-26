@@ -35,6 +35,11 @@ const (
 	// Kinds of waiting_sessions entries.
 	restartKindWait = "wait" // blocked in wait
 	restartKindIdle = "idle" // idle, awaiting a background-job continuation
+
+	// Other dispositions of a suspended session (restartDisposition).
+	restartKindInterrupted = "interrupted" // its turn was cut short
+	restartKindQuestion    = "question"    // parked on ask_user
+	restartKindEnded       = "ended"       // its turn finished, or ended on an error or a pause
 )
 
 // restartContextText is the synthetic context a reopened interrupted session
@@ -65,6 +70,15 @@ type restartState struct {
 	Waiting       []restartEntry `json:"waiting_sessions"`
 	Interrupted   []restartEntry `json:"interrupted_sessions"`
 	UnboundLeases []leaseRecord  `json:"unbound_leases"`
+	// SuspendedLoops lists the work loops whose restart checkpoint
+	// (.ycc/workloop.json) carries this restart_id (workloop_restart.go).
+	SuspendedLoops []restartLoopEntry `json:"suspended_loops,omitempty"`
+}
+
+// restartLoopEntry is one work loop the next daemon resumes.
+type restartLoopEntry struct {
+	Project   string `json:"project,omitempty"`
+	Workspace string `json:"workspace"`
 }
 
 // SetRestartStateFile makes graceful shutdown write the restart manifest at
@@ -80,8 +94,8 @@ type restartCandidate struct {
 // restartCandidates picks, before suspension, the live sessions the next
 // daemon may reopen by itself: running ones and idle ones awaiting their
 // background jobs. Sessions a daemon worker runs (work loops, watches,
-// grooms, workstream integration) are left to that worker; a work loop
-// restores as interrupted (spec §9.1).
+// grooms, workstream integration) are left to that worker; a work loop's
+// sessions come back with the loop (workloop_restart.go).
 func (m *Manager) restartCandidates() []restartCandidate {
 	if m.restartStateFile == "" {
 		return nil
@@ -110,35 +124,48 @@ func (s *Session) restartReopenable() bool {
 	return s.Mode != watchMode && s.Mode != integrateMode && s.preset != backlogGroomPreset
 }
 
-// restartEntryFor classifies a suspended candidate from its closed log:
-// waiting (blocked in wait, or idle awaiting its jobs), interrupted (its turn
-// was cut short, including a turn a job's completion had just started), or
-// neither (parked on ask_user, which stays closed until answered; finished;
-// or held after an error or a pause).
+// restartEntryFor classifies a suspended candidate from its closed log
+// (restartDisposition): waiting (blocked in wait, or idle awaiting its jobs),
+// interrupted (its turn was cut short, including a turn a job's completion had
+// just started), or neither (parked on ask_user, which stays closed until
+// answered; finished; or held after an error or a pause).
 func (m *Manager) restartEntryFor(c restartCandidate) (e restartEntry, interrupted, ok bool) {
 	s := c.s
 	if s.log == nil || s.logFailure() != nil {
 		return e, false, false
 	}
-	events := s.log.Snapshot()
 	e = restartEntry{SessionID: s.ID, LastSeq: s.log.LastSeq()}
 	e.Project, _ = m.persistedSessionProject(s.ID)
-	if findResumableQuestion(events) != nil {
-		return e, false, false
-	}
-	if findResumableWait(events) != nil {
-		e.Kind = restartKindWait
+	switch kind := restartDisposition(s.log.Snapshot()); kind {
+	case restartKindWait, restartKindIdle:
+		e.Kind = kind
 		return e, false, true
+	case restartKindInterrupted:
+		return e, true, true
+	}
+	return e, false, false
+}
+
+// restartDisposition classifies a suspended session from its log: parked on
+// ask_user (restartKindQuestion), blocked in wait (restartKindWait), idle
+// awaiting its background jobs (restartKindIdle), ended (restartKindEnded: its
+// turn finished, or ended in an error or a pause), or cut short mid-turn
+// (restartKindInterrupted).
+func restartDisposition(events []event.Event) string {
+	switch {
+	case findResumableQuestion(events) != nil:
+		return restartKindQuestion
+	case findResumableWait(events) != nil:
+		return restartKindWait
 	}
 	idle, awaiting := reopenBoundary(events)
 	switch {
 	case awaiting:
-		e.Kind = restartKindIdle
-		return e, false, true
+		return restartKindIdle
 	case idle, endedOnHold(events):
-		return e, false, false
+		return restartKindEnded
 	}
-	return e, true, true
+	return restartKindInterrupted
 }
 
 // endedOnHold reports whether the coordinator's latest turn ended in an error
@@ -189,6 +216,11 @@ func (m *Manager) writeRestartManifest(candidates []restartCandidate) {
 		leases := m.restartLeases
 		m.restartLeases = nil
 		m.leaseMu.Unlock()
+		restartID := newRestartID()
+		// Each suspended loop's checkpoint is written before the manifest
+		// naming it: a crash in between leaves a checkpoint no manifest
+		// matches, which restores as interrupted.
+		loops := m.checkpointSuspendedLoops(restartID)
 		if !m.restartRead.Load() {
 			if _, err := os.Stat(path); err == nil {
 				log.Printf("restart manifest: keeping %s, which this daemon never consumed", path)
@@ -196,8 +228,8 @@ func (m *Manager) writeRestartManifest(candidates []restartCandidate) {
 				return
 			}
 		}
-		st := restartState{Version: restartStateVersion, RestartID: newRestartID(), WrittenAt: time.Now().UTC(),
-			Waiting: []restartEntry{}, Interrupted: []restartEntry{}, UnboundLeases: leases}
+		st := restartState{Version: restartStateVersion, RestartID: restartID, WrittenAt: time.Now().UTC(),
+			Waiting: []restartEntry{}, Interrupted: []restartEntry{}, UnboundLeases: leases, SuspendedLoops: loops}
 		if st.UnboundLeases == nil {
 			st.UnboundLeases = []leaseRecord{}
 		}
@@ -214,19 +246,19 @@ func (m *Manager) writeRestartManifest(candidates []restartCandidate) {
 		for _, l := range [][]restartEntry{st.Waiting, st.Interrupted} {
 			sort.Slice(l, func(i, j int) bool { return l[i].SessionID < l[j].SessionID })
 		}
-		if len(st.Waiting)+len(st.Interrupted)+len(st.UnboundLeases) == 0 {
+		if len(st.Waiting)+len(st.Interrupted)+len(st.UnboundLeases)+len(st.SuspendedLoops) == 0 {
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				log.Printf("restart manifest: removing stale %s: %v", path, err)
 			}
 			return
 		}
 		if err := writeRestartState(path, &st); err != nil {
-			log.Printf("restart manifest: %v; its sessions stay closed after the restart and its leases end", err)
+			log.Printf("restart manifest: %v; its sessions stay closed after the restart, its leases end, and its work loops restore as interrupted", err)
 			m.endUncarriedLeases(st.UnboundLeases)
 			return
 		}
-		log.Printf("restart manifest %s (%s): %d waiting and %d interrupted session(s), %d lease(s)",
-			path, st.RestartID, len(st.Waiting), len(st.Interrupted), len(st.UnboundLeases))
+		log.Printf("restart manifest %s (%s): %d waiting and %d interrupted session(s), %d lease(s), %d work loop(s)",
+			path, st.RestartID, len(st.Waiting), len(st.Interrupted), len(st.UnboundLeases), len(st.SuspendedLoops))
 	})
 }
 
@@ -269,7 +301,8 @@ func writeRestartState(path string, st *restartState) error {
 // Each attempt is counted in the file first, and an entry that keeps
 // startup from finishing is quarantined (restart-state.json.quarantined).
 // The manifest is removed once every entry is prepared; an unreadable one is
-// moved aside (restart-state.json.unreadable).
+// moved aside (restart-state.json.unreadable). The work loops it lists are
+// resumed from their checkpoints (resumeSuspendedLoop).
 func (m *Manager) RecoverRestart() {
 	defer m.restartRead.Store(true)
 	path := m.restartStateFile
@@ -331,6 +364,11 @@ func (m *Manager) RecoverRestart() {
 			}
 		}
 	}
+	// Work loops come back with their slots' sessions, unattended, before
+	// execution is released (workloop_restart.go).
+	for _, l := range st.SuspendedLoops {
+		m.resumeSuspendedLoop(st.RestartID, l)
+	}
 	// Admission opens once startup finishes, so the generation's leases must
 	// not be replayed by a later startup: they may be released meanwhile. A
 	// session whose preparation could not be logged stays listed alone, for
@@ -351,12 +389,13 @@ func (m *Manager) RecoverRestart() {
 // costing the others. Only a manifest whose envelope is unreadable fails.
 func decodeRestartState(data []byte) (restartState, []json.RawMessage, error) {
 	var raw struct {
-		Version       int               `json:"version"`
-		RestartID     string            `json:"restart_id"`
-		WrittenAt     time.Time         `json:"written_at"`
-		Waiting       []json.RawMessage `json:"waiting_sessions"`
-		Interrupted   []json.RawMessage `json:"interrupted_sessions"`
-		UnboundLeases []json.RawMessage `json:"unbound_leases"`
+		Version        int               `json:"version"`
+		RestartID      string            `json:"restart_id"`
+		WrittenAt      time.Time         `json:"written_at"`
+		Waiting        []json.RawMessage `json:"waiting_sessions"`
+		Interrupted    []json.RawMessage `json:"interrupted_sessions"`
+		UnboundLeases  []json.RawMessage `json:"unbound_leases"`
+		SuspendedLoops []json.RawMessage `json:"suspended_loops"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return restartState{}, nil, err
@@ -394,6 +433,14 @@ func decodeRestartState(data []byte) (restartState, []json.RawMessage, error) {
 			continue
 		}
 		st.UnboundLeases = append(st.UnboundLeases, l)
+	}
+	for _, r := range raw.SuspendedLoops {
+		var l restartLoopEntry
+		if json.Unmarshal(r, &l) != nil || !filepath.IsAbs(l.Workspace) {
+			bad = append(bad, r)
+			continue
+		}
+		st.SuspendedLoops = append(st.SuspendedLoops, l)
 	}
 	return st, bad, nil
 }

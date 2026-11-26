@@ -46,16 +46,20 @@ func scriptedToolStub(t *testing.T, steps []*[2]string) *httptest.Server {
 		msg := map[string]any{"role": "assistant", "content": "done"}
 		finish := "stop"
 		if n < len(steps) {
-			step := steps[n]
-			if step == nil {
+			switch step := steps[n]; {
+			case step == nil:
 				<-r.Context().Done()
 				return
+			case step[0] == "":
+				// A text reply ends the turn.
+				msg["content"] = step[1]
+			default:
+				msg = map[string]any{"role": "assistant", "content": "", "tool_calls": []map[string]any{{
+					"index": 0, "id": fmt.Sprintf("call_%d", n), "type": "function",
+					"function": map[string]any{"name": step[0], "arguments": step[1]},
+				}}}
+				finish = "tool_calls"
 			}
-			msg = map[string]any{"role": "assistant", "content": "", "tool_calls": []map[string]any{{
-				"index": 0, "id": fmt.Sprintf("call_%d", n), "type": "function",
-				"function": map[string]any{"name": step[0], "arguments": step[1]},
-			}}}
-			finish = "tool_calls"
 		}
 		if req.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")

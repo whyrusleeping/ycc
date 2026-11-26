@@ -95,9 +95,10 @@ monitor. RPCs return `Unavailable` until startup finishes.
 
 `SIGINT` or `SIGTERM` shuts a persistent daemon down gracefully, and so does a signal received
 during startup, which then releases nothing further and never opens RPC admission. Every new RPC
-returns `Unavailable`; open subscriptions last until their sessions close. Git sync, work loops
-(which end as interrupted), the integration queue, grooms, watches, and the GC reaper stop, leaving
-their sessions running. Admitted RPCs, active model turns, foreground tools, and subagents then get
+returns `Unavailable`; open subscriptions last until their sessions close. Git sync, the
+integration queue, grooms, watches, and the GC reaper stop, leaving their sessions running. Work
+loops start no more sessions and stop following theirs, which keep running, and are suspended with
+them (§9.1). Admitted RPCs, active model turns, foreground tools, and subagents then get
 one window, `--shutdown-drain` from the signal (default `30s`, `0` skips it), to finish or reach a
 clean boundary. A coordinator that is idle, paused, parked on `ask_user`, or blocked in `wait` does
 not delay the drain, and neither does a subagent blocked in `wait`. A second signal ends the drain,
@@ -116,7 +117,9 @@ rename, stamped with a unique `restart_id`): the sessions blocked in `wait` or i
 background jobs (`waiting_sessions`), those whose turn it cut short (`interrupted_sessions`), each
 with its log's `last_seq`, and the unexpired leases without a job (`unbound_leases`, §7.3).
 Sessions parked on `ask_user`, or held after an error or a pause, stay closed until a human acts,
-and work-loop, watch, groom and workstream integration sessions are left to their workers (§9.1).
+and work-loop, watch, groom and workstream integration sessions are left to their workers. Each
+suspended work loop's scheduler checkpoint carries the manifest's `restart_id`, and the manifest
+lists the loop (`suspended_loops`, §9.1).
 If the manifest cannot be written, the daemon logs it, records the kept leases as ended, and exits
 anyway.
 The next daemon's startup consumes it while execution is still held: it holds the leases again
@@ -1203,8 +1206,9 @@ patience count only backoff actually served. Graceful stop and budget stops star
 and leave waiting sessions and their jobs running, no longer gated by the slot. The outcome names
 them, separating any that a job has woken and that now work, and counts a session that ended as
 the loop stopped. The loop snapshot and `.ycc/workloop.json` list
-every slot. A daemon shutdown stops them, and its outcome, like that of a loop restored as
-interrupted, names the sessions that were waiting (a restored loop also names those working).
+every slot. A daemon shutdown without a restart manifest (the one-shot in-process daemon) stops
+them, and its outcome, like that of a loop restored as interrupted, names the sessions that were
+waiting (a restored loop also names those working).
 
 Fresh loop sessions receive bounded continuation context from the immediately preceding session
 (session id, focus, and available report). Prior reports are untrusted evidence, not instructions
@@ -1222,8 +1226,31 @@ until accepted. Budget wrap-up or another necessary session boundary leaves unfi
 work actionable with durable evidence and remaining criteria, unless genuinely blocked.
 
 The loop survives client disconnects. Retryable provider outages enter a bounded waiting state
-with escalating delays; non-retryable failures stop. Daemon restart restores an active/waiting
-loop as interrupted and never silently resumes it. The daemon owns budget enforcement and the
+with escalating delays; non-retryable failures stop.
+
+A planned graceful restart of a persistent daemon (§3.1) suspends an active, waiting or stopping
+loop and resumes it. From the shutdown signal on, the loop starts no session and lets go of its
+working sessions (including those blocked in `wait`) and its waiting ones without reclaiming them,
+so none is replaced; they run through the drain and are suspended. A waiting session's job
+completion does not wake it during the drain (the session reopened after the restart takes it).
+A loop finishes during the drain only if it decided to before the shutdown began. A session whose
+closed log then
+shows it ended (its turn finished, or ended on an error or a pause) is settled into the loop's
+records as the loop would have, once. `.ycc/workloop.json` then holds the scheduler checkpoint (`state: "suspended_restart"`,
+stamped with the manifest's `restart_id`): the loop id, `parallel`, the original backlog baseline,
+the session records (with their commits and verdicts), usage and cost, the budget envelope, the
+stop request or reason, provider-outage and per-slot stall pacing, and every working and waiting
+slot's session, task, attempt, start, progress baseline (`before` hashes) and log `last_seq`. No
+outcome or digest is recorded. Startup resumes the loop only when the restart manifest lists it
+and its checkpoint carries the same `restart_id`, consuming the checkpoint before reopening
+anything. Each slot's session is reopened as the loop ran it (unattended, with the loop's
+`wait` cap, task holds, budgets and slot wake gate) and prepared like a manifest session
+(`session_reopened` with `restart_id`, a restored `wait` or awaiting idle, or a turn cut short
+going on, from a `restart_context` note when it owes no response) before execution is released;
+a slot whose log moved on, ended, or cannot be reopened is accounted from its log once. The
+resumed loop keeps its baseline and goes on as before. After a crash, or with a checkpoint no
+matching manifest lists, an active, waiting, stopping or suspended loop restores as interrupted
+and is never silently resumed. The daemon owns budget enforcement and the
 incremental/final digest. Session startup failures retain their full stop reason in the loop
 outcome and send an error notification even if no session was created. iOS shows the outcome
 when an observed loop finishes (including a start response that is already terminal), and keeps

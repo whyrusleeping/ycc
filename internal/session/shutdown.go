@@ -105,7 +105,9 @@ func (s *Session) startRun() {
 // BeginShutdown starts graceful daemon shutdown: new sessions are refused
 // (ErrShuttingDown), and manager-owned background workers (git sync, work
 // loops, the integration queue, grooms, the watch scheduler, the GC reaper) are
-// cancelled. They are joined only after the sessions are suspended
+// cancelled. Work loops of a daemon that keeps a restart manifest are not
+// cancelled but stop starting sessions, and are suspended with their sessions
+// (suspendLoopsForRestart). They are joined only after the sessions are suspended
 // (ReclaimAll), since some worker steps (a fetch, a rebase) are not
 // interruptible. From here on ShutdownForRestart is the single teardown owner:
 // a worker that would reclaim one of its sessions leaves it live
@@ -113,6 +115,11 @@ func (s *Session) startRun() {
 // idempotent and does not block.
 func (m *Manager) BeginShutdown() {
 	m.mu.Lock()
+	// A daemon that keeps a restart manifest suspends its work loops for the
+	// restart rather than ending them (workloop_restart.go).
+	if m.restartStateFile != "" {
+		m.loopRestart.Store(true)
+	}
 	m.shuttingDown.Store(true)
 	// The integration queue's stop flag lives under mu too: no stream that
 	// becomes ready during the drain is enqueued or dequeued (it stays durably

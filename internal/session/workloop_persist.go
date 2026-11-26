@@ -15,8 +15,8 @@ const workLoopPersistVersion = 2
 
 // persistedWorkLoop is the durable, versioned representation of the last work
 // loop for a workspace. The resource envelope and bounded attempt evidence remain
-// visible after restart; only the session runner is runtime-only because restored
-// loops never resume.
+// visible after restart. The session runner is runtime-only: a restored loop
+// resumes only from a planned restart's checkpoint (workloop_restart.go).
 type persistedWorkLoop struct {
 	Version                  int                        `json:"version"`
 	LoopID                   string                     `json:"loop_id"`
@@ -52,6 +52,9 @@ type persistedWorkLoop struct {
 	LoopTimeLimitSecs        int64                      `json:"loop_time_limit_secs"`
 	CostLimitsPricedOnly     bool                       `json:"cost_limits_priced_only"`
 	ResourceEnvelopeCaptured bool                       `json:"resource_envelope_captured"`
+	// Restart is the scheduler checkpoint of a loop a graceful restart
+	// suspended (state workLoopSuspendedState; workloop_restart.go).
+	Restart *persistedLoopCheckpoint `json:"restart,omitempty"`
 }
 
 type persistedWorkLoopSession struct {
@@ -66,6 +69,16 @@ type persistedWorkLoopSession struct {
 	PriceStatus    string   `json:"price_status"`
 	DurationSecs   int64    `json:"duration_secs,omitempty"`
 	CreatedTasks   []string `json:"created_tasks,omitempty"`
+	// Commits and Verdicts are kept in a restart checkpoint, so a resumed
+	// loop's digest still credits them.
+	Commits  []persistedCommit `json:"commits,omitempty"`
+	Verdicts []string          `json:"verdicts,omitempty"`
+}
+
+type persistedCommit struct {
+	Task    string `json:"task,omitempty"`
+	SHA     string `json:"sha"`
+	Message string `json:"message,omitempty"`
 }
 
 type persistedWorkLoopSlot struct {
@@ -246,6 +259,8 @@ func writePersistedWorkLoop(p persistedWorkLoop) error {
 // restoreWorkLoopLocked loads a workspace's last loop when it is not already in
 // memory. Caller holds m.loopMu. A live persisted state means the previous daemon
 // died mid-loop; it is terminated explicitly and the correction is made durable.
+// So is a restart checkpoint no matching restart manifest resumed (a crash
+// after it was written, say).
 func (m *Manager) restoreWorkLoopLocked(workspace string) {
 	p, ok := readPersistedWorkLoop(workspace)
 	if !ok {
@@ -312,7 +327,10 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		}
 	}
 
-	interrupted := wl.state == "running" || wl.state == "waiting" || wl.state == "stopping"
+	// A loop a graceful restart suspended resumes only from RecoverRestart,
+	// with the manifest of the same restart; anything else finds it here.
+	interrupted := wl.state == "running" || wl.state == "waiting" || wl.state == "stopping" ||
+		wl.state == workLoopSuspendedState
 	if interrupted {
 		wl.state = "finished"
 		wl.outcome = "loop interrupted: daemon restarted"
@@ -349,7 +367,7 @@ func readPersistedWorkLoop(workspace string) (persistedWorkLoop, bool) {
 		return persistedWorkLoop{}, false
 	}
 	switch p.State {
-	case "running", "waiting", "stopping", "finished":
+	case "running", "waiting", "stopping", "finished", workLoopSuspendedState:
 	default:
 		return persistedWorkLoop{}, false
 	}
