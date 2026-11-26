@@ -18,10 +18,8 @@ struct SessionView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var model: SessionViewModel
-    /// Focus mirror for the composer field (a plain Bool rather than
-    /// `@FocusState` because the field is the UIKit-backed `ComposerTextField`,
-    /// which exists so an image on the clipboard can be pasted in-field).
     @State private var composerFocused = false
+    @State private var requestComposerFocus = false
     /// The composer's caret while focused (drives `#123` task mentions).
     @State private var composerCaret: Int?
     /// The backlog `#123` mentions suggest from, loaded on the first one.
@@ -812,7 +810,8 @@ struct SessionView: View {
                 ComposerTextField(
                     placeholder: "Message…",
                     text: $draft,
-                    focused: $composerFocused,
+                    requestFocus: $requestComposerFocus,
+                    onEditingChanged: { composerFocused = $0 },
                     maxLines: 5,
                     autocorrectionDisabled: suppressAutocorrect,
                     caret: $composerCaret,
@@ -1005,7 +1004,7 @@ struct SessionView: View {
         if !restored.isEmpty {
             pictures = Array((restored + pictures).prefix(PictureComposer.maxPictures))
         }
-        composerFocused = true
+        requestComposerFocus = true
     }
 
     /// Tell the rest of the app this session's question is dealt with, so the

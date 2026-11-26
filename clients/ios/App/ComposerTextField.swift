@@ -12,7 +12,7 @@ import UIKit
 /// gave for free, styled to match `.roundedBorder`:
 /// - placeholder label (UITextView has no built-in placeholder),
 /// - growth with content up to `maxLines`, then internal scrolling,
-/// - a `Bool` focus binding (replacing `@FocusState`),
+/// - one-shot focus requests and editing-state notifications,
 /// - Return inserts a newline; sending is only via the explicit send control,
 /// - the autocorrect-suppression pulse (see SessionView.send()),
 /// - `.disabled(...)` support via the SwiftUI environment.
@@ -22,9 +22,10 @@ import UIKit
 struct ComposerTextField: View {
     let placeholder: String
     @Binding var text: String
-    /// Two-way focus mirror. Optional so a future call site without focus
-    /// choreography can skip it.
-    var focused: Binding<Bool>? = nil
+    /// Consumed once. Observing that editing began must not itself request focus:
+    /// an update during scroll dismissal would otherwise reopen the keyboard.
+    @Binding var requestFocus: Bool
+    var onEditingChanged: (Bool) -> Void = { _ in }
     /// Grow with content up to this many lines, then scroll internally
     /// (mirrors the previous `lineLimit(1...N)`).
     var maxLines: Int = 5
@@ -42,7 +43,8 @@ struct ComposerTextField: View {
         Representable(
             placeholder: placeholder,
             text: $text,
-            focused: focused,
+            requestFocus: $requestFocus,
+            onEditingChanged: onEditingChanged,
             caret: caret,
             maxLines: maxLines,
             autocorrectionDisabled: autocorrectionDisabled,
@@ -99,7 +101,8 @@ final class ComposerPasteTextView: UITextView {
 private struct Representable: UIViewRepresentable {
     let placeholder: String
     @Binding var text: String
-    let focused: Binding<Bool>?
+    @Binding var requestFocus: Bool
+    let onEditingChanged: (Bool) -> Void
     let caret: Binding<Int?>?
     let maxLines: Int
     let autocorrectionDisabled: Bool
@@ -143,10 +146,7 @@ private struct Representable: UIViewRepresentable {
         ])
 
         view.onDidMoveToWindow = { [weak view, weak coordinator = context.coordinator] in
-            guard let view, let coordinator,
-                  coordinator.wantsFocus == true,
-                  view.isEditable, !view.isFirstResponder else { return }
-            DispatchQueue.main.async { view.becomeFirstResponder() }
+            if let view { coordinator?.applyFocusRequest(to: view) }
         }
         return view
     }
@@ -182,16 +182,7 @@ private struct Representable: UIViewRepresentable {
             if view.isFirstResponder { view.reloadInputViews() }
         }
 
-        coordinator.wantsFocus = focused?.wrappedValue
-        if let wantsFocus = focused?.wrappedValue {
-            // Deferred: first-responder changes re-enter SwiftUI (focus
-            // delegates write the binding) and must escape the update pass.
-            if wantsFocus, !view.isFirstResponder, view.window != nil, view.isEditable {
-                DispatchQueue.main.async { view.becomeFirstResponder() }
-            } else if !wantsFocus, view.isFirstResponder {
-                DispatchQueue.main.async { view.resignFirstResponder() }
-            }
-        }
+        coordinator.applyFocusRequest(to: view)
     }
 
     func sizeThatFits(
@@ -212,14 +203,23 @@ private struct Representable: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: Representable
-        /// The focus the binding last asked for; consulted when the view
-        /// finally lands in a window (see `onDidMoveToWindow`).
-        var wantsFocus: Bool?
         /// Set while `updateUIView` writes the text, so the selection change
         /// it causes does not write the caret binding mid-update.
         var applyingUpdate = false
 
         init(_ parent: Representable) { self.parent = parent }
+
+        func applyFocusRequest(to view: UITextView) {
+            guard parent.requestFocus else { return }
+            // Responder changes call the editing delegates; escape the SwiftUI
+            // update pass and only consume the request once the field is ready.
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view, self.parent.requestFocus,
+                      view.window != nil, view.isEditable else { return }
+                self.parent.requestFocus = false
+                if !view.isFirstResponder { view.becomeFirstResponder() }
+            }
+        }
 
         private func reportCaret(_ textView: UITextView) {
             guard let caret = parent.caret, !applyingUpdate else { return }
@@ -245,16 +245,13 @@ private struct Representable: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
-            if let focused = parent.focused, focused.wrappedValue != true {
-                focused.wrappedValue = true
-            }
+            parent.onEditingChanged(true)
             reportCaret(textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            if let focused = parent.focused, focused.wrappedValue != false {
-                focused.wrappedValue = false
-            }
+            if parent.requestFocus { parent.requestFocus = false }
+            parent.onEditingChanged(false)
             if let caret = parent.caret, caret.wrappedValue != nil { caret.wrappedValue = nil }
         }
     }

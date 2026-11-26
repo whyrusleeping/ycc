@@ -16,10 +16,7 @@ struct NewSessionView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var model: NewSessionModel
-    /// Focus mirror for the composer field (a plain Bool rather than
-    /// `@FocusState` because the field is the UIKit-backed `ComposerTextField`,
-    /// which exists so an image on the clipboard can be pasted in-field).
-    @State private var composerFocused = false
+    @State private var requestComposerFocus = false
     /// The composer's caret while focused (drives `#123` task mentions).
     @State private var composerCaret: Int?
     /// The backlog `#123` mentions suggest from, loaded on the first one.
@@ -87,7 +84,7 @@ struct NewSessionView: View {
         .task {
             // Focus first: typing never waits on the catalog round trip (the
             // composer field defers focus until it is in a window).
-            composerFocused = true
+            requestComposerFocus = true
             await model.load()
         }
         .sheet(isPresented: $showAddProject) {
@@ -139,7 +136,7 @@ struct NewSessionView: View {
     private func presetCard(_ preset: Ycc_V1_Preset) -> some View {
         Button {
             model.apply(preset: preset)
-            composerFocused = true
+            requestComposerFocus = true
         } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text(preset.title.isEmpty ? preset.name : preset.title)
@@ -513,7 +510,7 @@ struct NewSessionView: View {
                         ? "What should the agent do? (optional)"
                         : "What should the agent do?",
                     text: $model.prompt,
-                    focused: $composerFocused,
+                    requestFocus: $requestComposerFocus,
                     maxLines: 6,
                     caret: $composerCaret,
                     onPasteImages: { images in
