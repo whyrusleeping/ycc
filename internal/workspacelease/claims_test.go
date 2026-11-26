@@ -156,25 +156,28 @@ func TestOverlapClaimsPersistAndUpgrade(t *testing.T) {
 	}
 }
 
-// Ambiguous claims count as each scope's own, persist, and become ordinary
-// with a scope's own write; Disown drops a claim and keeps the path out of the
-// scope's view until it is retired.
-func TestAmbiguousClaimsAndDisown(t *testing.T) {
+// An unattributed path is no scope's claim (in neither side of any Split),
+// persists, and settles on a scope that writes it definitely; a commit or
+// revert retires the mark, guarded by generation.
+func TestUnattributedPathsPersistAndSettle(t *testing.T) {
 	root := t.TempDir()
 	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	first := NewService()
 	first.PersistClaims()
-	first.RecordAmbiguous(root, []string{"gen.go", "other.go"}, []string{"s_a", "s_b"})
+	first.RecordUnattributed(root, []string{"gen.go", "other.go"})
 
 	s := NewService()
 	s.PersistClaims()
-	if got := s.Ambiguous(root); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "other.go": true}) {
-		t.Fatalf("ambiguous after restart = %v", got)
+	if got := s.Unattributed(root); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "other.go": true}) {
+		t.Fatalf("unattributed after restart = %v", got)
+	}
+	if got := s.Claims(root); len(got) != 0 {
+		t.Fatalf("unattributed paths are claimed: %v", got)
 	}
 	for _, scope := range []string{"s_a", "s_b"} {
-		if mine, foreign := s.Split(root, scope); !mine["gen.go"] || !foreign["gen.go"] {
+		if mine, foreign := s.Split(root, scope); mine["gen.go"] || foreign["gen.go"] {
 			t.Fatalf("%s: mine=%v foreign=%v", scope, mine, foreign)
 		}
 	}
@@ -182,39 +185,55 @@ func TestAmbiguousClaimsAndDisown(t *testing.T) {
 	s.SetOverlapNotifier(func(o Overlap) string { notified = append(notified, o); return "" })
 	s.RecordWrite(filepath.Join(root, "gen.go"), root, s.NewScopedToken("s_a", "a"))
 	if len(notified) != 0 {
-		t.Fatalf("an ambiguous claimant was notified: %+v", notified)
+		t.Fatalf("a possible writer was notified: %+v", notified)
 	}
-	for _, c := range s.ClaimDetails(root)["gen.go"] {
-		if (c.Scope == "s_a") != c.Definite() {
-			t.Fatalf("gen.go after s_a's write: %+v", s.ClaimDetails(root)["gen.go"])
-		}
+	if got := s.Unattributed(root); !reflect.DeepEqual(got, map[string]bool{"other.go": true}) {
+		t.Fatalf("unattributed after s_a's write = %v", got)
+	}
+	if got := s.Claims(root); !reflect.DeepEqual(got, map[string][]string{"gen.go": {"s_a"}}) {
+		t.Fatalf("claims after s_a's write = %v", got)
 	}
 
-	if held := s.Disown(root, "s_b", []string{"gen.go", "unclaimed.go"}); !reflect.DeepEqual(held, []string{"gen.go"}) {
-		t.Fatalf("held = %v", held)
-	}
-	if got := s.Claims(root)["gen.go"]; !reflect.DeepEqual(got, []string{"s_a"}) {
-		t.Fatalf("gen.go after disown = %v", got)
-	}
+	// A mark recorded after the caller sampled the generation survives.
+	before := s.Generation()
+	s.RecordUnattributed(root, []string{"late.go"})
+	s.ReleaseAll(root, []string{"other.go", "late.go"}, before)
 	restarted := NewService()
 	restarted.PersistClaims()
-	if got := restarted.Disowned(root, "s_b"); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "unclaimed.go": true}) {
-		t.Fatalf("disowned after restart = %v", got)
-	}
-	restarted.ReleaseAll(root, []string{"unclaimed.go"}, restarted.Generation())
-	restarted.RecordWrites(root, []string{"gen.go"}, restarted.NewScopedToken("s_b", "b"))
-	if got := restarted.Disowned(root, "s_b"); len(got) != 0 {
-		t.Fatalf("disowned after retire and rewrite = %v", got)
-	}
-	restarted.SettleAmbiguous(root, "s_b", []string{"other.go"})
-	if c := restarted.ClaimDetails(root)["other.go"]; len(c) != 2 || !c[1].Definite() || c[0].Definite() {
-		t.Fatalf("other.go after s_b's commit = %+v", c)
+	if got := restarted.Unattributed(root); !reflect.DeepEqual(got, map[string]bool{"late.go": true}) {
+		t.Fatalf("unattributed after guarded release = %v", got)
 	}
 }
 
-func sansClaimants(o ShellOverlap) ShellOverlap {
-	o.Claimants = nil
-	return o
+// A claims record from a daemon before unattributed marks turns its ambiguous
+// claims and released paths into unattributed paths, keeping the definite
+// claims.
+func TestLegacyAmbiguousAndReleasedRecordsBecomeUnattributed(t *testing.T) {
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	key, err := Canonical(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"version":1,"claims":{"gen.go":["s_a","s_b"],"mine.go":["s_a"],"both.go":["s_a","s_b"]},` +
+		`"ambiguous":{"gen.go":["s_a","s_b"],"both.go":["s_b"]},"released":{"gone.go":["s_c"]}}`
+	path := claimsFile(key)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewService()
+	s.PersistClaims()
+	if got := s.Claims(root); !reflect.DeepEqual(got, map[string][]string{"mine.go": {"s_a"}, "both.go": {"s_a"}}) {
+		t.Fatalf("claims = %v", got)
+	}
+	if got := s.Unattributed(root); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "both.go": true, "gone.go": true}) {
+		t.Fatalf("unattributed = %v", got)
+	}
 }
 
 // A shell run learns every other scope whose shell ran in its worktree while it
@@ -225,131 +244,47 @@ func TestShellRunsReportConcurrentScopes(t *testing.T) {
 	same := s.BeginShell("/w", s.NewScopedToken("s_a", "test"), false)
 	elsewhere := s.BeginShell("/x", s.NewScopedToken("s_c", "test"), false)
 	b := s.BeginShell("/w", s.NewScopedToken("s_b", "test"), false)
-	if got := sansClaimants(s.EndShell(b, time.Minute)); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_a"}, Concurrent: []string{"s_a"}}) {
+	if got := s.EndShell(b); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_a"}, Jobs: []string{}}) {
 		t.Fatalf("b saw %+v", got)
 	}
-	s.EndShell(same, time.Minute)
-	s.EndShell(elsewhere, time.Minute)
-	if got := sansClaimants(s.EndShell(a, time.Minute)); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_b"}, Concurrent: []string{"s_b"}}) {
+	s.EndShell(same)
+	s.EndShell(elsewhere)
+	if got := s.EndShell(a); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_b"}, Jobs: []string{}}) {
 		t.Fatalf("a saw %+v", got)
 	}
-	if got := s.EndShell(s.BeginShell("/w", s.NewScopedToken("s_a", "test"), false), time.Minute); len(got.Ran) != 0 || len(got.Concurrent) != 0 {
+	if got := s.EndShell(s.BeginShell("/w", s.NewScopedToken("s_a", "test"), false)); len(got.Ran) != 0 {
 		t.Fatalf("lone shell saw %+v", got)
 	}
 }
 
-// The narrowest window wins: a background job and a foreground command shorter
-// than the limit ran together but are not concurrent, from either side; two
-// jobs are, and so is a job and a foreground command over the limit.
-func TestBackgroundJobsAreNotConcurrentWithShortCommands(t *testing.T) {
-	const limit = 200 * time.Millisecond
+// A background job overlaps a short foreground command like any other shell,
+// from either side, and is reported as a job.
+func TestBackgroundJobsOverlapShortCommands(t *testing.T) {
 	s := NewService()
 	job := s.BeginShell("/w", s.NewScopedToken("s_job", "test"), true)
-	other := s.BeginShell("/w", s.NewScopedToken("s_other", "test"), true)
 	short := s.BeginShell("/w", s.NewScopedToken("s_short", "test"), false)
-	if got := sansClaimants(s.EndShell(short, limit)); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_job", "s_other"}, Concurrent: []string{}}) {
+	if got := s.EndShell(short); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_job"}, Jobs: []string{"s_job"}}) {
 		t.Fatalf("short command saw %+v", got)
 	}
-	long := s.BeginShell("/w", s.NewScopedToken("s_long", "test"), false)
-	time.Sleep(limit + 50*time.Millisecond)
-	if got := sansClaimants(s.EndShell(long, limit)); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_job", "s_other"}, Concurrent: []string{"s_job", "s_other"}}) {
-		t.Fatalf("long command saw %+v", got)
-	}
-	running := s.BeginShell("/w", s.NewScopedToken("s_running", "test"), false) // still short when the job ends
-	defer s.EndShell(running, limit)
-	window := map[string]PathStamp{"dirty.go": {Exists: true, Size: 1}}
-	s.SetShellSnapshot(running, window)
-	if got := sansClaimants(s.EndShell(job, limit)); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_long", "s_other", "s_running", "s_short"},
-		Concurrent: []string{"s_long", "s_other"}, ShortWindows: []map[string]PathStamp{window}}) {
+	running := s.BeginShell("/w", s.NewScopedToken("s_running", "test"), false)
+	defer s.EndShell(running)
+	if got := s.EndShell(job); !reflect.DeepEqual(got, ShellOverlap{Ran: []string{"s_running", "s_short"}, Jobs: []string{}}) {
 		t.Fatalf("job saw %+v", got)
 	}
-	// The running command's window holds what changed since its snapshot.
-	got := s.EndShell(s.BeginShell("/w", s.NewScopedToken("s_job2", "test"), true), limit) // overlapped only the running command
-	if !got.InShortWindow("new.go", PathStamp{Exists: true}) || !got.InShortWindow("dirty.go", PathStamp{Exists: true, Size: 2}) ||
-		got.InShortWindow("dirty.go", PathStamp{Exists: true, Size: 1}) {
-		t.Fatalf("short windows = %+v", got.ShortWindows)
-	}
-	if got := s.EndShell(other, limit); !reflect.DeepEqual(got.Concurrent, []string{"s_job", "s_job2", "s_long"}) {
-		t.Fatalf("other job saw %+v", got)
-	}
 }
 
-// A session's end drops its ambiguous claims, in memory and on disk, keeps its
-// definite ones and other scopes' ambiguous ones, and records no new
-// ambiguous claims for the ended instance. A reopened instance's claims are
-// its own: the old instance's end, even a late one, leaves them alone.
-func TestEndScopeDropsOnlyTheInstancesAmbiguousClaims(t *testing.T) {
-	root := t.TempDir()
-	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
-	}
-	first := NewService()
-	first.PersistClaims()
-	first.RecordAmbiguous(root, []string{"gen.go"}, []string{"s_a", "s_b"})
-	first.RecordWrites(root, []string{"mine.go"}, first.NewScopedToken("s_a", "a"))
-
-	s := NewService() // a restarted daemon: root's claims are not loaded yet
-	s.PersistClaims()
-	old := s.NewScopedToken("s_a", "a")
-	agent := s.Child(old, "agent")
-	s.RecordShellAmbiguous(root, []string{"old.go"}, []ShellClaimant{{"s_a", agent.Incarnation()}, {"s_b", 0}})
-	// The session reopens before the old instance's end has run.
-	reopened := s.NewScopedToken("s_a", "a reopened")
-	s.RecordShellAmbiguous(root, []string{"new.go"}, []ShellClaimant{{"s_a", reopened.Incarnation()}})
-	s.EndScope(old, root)
-	want := map[string][]string{"gen.go": {"s_b"}, "mine.go": {"s_a"}, "old.go": {"s_b"}, "new.go": {"s_a"}}
-	if got := s.Claims(root); !reflect.DeepEqual(got, want) {
-		t.Fatalf("claims after the old instance ended = %v", got)
-	}
-	// A shell that overlapped the ended instance records no claim for it.
-	s.RecordShellAmbiguous(root, []string{"late.go"}, []ShellClaimant{{"s_a", old.Incarnation()}, {"s_b", 0}})
-	want["late.go"] = []string{"s_b"}
-	restarted := NewService()
-	restarted.PersistClaims()
-	if got := restarted.Claims(root); !reflect.DeepEqual(got, want) {
-		t.Fatalf("persisted claims after the old instance ended = %v", got)
-	}
-	if got := restarted.Ambiguous(root); !reflect.DeepEqual(got, map[string]bool{"gen.go": true, "old.go": true, "new.go": true, "late.go": true}) {
-		t.Fatalf("ambiguous after the old instance ended = %v", got)
-	}
-	s.EndScope(reopened, root)
-	if got := s.Claims(root)["new.go"]; len(got) != 0 {
-		t.Fatalf("new.go after the reopened instance ended = %v", got)
-	}
-}
-
-// A long job keeps no dirty set of the commands it overlapped once they end,
-// and its claimants carry the session incarnation each run began in, so a
-// session that ended and reopened gets no ambiguous claim from its old run.
-func TestShellRunsDropSnapshotsAndCarryIncarnations(t *testing.T) {
-	root := t.TempDir()
-	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
-	}
-	key, err := Canonical(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+// A long job keeps no reference to the commands it overlapped once they end.
+func TestShellRunsDropEndedRuns(t *testing.T) {
 	s := NewService()
-	old := s.NewScopedToken("s_old", "old")
-	job := s.BeginShell(key, s.NewScopedToken("s_job", "test"), true)
+	job := s.BeginShell("/w", s.NewScopedToken("s_job", "test"), true)
 	for range 3 {
-		fg := s.BeginShell(key, s.NewScopedToken("s_fg", "test"), false)
-		s.SetShellSnapshot(fg, map[string]PathStamp{"x": {Exists: true}})
-		s.EndShell(fg, time.Minute)
-	}
-	for other := range job.others {
-		if other.before != nil {
-			t.Fatal("a long job retains an ended command's dirty set")
+		fg := s.BeginShell("/w", s.NewScopedToken("s_fg", "test"), false)
+		s.EndShell(fg)
+		if fg.others != nil {
+			t.Fatal("an ended command keeps its overlapping runs")
 		}
 	}
-	oldRun := s.BeginShell(key, old, true)
-	s.EndShell(oldRun, time.Minute)
-	s.EndScope(old, root)
-	s.NewScopedToken("s_old", "reopened")
-	got := s.EndShell(job, time.Minute)
-	s.RecordShellAmbiguous(root, []string{"job.txt"}, got.Claimants)
-	if claims := s.Claims(root)["job.txt"]; !reflect.DeepEqual(claims, []string{"s_job"}) {
-		t.Fatalf("job.txt claims = %v (claimants %+v)", claims, got.Claimants)
+	if got := s.EndShell(job); !reflect.DeepEqual(got.Ran, []string{"s_fg"}) {
+		t.Fatalf("job saw %+v", got)
 	}
 }

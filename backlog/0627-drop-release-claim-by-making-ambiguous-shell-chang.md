@@ -1,7 +1,7 @@
 ---
 id: "0627"
 title: Drop release_claim by making ambiguous shell changes opt-in and tightening background-job overlap
-status: todo
+status: done
 priority: 3
 created: "2026-11-26"
 updated: "2026-11-26"
@@ -9,6 +9,8 @@ depends_on: []
 spec_refs:
     - spec.md#7.3 Subagents and asynchronous jobs
 ---
+
+## Description
 
 ## Description
 ## Status
@@ -36,4 +38,17 @@ Accepted (owner decision, 2026-11-26, chat session reviewing coordinator tool co
 - Historical sessions containing `release_claim` calls and `claim_released` events still reopen and replay cleanly (test).
 - `go test ./internal/...` passes.
 
-## Work log
+## Acceptance criteria
+
+- No mode offers `release_claim`; prompts, error messages, and `spec.md` do not direct agents to call `release_claim`.
+- When two sessions' shells overlap in a shared worktree and a path changes, neither session gets a claim on it: it is absent from both sessions' `changes.Paths` / review diffs / default `commit` changesets, neither session's `commit` is blocked by the other on that path, `Bash` reports it as unattributed, and either session can commit it by naming it in `commit(paths=[...])` (tests).
+- When session A runs a short foreground `Bash` while session B has a running background `Bash` that writes a file, session A does not receive a definite claim on B's file (test).
+- Direct `Edit`/`Write` claims and lone-shell claims (no concurrent shell of another session) continue to attribute definitely as before (existing tests).
+- Historical sessions containing `release_claim` calls and `claim_released` events still reopen and replay cleanly (test).
+- `go test ./internal/...` passes.
+
+## Outcome
+
+release_claim is gone from chat and work modes; logs with release_claim calls and claim_released events still reopen and replay (new test). A path a shell changes while another session's shell (foreground or background) runs, and that no scope claims definitely, is now left unattributed. Nobody claims it, it is in no default changeset, it blocks no commit, Bash lists it, and a session takes it by naming it in commit paths. The short-command/background-job carve-out and ambiguous claims, Disown, EndScope and token incarnations were removed. Marks persist in claims.json (legacy ambiguous/released entries are converted) and are retired by a definite write, commit or revert. Overlapping shells add no overlap claims on an earlier claimant's path. Attribution is read atomically, and baseline-dirty unattributed paths are reported. Spec §7.3 and daemon-restart.md were updated. Proposed follow-up 0629 removes the now-dead client display of ambiguous claims.
+
+Commit: 0627: drop release_claim; shell changes during another session's shell are unattributed and opt-in

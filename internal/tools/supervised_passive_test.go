@@ -31,7 +31,7 @@ func shellRanBy(t *testing.T, svc *workspacelease.Service, root, scope string) b
 		t.Fatal(err)
 	}
 	other := svc.BeginShell(key, svc.NewScopedToken("s_other", "other"), true)
-	return slices.Contains(svc.EndShell(other, time.Minute).Ran, scope)
+	return slices.Contains(svc.EndShell(other).Ran, scope)
 }
 
 func waitUntil(t *testing.T, what string, cond func() bool) {

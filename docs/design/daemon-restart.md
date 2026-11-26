@@ -223,8 +223,8 @@ Therefore:
   1. During startup Phase 3 (before admitting any new shells), every surviving or
      `execution_unknown` shell — whether owned by a reopened session or a passive resource holder
      — is registered as an active background `ShellRun` in `workspacelease.Ownership` for its
-     worktree, participating in the existing overlap rules (including the short-foreground-command
-     exemption in `workspacelease.EndShell`).
+     worktree, participating in the existing overlap rules (another session's shell that overlaps
+     it leaves its changed paths unattributed, `workspacelease.EndShell`).
   2. Automatic post-restart `claimShellChanges` for the re-attached or downtime-harvested shell
      itself is skipped conservatively: its writes remain unclaimed dirty paths (surfaced in the
      change manifest under `docs/design/async-jobs.md`), and its recovered report notes that

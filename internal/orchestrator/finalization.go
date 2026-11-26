@@ -475,22 +475,10 @@ func (d *Deps) refuseLiveShared(changes *git.Changeset, paths []string) error {
 	if len(held) == 0 {
 		return nil
 	}
-	ambiguous := ""
-	var unsure []string
-	inAmbiguity := d.Ownership.Ambiguous(d.Workspace)
-	for _, path := range held {
-		if inAmbiguity[path] {
-			unsure = append(unsure, path)
-		}
-	}
-	if len(unsure) > 0 {
-		ambiguous = fmt.Sprintf(". Some are claimed only ambiguously, because a shell changed them while another session's shell also ran (%d): %s; "+
-			"the session that did not write one can release it with release_claim", len(unsure), boundedPathList(unsure, 1024))
-	}
 	return fmt.Errorf("refused: another live session also has uncommitted changes in files this session changed, and committing them would take its changes too (%d): %s. "+
 		"Only whole files can be committed, not hunks. Either wait for the other session to commit them (its commit takes this session's edits to them along, so tell it or the user), "+
-		"move further work on them to a separate workstream, or take them whole deliberately: name them in paths and name the other session's work in the message or outcome%s",
-		len(held), boundedPathList(held, 1024), ambiguous)
+		"move further work on them to a separate workstream, or take them whole deliberately: name them in paths and name the other session's work in the message or outcome",
+		len(held), boundedPathList(held, 1024))
 }
 
 // changesetNotes reports what a committed changeset carried beyond this
@@ -508,6 +496,9 @@ func changesetNotes(changes *git.Changeset) []string {
 	}
 	if changes.MovedFrom != "" {
 		notes = append(notes, fmt.Sprintf("HEAD had moved outside the session baseline's history (from %s); the baseline was re-anchored on the current HEAD, so files that move left differing from HEAD were committed as changes", shortCommit(changes.MovedFrom)))
+	}
+	if len(changes.Unattributed) > 0 {
+		notes = append(notes, fmt.Sprintf("left out, unattributed: changed by a shell while another session's shell also ran, so either may have written them; name any that are this session's work in paths (%d): %s", len(changes.Unattributed), boundedPathList(changes.Unattributed, 1024)))
 	}
 	if len(changes.Oversized) > 0 {
 		notes = append(notes, fmt.Sprintf("left out, untracked and over %d MiB (add to .gitignore, or commit by hand if they belong in git) (%d): %s", git.MaxUntrackedSnapshotMiB(), len(changes.Oversized), boundedPathList(changes.Oversized, 1024)))
@@ -692,9 +683,6 @@ func (d *Deps) releaseCommittedClaims(recovery *git.CommitRecovery) {
 		return
 	}
 	d.releaseCleanClaims(recovery.Paths)
-	// A path that changed again since the commit snapshot keeps its claims;
-	// this session's commit took it, so its ambiguous claim becomes definite.
-	d.Ownership.SettleAmbiguous(d.Workspace, d.CoordinatorToken.Scope(), recovery.Paths)
 }
 
 // gitSection holds the worktree's operation-scoped section for the git half of

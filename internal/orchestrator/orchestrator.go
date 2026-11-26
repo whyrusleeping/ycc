@@ -459,10 +459,10 @@ func (d *Deps) attribution() *git.Attribution {
 	}
 	d.pruneCleanClaims()
 	scope := d.CoordinatorToken.Scope()
-	mine, foreign := d.Ownership.Split(d.Workspace, scope)
+	mine, foreign, unattributed := d.Ownership.Attribution(d.Workspace, scope)
 	return &git.Attribution{
-		Mine: mine, Foreign: foreign, Ambiguous: d.Ownership.Ambiguous(d.Workspace),
-		Released: d.Ownership.Disowned(d.Workspace, scope), Bookkeeping: BookkeepingPaths(d.Workspace, d.Docs),
+		Mine: mine, Foreign: foreign, Unattributed: unattributed,
+		Bookkeeping: BookkeepingPaths(d.Workspace, d.Docs),
 		Lines: BookkeepingLines(d.Workspace, d.Docs, d.Ownership, scope),
 	}
 }
@@ -475,20 +475,20 @@ func (d *Deps) RecordBookkeeping(path string, before, after []byte) {
 	}
 }
 
-// pruneCleanClaims retires every scope's claims and releases on paths that now
-// match HEAD (committed by anyone, or reverted), so a later edit starts fresh
-// attribution rather than reviving a stale claimant or release.
+// pruneCleanClaims retires every scope's claims and the unattributed marks on
+// paths that now match HEAD (committed by anyone, or reverted), so a later
+// edit starts fresh attribution rather than reviving a stale claimant or mark.
 func (d *Deps) pruneCleanClaims() {
 	claims := d.Ownership.Claims(d.Workspace)
-	released := d.Ownership.DisownedPaths(d.Workspace)
-	if len(claims)+len(released) == 0 || d.Repo == nil {
+	unattributed := d.Ownership.Unattributed(d.Workspace)
+	if len(claims)+len(unattributed) == 0 || d.Repo == nil {
 		return
 	}
-	paths := make([]string, 0, len(claims)+len(released))
+	paths := make([]string, 0, len(claims)+len(unattributed))
 	for path := range claims {
 		paths = append(paths, path)
 	}
-	for _, path := range released {
+	for path := range unattributed {
 		if _, claimed := claims[path]; !claimed {
 			paths = append(paths, path)
 		}
@@ -604,7 +604,7 @@ func CoordinatorTools(d *Deps, ws *tools.Workspace, direct bool) *tools.Registry
 	// serialized by the store's directory lock; they deliberately skip the
 	// worktree execution lease so bookkeeping never fails just because a
 	// background implementer/agent (or another session) is mid-run.
-	reg.Add(askUser(d), commitTool(d), releaseClaim(d), updateTask(d),
+	reg.Add(askUser(d), commitTool(d), updateTask(d),
 		createTask(d), remember(d), forget(d), tools.Finish())
 	return reg
 }
@@ -2117,9 +2117,8 @@ func attributionNote(changes *git.Changeset) string {
 		}
 	}
 	line("SHARED WORKTREE — also written by another session (included; their edits to these files ride along; commit refuses them while that session is live unless named in paths)", changes.Shared)
-	line("AMBIGUOUS — changed by a shell while another session's shell also ran in this worktree, so a claim on it may not be its session's work; if this session did not write it, release it with release_claim, and to take it whole name it in paths", changes.Ambiguous)
 	line("Excluded — written only by another session", changes.Foreign)
-	line("Excluded — released by this session with release_claim", changes.Released)
+	line("UNATTRIBUTED — excluded: changed by a shell while another session's shell also ran in this worktree, so either may have written it; if it is this session's work, name it in the commit tool's paths", changes.Unattributed)
 	line("Included line by line — only this session's lines; other sessions' uncommitted lines stay in the worktree", changes.Partial)
 	line("Included — already dirty before this session; earlier changes ride along", changes.Preexisting)
 	line("Excluded — dirty before this session and since written by another session", changes.Deferred)

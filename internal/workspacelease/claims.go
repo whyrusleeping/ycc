@@ -22,43 +22,34 @@ import (
 //
 // A shell write is attributed by snapshots (internal/tools/shellclaims.go).
 // While shells of two scopes overlap in one worktree, a path that changed has
-// no single likely writer, so it gets an ambiguous claim for each of them
-// (RecordAmbiguous): it is in both scopes' changesets, listed as ambiguous,
-// until one of them writes it definitely, releases it (Disown), a commit
-// retires it, or its session ends (EndScope).
+// no single likely writer, so it is left unattributed (RecordUnattributed): no
+// scope claims it, it is in no scope's changeset unless named, and it blocks
+// no commit, until a scope writes it definitely or a commit or revert retires
+// it.
 
 // claimSet maps a scope to its claim on a path.
 type claimSet map[string]claimEntry
 
 // claimEntry is one scope's claim: the generation of its latest write and when
 // it first claimed the path. overlap marks a claim recorded only because the
-// scope's shell changed a path another scope already claimed (RecordOverlaps);
-// ambiguous marks a claim recorded because the path changed while shells of
-// this scope and another overlapped (RecordAmbiguous).
+// scope's shell changed a path another scope already claimed (RecordOverlaps).
 type claimEntry struct {
-	gen       uint64
-	since     time.Time
-	overlap   bool
-	ambiguous bool
-	// incarnation is the session instance an ambiguous claim was recorded
-	// for (RecordShellAmbiguous); 0 when unknown. It is not persisted, since
-	// token ids restart with the daemon.
-	incarnation uint64
+	gen     uint64
+	since   time.Time
+	overlap bool
 }
 
 // Claim is one scope's claim on a path, for display. Gen is the claim
 // generation of the scope's latest write of the path (0 when loaded from disk).
 type Claim struct {
-	Scope     string
-	Since     time.Time // zero when unknown (claims persisted before it was recorded)
-	Gen       uint64
-	Overlap   bool // recorded by RecordOverlaps
-	Ambiguous bool // recorded by RecordAmbiguous
+	Scope   string
+	Since   time.Time // zero when unknown (claims persisted before it was recorded)
+	Gen     uint64
+	Overlap bool // recorded by RecordOverlaps
 }
 
-// Definite reports whether the claim is an ordinary one: neither an overlap
-// nor an ambiguous claim.
-func (c Claim) Definite() bool { return !c.Overlap && !c.Ambiguous }
+// Definite reports whether the claim is an ordinary one, not an overlap claim.
+func (c Claim) Definite() bool { return !c.Overlap }
 
 // Overlap reports a write to a path that other scopes had already claimed.
 type Overlap struct {
@@ -153,8 +144,7 @@ func (s *Service) Generation() uint64 {
 
 // RecordWrite attributes a write of path to token's scope. Unscoped tokens and
 // paths outside a canonical worktree are ignored. When other scopes already
-// claim the path (ambiguous claims aside), the overlap notifier is told and its
-// text returned.
+// claim the path, the overlap notifier is told and its text returned.
 func (s *Service) RecordWrite(path, fallback string, token *Token) string {
 	if s == nil || token == nil || token.scope == "" {
 		return ""
@@ -165,8 +155,8 @@ func (s *Service) RecordWrite(path, fallback string, token *Token) string {
 	}
 	s.mu.Lock()
 	var others []string
-	for scope, entry := range s.claimsLocked(key)[rel] {
-		if scope != token.scope && !entry.ambiguous {
+	for scope := range s.claimsLocked(key)[rel] {
+		if scope != token.scope {
 			others = append(others, scope)
 		}
 	}
@@ -180,7 +170,8 @@ func (s *Service) RecordWrite(path, fallback string, token *Token) string {
 }
 
 // RecordWrites attributes writes of repository-relative paths in the worktree
-// containing root to token's scope (one canonicalization for many paths).
+// containing root to token's scope (one canonicalization for many paths). A
+// definite write of an unattributed path settles it on the writer.
 func (s *Service) RecordWrites(root string, paths []string, token *Token) {
 	if s == nil || token == nil || token.scope == "" || len(paths) == 0 {
 		return
@@ -206,15 +197,16 @@ func (s *Service) recordLocked(key string, paths []string, scope string) {
 			byPath[rel] = set
 		}
 		entry, ok := set[scope]
-		if !ok || entry.overlap || entry.ambiguous {
+		if !ok || entry.overlap {
 			added = true
 		}
 		if !ok {
 			entry.since = now
 		}
-		entry.gen, entry.overlap, entry.ambiguous = s.gen, false, false
+		entry.gen, entry.overlap = s.gen, false
 		set[scope] = entry
-		if s.undisownLocked(key, rel, scope) {
+		if _, marked := s.unattributed[key][rel]; marked {
+			delete(s.unattributed[key], rel)
 			added = true
 		}
 	}
@@ -263,162 +255,39 @@ func (s *Service) RecordOverlaps(root string, paths []string, token *Token) {
 	}
 }
 
-// RecordAmbiguous records that repository-relative paths in the worktree
-// containing root changed while shells of the given scopes overlapped, so any
-// of them may have written them. Each scope gets an ambiguous claim on each
-// path: it counts as the scope's own (Split) and as another scope's claim for
-// everyone else, and Ambiguous lists the path. A scope's existing ordinary
-// claim is kept; its overlap claim becomes ambiguous. A scope that released
-// the path (Disown) keeps it released: an ambiguous change is no evidence that
-// it wrote. A later file-tool or lone shell write (RecordWrite, RecordWrites)
-// makes the writer's claim ordinary and clears its release. The session
-// instance of these claims is unknown (RecordShellAmbiguous).
-func (s *Service) RecordAmbiguous(root string, paths, scopes []string) {
-	claimants := make([]ShellClaimant, 0, len(scopes))
-	for _, scope := range scopes {
-		claimants = append(claimants, ShellClaimant{Scope: scope})
-	}
-	s.RecordShellAmbiguous(root, paths, claimants)
-}
-
-// RecordShellAmbiguous is RecordAmbiguous for shell claimants, each with the
-// session instance whose shell ran: an instance that has ended (EndScope)
-// gets no claim, and the claim records the instance so that only its end
-// releases it.
-func (s *Service) RecordShellAmbiguous(root string, paths []string, claimants []ShellClaimant) {
-	if s == nil || len(paths) == 0 || len(claimants) == 0 {
+// RecordUnattributed records that repository-relative paths in the worktree
+// containing root, which no scope claims definitely, changed while shells of
+// several scopes overlapped, so any of them may have written them. No scope
+// gets a claim: an unattributed path is in no scope's changeset unless the
+// scope claims it or names it (Attribution), and it blocks no commit. A later
+// file-tool or lone shell write (RecordWrite, RecordWrites) settles the path
+// on its writer, and a commit or revert retires the mark (ReleaseAll); the
+// mark does not depend on which sessions are live, since their ending says
+// nothing about who wrote the path.
+func (s *Service) RecordUnattributed(root string, paths []string) {
+	if s == nil || len(paths) == 0 {
 		return
 	}
 	key, err := Canonical(root)
 	if err != nil {
 		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	byPath := s.claimsLocked(key)
-	s.gen++
-	now := time.Now()
-	for _, rel := range paths {
-		set := byPath[rel]
-		for _, claimant := range claimants {
-			scope := claimant.Scope
-			if scope == "" || (claimant.Incarnation != 0 && s.ended[claimant.Incarnation]) {
-				continue
-			}
-			if _, released := s.disowned[key][rel][scope]; released {
-				continue
-			}
-			entry, ok := set[scope]
-			if ok && !entry.overlap && !entry.ambiguous {
-				continue
-			}
-			if !ok {
-				entry.since = now
-			}
-			if entry.ambiguous && entry.incarnation > claimant.Incarnation {
-				claimant.Incarnation = entry.incarnation // keep the later instance's claim
-			}
-			entry.gen, entry.overlap, entry.ambiguous, entry.incarnation = s.gen, false, true, claimant.Incarnation
-			if set == nil {
-				set = make(claimSet)
-				byPath[rel] = set
-			}
-			set[scope] = entry
-		}
-	}
-	s.saveLocked(key)
-}
-
-// Ambiguous returns the repository-relative paths in the worktree containing
-// root on which any scope holds an ambiguous claim.
-func (s *Service) Ambiguous(root string) map[string]bool {
-	if s == nil {
-		return nil
-	}
-	key, err := Canonical(root)
-	if err != nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := map[string]bool{}
-	for path, set := range s.claimsLocked(key) {
-		for _, entry := range set {
-			if entry.ambiguous {
-				out[path] = true
-				break
-			}
-		}
-	}
-	return out
-}
-
-// Disown releases scope's claims on repository-relative paths in the worktree
-// containing root, for paths it did not write, and marks them released: until
-// scope writes a path again or a commit or revert retires it (ReleaseAll),
-// Disowned lists it so scope's changeset leaves it out even when no other
-// scope claims it. It returns the paths on which scope held a claim.
-func (s *Service) Disown(root, scope string, paths []string) []string {
-	if s == nil || scope == "" || len(paths) == 0 {
-		return nil
-	}
-	key, err := Canonical(root)
-	if err != nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	byPath := s.claimsLocked(key)
-	s.gen++
-	if s.disowned[key] == nil {
-		s.disowned[key] = map[string]map[string]uint64{}
-	}
-	var held []string
-	for _, rel := range paths {
-		if set := byPath[rel]; set != nil {
-			if _, ok := set[scope]; ok {
-				delete(set, scope)
-				held = append(held, rel)
-			}
-			if len(set) == 0 {
-				delete(byPath, rel)
-			}
-		}
-		if s.disowned[key][rel] == nil {
-			s.disowned[key][rel] = map[string]uint64{}
-		}
-		s.disowned[key][rel][scope] = s.gen
-	}
-	s.saveLocked(key)
-	return held
-}
-
-// Disowned returns the repository-relative paths in the worktree containing
-// root that scope released with Disown and has not written since.
-func (s *Service) Disowned(root, scope string) map[string]bool {
-	if s == nil || scope == "" {
-		return nil
-	}
-	key, err := Canonical(root)
-	if err != nil {
-		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.claimsLocked(key)
-	out := map[string]bool{}
-	for path, scopes := range s.disowned[key] {
-		if _, ok := scopes[scope]; ok {
-			out[path] = true
-		}
+	s.gen++
+	if s.unattributed[key] == nil {
+		s.unattributed[key] = map[string]uint64{}
 	}
-	return out
+	for _, rel := range paths {
+		s.unattributed[key][rel] = s.gen
+	}
+	s.saveLocked(key)
 }
 
-// DisownedPaths returns the repository-relative paths in the worktree
-// containing root that any scope released and has not written since, so a
-// clean check can retire their marks (ReleaseAll).
-func (s *Service) DisownedPaths(root string) []string {
+// Unattributed returns the repository-relative paths in the worktree
+// containing root that are marked unattributed (RecordUnattributed).
+func (s *Service) Unattributed(root string) map[string]bool {
 	if s == nil {
 		return nil
 	}
@@ -429,51 +298,11 @@ func (s *Service) DisownedPaths(root string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.claimsLocked(key)
-	out := make([]string, 0, len(s.disowned[key]))
-	for path := range s.disowned[key] {
-		out = append(out, path)
+	out := make(map[string]bool, len(s.unattributed[key]))
+	for path := range s.unattributed[key] {
+		out[path] = true
 	}
-	sort.Strings(out)
 	return out
-}
-
-// SettleAmbiguous makes scope's ambiguous claims on repository-relative paths
-// in the worktree containing root ordinary: its commit took them.
-func (s *Service) SettleAmbiguous(root, scope string, paths []string) {
-	if s == nil || scope == "" || len(paths) == 0 {
-		return
-	}
-	key, err := Canonical(root)
-	if err != nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	byPath := s.claimsLocked(key)
-	changed := false
-	for _, rel := range paths {
-		if entry, ok := byPath[rel][scope]; ok && entry.ambiguous {
-			entry.ambiguous = false
-			byPath[rel][scope] = entry
-			changed = true
-		}
-	}
-	if changed {
-		s.saveLocked(key)
-	}
-}
-
-// undisownLocked drops scope's Disown mark on rel, reporting whether it had one.
-func (s *Service) undisownLocked(key, rel, scope string) bool {
-	scopes := s.disowned[key][rel]
-	if _, ok := scopes[scope]; !ok {
-		return false
-	}
-	delete(scopes, scope)
-	if len(scopes) == 0 {
-		delete(s.disowned[key], rel)
-	}
-	return true
 }
 
 // Claims returns, for the worktree containing root, each claimed
@@ -518,7 +347,7 @@ func (s *Service) ClaimDetails(root string) map[string][]Claim {
 	for path, set := range byPath {
 		list := make([]Claim, 0, len(set))
 		for scope, entry := range set {
-			list = append(list, Claim{Scope: scope, Since: entry.since, Gen: entry.gen, Overlap: entry.overlap, Ambiguous: entry.ambiguous})
+			list = append(list, Claim{Scope: scope, Since: entry.since, Gen: entry.gen, Overlap: entry.overlap})
 		}
 		sort.Slice(list, func(i, j int) bool { return list[i].Scope < list[j].Scope })
 		out[path] = list
@@ -542,20 +371,33 @@ func (s *Service) PathClaims(path, fallback string) (worktree, rel string, claim
 
 // Split partitions the claims in the worktree containing root into paths scope
 // wrote (mine) and paths any other scope wrote (foreign); a path both wrote is
-// in both. scope's overlap claims are in neither; ambiguous claims count as
-// written. It returns nils for an unscoped caller.
+// in both. scope's overlap claims are in neither. It returns nils for an
+// unscoped caller.
 func (s *Service) Split(root, scope string) (mine, foreign map[string]bool) {
+	mine, foreign, _ = s.Attribution(root, scope)
+	return mine, foreign
+}
+
+// Attribution is Split plus the unattributed paths (Unattributed), read in one
+// step, so a write that settles an unattributed path on a scope in between is
+// seen either as the mark or as that scope's claim, never as neither. It
+// returns nils for an unscoped caller.
+func (s *Service) Attribution(root, scope string) (mine, foreign, unattributed map[string]bool) {
 	if s == nil || scope == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
-	mine, foreign = map[string]bool{}, map[string]bool{}
+	mine, foreign, unattributed = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	key, err := Canonical(root)
 	if err != nil {
-		return mine, foreign
+		return mine, foreign, unattributed
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for path, set := range s.claimsLocked(key) {
+	byPath := s.claimsLocked(key)
+	for path := range s.unattributed[key] {
+		unattributed[path] = true
+	}
+	for path, set := range byPath {
 		for owner, entry := range set {
 			switch {
 			case owner != scope:
@@ -565,7 +407,7 @@ func (s *Service) Split(root, scope string) (mine, foreign map[string]bool) {
 			}
 		}
 	}
-	return mine, foreign
+	return mine, foreign, unattributed
 }
 
 // ReleaseClaims drops scope's claims on the given repository-relative paths in
@@ -603,10 +445,10 @@ func (s *Service) ReleaseClaims(root, scope string, paths []string) {
 	}
 }
 
-// ReleaseAll drops every scope's claims on the given repository-relative paths
-// in the worktree containing root — but only claims recorded at or before
-// generation before (see Generation), so a write that landed after the caller
-// observed the paths clean keeps its claim.
+// ReleaseAll drops every scope's claims, and the unattributed marks, on the
+// given repository-relative paths in the worktree containing root — but only
+// those recorded at or before generation before (see Generation), so a write
+// that landed after the caller observed the paths clean keeps its claim.
 func (s *Service) ReleaseAll(root string, paths []string, before uint64) {
 	if s == nil || len(paths) == 0 {
 		return
@@ -630,57 +472,13 @@ func (s *Service) ReleaseAll(root string, paths []string, before uint64) {
 		if set != nil && len(set) == 0 {
 			delete(byPath, path)
 		}
-		for scope, gen := range s.disowned[key][path] {
-			if gen <= before {
-				s.undisownLocked(key, path, scope)
-				changed = true
-			}
+		if gen, ok := s.unattributed[key][path]; ok && gen <= before {
+			delete(s.unattributed[key], path)
+			changed = true
 		}
 	}
 	if changed {
 		s.saveLocked(key)
-	}
-}
-
-// EndScope ends the session instance token works for (Token.Incarnation): it
-// drops the scope's ambiguous claims recorded for that instance or of unknown
-// instance (RecordAmbiguous, or loaded from disk) in the worktrees containing
-// roots (loading their persisted claims) and in every other loaded worktree,
-// and records no new ones for the instance (a shell that overlapped it may
-// still be attributing). Its definite claims stay, so its uncommitted work
-// remains attributed to it. Another instance of the scope (the session
-// reopened) keeps the claims recorded for it.
-func (s *Service) EndScope(token *Token, roots ...string) {
-	if s == nil || token.Scope() == "" || token.Incarnation() == 0 {
-		return
-	}
-	scope, incarnation := token.scope, token.incarnation
-	var keys []string
-	for _, root := range roots {
-		if key, err := Canonical(root); err == nil {
-			keys = append(keys, key)
-		}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ended[incarnation] = true
-	for _, key := range keys {
-		s.claimsLocked(key)
-	}
-	for key, byPath := range s.claims {
-		changed := false
-		for path, set := range byPath {
-			if entry, ok := set[scope]; ok && entry.ambiguous && (entry.incarnation == 0 || entry.incarnation == incarnation) {
-				delete(set, scope)
-				changed = true
-			}
-			if len(set) == 0 {
-				delete(byPath, path)
-			}
-		}
-		if changed {
-			s.saveLocked(key)
-		}
 	}
 }
 
@@ -700,11 +498,6 @@ func (s *Service) ReleaseScope(scope string) {
 			}
 			if len(set) == 0 {
 				delete(byPath, path)
-			}
-		}
-		for path := range s.disowned[key] {
-			if s.undisownLocked(key, path, scope) {
-				changed = true
 			}
 		}
 		if changed {
@@ -755,24 +548,26 @@ func (s *Service) claimsLocked(key string) map[string]claimSet {
 			}
 		}
 	}
+	marks := map[string]uint64{}
+	for _, rel := range record.Unattributed {
+		marks[rel] = 0
+	}
+	// Records written before unattributed marks held ambiguous claims and the
+	// paths a session released (release_claim): both are now unattributed.
 	for rel, scopes := range record.Ambiguous {
 		for _, scope := range scopes {
-			if entry, ok := byPath[rel][scope]; ok {
-				entry.ambiguous = true
-				byPath[rel][scope] = entry
-			}
+			delete(byPath[rel], scope)
 		}
+		if len(byPath[rel]) == 0 {
+			delete(byPath, rel)
+		}
+		marks[rel] = 0
 	}
-	for rel, scopes := range record.Released {
-		for _, scope := range scopes {
-			if s.disowned[key] == nil {
-				s.disowned[key] = map[string]map[string]uint64{}
-			}
-			if s.disowned[key][rel] == nil {
-				s.disowned[key][rel] = map[string]uint64{}
-			}
-			s.disowned[key][rel][scope] = 0
-		}
+	for rel := range record.Released {
+		marks[rel] = 0
+	}
+	if len(marks) > 0 {
+		s.unattributed[key] = marks
 	}
 	return byPath
 }
@@ -780,16 +575,18 @@ func (s *Service) claimsLocked(key string) map[string]claimSet {
 const claimsRecordVersion = 1
 
 // claimsRecord is the persisted form. Since (path -> scope -> unix seconds of
-// the first claim), Overlap and Ambiguous (path -> scopes whose claim is an
-// overlap or ambiguous claim) and Released (path -> scopes that disowned it)
-// are optional so older records and daemons stay compatible.
+// the first claim), Overlap (path -> scopes whose claim is an overlap claim)
+// and Unattributed (the unattributed paths, sorted) are optional so older
+// records and daemons stay compatible. Ambiguous and
+// Released are only read, from records of daemons before unattributed marks.
 type claimsRecord struct {
-	Version   int                         `json:"version"`
-	Claims    map[string][]string         `json:"claims"`
-	Since     map[string]map[string]int64 `json:"since,omitempty"`
-	Overlap   map[string][]string         `json:"overlap,omitempty"`
-	Ambiguous map[string][]string         `json:"ambiguous,omitempty"`
-	Released  map[string][]string         `json:"released,omitempty"`
+	Version      int                         `json:"version"`
+	Claims       map[string][]string         `json:"claims"`
+	Since        map[string]map[string]int64 `json:"since,omitempty"`
+	Overlap      map[string][]string         `json:"overlap,omitempty"`
+	Unattributed []string                    `json:"unattributed,omitempty"`
+	Ambiguous    map[string][]string         `json:"ambiguous,omitempty"`
+	Released     map[string][]string         `json:"released,omitempty"`
 }
 
 // saveLocked persists key's claims (best effort: attribution degrades to
@@ -803,7 +600,7 @@ func (s *Service) saveLocked(key string) {
 		return
 	}
 	record := claimsRecord{Version: claimsRecordVersion, Claims: map[string][]string{}, Since: map[string]map[string]int64{},
-		Overlap: map[string][]string{}, Ambiguous: map[string][]string{}, Released: map[string][]string{}}
+		Overlap: map[string][]string{}}
 	for rel, set := range s.claims[key] {
 		scopes := make([]string, 0, len(set))
 		for scope, entry := range set {
@@ -811,10 +608,6 @@ func (s *Service) saveLocked(key string) {
 			if entry.overlap {
 				record.Overlap[rel] = append(record.Overlap[rel], scope)
 				sort.Strings(record.Overlap[rel])
-			}
-			if entry.ambiguous {
-				record.Ambiguous[rel] = append(record.Ambiguous[rel], scope)
-				sort.Strings(record.Ambiguous[rel])
 			}
 			if !entry.since.IsZero() {
 				if record.Since[rel] == nil {
@@ -826,12 +619,10 @@ func (s *Service) saveLocked(key string) {
 		sort.Strings(scopes)
 		record.Claims[rel] = scopes
 	}
-	for rel, scopes := range s.disowned[key] {
-		for scope := range scopes {
-			record.Released[rel] = append(record.Released[rel], scope)
-		}
-		sort.Strings(record.Released[rel])
+	for rel := range s.unattributed[key] {
+		record.Unattributed = append(record.Unattributed, rel)
 	}
+	sort.Strings(record.Unattributed)
 	data, err := json.Marshal(record)
 	if err != nil {
 		return

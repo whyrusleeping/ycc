@@ -22,7 +22,6 @@ import (
 // Bounds on list_sessions output.
 const (
 	listSessionsMaxClaims = 10        // claimed paths shown per session
-	footerMaxAmbiguous    = 3         // ambiguous paths shown per session in the list_backlog footer
 	listSessionsMaxBytes  = 24 * 1024 // whole overview
 	maxNoticeTexts        = 10        // full notices per delivery; the rest are summarized
 )
@@ -91,13 +90,11 @@ func (m *Manager) listSessionsFor(absWS, self, path string, now time.Time) (stri
 	return out + board, nil
 }
 
-// PathClaim is one repository-relative path a session claims, when it first
-// claimed it, and whether the claim is only ambiguous (its shell changed the
-// path while another session's shell also ran).
+// PathClaim is one repository-relative path a session claims and when it
+// first claimed it.
 type PathClaim struct {
-	Path      string
-	Since     time.Time
-	Ambiguous bool
+	Path  string
+	Since time.Time
 }
 
 // sessionClaims returns scope's claimed paths from a worktree's claims, newest
@@ -107,7 +104,7 @@ func sessionClaims(claims map[string][]workspacelease.Claim, scope string) []Pat
 	for path, list := range claims {
 		for _, c := range list {
 			if c.Scope == scope {
-				out = append(out, PathClaim{Path: path, Since: c.Since, Ambiguous: c.Ambiguous})
+				out = append(out, PathClaim{Path: path, Since: c.Since})
 			}
 		}
 	}
@@ -120,49 +117,12 @@ func sessionClaims(claims map[string][]workspacelease.Claim, scope string) []Pat
 	return out
 }
 
-// claimLines formats a session's claimed paths with their age, bounded: its
-// definite claims, then its ambiguous ones on a line of their own.
+// claimLines formats a session's claimed paths with their age, bounded.
 func claimLines(claims []PathClaim, now time.Time) string {
-	var definite, ambiguous []PathClaim
-	for _, c := range claims {
-		if c.Ambiguous {
-			ambiguous = append(ambiguous, c)
-		} else {
-			definite = append(definite, c)
-		}
-	}
-	var b strings.Builder
-	if len(definite) > 0 {
-		fmt.Fprintf(&b, "    claims %d path(s): %s\n", len(definite), claimList(definite, now))
-	}
-	if len(ambiguous) > 0 {
-		fmt.Fprintf(&b, "    ambiguous claims on %d path(s), changed while another session's shell also ran, so possibly not this session's: %s\n",
-			len(ambiguous), claimList(ambiguous, now))
-	}
-	return b.String()
-}
-
-// ambiguousClaimNote flags a session's ambiguous claims in brief listings (the
-// list_backlog footer): a count and the first few paths.
-func ambiguousClaimNote(claims []PathClaim) string {
-	var paths []string
-	for _, c := range claims {
-		if c.Ambiguous {
-			paths = append(paths, c.Path)
-		}
-	}
-	if len(paths) == 0 {
+	if len(claims) == 0 {
 		return ""
 	}
-	shown := paths
-	if len(shown) > footerMaxAmbiguous {
-		shown = shown[:footerMaxAmbiguous]
-	}
-	list := strings.Join(shown, ", ")
-	if n := len(paths) - len(shown); n > 0 {
-		list += fmt.Sprintf(", … %d more", n)
-	}
-	return fmt.Sprintf("    ambiguous claims on %d path(s), possibly another session's (see list_sessions): %s\n", len(paths), list)
+	return fmt.Sprintf("    claims %d path(s): %s\n", len(claims), claimList(claims, now))
 }
 
 // claimList lists claimed paths with their age, bounded.
@@ -284,9 +244,6 @@ func (m *Manager) pathClaimants(absWS, path string, now time.Time) (string, erro
 		}
 		listed++
 		fmt.Fprintf(&b, "- %s claimed %s", c.Scope, claimAge(c.Since, now))
-		if c.Ambiguous {
-			b.WriteString(" (ambiguous: changed by its shell while another session's shell also ran)")
-		}
 		switch {
 		case brief.live:
 			fmt.Fprintf(&b, "; live %s session, %s", brief.mode, brief.state)

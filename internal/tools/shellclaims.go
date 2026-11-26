@@ -21,15 +21,13 @@ import (
 // are claimed for the shell's scope — unless another scope already claims
 // them, since a concurrent session's writes can land in the same window.
 // Running shells are registered with the ownership service, so a command
-// knows which other scopes' shells ran in its worktree meanwhile; a changed
-// path nobody definitely claims is then ambiguous for all of them rather than
-// claimed by whichever finishes first. The narrowest window wins: another
-// scope's background job does not count against a foreground command shorter
-// than shortShellLimit, nor such a command against a job, so a job running for
-// hours does not leave every write ambiguous. Attribution stays approximate (a
-// concurrent hand edit can still be picked up), but codegen, formatters, and
-// `go mod tidy` output belong to the session that ran them instead of whoever
-// commits next.
+// knows which other scopes' shells, foreground or background, ran in its
+// worktree meanwhile; a changed path nobody definitely claims is then left
+// unattributed rather than claimed by whichever finishes first: it is in no
+// session's changeset unless a session names it in a commit. Attribution stays
+// approximate (a concurrent hand edit can still be picked up), but codegen,
+// formatters, and `go mod tidy` output belong to the session that ran them
+// instead of whoever commits next.
 
 // shellSnapshotLimit bounds the dirty-set size worth stamping; beyond it the
 // command's writes stay unclaimed rather than slowing every command down.
@@ -37,10 +35,6 @@ const shellSnapshotLimit = 20000
 
 // shellSnapshotTimeout bounds each git status run.
 const shellSnapshotTimeout = 3 * time.Second
-
-// shortShellLimit is the longest foreground command that another scope's
-// background job does not count as concurrent with (workspacelease.EndShell).
-const shortShellLimit = time.Minute
 
 type fileStamp = workspacelease.PathStamp
 
@@ -75,10 +69,6 @@ func (w *Workspace) snapshotShell(command string, background bool) *shellSnapsho
 	if snap == nil {
 		// Outside a git worktree only the worktrees command targets are watched.
 		snap = &shellSnapshot{}
-	}
-	if snap.run != nil && snap.dirty {
-		// A background job ending while this command runs compares against it.
-		w.Ownership.SetShellSnapshot(snap.run, snap.entries)
 	}
 	snap.heads = w.watchHeads(snap.top, gitDir, command)
 	return snap
@@ -135,7 +125,7 @@ func (w *Workspace) snapshotDirty(located func(*shellSnapshot)) (*shellSnapshot,
 
 // claimShellChanges attributes the paths that became dirty or changed since
 // before was taken (claimDirtyChanges) and ends the command's registration. The
-// returned text is the notice for the command's result: overlaps, ambiguous
+// returned text is the notice for the command's result: overlaps, unattributed
 // paths, and a rewrite or stash of a HEAD other live sessions share
 // (sharedHeadNotices).
 func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
@@ -149,16 +139,17 @@ func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 		after, _ = w.snapshotDirty(nil)
 	}
 	var overlaps []workspacelease.Overlap
-	var ambiguous []string
+	var unattributed []string
+	var overlap workspacelease.ShellOverlap
 	// Ending the registration and recording the claims form one step, so a
 	// shell ending meanwhile sees either this one running or its claims.
 	w.Ownership.AttributeShell(func() {
-		overlap := w.Ownership.EndShell(before.run, shortShellLimit)
+		overlap = w.Ownership.EndShell(before.run)
 		if after != nil && after.top == before.top && after.dirty && before.key != "" {
-			overlaps, ambiguous = w.claimDirtyChanges(before, after, before.key, scope, overlap)
+			overlaps, unattributed = w.claimDirtyChanges(before, after, before.key, scope, overlap)
 		}
 	})
-	if notice := w.dirtyNotices(overlaps, ambiguous); notice != "" {
+	if notice := w.dirtyNotices(overlaps, unattributed, overlap); notice != "" {
 		notices = append(notices, notice)
 	}
 	if notice := w.sharedHeadNotices(before, scope); notice != "" {
@@ -168,30 +159,22 @@ func (w *Workspace) claimShellChanges(before *shellSnapshot) string {
 }
 
 // claimDirtyChanges is claimShellChanges' attribution of the dirty set. It
-// returns the overlaps to notify and the paths left ambiguous. overlap names the other scopes whose shells ran in the worktree while the
-// command did (Ran), and those of them that count as concurrent with it
-// (Concurrent: not a background job against a short foreground command, or the
-// reverse). Only ordinary (definite) claims decide a path:
-//   - a background job ending while another scope's short foreground command
-//     still runs skips paths whose state differs from that command's starting
-//     snapshot; the command attributes them when it ends;
+// returns the overlaps to notify and the paths left unattributed. overlap names
+// the other scopes whose shells, foreground or background, ran in the worktree
+// while the command did. Only ordinary (definite) claims decide a path:
 //   - with none from another scope, the path is claimed for this scope when no
-//     concurrent shell ran or this scope already claims it definitely, and
-//     otherwise recorded as ambiguous for this scope and every concurrent one
-//     whose session has not ended;
-//   - a path claimed by a scope whose shell ran meanwhile is left to it with
-//     no overlap, since the change is as likely that scope's own shell write;
-//   - a path another scope had claimed before the command started is left to
-//     that scope, reported as an overlap and recorded as an overlap claim
-//     (workspacelease.Service.RecordOverlaps).
+//     other scope's shell ran or this scope already claims it definitely, and
+//     otherwise left unattributed;
+//   - a path another scope claims is left to it with no overlap when any other
+//     scope's shell ran meanwhile, since the change may be that shell's write
+//     (the claimant's own, or a third scope's) and this command may only have
+//     read;
+//   - otherwise a path another scope had claimed before the command started
+//     is left to that scope, reported as an overlap and recorded as an overlap
+//     claim (workspacelease.Service.RecordOverlaps).
 func (w *Workspace) claimDirtyChanges(before, after *shellSnapshot, key, scope string, overlap workspacelease.ShellOverlap) ([]workspacelease.Overlap, []string) {
 	claims := w.Ownership.ClaimDetails(after.top)
-	concurrent := overlap.Concurrent
-	running := make(map[string]bool, len(overlap.Ran))
-	for _, other := range overlap.Ran {
-		running[other] = true
-	}
-	var changed, overlapped, ambiguous []string
+	var changed, overlapped, unattributed []string
 	var overlaps []workspacelease.Overlap
 	for rel, stamp := range after.entries {
 		if prior, ok := before.entries[rel]; ok && prior == stamp {
@@ -200,17 +183,9 @@ func (w *Workspace) claimDirtyChanges(before, after *shellSnapshot, key, scope s
 		if w.SharedBookkeeping != nil && w.SharedBookkeeping(filepath.Join(after.top, filepath.FromSlash(rel))) {
 			continue
 		}
-		if overlap.InShortWindow(rel, stamp) {
-			// A background job ending while another session's short command
-			// runs leaves what changed in that command's window to it.
-			continue
-		}
-		foreign, renewed, mine, mineAmbiguous, claimantRan := false, false, false, false, false
+		foreign, renewed, mine := false, false, false
 		var earlier []string
 		for _, claim := range claims[rel] {
-			if claim.Scope == scope && claim.Ambiguous {
-				mineAmbiguous = true
-			}
 			if !claim.Definite() {
 				continue
 			}
@@ -220,8 +195,6 @@ func (w *Workspace) claimDirtyChanges(before, after *shellSnapshot, key, scope s
 			}
 			foreign = true
 			switch {
-			case running[claim.Scope]:
-				claimantRan = true
 			case claim.Gen <= before.gen:
 				earlier = append(earlier, claim.Scope)
 			default:
@@ -232,22 +205,16 @@ func (w *Workspace) claimDirtyChanges(before, after *shellSnapshot, key, scope s
 			}
 		}
 		switch {
-		case !foreign && (len(concurrent) == 0 || mine):
+		case !foreign && (len(overlap.Ran) == 0 || mine):
 			changed = append(changed, rel)
 		case !foreign:
-			ambiguous = append(ambiguous, rel)
-		case claimantRan:
-			// The claimant's own shell ran meanwhile: the change is most
-			// likely its own, and this command may have only read.
+			unattributed = append(unattributed, rel)
+		case len(overlap.Ran) > 0:
+			// Another scope's shell ran meanwhile (perhaps the claimant's
+			// own): the change is not reliably this command's, and an
+			// overlap claim would block the claimant's commit on a guess.
 		case len(earlier) > 0:
-			switch {
-			case renewed:
-			case mineAmbiguous && len(concurrent) == 0:
-				// The path is already in this scope's changeset; with no
-				// other shell running, this write makes its claim definite
-				// beside the other scope's.
-				changed = append(changed, rel)
-			default:
+			if !renewed {
 				// With no other write recorded during the command, the change
 				// is most likely this command's.
 				overlapped = append(overlapped, rel)
@@ -260,25 +227,34 @@ func (w *Workspace) claimDirtyChanges(before, after *shellSnapshot, key, scope s
 	// claim: the path stays out of this session's changeset, but the earlier
 	// claimant's commit sees that a live session also changed it.
 	w.Ownership.RecordOverlaps(after.top, overlapped, w.MutationToken)
-	// Sessions that ended, or ended and reopened, since their shell began get
-	// no ambiguous claim.
-	w.Ownership.RecordShellAmbiguous(after.top, ambiguous, overlap.Claimants)
+	w.Ownership.RecordUnattributed(after.top, unattributed)
 	sort.Slice(overlaps, func(i, j int) bool { return overlaps[i].Path < overlaps[j].Path })
-	return overlaps, ambiguous
+	return overlaps, unattributed
 }
 
 // dirtyNotices notifies overlaps (outside the attribution lock) and returns
-// the result notice for them and for the paths left ambiguous.
-func (w *Workspace) dirtyNotices(overlaps []workspacelease.Overlap, ambiguous []string) string {
+// the result notice for them and for the paths left unattributed while the
+// other sessions in overlap ran shells.
+func (w *Workspace) dirtyNotices(overlaps []workspacelease.Overlap, unattributed []string, overlap workspacelease.ShellOverlap) string {
 	notices := w.Ownership.NotifyOverlaps(overlaps)
-	if len(ambiguous) > 0 {
-		sort.Strings(ambiguous)
-		note := fmt.Sprintf("[shell attribution] Another session's shell ran in this worktree while this command did, so these changed paths "+
-			"may be either session's work and are recorded as ambiguous for each (%d): %s. Another session's background job does not count "+
-			"against a foreground command shorter than %s, nor such a command against a job. A file-tool write, a shell write while no "+
-			"concurrent shell of another session runs, or a commit makes a claim definite, and a session's ambiguous claims are dropped "+
-			"when it ends; if a path is not this session's work, its coordinator can release it with release_claim.",
-			len(ambiguous), boundedPaths(ambiguous, 20), shortShellLimit)
+	if len(unattributed) > 0 {
+		sort.Strings(unattributed)
+		jobs := make(map[string]bool, len(overlap.Jobs))
+		for _, scope := range overlap.Jobs {
+			jobs[scope] = true
+		}
+		others := make([]string, 0, len(overlap.Ran))
+		for _, scope := range overlap.Ran {
+			if jobs[scope] {
+				scope += " (background job)"
+			}
+			others = append(others, scope)
+		}
+		note := fmt.Sprintf("[shell attribution] Shells of other sessions ran in this worktree while this command did (%s), so these "+
+			"changed paths may be either session's work and are left unattributed (%d): %s. They are in no session's changeset and "+
+			"block no commit; if one is this session's work, name it in the commit tool's paths. A later file-tool write, or a "+
+			"shell write while no other session's shell runs, attributes a path to its writer.",
+			strings.Join(others, ", "), len(unattributed), boundedPaths(unattributed, 20))
 		notices = strings.TrimPrefix(notices+"\n"+note, "\n")
 	}
 	return notices
@@ -287,14 +263,13 @@ func (w *Workspace) dirtyNotices(overlaps []workspacelease.Overlap, ambiguous []
 // endShell ends before's registration for a command that never ran.
 func (w *Workspace) endShell(before *shellSnapshot) {
 	if before != nil {
-		w.Ownership.AttributeShell(func() { w.Ownership.EndShell(before.run, shortShellLimit) })
+		w.Ownership.AttributeShell(func() { w.Ownership.EndShell(before.run) })
 	}
 }
 
 // recoveredShell registers a background shell that kept running across a
 // daemon restart as a running background job in its worktree, so other
-// scopes' shells see it overlap (the usual EndShell rules, including the
-// short-foreground exemption, apply). It takes no dirty snapshot: such a
+// scopes' shells see it overlap (the usual EndShell rules apply). It takes no dirty snapshot: such a
 // shell's writes are never attributed automatically, and endShell only ends
 // its registration.
 func (w *Workspace) recoveredShell() *shellSnapshot {

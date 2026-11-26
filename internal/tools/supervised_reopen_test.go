@@ -425,7 +425,7 @@ func TestReopenLostSupervisionKeepsOverlapUntilConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := svc.BeginShell(key, svc.NewScopedToken("s_other", "other"), true)
-	if overlap := svc.EndShell(other, time.Minute); !slices.Contains(overlap.Ran, "s_test") {
+	if overlap := svc.EndShell(other); !slices.Contains(overlap.Ran, "s_test") {
 		t.Fatalf("overlap = %+v, want the unknown shell counted as running", overlap)
 	}
 	job, _ := ws.Jobs.Get("job_1")

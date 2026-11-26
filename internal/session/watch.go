@@ -1492,7 +1492,6 @@ func liveSessionText(sessions []LiveSession, now time.Time, detail bool) string 
 			if len(s.Focus) == 0 && s.Intent == "" && s.Title != "" {
 				b.WriteString("    title: " + s.Title + "\n")
 			}
-			b.WriteString(ambiguousClaimNote(s.Claims))
 		}
 		for jn, j := range s.Jobs {
 			if jn == 10 {
@@ -1547,11 +1546,10 @@ func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string
 	if coordination {
 		board = m.boardSection(primary, now)
 	}
-	// With coordination on, the note also flags each session's ambiguous
-	// claims (bounded); full claim lists stay in list_sessions.
+	// Claim lists stay in list_sessions.
 	var lines string
 	if coordination {
-		lines = liveSessionText(m.liveSessions(primary, exclude, now, true), now, false)
+		lines = liveSessionText(m.liveSessions(primary, exclude, now, false), now, false)
 	} else {
 		lines = m.liveSessionLines(primary, exclude, now)
 	}

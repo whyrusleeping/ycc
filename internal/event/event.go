@@ -116,9 +116,10 @@ const (
 	// { id, reason }). They do not enter the conversation.
 	NoticePosted  Type = "notice_posted"
 	NoticeCleared Type = "notice_cleared"
-	// ClaimReleased records the coordinator releasing its claims on paths it
-	// did not write with release_claim (data: { paths, held, reason }; held
-	// lists the paths it had a claim on). It does not enter the conversation.
+	// ClaimReleased recorded the coordinator releasing its claims on paths it
+	// did not write with the former release_claim tool (data: { paths, held,
+	// reason }; held lists the paths it had a claim on). It is no longer
+	// written; older logs keep it, and it does not enter the conversation.
 	ClaimReleased Type = "claim_released"
 	// LeaseAcquired / LeaseReleased record this session taking, renewing or
 	// giving up an exclusive project lease (data: { name, reason, expires_at,

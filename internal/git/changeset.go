@@ -109,12 +109,10 @@ type Changeset struct {
 	// or generator output, structured docs writes, or another writer that left
 	// no claim); their attribution is approximate.
 	Unclaimed []string
-	// Ambiguous lists included paths some scope claims only ambiguously: a
-	// shell changed them while another scope's shell also ran, so either may
-	// have written them. Released lists changed paths left out because this
-	// scope released them as not its work and no claim of its own remains.
-	Ambiguous []string
-	Released  []string
+	// Unattributed lists changed paths left out because a shell changed them
+	// while another scope's shell also ran, so no scope is their known writer
+	// (naming one adopts it).
+	Unattributed []string
 	// MovedFrom is the baseline commit when HEAD has since moved outside its
 	// history (reset, rebase, checkout). The baseline was re-anchored on the
 	// current HEAD, so files the move left differing from HEAD count as changes.
@@ -537,7 +535,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	}
 	bookkeepingOnly := attr != nil && attr.BookkeepingOnly
 	explicit := adopted
-	var preexisting, deferred, reported []string
+	var preexisting, deferred, reported, unattributed []string
 	isAdopted := make(map[string]bool, len(adopted))
 	for _, path := range adopted {
 		isAdopted[path] = true
@@ -563,13 +561,17 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 			continue
 		}
 		// With an Attribution, a path only another scope is writing is
-		// deferred to it. Everything else that changed — this scope's edits,
-		// shared bookkeeping, unclaimed shell output or hand edits — rides
-		// along whole, with the same staged-variant safety checks below.
-		if attr.leftOut(path) && (attr.Bookkeeping == nil || !attr.Bookkeeping(path)) {
-			deferred = append(deferred, path)
-		} else {
+		// deferred to it, and an unattributed one is left out and reported.
+		// Everything else that changed — this scope's edits, shared
+		// bookkeeping, unclaimed shell output or hand edits — rides along
+		// whole, with the same staged-variant safety checks below.
+		switch {
+		case !attr.leftOut(path) || attr.Bookkeeping != nil && attr.Bookkeeping(path):
 			preexisting = append(preexisting, path)
+		case attr.Foreign[path]:
+			deferred = append(deferred, path)
+		default:
+			unattributed = append(unattributed, path)
 		}
 	}
 	reported = append(reported, preexisting...)
@@ -649,7 +651,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 			excluded++
 		}
 	}
-	var foreign, shared, unclaimed, ambiguous, released []string
+	var foreign, shared, unclaimed []string
 	explicitSet := make(map[string]bool, len(explicit))
 	for _, path := range explicit {
 		explicitSet[path] = true
@@ -669,12 +671,9 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 			if attr.Foreign[path] {
 				foreign = append(foreign, path)
 			} else {
-				released = append(released, path)
+				unattributed = append(unattributed, path)
 			}
 			continue
-		}
-		if attr != nil && attr.Ambiguous[path] {
-			ambiguous = append(ambiguous, path)
 		}
 		if attr != nil && attr.Foreign[path] {
 			shared = append(shared, path)
@@ -688,8 +687,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	sort.Strings(foreign)
 	sort.Strings(shared)
 	sort.Strings(unclaimed)
-	sort.Strings(ambiguous)
-	sort.Strings(released)
+	sort.Strings(unattributed)
 	tree, _, err := r.writeWorktreeTree(head, paths)
 	if err != nil {
 		return nil, fmt.Errorf("build scoped changeset: %w", err)
@@ -719,7 +717,7 @@ func (r *Repo) inspectIncluding(b *Baseline, adopted []string, attr *Attribution
 	return &Changeset{
 		ID: id, BaselineID: b.ID, BaselineOrigin: b.Origin(), BaseCommit: head, Tree: tree, Paths: paths, Diff: diff,
 		ExcludedDirtyPaths: excluded, Foreign: foreign, Shared: shared, Preexisting: reported, Deferred: deferred,
-		Partial: partial, Unclaimed: unclaimed, Ambiguous: ambiguous, Released: released, MovedFrom: movedFrom, Oversized: oversized,
+		Partial: partial, Unclaimed: unclaimed, Unattributed: unattributed, MovedFrom: movedFrom, Oversized: oversized,
 		baseline: b, adopted: append([]string(nil), explicit...), attr: attr,
 	}, nil
 }

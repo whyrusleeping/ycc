@@ -696,43 +696,36 @@ delegates to) is an attribution scope. Writes record a claim on the path for tha
 - A shell command is bracketed by two snapshots of the worktree's dirty set (git status plus each
   dirty path's size, mtime, and mode). Paths that changed during the command are claimed unless
   another scope already claims them, because a concurrent session's writes can land in the same
-  window. A changed path whose other claims all predate the command gets an overlap claim instead:
+  window. A changed path whose other claims all predate the command, when no other scope's shell ran
+  meanwhile, gets an overlap claim instead:
   it stays out of the shell session's changeset but counts as that session's claim for every other
   scope, so the earlier claimant's commit sees it (below). Background shells claim when they exit.
-- Running shells are registered per worktree, so a command knows which other scopes' shells ran
-  there while it did, and which of them count as concurrent with it. The narrowest window wins:
-  another scope's background job does not count as concurrent with a foreground command shorter than
-  one minute, nor such a command with a job, since a job that runs for hours would otherwise overlap
-  every command and no shell write could settle. Two foreground commands, two background jobs, or a
-  job and a foreground command of a minute or more do count. A changed path that no scope claims
-  definitely (ambiguous and overlap claims do not count) is claimed definitely for the command's
-  scope when no concurrent shell ran. Otherwise it has no single likely writer: it gets an ambiguous
-  claim for this scope and each concurrent scope, unless the session instance whose shell ran has
-  ended (a reopened session is a new instance), rather than going to whichever shell finished first.
-  So a short foreground write is definite for its scope while other sessions' jobs run, and a job,
-  when it exits, claims the unclaimed paths that changed during its run, ambiguously between the
-  jobs' scopes when another scope's job overlapped. A job that exits while another scope's short
-  command still runs leaves the paths whose state differs from that command's starting snapshot for
-  the command to attribute, so the command's window wins in either exit order; shells attribute one
-  at a time, so one that ends sees another either still running or with its claims recorded. An
-  ambiguous claim counts as each holder's own and as another scope's claim for everyone else, so the
-  path is in every holder's changeset, listed as ambiguous, and a commit refuses it while another
-  holder is live (below). A scope's file-tool write, its shell write while no concurrent shell of
-  another scope runs, or its commit taking the path makes its claim definite; other holders keep
-  theirs until they release it, the path is retired, or their session ends (a session instance's
-  ambiguous claims are released when it ends, in memory and in `claims.json`; a reopened instance
-  keeps its own). A path that another scope claims definitely, changed while any shell of that scope
-  also ran, is left to that scope with no overlap claim or notice: the change is as likely that
-  scope's own shell write, and this command may only have read.
-- The cost of the rule: a file a background job writes during another session's short command is
-  claimed definitely by that session. If it releases the path (below) before the job exits, the
-  path has no definite claimant and the job's exit claims it.
+- Running shells are registered per worktree, so a command knows which other scopes' shells,
+  foreground or background, ran there while it did. A changed path that no scope claims definitely
+  (overlap claims do not count) is claimed definitely for the command's scope when no other scope's
+  shell ran, or when this scope already claims it definitely. Otherwise it has no single likely
+  writer, rather than going to whichever shell finished first: it is left unattributed. Nobody
+  claims it, it is in no session's changeset (a session takes it by naming it in the commit tool's
+  `paths`), and it blocks no commit. The Bash result lists the paths it left unattributed and names
+  the other sessions whose shells ran, marking background jobs. So a short foreground command (`git
+  status`, `ssh`) never gains a claim on a file another session's background job writes meanwhile, and
+  a job, when it exits, claims the unclaimed paths that changed during its run only when no other
+  session's shell overlapped it. Shells attribute one at a time, so one that ends sees another
+  either still running or with its claims recorded. An unattributed path is settled on a scope by
+  that scope's file-tool write or its shell write while no other scope's shell runs, and is retired
+  when it is committed or reverted. The mark does not depend on which sessions are live: their
+  ending says nothing about who wrote the path. A path that another scope claims definitely,
+  changed while any other scope's shell also ran, is left to its claimant with no overlap claim or
+  notice: the change is as likely that shell's write (the claimant's own, or a third scope's), and
+  this command may only have read.
+- The cost of the rule: while another session's shell runs, a long background job in particular,
+  this session's shell writes stay unattributed until it names them in a commit or writes them with
+  a file tool or a lone shell; and a job whose run overlapped any other session's shell, even one
+  that ended long before the job wrote, leaves all its writes unattributed, since a snapshot cannot
+  tell when during the run a path changed.
 
-A coordinator can release its claims on paths it did not write with `release_claim`, which records
-a `claim_released` event (paths, the ones it held a claim on, and a reason) in its log. Released
-paths stay out of its changeset, even when no other scope claims them, until it writes them again or
-they are retired (committed or reverted); an ambiguous change never revives a release. Backlog
-task files and `memory.md` are not released.
+Session logs may hold calls to `release_claim`, a former tool that released a session's claims, and
+the `claim_released` events it recorded; they replay unchanged.
 
 Backlog task files and `memory.md` are the exception: they are shared bookkeeping, never claimed,
 and attributed by line instead. Each scoped write of one, whether a structured docs-store write or a
@@ -764,8 +757,10 @@ alert naming the uncommitted edits.
 
 A session's changeset — reviewed, inspected by clients, and committed — then:
 
-- excludes paths that only other scopes claimed, and paths this session released;
-- includes paths both claimed, reporting them as shared, and lists ambiguous ones;
+- excludes paths that only other scopes claimed, and unattributed paths it does not claim, listing
+  the unattributed ones (the change manifest, and the commit result or its "nothing to commit"
+  refusal, say to name them in `paths`);
+- includes paths both claimed, reporting them as shared;
 - adopts baseline-dirty paths that changed since the baseline, whole, reporting the earlier changes
   that ride along;
 - leaves out baseline-dirty paths only another scope has written since.
@@ -788,10 +783,11 @@ shell) is included rather than refused or silently dropped. Other unclaimed chan
 to whichever session commits them. When the tree is shared, the change manifest and review evidence
 list them as unclaimed, alongside the other classifications.
 
-Claims persist per worktree in its git directory (`ycc/claims.json`), with their overlap and
-ambiguous marks and the paths each session released, so they survive daemon restarts.
+Claims persist per worktree in its git directory (`ycc/claims.json`), with their overlap marks and
+the unattributed paths, so they survive daemon restarts (a record from
+before unattributed paths turns its ambiguous claims and released paths into unattributed ones).
 They also outlive the writing session, which keeps a stopped session's uncommitted work attributed to
-it. A claim is retired once its path matches HEAD again (committed by anyone, or reverted). The check
+it. A claim or unattributed mark is retired once its path matches HEAD again (committed by anyone, or reverted). The check
 runs after each commit and whenever a changeset is computed.
 
 A commit by any session moves HEAD. Other sessions' baselines are rebased onto the new HEAD when it
@@ -853,12 +849,10 @@ keeps working and their session notices stay shown when the setting is off or tu
   both sides once per path and session pair: the writer in its Write/Edit result, or in its Bash
   result when a shell changed a path another scope claimed before the command started (the shell
   records only an overlap claim), and the other session's live coordinator at its next safe checkpoint.
-  Ambiguous claims cause no notice; the shell's result lists the paths it left ambiguous.
-  `list_sessions`, `ycc notices` and `ListProjectNotices` (`ClaimedPath.ambiguous`) list a
-  session's ambiguous claims apart from its definite ones, the `list_backlog` footer flags each
-  session's ambiguous claims (count and first three paths) while coordination is on, and the web
-  and iOS Live sessions views show them after the definite claims in a collapsed "possibly this
-  session's" group.
+  Unattributed paths cause no notice; the shell's result lists the paths it left unattributed. They
+  are nobody's claim, so `list_sessions` and the `list_backlog` footer do not list them, and
+  `ListProjectNotices` never sets `ClaimedPath.ambiguous` (kept for older daemons, which `ycc
+  notices` and the web and iOS Live sessions views still render apart from definite claims).
   That coordinator is never woken and its `wait` does not end early; the notice simply waits for its
   next run. Each side is told only if its own session has the feature. Backlog task files and `memory.md`
   are never claimed, so they never cause one. A notice names the path, the other session, and its

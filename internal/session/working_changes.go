@@ -67,11 +67,11 @@ func (m *Manager) WorkingChanges(project, sessionID, taskID string) (*git.Change
 	}
 	// Narrow to this session's own writes when other sessions share the tree,
 	// exactly as its review and commit would.
-	if mine, foreign := m.ownership.Split(ws, sessionID); mine != nil {
+	if mine, foreign, unattributed := m.ownership.Attribution(ws, sessionID); mine != nil {
 		store := docs.NewStore(ws)
 		attr := &git.Attribution{
-			Mine: mine, Foreign: foreign, Ambiguous: m.ownership.Ambiguous(ws),
-			Released: m.ownership.Disowned(ws, sessionID), Bookkeeping: orchestrator.BookkeepingPaths(ws, store),
+			Mine: mine, Foreign: foreign, Unattributed: unattributed,
+			Bookkeeping: orchestrator.BookkeepingPaths(ws, store),
 			Lines: orchestrator.BookkeepingLines(ws, store, m.ownership, sessionID),
 		}
 		changes, err := repo.InspectChangesFor(baseline, attr, adopted...)

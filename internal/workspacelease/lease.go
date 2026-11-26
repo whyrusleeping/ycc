@@ -28,14 +28,11 @@ type Service struct {
 	// claims: canonical worktree -> repository-relative path -> scope -> the
 	// generation of its latest claim (see claims.go).
 	claims map[string]map[string]claimSet
-	// disowned: canonical worktree -> path -> scope -> generation of the
-	// scope's Disown of the path (claims.go).
-	disowned map[string]map[string]map[string]uint64
+	// unattributed: canonical worktree -> unattributed path -> the
+	// generation it was last marked at (claims.go).
+	unattributed map[string]map[string]uint64
 	// shells are the running shell commands of scoped sessions (shells.go).
 	shells map[*ShellRun]struct{}
-	// ended are the session incarnations (Token.Incarnation) that ended
-	// (EndScope): no new ambiguous claim is recorded for them.
-	ended map[uint64]bool
 	// attrMu serializes shell attributions (AttributeShell); it is taken
 	// before mu.
 	attrMu    sync.Mutex
@@ -67,18 +64,6 @@ type Token struct {
 	id      uint64
 	owner   string
 	scope   string
-	// incarnation identifies the session instance the token works for: the
-	// id of its NewScopedToken, shared by Child tokens (0 when unscoped).
-	incarnation uint64
-}
-
-// Incarnation returns the id of the session instance t works for, 0 for an
-// unscoped or nil token.
-func (t *Token) Incarnation() uint64 {
-	if t == nil {
-		return 0
-	}
-	return t.incarnation
 }
 
 // Lease is one retained claim on a worktree. Release is idempotent.
@@ -101,12 +86,11 @@ func (e *Conflict) Error() string {
 // NewService returns an empty ownership service.
 func NewService() *Service {
 	return &Service{
-		owners:   make(map[string]*entry),
-		released: make(chan struct{}),
-		claims:   make(map[string]map[string]claimSet),
-		disowned: make(map[string]map[string]map[string]uint64),
-		shells:   make(map[*ShellRun]struct{}),
-		ended:    make(map[uint64]bool),
+		owners:       make(map[string]*entry),
+		released:     make(chan struct{}),
+		claims:       make(map[string]map[string]claimSet),
+		unattributed: make(map[string]map[string]uint64),
+		shells:       make(map[*ShellRun]struct{}),
 	}
 }
 
@@ -117,30 +101,26 @@ func (s *Service) NewToken(owner string) *Token {
 }
 
 // NewScopedToken creates an execution token whose writes are attributed to
-// scope (normally a session id, whose session starts or reopens).
+// scope (normally a session id).
 func (s *Service) NewScopedToken(scope, owner string) *Token {
 	if s == nil {
 		return nil
 	}
-	token := &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope}
-	if scope != "" {
-		token.incarnation = token.id
-	}
-	return token
+	return &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope}
 }
 
 // Child creates a distinct token for a delegated worker that shares parent's
 // attribution scope.
 func (s *Service) Child(parent *Token, owner string) *Token {
-	scope, incarnation := "", uint64(0)
+	scope := ""
 	if parent != nil {
-		scope, incarnation = parent.scope, parent.incarnation
+		scope = parent.scope
 		owner = parent.owner + " / " + owner
 	}
 	if s == nil {
 		return nil
 	}
-	return &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope, incarnation: incarnation}
+	return &Token{service: s, id: s.next.Add(1), owner: owner, scope: scope}
 }
 
 // Owner returns the token's human-readable owner.

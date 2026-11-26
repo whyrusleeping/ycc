@@ -116,6 +116,11 @@ func commitSessionChanges(ctx context.Context, d *Deps, message string, paths []
 	}
 	if strings.TrimSpace(changes.Diff) == "" {
 		release()
+		if len(changes.Unattributed) > 0 {
+			return "", nil, fmt.Errorf("nothing to commit: this session has no attributed uncommitted changes; these changed paths are unattributed, "+
+				"because a shell changed them while another session's shell also ran, so name any that are this session's work in paths (%d): %s",
+				len(changes.Unattributed), boundedPathList(changes.Unattributed, 1024))
+		}
 		return "", nil, fmt.Errorf("nothing to commit: this session has no uncommitted changes")
 	}
 	if err := d.refuseLiveShared(changes, paths); err != nil {

@@ -3,13 +3,11 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/whyrusleeping/gollama"
 
-	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
@@ -205,67 +203,6 @@ func boardTools(d *Deps) []*gollama.Tool {
 		return nil
 	}
 	return []*gollama.Tool{noticeTool(d.Board.SetIntent, d.Board)}
-}
-
-// releaseClaim lets a coordinator drop its claim on paths it did not write,
-// such as a path a shell left ambiguous or a write wrongly attributed to it
-// (spec §7.3). It is not gated by session coordination: claims and their
-// ambiguity exist in every shared worktree.
-func releaseClaim(d *Deps) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "release_claim",
-		Description: "Release this session's claim on files it did not write: a path a shell recorded as ambiguous (another " +
-			"session's shell ran at the same time), or one wrongly attributed to this session, such as a file another session's " +
-			"background job wrote during this session's short command (release it before that job exits, and the job's exit " +
-			"claims it for its session). Released paths leave this " +
-			"session's changeset until it writes them again or they are committed or reverted, so another session's claim " +
-			"no longer refuses its commit. Do not release files this session changed.",
-		Params: tools.Obj(map[string]any{
-			"paths":  tools.StrArrProp("files to release (workspace-relative or absolute)"),
-			"reason": tools.StrProp("why they are not this session's work (one line)"),
-		}, "paths", "reason"),
-		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
-			paths := tools.GetStringSlice(params, "paths")
-			reason, _ := tools.GetString(params, "reason")
-			out, err := d.releaseClaims(ctx, paths, strings.TrimSpace(reason))
-			if err != nil {
-				return tools.ErrResult("release_claim: %v", err), nil
-			}
-			return tools.OkResult(out), nil
-		},
-	}
-}
-
-// releaseClaims backs release_claim.
-func (d *Deps) releaseClaims(ctx context.Context, paths []string, reason string) (string, error) {
-	scope := d.CoordinatorToken.Scope()
-	if d.Ownership == nil || scope == "" || d.Repo == nil {
-		return "", errors.New("this session does not track path claims")
-	}
-	if len(paths) == 0 {
-		return "", errors.New("paths is required")
-	}
-	if reason == "" {
-		return "", errors.New("reason is required")
-	}
-	rels, err := d.Repo.RepoPaths(paths)
-	if err != nil {
-		return "", err
-	}
-	bookkeeping := BookkeepingPaths(d.Workspace, d.Docs)
-	for _, rel := range rels {
-		if bookkeeping != nil && bookkeeping(rel) {
-			return "", fmt.Errorf("%s is a backlog or memory file, attributed by line rather than claimed; nothing to release", rel)
-		}
-	}
-	held := d.Ownership.Disown(d.Workspace, scope, rels)
-	if err := emitDurable(ctx, d.Emitter, event.ClaimReleased, map[string]any{
-		"paths": rels, "held": held, "reason": reason,
-	}); err != nil {
-		return "", fmt.Errorf("released, but recording it in the session log failed: %w", err)
-	}
-	return fmt.Sprintf("Released %d path(s) (this session held a claim on %d): %s. They stay out of this session's changeset "+
-		"until it writes them again or they are committed or reverted.", len(rels), len(held), boundedPathList(rels, 1024)), nil
 }
 
 // Leases is the session's view of the project's exclusive leases. Each method

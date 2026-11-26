@@ -1066,7 +1066,7 @@ func TestOverlappingWritesReportNotices(t *testing.T) {
 // shell starts and finishes inside that window (before the claimant's shell
 // ends and renews its claim): the read-only shell records no
 // overlap and sends no notice naming itself as the writer. A later shell write
-// while no other session's shell runs turns an ambiguous claim definite.
+// while no other session's shell runs settles an unattributed path on it.
 func TestConcurrentShellOfClaimantIsNotBlamedOnReadOnlyShell(t *testing.T) {
 	root := t.TempDir()
 	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
@@ -1117,16 +1117,14 @@ func TestConcurrentShellOfClaimantIsNotBlamedOnReadOnlyShell(t *testing.T) {
 		t.Fatalf("owned.go claims = %+v", got)
 	}
 
-	// An ambiguous claim on a path becomes definite when its scope's shell
+	// An unattributed path is claimed definitely by the scope whose shell
 	// writes it while no other session's shell runs.
-	ownership.RecordAmbiguous(root, []string{"gen.txt"}, []string{"s_owner", "s_reader"})
+	ownership.RecordUnattributed(root, []string{"gen.txt"})
 	if res := dispatch(t, owner, "Bash", `{"command":"echo gen > gen.txt"}`); res.IsError || strings.Contains(res.Content, "[shell attribution]") {
 		t.Fatalf("lone Bash: %s", res.Content)
 	}
-	for _, c := range ownership.ClaimDetails(root)["gen.txt"] {
-		if (c.Scope == "s_owner") != c.Definite() {
-			t.Fatalf("gen.txt claims after the lone write = %+v", ownership.ClaimDetails(root)["gen.txt"])
-		}
+	if got := ownership.ClaimDetails(root)["gen.txt"]; len(got) != 1 || got[0].Scope != "s_owner" || !got[0].Definite() || ownership.Unattributed(root)["gen.txt"] {
+		t.Fatalf("gen.txt claims after the lone write = %+v (unattributed %v)", got, ownership.Unattributed(root))
 	}
 }
 

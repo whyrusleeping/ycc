@@ -269,12 +269,13 @@ func (s *Server) ListProjectNotices(_ context.Context, req *connect.Request[v1.L
 	return connect.NewResponse(resp), nil
 }
 
-// claimedPathsProto maps a live session's claims, in order, keeping which
-// are ambiguous.
+// claimedPathsProto maps a live session's claims, in order. Claims are never
+// ambiguous any more (a path two sessions' shells may have written is left
+// unattributed, unclaimed), so ClaimedPath.ambiguous stays false.
 func claimedPathsProto(claims []session.PathClaim) []*v1.ClaimedPath {
 	var out []*v1.ClaimedPath
 	for _, c := range claims {
-		out = append(out, &v1.ClaimedPath{Path: c.Path, Since: rfc3339OrEmpty(c.Since), Ambiguous: c.Ambiguous})
+		out = append(out, &v1.ClaimedPath{Path: c.Path, Since: rfc3339OrEmpty(c.Since)})
 	}
 	return out
 }
