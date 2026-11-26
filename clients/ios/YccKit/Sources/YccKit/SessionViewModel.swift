@@ -669,7 +669,7 @@ public final class SessionViewModel {
             }
             do {
                 // Let the first page lay out and the stream open first.
-                if delay > 0 { try await pause(delay) }
+                if delay > 0 { try await Self.pause(delay, using: sleep) }
                 guard let self, cursor == self.earlierCursor, epoch == self.snapshotEpoch,
                       !Task.isCancelled else { return }
                 // First-page sized on open: a glance should not cost a deep
@@ -1676,7 +1676,7 @@ public final class SessionViewModel {
         let timeout = sentEchoTimeout
         let sleep = self.sleep
         Task { @MainActor [weak self] in
-            do { try await pause(timeout) } catch { return }
+            do { try await Self.pause(timeout, using: sleep) } catch { return }
             guard let self,
                   let current = self.pendingUserMessages.firstIndex(where: { $0.id == id }),
                   self.pendingUserMessages[current].status == .sent else { return }
@@ -1978,7 +1978,7 @@ public final class SessionViewModel {
         let timeout = controlAckTimeout
         let sleep = self.sleep
         Task { @MainActor [weak self] in
-            do { try await pause(timeout) } catch { return }
+            do { try await Self.pause(timeout, using: sleep) } catch { return }
             guard let self, self.pendingControl?.token == token else { return }
             self.pendingControl = nil
         }

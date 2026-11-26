@@ -190,8 +190,8 @@ public struct QuickReplyDraft: Identifiable, Equatable, Sendable {
 @Observable
 public final class QuickRepliesEditorModel {
     public static let maxReplies = 12
-    public static let maxLabelLength = 32
-    public static let maxTextBytes = 4000
+    nonisolated public static let maxLabelLength = 32
+    nonisolated public static let maxTextBytes = 4000
 
     /// Every row, each tagged with its list; a list's order is its rows'
     /// order here.

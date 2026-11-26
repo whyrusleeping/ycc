@@ -2013,7 +2013,9 @@ private struct DurableTranscriptRows: View {
     let onOpenReview: (String, String) -> Void
     let onOpenQuestion: (String) -> Void
     let onFork: (Int64) -> Void
-    let loadPicture: @Sendable (String) async -> Data?
+    // `nonisolated`: Swift 6.4 drops `@Sendable` when a View with inferred
+    // main-actor isolation reads its own stored closure, warning on hand-off.
+    nonisolated let loadPicture: @Sendable (String) async -> Data?
     let onEditFailedMessage: (String) -> Void
 
     var body: some View {
@@ -2309,7 +2311,7 @@ struct TranscriptRowView: View, Equatable {
     var loadDetail: @MainActor (String) async -> Void = { _ in }
     /// Lazily retrieves a retained user picture. Returning nil renders the
     /// metadata fallback instead of a broken thumbnail.
-    var loadPicture: @Sendable (String) async -> Data? = { _ in nil }
+    nonisolated var loadPicture: @Sendable (String) async -> Data? = { _ in nil }
 
     /// The callbacks are stable for a transcript row's lifetime; row payload and
     /// the optional live model label are the only inputs that should invalidate
