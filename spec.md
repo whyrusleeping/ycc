@@ -103,7 +103,8 @@ clean boundary. A coordinator that is idle, paused, parked on `ask_user`, or blo
 not delay the drain, and neither does a subagent blocked in `wait`. A second signal ends the drain,
 and a later one exits at once. Every session is then suspended for restart. A blocked `wait` (the
 coordinator's or a subagent's) or `ask_user` exits with no result and claims no job report, so the
-coordinator's `tool_call` stays unresolved in the log. Background jobs and subagents are killed and
+coordinator's `tool_call` stays unresolved in the log, and reopen resumes it (§5.1). Background
+jobs and subagents are killed and
 joined without `session_stopped`, workstream watchers are joined, and the log closes last. Stop,
 idle reaping, fail-stop, and the one-shot in-process daemon keep ordinary cancel-and-kill teardown.
 
@@ -197,8 +198,24 @@ bounded head capture and an atomic exit record, so the job can outlive the daemo
 - A downtime finish or a loss of supervision is recorded as `job_finished` (`recovered: true`)
   ahead of `session_reopened`.
 - `session_reopened` lists the jobs still running in `surviving_jobs`. It sets `awaiting_jobs`
-  when the session reopens idle and waiting on them.
+  when the session reopens idle and waiting on them: its last lifecycle boundary was a
+  `session_idle` with `awaiting_jobs` (or such a reopen), with no pause, error or refusal, fork,
+  question, turn or input since, and a job continuation is still pending. Their completion then
+  wakes it as it would have before.
 - When both fields are omitted, the reopen means what it always did: nothing survived it.
+
+A `wait` records `wait_started` before it blocks: the call id, the resolved job ids, `for`, and
+the RFC3339 deadline after its default timeout and any work-loop shell cap. A log that ends inside
+that wait (a graceful restart suspended it, or a crash or stop cut it off) reopens into it rather
+than giving the model a placeholder result: `session_reopened` sets `wait_restored`, the wait runs
+on to its recorded deadline (or, already past it, collects at once), and its `tool_result`
+(`restored: true`) continues the turn. Reports it had already claimed are returned without a second
+`job_claimed`. Messages queued during that run but never delivered, and input sent while it waits,
+end it early and are delivered after its result in order, as with a live `wait`. Any reopen that
+goes on with a cut-off run (a restored `wait`, or history that still owes a model response) puts
+that run's undelivered queued messages back first and lists them in
+`session_reopened.requeued_inputs`; a session whose last turn finished reopens idle even when its
+history ends on a tool result, such as `report_blocked`.
 
 Persistent startup holds the supervised jobs of sessions that stay closed in a passive table, and
 writes nothing to their logs. Those jobs guard their workstream's worktree and count as running

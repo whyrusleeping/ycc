@@ -910,6 +910,7 @@ export function systemSummary(type: string, data: Data): string | null {
     case "user_input_delivered":
     case "job_notified":
     case "plan_only_delivered":
+    case "wait_started":
       return null;
     case "commit_made": {
       const sha = s("sha");

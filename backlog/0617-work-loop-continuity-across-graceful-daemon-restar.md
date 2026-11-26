@@ -8,13 +8,14 @@ updated: "2026-11-26"
 depends_on:
     - "0613"
     - "0616"
+    - "0622"
 spec_refs:
     - docs/design/daemon-restart.md#6. Work-loop continuity across graceful restart (Slice 5)
     - spec.md#9.1 Unattended work loop
 ---
 
 ## Description
-Slice 5 of restart-safe daemon sessions (`docs/design/daemon-restart.md` §6), building on 0613 (graceful daemon shutdown and phased startup) and 0616 (persisted wait, wake-eligible idle continuation, restart manifest, and passive leases). Extends planned graceful daemon restarts to suspend and seamlessly resume active/waiting unattended work loops with both working and waiting slots, while keeping crashed or unmatched loops visibly interrupted.
+Slice 5 of restart-safe daemon sessions (`docs/design/daemon-restart.md` §6), building on 0613 (graceful daemon shutdown and phased startup) and 0616 (persisted wait, wake-eligible idle continuation), whose restart-manifest and lease parts were split into 0621 (passive lease ownership) and 0622 (restart manifest recovery). Extends planned graceful daemon restarts to suspend and seamlessly resume active/waiting unattended work loops with both working and waiting slots, while keeping crashed or unmatched loops visibly interrupted.
 
 ### Acceptance criteria
 - Under `ShutdownForRestart`, active and waiting work loops stop launching new sessions, settle any session that ended right as shutdown began, and release both foreground working slots (including slots blocked in `wait`) and detached waiting slots without calling `reclaimIfCurrent`, preventing replacement work in the same slot or on the same focused task.

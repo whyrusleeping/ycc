@@ -1026,6 +1026,18 @@ func (r *Registry) WaitSuspendable(ctx context.Context, ids []string, mode strin
 	return r.collectUnlessSuspended(ctx, targets)
 }
 
+// CollectSuspendable is a non-blocking WaitSuspendable: it collects the
+// reports of the listed jobs that have finished and the ids of those still
+// running, without waiting. A restored wait whose deadline already passed uses
+// it, since a zero timeout means "no timeout" to WaitSuspendable. Empty ids
+// collect nothing.
+func (r *Registry) CollectSuspendable(ctx context.Context, ids []string) (reports []Report, running []string, suspended bool) {
+	if len(ids) == 0 {
+		return nil, nil, false
+	}
+	return r.collectUnlessSuspended(ctx, r.targets(ids))
+}
+
 // collectUnlessSuspended collects the wait's reports, except that a wait whose
 // context a graceful restart cancelled claims nothing: delivery of its reports
 // belongs to the reopened session.

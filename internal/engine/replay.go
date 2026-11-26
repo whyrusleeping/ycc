@@ -213,7 +213,7 @@ func ReplayHistoryReconciled(events []event.Event, reconciled map[string]bool) [
 			}
 			repairDangling()
 			flushDeferred()
-			history = append(history, gollama.Message{Role: "user", Content: replayUserText(ev.Data)})
+			history = append(history, gollama.Message{Role: "user", Content: ReplayUserText(ev.Data)})
 			assistantIdx = -1
 		case event.UserInputDelivered:
 			// A queued mid-run input entering the conversation at its safe checkpoint:
@@ -224,11 +224,11 @@ func ReplayHistoryReconciled(events []event.Event, reconciled map[string]bool) [
 			// the Post to the batch end — buffer it to match. Image bytes are not
 			// persisted, so replay supplies an explicit attachment-loss marker.
 			if batchOpen() {
-				deferredUser = append(deferredUser, replayUserText(ev.Data))
+				deferredUser = append(deferredUser, ReplayUserText(ev.Data))
 				continue
 			}
 			repairDangling()
-			history = append(history, gollama.Message{Role: "user", Content: replayUserText(ev.Data)})
+			history = append(history, gollama.Message{Role: "user", Content: ReplayUserText(ev.Data)})
 			assistantIdx = -1
 		case event.ModelTurn:
 			if ev.Actor != "coordinator" {
@@ -579,7 +579,9 @@ func legacyNotificationResult(data map[string]any) string {
 	return text
 }
 
-func replayUserText(data map[string]any) string {
+// ReplayUserText is the model text of a recorded user message: its text plus
+// a note for picture attachments, whose bytes are not replayed.
+func ReplayUserText(data map[string]any) string {
 	text := str(data, "text")
 	count := 0
 	switch images := data["images"].(type) {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,10 +95,10 @@ func shutdownTestManager(t *testing.T, steps []*[2]string) (*Manager, string) {
 	return m, ws
 }
 
-// lastCoordinatorToolCall reports whether the session's latest coordinator event
-// is a tool_call of name.
+// lastCoordinatorToolCall reports whether the session's latest coordinator turn
+// step is a tool_call of name.
 func lastCoordinatorToolCall(s *Session, name string) bool {
-	ev, ok := s.Log().LastByActor("coordinator")
+	ev, ok := s.Log().LastByActor("coordinator", event.ModelTurn, event.ToolCall, event.ToolResult)
 	if !ok || ev.Type != event.ToolCall {
 		return false
 	}
@@ -141,9 +142,9 @@ func TestShutdownForRestartLeavesWaitUnresolved(t *testing.T) {
 	}
 
 	evs := readLog(t, s)
-	last := evs[len(evs)-1]
-	if last.Type != event.ToolCall || last.Data["name"] != "wait" {
-		t.Fatalf("log ends with %s %v, want the unresolved wait tool_call", last.Type, last.Data)
+	if n := len(evs); n < 2 || evs[n-2].Type != event.ToolCall || evs[n-2].Data["name"] != "wait" ||
+		evs[n-1].Type != event.WaitStarted {
+		t.Fatalf("log ends with %v, want the unresolved wait tool_call and its wait_started", evs[max(0, n-2):])
 	}
 	for _, ev := range evs {
 		switch ev.Type {
@@ -155,11 +156,23 @@ func TestShutdownForRestartLeavesWaitUnresolved(t *testing.T) {
 			}
 		}
 	}
-	// The suspended log reopens; the dangling wait is repaired by replay.
+	// The suspended log reopens and resumes the wait: its unsupervised job
+	// did not survive, so the restored wait returns the loss at once.
 	m2, _ := shutdownTestManager(t, nil)
 	m2.SetProjects(m.projects)
-	if _, err := m2.Reopen("proj", s.ID); err != nil {
+	s2, err := m2.Reopen("proj", s.ID)
+	if err != nil {
 		t.Fatalf("Reopen after restart suspension: %v", err)
+	}
+	waitFor(t, func() bool { return len(eventsOf(s2, event.SessionIdle)) == 1 })
+	var result *event.Event
+	for _, ev := range s2.Log().Snapshot() {
+		if ev.Type == event.ToolResult && ev.Data["name"] == "wait" {
+			result = &ev
+		}
+	}
+	if result == nil || !boolVal(result.Data, "restored") || !strings.Contains(str(result.Data, "result"), "[job job_1 lost]") {
+		t.Fatalf("restored wait result = %v", result)
 	}
 }
 

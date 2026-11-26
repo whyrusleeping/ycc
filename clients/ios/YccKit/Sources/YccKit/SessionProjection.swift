@@ -1388,7 +1388,7 @@ public struct SessionProjection: Sendable, Equatable {
             let to = s("to")
             let scope = role.isEmpty || role == "all" ? "all roles" : role
             return to.isEmpty ? "Thinking changed" : "Thinking (\(scope)) → \(to)"
-        case "user_input_delivered":
+        case "user_input_delivered", "wait_started":
             return nil
         case "commit_made":
             let sha = s("sha")

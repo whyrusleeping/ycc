@@ -32,6 +32,7 @@ var ErrNoPendingQuestion = errors.New("no pending question")
 // persisted log.
 type resumableQuestion struct {
 	callID    string // raw recorded ask_user tool_call id
+	index     int    // the call's position among its turn's recorded tool calls
 	batch     bool   // asked via the `questions` list form
 	questions []orchestrator.Question
 
@@ -53,6 +54,8 @@ func findResumableQuestion(events []event.Event) *resumableQuestion {
 		lastCallID   string
 		lastCallName string
 		lastResolved bool
+		lastIndex    int
+		turnCalls    int
 	)
 	for _, ev := range events {
 		switch ev.Type {
@@ -61,6 +64,8 @@ func findResumableQuestion(events []event.Event) *resumableQuestion {
 				continue
 			}
 			lastCallID, lastCallName, lastResolved = str(ev.Data, "id"), str(ev.Data, "name"), false
+			lastIndex = turnCalls
+			turnCalls++
 			q = nil
 		case event.ToolResult:
 			if ev.Actor != "coordinator" {
@@ -81,10 +86,14 @@ func findResumableQuestion(events []event.Event) *resumableQuestion {
 			q = parseAskedQuestion(ev.Data)
 			if q != nil {
 				q.callID = lastCallID
+				q.index = lastIndex
 			}
 		case event.QuestionAnswered, event.ModelTurn, event.ContextViewChanged:
 			if ev.Actor == "coordinator" {
 				q = nil
+				if ev.Type == event.ModelTurn {
+					turnCalls = 0
+				}
 			}
 		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.SessionForked:
 			q = nil
@@ -136,11 +145,15 @@ func strList(v any) []string {
 }
 
 // placeholderCallID finds the replayed history's synthetic result for the
-// restored ask_user call on the trailing assistant turn and returns its
+// restored toolName call on the trailing assistant turn and returns its
 // (canonicalized) tool-call id, or "" when the history does not have the
-// expected shape — in which case the question is not restored and reopen keeps
-// its ordinary behavior.
-func placeholderCallID(history []gollama.Message, rawID string) string {
+// expected shape — in which case the call is not restored and reopen keeps
+// its ordinary behavior. The call is matched by index, its position among the
+// turn's recorded tool calls, which replay keeps; replay may rewrite ids a
+// backend would reject (so a raw id can even equal another call's rewritten
+// id), so the raw id is used only when the index does not name a toolName
+// call, and failing that the turn's last toolName call.
+func placeholderCallID(history []gollama.Message, toolName, rawID string, index int) string {
 	ai := -1
 	for i := len(history) - 1; i >= 0; i-- {
 		if history[i].Role == "assistant" {
@@ -151,16 +164,25 @@ func placeholderCallID(history []gollama.Message, rawID string) string {
 	if ai < 0 {
 		return ""
 	}
+	calls := history[ai].ToolCalls
 	id := ""
-	for _, c := range history[ai].ToolCalls {
-		if c.Function.Name != "ask_user" {
-			continue
+	if index >= 0 && index < len(calls) && calls[index].Function.Name == toolName {
+		id = calls[index].ID
+	}
+	if id == "" {
+		for _, c := range calls {
+			if c.Function.Name == toolName && c.ID == rawID {
+				id = c.ID
+				break
+			}
 		}
-		if c.ID == rawID {
-			id = c.ID
-			break
+	}
+	if id == "" {
+		for _, c := range calls {
+			if c.Function.Name == toolName {
+				id = c.ID
+			}
 		}
-		id = c.ID // canonicalized id: fall back to the turn's last ask_user call
 	}
 	if id == "" {
 		return ""
@@ -180,7 +202,7 @@ func (s *Session) restoreQuestion(rq *resumableQuestion, history []gollama.Messa
 	if rq == nil || s.inter == nil || s.inter.unattended {
 		return false
 	}
-	rq.historyCallID = placeholderCallID(history, rq.callID)
+	rq.historyCallID = placeholderCallID(history, "ask_user", rq.callID, rq.index)
 	if rq.historyCallID == "" {
 		return false
 	}

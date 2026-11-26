@@ -74,8 +74,14 @@ const (
 	JobFinished  Type = "job_finished"
 	// JobClaimed records that an explicit wait suppressed future automatic
 	// notification without adding another user-role message to replay history.
-	JobClaimed   Type = "job_claimed"
-	JobNotified  Type = "job_notified"
+	JobClaimed  Type = "job_claimed"
+	JobNotified Type = "job_notified"
+	// WaitStarted records a wait call's resolved targets once it starts blocking
+	// (data: { call_id, job_ids, for, deadline, timeout_ms, shell_only }; deadline
+	// is RFC3339 and already includes the default timeout and any work-loop shell
+	// cap). A reopen whose log ends inside that wait resumes it rather than
+	// giving the model a placeholder result. It does not enter the conversation.
+	WaitStarted  Type = "wait_started"
 	PlanProposed Type = "plan_proposed"
 	// ReviewTierSelected records which review tier the coordinator chose for a
 	// change, so tier selection is auditable in the work log/events.

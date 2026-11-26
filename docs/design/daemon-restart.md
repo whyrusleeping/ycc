@@ -536,6 +536,9 @@ and client projections as its behavior lands:
    `restart-state.json` recovery with synthetic restart context, and decouple `leases.go` for
    passive lease ownership plus persistent job-bound `leases.json` with fail-closed
    `execution_unknown` and `WaitExecution` gating.
+   Implemented in three tasks: persisted `wait` and the wake-eligible idle check (0616), passive
+   lease ownership and `leases.json` (0621), and the restart manifest with supervised launches on
+   by default (0622).
 5. **Work-loop continuity across graceful restart** *(depends on 1, 4)*.
    Revise `spec.md` §9.1 for planned graceful restarts, add working- and waiting-slot restart
    release, persist and restore the generation-bound full scheduler checkpoint

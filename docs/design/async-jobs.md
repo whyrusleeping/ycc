@@ -124,6 +124,21 @@ worktree. A session whose last boundary was an idle
 report awaiting jobs, and which still has job deliveries pending, reopens into that same awaiting
 state (`session_reopened.awaiting_jobs`), so a survivor's completion or a downtime finish resumes it.
 
+An explicit `wait` records `wait_started` (call id, resolved job ids, `for`, RFC3339 deadline after the
+default timeout and any shell cap) before it blocks. When the coordinator's log ends inside that wait
+(a graceful restart suspended it, or the daemon crashed or the session stopped first), reopen resumes
+the same wait instead of letting replay's placeholder result stand: `session_reopened.wait_restored`
+is set, the wait runs to its recorded deadline (collecting at once, without blocking, if the deadline
+passed during the downtime), and its `tool_result` is recorded with `restored: true` and replaces the
+placeholder in history before the turn continues. A survivor's completion or a downtime finish thus
+reaches the coordinator as the wait's result, claimed once. A report the interrupted wait had already
+claimed is returned again without a second `job_claimed`. User messages queued during that run and
+never delivered are queued again ahead of any new input (`session_reopened.requeued_inputs`, so a
+later reopen still finds them if the log is cut before their delivery); like input sent during the
+restored wait, they end it early and are delivered after its result in order. A reopen into
+wake-eligible idle is armed before the session is published, and a session whose last turn finished
+reopens idle even when its history ends on a control tool's result.
+
 A session can also stay closed after a restart or crash while its supervised jobs keep running.
 Persistent startup therefore scans every registered project's session directories, and every session
 directory in each workstream's verified worktree, for supervised jobs that have

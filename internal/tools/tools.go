@@ -70,6 +70,19 @@ func RestartSuspendedResult(res *gollama.ToolResult) bool {
 	return ok
 }
 
+type toolCallIDKey struct{}
+
+func withToolCallID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, toolCallIDKey{}, id)
+}
+
+// ToolCallID is the raw id of the tool call being dispatched, as recorded on
+// its tool_call event, or "" outside Registry.Dispatch.
+func ToolCallID(ctx context.Context) string {
+	id, _ := ctx.Value(toolCallIDKey{}).(string)
+	return id
+}
+
 // Registry holds the tools available to an agent and dispatches calls.
 type Registry struct {
 	tools  []*gollama.Tool
@@ -122,7 +135,7 @@ func (r *Registry) Dispatch(ctx context.Context, call gollama.ToolCall) *gollama
 	if err := validateToolArguments(call.Function.Arguments, t.Params); err != nil {
 		return errResult("tool %q has invalid arguments: %v", call.Function.Name, err)
 	}
-	res, err := gollama.HandleToolCall(ctx, []*gollama.Tool{t}, call)
+	res, err := gollama.HandleToolCall(withToolCallID(ctx, call.ID), []*gollama.Tool{t}, call)
 	if errors.Is(err, jobs.ErrRestartSuspend) {
 		return &gollama.ToolResult{Content: err.Error(), IsError: true, Structured: restartSuspended{}}
 	}

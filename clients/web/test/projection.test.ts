@@ -233,3 +233,12 @@ describe("plan only", () => {
     expect(texts(p).at(-1)).toBe("Plan only off: the agent may implement");
   });
 });
+
+describe("wait_started", () => {
+  it("is plumbing behind the wait tool row, never a row of its own", () => {
+    const p = new SessionProjection();
+    p.installIndexed(state(1), []);
+    p.apply(ev(2, "wait_started", { call_id: "c1", job_ids: ["job_1"], for: "any" }));
+    expect(texts(p)).toEqual([]);
+  });
+});

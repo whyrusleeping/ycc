@@ -136,6 +136,9 @@ type Session struct {
 	// resumeQuestion, set by Reopen, is a still-unanswered ask_user question the
 	// persisted log ended on; run() waits for its answer before anything else.
 	resumeQuestion *resumableQuestion
+	// resumeWait, set by Reopen, is the wait the persisted log ended inside;
+	// run() finishes it (resume_wait.go) before anything else.
+	resumeWait *resumableWait
 
 	// forkAwaitsInput, set by Reopen for a fork no input has reached yet, makes
 	// run() wait for that input even when the copied conversation ends on tool
@@ -145,10 +148,14 @@ type Session struct {
 
 	// reopenSurviving, set by Reopen, lists the coordinator's supervised jobs
 	// still running after reconciliation; reopenAwaitingJobs marks a reopen
-	// straight into wake-eligible idle (reopenAwaitingJobs). run() records both
-	// on session_reopened.
+	// straight into wake-eligible idle (reopenAwaitingJobs), already armed
+	// before publication. run() records both on session_reopened.
 	reopenSurviving    []string
 	reopenAwaitingJobs bool
+	// reopenParked marks a reopen that waits idle for input: its last turn
+	// finished, its history owes no response, or it is a fork awaiting its
+	// first input.
+	reopenParked bool
 	// noDetach makes a restart teardown kill and join supervised shells
 	// instead of leaving them running: the workstream they run in is being
 	// merged or discarded, so its worktree must be settled.
@@ -311,6 +318,10 @@ type Session struct {
 type correction struct {
 	message engine.UserMessage
 	seq     int
+	// recordedImages is the picture metadata of a queued message recovered
+	// from the log on reopen (see resume_wait.go); its bytes are not reloaded,
+	// so the delivered text carries the replay attachment note instead.
+	recordedImages any
 }
 
 // Role name constants used to resolve settings requests to assigned models.
@@ -1160,12 +1171,18 @@ func (s *Session) deliverCorrections(corr []correction) ([]engine.UserMessage, e
 		data := map[string]any{"seq": c.seq, "text": c.message.Text}
 		if images := imageMetadata(c.message.Images); images != nil {
 			data["images"] = images
+		} else if c.recordedImages != nil {
+			data["images"] = c.recordedImages
 		}
 		s.emitter.EmitAs("user", event.UserInputDelivered, data)
 		if err := s.logFailure(); err != nil {
 			return nil, fmt.Errorf("session event log failed: %w", err)
 		}
-		messages = append(messages, c.message)
+		message := c.message
+		if c.recordedImages != nil {
+			message.Text = engine.ReplayUserText(data)
+		}
+		messages = append(messages, message)
 	}
 	return messages, nil
 }
@@ -1840,17 +1857,32 @@ func (s *Session) run() {
 			// live (restored), not a stale gate to drop.
 			reopened["question_restored"] = true
 		}
+		if s.resumeWait != nil {
+			reopened["wait_restored"] = true
+		}
 		// Recovery metadata (docs/design/daemon-restart.md §3); omitted fields
 		// keep the legacy meaning (nothing survived the reopen).
 		if len(s.reopenSurviving) > 0 {
 			reopened["surviving_jobs"] = s.reopenSurviving
 		}
-		awaiting := s.reopenAwaitingJobs && s.resumeQuestion == nil && !s.forkAwaitsInput &&
-			!s.contextModelSwitchRequired() && !s.currentLoop().PendingResponse()
+		awaiting := s.reopenAwaitingJobs
 		if awaiting {
 			reopened["awaiting_jobs"] = true
 		}
+		// Every message on the correction queue precedes the marker, whether the
+		// reopen put it back or it arrived since publication: list them all so
+		// a later reopen keeps them if the log is cut before their delivery.
+		// steerMu orders the marker against a correction being accepted.
+		s.steerMu.Lock()
+		var requeued []int
+		for _, c := range s.corrections {
+			requeued = append(requeued, c.seq)
+		}
+		if len(requeued) > 0 {
+			reopened["requeued_inputs"] = requeued
+		}
 		s.emitter.Emit(event.SessionReopened, reopened)
+		s.steerMu.Unlock()
 		s.recovery.ReleaseMarker()
 		for _, notice := range s.startupNotices {
 			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": notice, "level": "warning"})
@@ -1864,6 +1896,16 @@ func (s *Session) run() {
 		if rq := s.resumeQuestion; rq != nil {
 			s.resumeQuestion = nil
 			if !s.awaitRestoredQuestion(rq) {
+				return
+			}
+		}
+		// The log ended inside wait: finish it on its recorded targets and
+		// deadline. Its result is the model's pending input, so the history then
+		// owes a model response and falls through to the run loop below, whose
+		// first checkpoint delivers any messages queued while it waited.
+		if rw := s.resumeWait; rw != nil {
+			s.resumeWait = nil
+			if !s.awaitRestoredWait(rw) {
 				return
 			}
 		}
@@ -1894,7 +1936,7 @@ func (s *Session) run() {
 			if !s.awaitNextRun(true) {
 				return
 			}
-		} else if !s.currentLoop().PendingResponse() || s.forkAwaitsInput {
+		} else if s.reopenParked || !s.currentLoop().PendingResponse() || s.forkAwaitsInput {
 			s.setStatus(event.StatusIdle)
 			if !s.awaitNextRun(false) {
 				return
@@ -3808,6 +3850,10 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	// question as a live gate (armed before registration, so an answer RPC can
 	// never race the run goroutine's start).
 	s.restoreQuestion(findResumableQuestion(events), loop.History())
+	// Likewise a log that ended inside wait resumes that wait, with input
+	// routing armed before registration so a message sent meanwhile ends it
+	// early, as it would a live wait.
+	s.restoreWait(findResumableWait(events), loop.History())
 	s.forkAwaitsInput = forkAwaitingInput(events)
 	// Seed the spend-guard flags from the replayed log so a session that already
 	// crossed the warning/breach line does not re-fire or re-ask on reopen.
@@ -3827,7 +3873,7 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	endPassive()
 	s.recovery = recovery
 	s.reopenSurviving = recovery.Surviving()
-	s.reopenAwaitingJobs = reopenAwaitingJobs(events) && s.deps.Jobs.PendingContinuation("coordinator")
+	s.prepareReopenDisposition(events)
 
 	wsKey := worktreeKey(absWS)
 	// Register atomically: re-check under the lock so a concurrent Reopen/Start
@@ -3879,36 +3925,62 @@ func (s *Session) recoveryWorkspace() *tools.Workspace {
 }
 
 // reopenAwaitingJobs reports whether the log's latest lifecycle boundary
-// leaves the coordinator idle waiting on its background jobs: a session_idle
-// with awaiting_jobs (or a reopen that recorded it), with no later turn,
-// input, pause, error, stop, fork, question, or context switch. The caller
-// also requires a job continuation still pending in the restored registry.
+// leaves the coordinator idle waiting on its background jobs (reopenBoundary).
+// The caller also requires a job continuation still pending in the restored
+// registry.
 func reopenAwaitingJobs(events []event.Event) bool {
+	_, awaiting := reopenBoundary(events)
+	return awaiting
+}
+
+// reopenBoundary reports whether the log's latest conversation boundary is a
+// finished turn's session_idle (idle), and whether background-job completion
+// may still wake it (awaiting): that report was awaiting jobs, and no stop,
+// error, or pending pause has disarmed it since. A later turn, input, job
+// notification, fork, question, or context switch means the conversation
+// moved on (neither). Reopen and lifecycle markers change nothing in the
+// conversation, so they are looked through. A session whose log ends at such
+// a boundary reopens idle even when its history ends on a tool result (a
+// finish or report_blocked call): its turn is complete.
+func reopenBoundary(events []event.Event) (idle, awaiting bool) {
+	// A pause request the user cancelled again (pause_cancelled) set no
+	// boundary; only one still pending does.
+	cancelledPauses := 0
+	disarmed := false
 	for i := len(events) - 1; i >= 0; i-- {
 		ev := events[i]
 		if ev.Transient {
 			continue
 		}
 		switch ev.Type {
-		case event.SessionIdle, event.SessionReopened:
-			return boolVal(ev.Data, "awaiting_jobs")
+		case event.SessionIdle:
+			return true, boolVal(ev.Data, "awaiting_jobs") && !disarmed
+		case event.PauseCancelled:
+			cancelledPauses++
+		case event.PauseRequested:
+			if cancelledPauses > 0 {
+				cancelledPauses--
+				continue
+			}
+			disarmed = true
+		case event.SessionStopped, event.SessionError, event.Interrupted, event.Resumed:
+			disarmed = true
 		case event.UserInput:
 			if boolVal(ev.Data, "queued") {
 				continue
 			}
-			return false
+			return false, false
 		case event.ModelTurn, event.ToolCall, event.ToolResult:
 			if ev.Actor != "coordinator" {
 				continue
 			}
-			return false
-		case event.UserInputDelivered, event.SessionError, event.SessionStopped, event.Interrupted,
-			event.PauseRequested, event.Resumed, event.SessionForked, event.QuestionAsked,
+			return false, false
+		case event.UserInputDelivered, event.JobNotified, event.SessionForked, event.QuestionAsked,
 			event.ContextViewChanged, event.SessionStarted:
-			return false
+			return false, false
 		}
 	}
-	return false
+	return false, false
 }
 
 // SessionLogPath resolves a session to its authoritative JSONL log and workspace.

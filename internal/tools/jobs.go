@@ -219,76 +219,174 @@ func waitTool(ws *Workspace) *gollama.Tool {
 			if shellOnly && timeout > ws.ShellWaitCap {
 				timeout = ws.ShellWaitCap
 			}
-			waitCtx, wake := ctx, (<-chan struct{})(nil)
-			if ws.InputWake != nil {
-				wake = ws.InputWake()
-				var cancel context.CancelFunc
-				waitCtx, cancel = context.WithCancel(ctx)
-				defer cancel()
-				go func() {
-					select {
-					case <-wake:
-						cancel()
-					case <-waitCtx.Done():
-					}
-				}()
-			}
-			reports, running, suspended := ws.Jobs.WaitSuspendable(waitCtx, ids, mode, timeout)
-			if suspended {
-				// Suspended by a graceful daemon restart: nothing was claimed, so
-				// record no result and reopen restores this wait.
-				return nil, jobs.ErrRestartSuspend
-			}
-			interrupted := false
-			if len(running) > 0 && wake != nil {
-				select {
-				case <-wake:
-					interrupted = true
-				default:
-				}
-			}
+			spec := WaitSpec{IDs: ids, Mode: mode, Deadline: time.Now().Add(timeout), Timeout: timeout, ShellOnly: shellOnly}
+			// Recorded before blocking, so a reopen whose log ends inside this
+			// wait resumes it on the same targets and deadline
+			// (docs/design/daemon-restart.md §4).
 			if ws.Emitter != nil {
-				for _, report := range reports {
-					if report.ClaimedNotification {
-						ws.Emitter.Emit(event.JobClaimed, map[string]any{
-							"id": report.ID, "kind": report.Kind, "label": report.Label,
-							"status": string(report.Status), "result": report.Result, "reason": "wait",
-						})
-					}
-				}
+				ws.Emitter.Emit(event.WaitStarted, spec.EventData(ToolCallID(ctx)))
 			}
-			if len(reports) == 0 && len(running) == 0 {
-				return okResult("wait: no matching jobs."), nil
-			}
-			var b strings.Builder
-			for i, r := range reports {
-				if i > 0 {
-					b.WriteString("\n\n")
-				}
-				b.WriteString(FormatJobReport(r))
-			}
-			if len(running) > 0 {
-				if b.Len() > 0 {
-					b.WriteString("\n\n")
-				}
-				if interrupted {
-					fmt.Fprintf(&b, "wait returned early because the user sent a message (it follows); still running: %s. "+
-						"Answer the user in visible text (reasoning is not shown), then wait again or end your turn: "+
-						"their completion is still notified automatically and wakes this session",
-						strings.Join(running, ", "))
-				} else if shellOnly {
-					fmt.Fprintf(&b, "still running after %s: %s. This work-loop session holds a working slot while it "+
-						"waits. If nothing else remains, report progress in visible text and end your turn: the job's "+
-						"completion resumes you, and meanwhile the loop counts you as waiting and starts other work",
-						timeout, strings.Join(running, ", "))
-				} else {
-					fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
-						timeout, strings.Join(running, ", "))
-				}
-			}
-			return okResult(b.String()), nil
+			return runWait(ctx, ws, spec, timeout, false)
 		},
 	}
+}
+
+// WaitSpec is a wait call's resolved targets and effective deadline, as
+// recorded on its wait_started event.
+type WaitSpec struct {
+	IDs      []string
+	Mode     string // "any" or "all"
+	Deadline time.Time
+	// Timeout is the call's effective timeout (default and work-loop shell cap
+	// applied), quoted in its result when jobs are still running.
+	Timeout   time.Duration
+	ShellOnly bool
+}
+
+// EventData is the wait_started payload for the wait call callID.
+func (s WaitSpec) EventData(callID string) map[string]any {
+	return map[string]any{
+		"call_id":    callID,
+		"job_ids":    append([]string(nil), s.IDs...),
+		"for":        s.Mode,
+		"deadline":   s.Deadline.UTC().Format(time.RFC3339Nano),
+		"timeout_ms": s.Timeout.Milliseconds(),
+		"shell_only": s.ShellOnly,
+	}
+}
+
+// ParseWaitStarted decodes a wait_started payload, reporting false when it
+// lacks a call id, targets, or a valid deadline.
+func ParseWaitStarted(data map[string]any) (callID string, spec WaitSpec, ok bool) {
+	callID, _ = data["call_id"].(string)
+	switch ids := data["job_ids"].(type) {
+	case []string:
+		spec.IDs = append([]string(nil), ids...)
+	case []any:
+		for _, v := range ids {
+			if id, isStr := v.(string); isStr && id != "" {
+				spec.IDs = append(spec.IDs, id)
+			}
+		}
+	}
+	spec.Mode, _ = data["for"].(string)
+	if spec.Mode != "all" {
+		spec.Mode = "any"
+	}
+	deadline, _ := data["deadline"].(string)
+	t, err := time.Parse(time.RFC3339Nano, deadline)
+	if err != nil || callID == "" || len(spec.IDs) == 0 {
+		return "", WaitSpec{}, false
+	}
+	spec.Deadline = t
+	switch v := data["timeout_ms"].(type) {
+	case float64:
+		spec.Timeout = time.Duration(v) * time.Millisecond
+	case int64:
+		spec.Timeout = time.Duration(v) * time.Millisecond
+	case int:
+		spec.Timeout = time.Duration(v) * time.Millisecond
+	}
+	spec.ShellOnly, _ = data["shell_only"].(bool)
+	return callID, spec, true
+}
+
+// ResumeWait finishes a wait call restored from its wait_started event after a
+// reopen: it waits on the same targets until the recorded deadline, or — when
+// the deadline has already passed — collects what is ready without blocking.
+// Reports a previous run already claimed are returned again without a second
+// job_claimed. It returns jobs.ErrRestartSuspend when a graceful restart
+// suspends it again.
+func ResumeWait(ctx context.Context, ws *Workspace, spec WaitSpec, now time.Time) (*gollama.ToolResult, error) {
+	remaining := spec.Deadline.Sub(now)
+	if remaining <= 0 {
+		return runWait(ctx, ws, spec, 0, true)
+	}
+	return runWait(ctx, ws, spec, remaining, false)
+}
+
+// runWait blocks on spec's targets for timeout (or, when collectNow is set,
+// only collects without blocking), records a job_claimed for each report it
+// claims, and renders the wait result. A user message queued as a correction
+// ends the wait early.
+func runWait(ctx context.Context, ws *Workspace, spec WaitSpec, timeout time.Duration, collectNow bool) (*gollama.ToolResult, error) {
+	waitCtx, wake := ctx, (<-chan struct{})(nil)
+	if ws.InputWake != nil {
+		wake = ws.InputWake()
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-wake:
+				cancel()
+			case <-waitCtx.Done():
+			}
+		}()
+	}
+	var (
+		reports   []jobs.Report
+		running   []string
+		suspended bool
+	)
+	if collectNow {
+		reports, running, suspended = ws.Jobs.CollectSuspendable(waitCtx, spec.IDs)
+	} else {
+		reports, running, suspended = ws.Jobs.WaitSuspendable(waitCtx, spec.IDs, spec.Mode, timeout)
+	}
+	if suspended {
+		// Suspended by a graceful daemon restart: nothing was claimed, so
+		// record no result and reopen restores this wait.
+		return nil, jobs.ErrRestartSuspend
+	}
+	interrupted := false
+	if len(running) > 0 && wake != nil {
+		select {
+		case <-wake:
+			interrupted = true
+		default:
+		}
+	}
+	if ws.Emitter != nil {
+		for _, report := range reports {
+			if report.ClaimedNotification {
+				ws.Emitter.Emit(event.JobClaimed, map[string]any{
+					"id": report.ID, "kind": report.Kind, "label": report.Label,
+					"status": string(report.Status), "result": report.Result, "reason": "wait",
+				})
+			}
+		}
+	}
+	if len(reports) == 0 && len(running) == 0 {
+		return okResult("wait: no matching jobs."), nil
+	}
+	var b strings.Builder
+	for i, r := range reports {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(FormatJobReport(r))
+	}
+	if len(running) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		if interrupted {
+			fmt.Fprintf(&b, "wait returned early because the user sent a message (it follows); still running: %s. "+
+				"Answer the user in visible text (reasoning is not shown), then wait again or end your turn: "+
+				"their completion is still notified automatically and wakes this session",
+				strings.Join(running, ", "))
+		} else if spec.ShellOnly {
+			fmt.Fprintf(&b, "still running after %s: %s. This work-loop session holds a working slot while it "+
+				"waits. If nothing else remains, report progress in visible text and end your turn: the job's "+
+				"completion resumes you, and meanwhile the loop counts you as waiting and starts other work",
+				spec.Timeout, strings.Join(running, ", "))
+		} else {
+			fmt.Fprintf(&b, "still running after %s: %s (wait again, check job_output, or kill_job)",
+				spec.Timeout, strings.Join(running, ", "))
+		}
+	}
+	return okResult(b.String()), nil
 }
 
 // onlyShellJobs reports whether every listed job is a background shell job

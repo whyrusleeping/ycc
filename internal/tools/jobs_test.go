@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -506,5 +507,85 @@ func TestBackgroundBashTimeoutIsJobRuntimeLimit(t *testing.T) {
 	killed := dispatch(t, reg, "kill_job", `{"job_id":"job_1"}`)
 	if killed.IsError || !strings.Contains(killed.Content, "already failed") {
 		t.Fatalf("kill_job after timeout = %q (err=%v)", killed.Content, killed.IsError)
+	}
+}
+
+// wait records its resolved targets (expanded when omitted) and effective
+// deadline, after the default timeout and the work-loop shell cap, before
+// blocking; the payload round-trips through ParseWaitStarted.
+func TestWaitRecordsWaitStarted(t *testing.T) {
+	rec := &captureRec{}
+	jr := jobs.NewRegistry()
+	t.Cleanup(func() { _ = jr.KillAll() })
+	ws := &Workspace{Root: t.TempDir(), Jobs: jr, Emitter: event.NewEmitter(rec, "coordinator"),
+		ShellWaitCap: 200 * time.Millisecond}
+	reg := New()
+	reg.Add(Editing(ws)...)
+	dispatch(t, reg, "Bash", `{"command":"sleep 30","run_in_background":true}`)
+	before := time.Now()
+	dispatch(t, reg, "wait", `{"for":"all","timeout_s":60}`)
+	ev := rec.find(event.WaitStarted)
+	if ev == nil {
+		t.Fatal("wait recorded no wait_started")
+	}
+	callID, spec, ok := ParseWaitStarted(ev.Data)
+	if !ok || callID != "x" || len(spec.IDs) != 1 || spec.IDs[0] != "job_1" || spec.Mode != "all" || !spec.ShellOnly ||
+		spec.Timeout != 200*time.Millisecond {
+		t.Fatalf("wait_started = %v (parsed %q %+v %t)", ev.Data, callID, spec, ok)
+	}
+	if spec.Deadline.Before(before.Add(200*time.Millisecond)) || spec.Deadline.After(time.Now().Add(200*time.Millisecond)) {
+		t.Fatalf("deadline %s does not include the capped timeout", spec.Deadline)
+	}
+
+	// Without a cap the omitted timeout is the 600s default.
+	rec2 := &captureRec{}
+	ws2 := &Workspace{Root: t.TempDir(), Jobs: jr, Emitter: event.NewEmitter(rec2, "coordinator")}
+	reg2 := New()
+	reg2.Add(JobTools(ws2)...)
+	jr.Start("agent", "probe", "coordinator").Finish(jobs.Done, "ok")
+	dispatch(t, reg2, "wait", `{"job_ids":["job_2"]}`)
+	ev = rec2.find(event.WaitStarted)
+	if ev == nil {
+		t.Fatal("wait recorded no wait_started")
+	}
+	if _, spec, _ = ParseWaitStarted(ev.Data); spec.Timeout != defaultWaitTimeout || spec.ShellOnly {
+		t.Fatalf("default wait_started = %v", ev.Data)
+	}
+}
+
+// A restored wait whose deadline already passed collects without blocking —
+// never treating the spent timeout as "no timeout" — and a report an earlier
+// run already claimed is returned again without a second job_claimed.
+func TestResumeWaitExpiredDeadlineCollectsNow(t *testing.T) {
+	rec := &captureRec{}
+	jr := jobs.NewRegistry()
+	t.Cleanup(func() { _ = jr.KillAll() })
+	ws := &Workspace{Jobs: jr, Emitter: event.NewEmitter(rec, "coordinator")}
+	done := jr.Start("bash", "quick", "coordinator")
+	done.Finish(jobs.Done, "exit 0\nquick")
+	jr.Wait(context.Background(), []string{done.ID()}, "all", time.Second) // claimed by an earlier run
+	slow := jr.Start("bash", "slow", "coordinator")
+	spec := WaitSpec{IDs: []string{done.ID(), slow.ID()}, Mode: "all", Deadline: time.Now().Add(-time.Second), Timeout: time.Minute}
+	start := time.Now()
+	res, err := ResumeWait(context.Background(), ws, spec, time.Now())
+	if err != nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("expired restored wait: err=%v after %s", err, time.Since(start))
+	}
+	if !strings.Contains(res.Content, "quick") || !strings.Contains(res.Content, "still running after 1m0s: "+slow.ID()) {
+		t.Fatalf("expired restored wait = %q", res.Content)
+	}
+	if ev := rec.find(event.JobClaimed); ev != nil {
+		t.Fatalf("restored wait re-claimed an already claimed report: %v", ev.Data)
+	}
+
+	// Before the deadline it blocks on the remaining targets.
+	go func() { time.Sleep(100 * time.Millisecond); slow.Finish(jobs.Done, "exit 0\nslow") }()
+	spec.Deadline = time.Now().Add(time.Minute)
+	res, err = ResumeWait(context.Background(), ws, spec, time.Now())
+	if err != nil || !strings.Contains(res.Content, "slow") || strings.Contains(res.Content, "still running") {
+		t.Fatalf("restored wait = %q, %v", res.Content, err)
+	}
+	if ev := rec.find(event.JobClaimed); ev == nil || ev.Data["id"] != slow.ID() {
+		t.Fatalf("restored wait did not claim the newly collected report: %v", ev)
 	}
 }

@@ -1371,4 +1371,14 @@ final class SessionProjectionTests: XCTestCase {
             state: indexedState(3, phase: "idle"), upserts: [], deletedIDs: [])
         XCTAssertTrue(projection.liveTails.isEmpty)
     }
+
+    // wait_started is plumbing behind the wait tool row, never a row of its own.
+    func testWaitStartedAddsNoRow() {
+        var proj = SessionProjection()
+        proj.apply(makeEvent(
+            seq: 1, type: "wait_started",
+            dataJson: #"{"call_id":"c1","job_ids":["job_1"],"for":"any"}"#))
+        XCTAssertTrue(proj.durableRows.isEmpty)
+        XCTAssertNil(SessionProjection.systemSummary(type: "wait_started", data: [:]))
+    }
 }
