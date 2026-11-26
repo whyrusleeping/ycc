@@ -122,6 +122,11 @@ export function SessionRowView({
             loop
           </span>
         )}
+        {s.origin === "watch" && (
+          <span className="tag loop-tag" title="A watch run (listed while it works or asks)">
+            watch
+          </span>
+        )}
         <WorkstreamMark row={row} className="row-ws" />
         {showProject && project && <span className="project">{project}</span>}
         {chips.map((c) =>
@@ -233,7 +238,8 @@ function SidebarRow({
   const state = compactState(s);
   const age = compactAge(s.lastActivity || s.startedAt, now);
   const asks = needsAnswer(s);
-  const hasLead = !!project || chips.length > 0 || loopOwned || !!s.workstreamId || !!s.forkedFrom;
+  const watchRun = s.origin === "watch";
+  const hasLead = !!project || chips.length > 0 || loopOwned || watchRun || !!s.workstreamId || !!s.forkedFrom;
   const trail = (
     <span className="row-trail">
       <FollowUpFlag s={s} pending={followUpPending} onToggle={onToggleFollowUp} />
@@ -287,6 +293,7 @@ function SidebarRow({
                 ),
               )}
               {loopOwned && <span className="row-loop" title="Started by the work loop">loop</span>}
+              {watchRun && <span className="row-loop" title="A watch run (listed while it works or asks)">watch</span>}
               {s.forkedFrom && (
                 <span className="row-loop" title={`Forked from ${s.forkedFrom}`}>
                   fork

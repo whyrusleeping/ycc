@@ -91,6 +91,7 @@ private struct ScopedRows {
     let revision: Int
     let project: String?
     let followUpOnly: Bool
+    let liveOnly: Bool
     let followUpCount: Int
     let sessions: [Ycc_V1_SessionSummary]
     let sections: [SessionSection]
@@ -194,9 +195,18 @@ public final class SessionListModel {
     /// The selected project filter. `nil` is the daemon-wide recent-session feed;
     /// a value is a registered project name. Scope changes use loaded pages
     /// locally, without a network round-trip.
-    public var selectedProject: String?
+    public var selectedProject: String? {
+        // The live view belongs to one visit of a scope: a scope change
+        // (chip, drawer, deep link) lands on its latest view.
+        didSet { if selectedProject != oldValue { showsLiveOnly = false } }
+    }
     /// Filter the loaded rows in the current scope, without fetching all history.
     public var showsFollowUpOnly = false
+    /// The live view of the current scope: only sessions with work in flight
+    /// or a pending question (``isInFlight(_:)``), watch runs included, the
+    /// same sessions the scope's live squares and answer count tally. The
+    /// daemon pins every live row onto the first page, so no paging is needed.
+    public var showsLiveOnly = false
     public private(set) var followUpUpdatingIDs: Set<String> = []
     /// Why the latest ``setFollowUp`` failed (nil after success or an
     /// unauthorized failure). Kept apart from ``errorMessage``, which is the
@@ -294,8 +304,9 @@ public final class SessionListModel {
         let revision = dataRevision
         let project = selectedProject
         let followUpOnly = showsFollowUpOnly
+        let liveOnly = showsLiveOnly
         if let cached = scopedCache, cached.revision == revision, cached.project == project,
-           cached.followUpOnly == followUpOnly {
+           cached.followUpOnly == followUpOnly, cached.liveOnly == liveOnly {
             return cached
         }
         var rows: [Ycc_V1_SessionSummary]
@@ -313,19 +324,28 @@ public final class SessionListModel {
             // The aggregate is already sorted on ingestion.
             rows = allSessions
         }
-        rows = rows.filter(Self.isListed)
+        // The live view keeps watch runs: a running one is live work too.
+        rows = rows.filter(liveOnly ? Self.isInFlight : Self.isListed)
         let followUpCount = rows.filter(\.followUp).count
         if followUpOnly { rows = rows.filter(\.followUp) }
-        // Flagged rows are pinned in both scopes, except under the follow-up
-        // filter where every row is flagged and a header would be redundant.
-        // Only a scoped project view keeps the needs-answer pinning.
-        sections = project == nil
-            ? Self.sectionsFromSorted(rows, pinsNeedsAnswer: false,
-                pinsFollowUp: !followUpOnly, remainderTitle: "Recent")
-            : Self.sectionsFromSorted(rows, pinsNeedsAnswer: true,
-                pinsFollowUp: !followUpOnly, remainderTitle: "All sessions")
+        if liveOnly {
+            // Questions first in either scope; the rest stay under a "Live"
+            // header even alone, since the header is what names the view.
+            sections = Self.sectionsFromSorted(rows, pinsNeedsAnswer: true,
+                pinsFollowUp: false, remainderTitle: "Live", titlesLoneRemainder: true)
+        } else {
+            // Flagged rows are pinned in both scopes, except under the follow-up
+            // filter where every row is flagged and a header would be redundant.
+            // Only a scoped project view keeps the needs-answer pinning.
+            sections = project == nil
+                ? Self.sectionsFromSorted(rows, pinsNeedsAnswer: false,
+                    pinsFollowUp: !followUpOnly, remainderTitle: "Recent")
+                : Self.sectionsFromSorted(rows, pinsNeedsAnswer: true,
+                    pinsFollowUp: !followUpOnly, remainderTitle: "All sessions")
+        }
         let value = ScopedRows(revision: revision, project: project,
-            followUpOnly: followUpOnly, followUpCount: followUpCount, sessions: rows, sections: sections)
+            followUpOnly: followUpOnly, liveOnly: liveOnly, followUpCount: followUpCount,
+            sessions: rows, sections: sections)
         scopedCache = value
         return value
     }
@@ -376,6 +396,15 @@ public final class SessionListModel {
         session.origin != "watch" || session.waitingInput || session.followUp
     }
 
+    /// Whether a row belongs in the live view: a live session blocked on a
+    /// question or with work in flight (running, paused, or idle while its
+    /// own background jobs will resume it), whatever its origin.
+    public nonisolated static func isInFlight(_ session: Ycc_V1_SessionSummary) -> Bool {
+        var counts = ProjectActivity()
+        accumulate(session, into: &counts)
+        return counts.active > 0 || counts.needsAnswer > 0
+    }
+
     // MARK: - Unread agent activity
 
     /// Whether a row carries agent activity the user has not seen yet.
@@ -418,15 +447,19 @@ public final class SessionListModel {
         var latest: [String: Date] = [:]
         var total = ProjectActivity()
         for project in loadedProjects { counts[project] = ProjectActivity() }
-        for session in allSessions where Self.isListed(session) {
+        for session in allSessions {
+            // A running watch run stays off the lists but is live work, so it
+            // counts toward the live squares (and the live view lists it).
+            let listed = Self.isListed(session)
             var own = ProjectActivity()
             Self.accumulate(session, into: &own)
-            if readMarks.isUnread(session) { own.unread += 1 }
+            if listed && readMarks.isUnread(session) { own.unread += 1 }
+            guard listed || own.active > 0 else { continue }
             total.active += own.active
             total.needsAnswer += own.needsAnswer
             total.unread += own.unread
             guard let project = sessionProjects[session.sessionID] else { continue }
-            if let date = Self.recencyDate(session), date > (latest[project] ?? .distantPast) {
+            if listed, let date = Self.recencyDate(session), date > (latest[project] ?? .distantPast) {
                 latest[project] = date
             }
             var activity = counts[project] ?? ProjectActivity()
@@ -1069,7 +1102,11 @@ public final class SessionListModel {
         for load in loads where load.hasHistory {
             succeeded.append(load.project)
             for session in load.sessions {
-                if let frontier, Self.precedes(frontier, session) { continue }
+                // Rows the daemon would have pinned had they been off the page
+                // (live or flagged) pass the frontier as pinned rows do, so
+                // the live view and the badges see every live session.
+                if let frontier, Self.precedes(frontier, session),
+                   !(session.live || session.followUp) { continue }
                 if seenSessionIDs.insert(session.sessionID).inserted {
                     merged.append(session)
                     routes[session.sessionID] = load.project
@@ -1146,7 +1183,7 @@ public final class SessionListModel {
 
     /// Count one session into a project's live-activity tally. Only live rows
     /// count: a persisted log's last-known status is history, not activity.
-    static func accumulate(_ session: Ycc_V1_SessionSummary, into counts: inout ProjectActivity) {
+    nonisolated static func accumulate(_ session: Ycc_V1_SessionSummary, into counts: inout ProjectActivity) {
         guard session.live else { return }
         if session.waitingInput { counts.needsAnswer += 1 }
         switch SessionStatusKind(status: session.status) {
@@ -1217,7 +1254,8 @@ public final class SessionListModel {
         _ sessions: [Ycc_V1_SessionSummary],
         pinsNeedsAnswer: Bool,
         pinsFollowUp: Bool,
-        remainderTitle: String
+        remainderTitle: String,
+        titlesLoneRemainder: Bool = false
     ) -> [SessionSection] {
         // Stable partition of the already recency-sorted input. A row that both
         // needs an answer and is flagged belongs to needs-answer.
@@ -1251,8 +1289,8 @@ public final class SessionListModel {
             out.append(SessionSection(
                 kind: .all,
                 // Only label the remainder when there's a pinned section above
-                // it to distinguish from.
-                title: out.isEmpty ? nil : remainderTitle,
+                // it to distinguish from (or the caller's view needs naming).
+                title: out.isEmpty && !titlesLoneRemainder ? nil : remainderTitle,
                 sessions: rest))
         }
         return out
@@ -1529,7 +1567,7 @@ public final class SessionListModel {
     }
 
     /// Routine non-project metadata, kept testable outside SwiftUI. Rows stay
-    /// quiet (matching the web list): only a non-default mode, loop
+    /// quiet (matching the web list): only a non-default mode, loop or watch
     /// provenance, and a fork marker. The default "chat" mode, model names and context fill are
     /// per-session detail and live in the session view, not on every row.
     public static func metadataItems(
@@ -1539,6 +1577,8 @@ public final class SessionListModel {
         let mode = session.mode.trimmingCharacters(in: .whitespacesAndNewlines)
         if !mode.isEmpty && mode.lowercased() != "chat" { items.append(mode) }
         if isLoopOwned { items.append("via loop") }
+        // Only the live view lists a running watch run; say what it is.
+        if session.origin == "watch" { items.append("watch run") }
         if !session.forkedFrom.isEmpty { items.append("fork") }
         return items
     }

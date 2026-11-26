@@ -90,6 +90,15 @@ session, backlog → task) push; task dependency references are lateral hops tha
 screen in place, so a blocked task leads directly to each blocker without growing the stack when
 dependencies cross-link. A deep link identifies a project/session but never carries credentials.
 
+A chip bar above the list switches scope in one tap (Recent, then projects by recency), each chip
+carrying a live square per session with work in flight and the loudest question/unread count.
+Tapping the selected chip again toggles that scope between its latest sessions and its **live**
+view, which fills the chip in the live colour and marks the title: only sessions running,
+paused, idle on their own background jobs, or asking a question, under a "Live" header with
+questions pinned above. It lists the same sessions the squares count, running watch runs
+included and marked "watch run", needs no paging since the daemon pins every live row onto the
+first page, and any scope change lands back on the latest view.
+
 New session starts in the daemon's default mode (chat, `ListModes` `default_mode`); the mode choice
 sits behind a trailing icon-only chip and moves to the front of the chip row once another mode is
 selected. The only suggestion card is the onboarding-placed preset, for a project that needs
@@ -120,7 +129,8 @@ their session so Back returns to the watch. A sheet like the web editor creates 
 list's + or empty state, then its screen opens) or edits its definition (the watch's Edit, or a
 row's context menu), with the name fixed once created. Watch runs stay out of the session lists
 and drawer badges unless they ask a
-question or are flagged, so a run drops back out once answered.
+question or are flagged, so a run drops back out once answered; a running one still counts as a
+live square and shows in the live view.
 
 A project's overflow menu also opens **History** (`ListCommits`): one local branch's commits,
 newest first, with subject, short sha, author, age and +/- line counts, paging in as the list
@@ -217,7 +227,9 @@ Recent publishes each project's history as it arrives, retaining prior rows for 
 failed projects. Supplemental work-loop badges never gate history display; failed badge requests
 retain known ownership, while successful empty results clear it. Aggregate ordering and duplicate
 routing follow registry order, not request completion order. Histories are sorted on ingestion;
-section/filter reads preserve that order without re-parsing timestamps. Listing sessions never
+section/filter reads preserve that order without re-parsing timestamps. Rows older than the newest
+truncated project's oldest loaded row wait for that project to page past them, except live and
+flagged rows, which pass as the daemon's pinned rows do. Listing sessions never
 creates read marks. Only opening a session or an explicit mark-read action does, so a fresh install
 shows the daemon's shared unread state rather than baselining its first list as read.
 

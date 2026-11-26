@@ -58,6 +58,21 @@ describe("feed", () => {
     expect(ids(buildFeed(loads, null).rows)).toEqual(["a2", "b2", "a1", "b1", "a0", "live"]);
   });
 
+  it("lets a page's own live or flagged rows past another project's frontier", () => {
+    // The daemon doesn't repeat a first-page row in pinned, so b's live and
+    // flagged rows below a's frontier must still show (Active filter, badges).
+    const loads: HistoryLoad[] = [
+      { project: "a", sessions: [s("a2", 50), s("a1", 40)], pinned: [], nextCursor: "more" },
+      {
+        project: "b",
+        sessions: [s("b-live", 20, { live: true, status: "running" }), s("b-flag", 10, { followUp: true }), s("b1", 5)],
+        pinned: [],
+        nextCursor: "",
+      },
+    ];
+    expect(ids(buildFeed(loads, null).rows)).toEqual(["a2", "a1", "b-live", "b-flag"]);
+  });
+
   it("scopes to one project including its pinned rows", () => {
     const loads: HistoryLoad[] = [
       { project: "a", sessions: [s("a1", 10)], pinned: [s("a-live", 1, { live: true })], nextCursor: "x" },

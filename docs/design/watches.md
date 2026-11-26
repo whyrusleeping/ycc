@@ -96,7 +96,8 @@ creation. Chat exposes inspection, confirmed full-definition editing, and pause/
 Updates are checked before confirmation: correcting an existing watch does not require a second
 watch or an approval for an operation that cannot succeed. Clients list each project's watches
 with latest status and next due time, link an active run to its live session, show the report
-timeline, and keep watch run sessions out of the main recent-session list.
+timeline, and keep watch run sessions out of the main recent-session list (a running run still
+counts as live work and appears, marked as a watch run, in the clients' live/Active views).
 
 A watch is independent monitoring, not a continuation of the session that created it. When work
 needs follow-up in that session, a tracked background job and `wait` keep completion and subsequent

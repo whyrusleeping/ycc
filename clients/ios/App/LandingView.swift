@@ -409,13 +409,22 @@ struct LandingView: View {
             .topBar {
                 if let model, model.showsProjectFilter {
                     ScopeChipBar(model: model) { project, position in
+                        // Tapping the selected chip again flips its scope
+                        // between latest and live; another chip switches scope
+                        // (landing on latest).
+                        if project == model.selectedProject {
+                            Analytics.action("scope.toggle_live",
+                                attrs: ["from": "chip", "to": model.showsLiveOnly ? "latest" : "live"])
+                            model.showsLiveOnly.toggle()
+                            return
+                        }
                         Analytics.action("scope.select", attrs: ["from": "chip", "pos": String(position)])
                         // Client-side filter over the aggregate load: instant.
                         model.selectedProject = project
                     }
                 }
             }
-            .navigationTitle(model?.selectedProject ?? "Recent")
+            .navigationTitle(model.map(Self.title) ?? "Recent")
             // Inline, not large: a large title expanding back on scroll-to-top
             // animates behind the pinned chip bar and the bar jumps down, so the
             // title flickers behind the toolbar buttons. The selected chip
@@ -657,9 +666,11 @@ struct LandingView: View {
                             ? "bubble.left.and.bubble.right"
                             : "exclamationmark.triangle")
                 } description: {
-                    Text(model.partialWarning ?? "Start one with the compose button.")
+                    Text(model.partialWarning ?? (model.showsLiveOnly
+                        ? "No session is running or waiting on background work. Tap the chip again for the latest sessions."
+                        : "Start one with the compose button."))
                 } actions: {
-                    if model.partialWarning == nil {
+                    if model.partialWarning == nil && !model.showsLiveOnly {
                         Button("New chat") { beginNewSession() }
                             .buttonStyle(.accent)
                     }
@@ -738,8 +749,16 @@ struct LandingView: View {
     }
 
     private func emptyTitle(_ model: SessionListModel) -> String {
+        if model.showsLiveOnly { return "Nothing live" }
         guard let project = model.selectedProject else { return "No sessions yet" }
         return "Nothing in \(project) yet"
+    }
+
+    /// The scope's name, marked while its live view shows.
+    private static func title(_ model: SessionListModel) -> String {
+        let scope = model.selectedProject ?? "Recent"
+        guard model.showsLiveOnly else { return scope }
+        return model.selectedProject.map { "\($0) · live" } ?? "Live"
     }
 
     /// Wraps an empty/error placeholder in a full-size scroll view so
@@ -826,7 +845,9 @@ struct LandingView: View {
             ForEach(model.sections) { section in
                 sessionSection(section, model: model)
             }
-            if model.hasMoreHistory {
+            // The live view is complete from the first page (the daemon pins
+            // every live row), so older pages hold nothing for it.
+            if model.hasMoreHistory && !model.showsLiveOnly {
                 Button {
                     Task { await model.loadMoreHistory() }
                 } label: {

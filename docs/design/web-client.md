@@ -128,7 +128,9 @@ state, the task and session it is working on now, the tasks it completed (most r
 first), and its blocked and in-review counts. This status carries no unread marks or
 notifications. The sidebar and keyboard next/previous navigation share
 the same filter. The main list provides visible search and Inbox, Unread, Needs answer, Follow-up,
-Active, and All history filters; Active also lists running automatic sessions. Its search matches
+Active, and All history filters; Active also lists running automatic sessions, watch runs marked
+"watch". Live and flagged rows pass the aggregate paging frontier as the daemon's pinned rows do, so
+Active and the project badges see every live session. Its search matches
 titles, projects, ids and tasks of loaded rows only, and paging remains available. Default palette
 suggestions use the inbox; explicit palette search can reach all loaded history. Work-loop outcome
 notifications remain separate from routine per-session notifications.

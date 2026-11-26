@@ -1262,8 +1262,8 @@ final class SessionListModelTests: XCTestCase {
     }
 
     /// Watch runs live on their watch's timeline: only a pending question or
-    /// a follow-up flag lists one, in either scope, and only listed rows feed
-    /// the drawer badges.
+    /// a follow-up flag lists one, in either scope; listed rows feed the
+    /// drawer badges, and a running unlisted run adds only live work.
     func testWatchRunsAreListedOnlyWhileAskingOrFlagged() async {
         func watchRun(_ id: String, live: Bool = false, waiting: Bool = false, flagged: Bool = false,
                       answered: Bool = false) -> Ycc_V1_SessionSummary {
@@ -1288,13 +1288,66 @@ final class SessionListModelTests: XCTestCase {
         XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["chat", "parked", "flagged"])
         model.selectedProject = "one"
         XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["chat", "parked", "flagged"])
-        // The running unlisted run doesn't count as activity; the parked one asks.
-        XCTAssertEqual(model.activity(forProject: "one"), ProjectActivity(active: 1, needsAnswer: 1))
+        // The parked run asks; the running unlisted run still counts as live work.
+        XCTAssertEqual(model.activity(forProject: "one"), ProjectActivity(active: 2, needsAnswer: 1))
         // Still reachable by id (from its watch).
         XCTAssertNotNil(model.session(sessionID: "run"))
 
         model.markAnswered(sessionID: "parked")
         XCTAssertEqual(Set(model.sessions.map(\.sessionID)), ["chat", "flagged"])
+    }
+
+    /// The live view lists exactly the in-flight sessions in the scope —
+    /// running, paused, waiting on its own jobs, or asking — including
+    /// running watch runs and live rows pinned beyond the first page, and a
+    /// scope change returns to the latest view.
+    func testLiveViewListsInFlightSessionsInEitherScope() async {
+        var watchRun = session(id: "a-watch", status: "running", lastActivity: "2026-07-08T12:30:00Z", live: true)
+        watchRun.origin = "watch"
+        let source = MockListSource()
+        source.projects = [project("a"), project("b")]
+        source.pagesByProject["a"] = [
+            "": SessionHistoryPage(
+                sessions: [
+                    watchRun,
+                    session(id: "a-running", status: "running", lastActivity: "2026-07-08T12:00:00Z", live: true),
+                    session(id: "a-idle", status: "idle", lastActivity: "2026-07-08T11:00:00Z", live: true),
+                    session(id: "a-done", status: "stopped", lastActivity: "2026-07-08T10:00:00Z"),
+                ],
+                // Older than the page, so the live view only has it as pinned.
+                pinned: [session(id: "a-jobs", status: "idle", lastActivity: "2026-07-01T00:00:00Z",
+                                 live: true, awaitingJobs: true)],
+                nextCursor: "a-2"),
+        ]
+        source.sessionsByProject["b"] = [
+            session(id: "b-asking", status: "idle", lastActivity: "2026-07-08T09:00:00Z", live: true, waitingInput: true),
+            session(id: "b-paused", status: "paused", lastActivity: "2026-07-08T08:00:00Z", live: true),
+        ]
+        let model = SessionListModel(source: source, retryDelays: [])
+        await model.refresh()
+        XCTAssertFalse(model.sessions.contains { $0.sessionID == "a-watch" })
+
+        model.showsLiveOnly = true
+        XCTAssertEqual(model.sections.map(\.kind), [.needsAnswer, .all])
+        XCTAssertEqual(model.sections.map(\.title), ["Needs answer", "Live"])
+        XCTAssertEqual(model.sections[1].sessions.map(\.sessionID), ["a-watch", "a-running", "b-paused", "a-jobs"])
+        XCTAssertEqual(model.sections[0].sessions.map(\.sessionID), ["b-asking"])
+        // The squares count the same work the view lists.
+        XCTAssertEqual(model.totalActivity.active, 4)
+
+        // A scope change lands on the latest view; toggling again shows the
+        // scope's live rows under a lone, still-titled section.
+        model.selectedProject = "a"
+        XCTAssertFalse(model.showsLiveOnly)
+        model.showsLiveOnly = true
+        XCTAssertEqual(model.sections.map(\.title), ["Live"])
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["a-watch", "a-running", "a-jobs"])
+        model.showsLiveOnly = false
+        XCTAssertEqual(model.sessions.map(\.sessionID), ["a-running", "a-idle", "a-done", "a-jobs"])
+        // Reassigning the same scope keeps the view.
+        model.showsLiveOnly = true
+        model.selectedProject = "a"
+        XCTAssertTrue(model.showsLiveOnly)
     }
 
     func testProjectsByRecencyOrdersByNewestSessionThenRegistryOrder() async {

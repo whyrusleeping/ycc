@@ -116,7 +116,10 @@ export function buildFeed(loads: HistoryLoad[], scope: string | null): Feed {
   const merged: FeedRow[] = [];
   for (const load of loads) {
     for (const session of load.sessions) {
-      if (frontier && precedes(frontier, session)) continue;
+      // Rows the daemon would have pinned had they been off the page (live
+      // or flagged) pass the frontier as pinned rows do, so the Active
+      // filter and the badges see every live session.
+      if (frontier && precedes(frontier, session) && !(session.live || session.followUp)) continue;
       if (seen.has(session.sessionId)) continue;
       seen.add(session.sessionId);
       merged.push({ session, project: load.project });

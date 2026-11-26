@@ -5,7 +5,8 @@ import YccKit
 /// registered project, most recently active first, each carrying the drawer's
 /// live-activity cues. Usage analytics showed the drawer was mostly used as a
 /// project switcher (open → pick → close), so the common switch lives here and
-/// the drawer keeps the rarer project management.
+/// the drawer keeps the rarer project management. Tapping the selected chip
+/// again toggles that scope between its latest sessions and its live ones.
 struct ScopeChipBar: View {
     let model: SessionListModel
     /// Select the daemon-wide feed (`nil`) or a project; `position` is the
@@ -25,6 +26,7 @@ struct ScopeChipBar: View {
                         title: "Recent",
                         systemImage: "clock.arrow.circlepath",
                         isSelected: model.selectedProject == nil,
+                        isLive: model.selectedProject == nil && model.showsLiveOnly,
                         activity: model.totalActivity
                     ) { onSelect(nil, 0) }
                         .id(Self.recentID)
@@ -32,6 +34,7 @@ struct ScopeChipBar: View {
                         ScopeChip(
                             title: project.name,
                             isSelected: model.selectedProject == project.name,
+                            isLive: model.selectedProject == project.name && model.showsLiveOnly,
                             activity: model.activity(forProject: project.name)
                         ) { onSelect(project.name, index + 1) }
                             .id(project.name)
@@ -58,6 +61,8 @@ private struct ScopeChip: View {
     let title: String
     var systemImage: String?
     let isSelected: Bool
+    /// The selected scope shows its live view (a second tap toggles it).
+    var isLive = false
     let activity: ProjectActivity
     let action: () -> Void
 
@@ -78,13 +83,17 @@ private struct ScopeChip: View {
             .foregroundStyle(isSelected ? Color(.systemBackground) : Color.primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(shape.fill(isSelected ? Color.primary : Color.clear))
+            // The live view fills the selected chip in the live colour, so
+            // the scope says which view it shows.
+            .background(shape.fill(isLive ? Theme.live : isSelected ? Color.primary : Color.clear))
             .overlay(shape.strokeBorder(isSelected ? Color.clear : Color(.separator), lineWidth: 1))
             .contentShape(shape)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityValue(isLive ? "live sessions" : "")
+        .accessibilityHint(isSelected ? (isLive ? "Shows the latest sessions" : "Shows only live sessions") : "")
     }
 
     /// On the inverted (selected) chip the state colours would fight the fill,
