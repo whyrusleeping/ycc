@@ -14,6 +14,9 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+  # Stamps LastUpgradeCheck so Xcode stops offering "Update to recommended
+  # settings" (its own fix is lost on regenerate). Bump with each Xcode release.
+  xcodeVersion: "27.1"
 
 packages:
   YccKit:
