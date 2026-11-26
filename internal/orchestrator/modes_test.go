@@ -17,6 +17,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/event"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/tools"
 )
 
@@ -94,6 +95,68 @@ func TestBuildModeToolsets(t *testing.T) {
 		if !hasTool(reg, "spawn_reviewers") || !hasTool(reg, "commit") {
 			t.Fatalf("removed mode %q should fall through to work coordinator", mode)
 		}
+	}
+}
+
+type stubLeases struct{}
+
+func (stubLeases) Acquire(name, _ string, _ time.Duration, _ string) (string, error) {
+	return "Acquired " + name + ".", nil
+}
+func (stubLeases) Release(name string) (string, error) { return "Released " + name + ".", nil }
+
+// With the notice board, leases and a job registry all available, pm gets
+// none of the lease, notice or background job tools (it keeps read-only
+// list_sessions and a foreground-only Bash), and watch drops only the lease
+// tools. Chat and work keep everything.
+func TestModeCoordinationAndJobTools(t *testing.T) {
+	d := depsFor(t)
+	d.Board = &fakeBoard{}
+	d.Leases = stubLeases{}
+	d.Jobs = jobs.NewRegistry()
+	d.ListSessions = func(string) (string, error) { return "", nil }
+	d.AgentModels = func() []ModelCatalogEntry { return []ModelCatalogEntry{{Name: "fast"}} }
+	d.ResolveAgent = func(string) (AgentSpec, error) { return AgentSpec{}, nil }
+	jobTools := []string{"job_output", "wait", "kill_job", "list_jobs"}
+	cases := []struct {
+		mode       string
+		want, gone []string
+	}{
+		{"pm", []string{"list_sessions", "Bash"}, append([]string{"acquire_lease", "release_lease", "notice"}, jobTools...)},
+		{"watch", []string{"list_sessions", "notice", "job_output", "wait", "kill_job", "spawn_agent"}, []string{"acquire_lease", "release_lease"}},
+		{"chat", []string{"list_sessions", "notice", "acquire_lease", "release_lease", "job_output", "wait", "kill_job"}, nil},
+		{"work", []string{"list_sessions", "notice", "acquire_lease", "release_lease", "job_output", "wait", "kill_job"}, nil},
+	}
+	for _, c := range cases {
+		reg, system := BuildMode(c.mode, d, false)
+		for _, name := range c.want {
+			if !hasTool(reg, name) {
+				t.Errorf("%s mode missing %s", c.mode, name)
+			}
+		}
+		for _, name := range c.gone {
+			if hasTool(reg, name) {
+				t.Errorf("%s mode offers %s", c.mode, name)
+			}
+		}
+		background := false
+		for _, def := range reg.APIDefs() {
+			if def.Function != nil && def.Function.Name == "Bash" {
+				background = strings.Contains(fmt.Sprint(def.Function.Parameters), "run_in_background")
+			}
+		}
+		if background != (c.mode != "pm") {
+			t.Errorf("%s mode Bash run_in_background = %v", c.mode, background)
+		}
+		if board := strings.Contains(system, "NOTICE BOARD"); board != (c.mode != "pm") {
+			t.Errorf("%s mode board guidance = %v", c.mode, board)
+		}
+	}
+	pmReg, _ := BuildMode("pm", d, false)
+	res := pmReg.Dispatch(context.Background(), gollama.ToolCall{ID: "bg", Type: "function",
+		Function: gollama.ToolCallFunction{Name: "Bash", Arguments: `{"command":"true","run_in_background":true}`}})
+	if !res.IsError || len(d.Jobs.List("", true)) != 0 {
+		t.Fatalf("pm Bash started a background job: %s", res.Content)
 	}
 }
 

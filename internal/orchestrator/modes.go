@@ -67,19 +67,20 @@ func Presets() []Preset {
 // BuildMode returns a mode's tools and system prompt. Direct work mode omits
 // worker-agent tools; edits to configured design docs emit doc_updated events.
 // A session built with experimental session coordination also gets
-// list_sessions and, outside integrate mode, the notice tool (a work session
-// without it gets the session-scoped notice alone when SetIntent is set).
-// Outside integrate mode coordinators also get the lease tools.
+// list_sessions and, outside integrate and pm modes, the notice tool (a work
+// session without it gets the session-scoped notice alone when SetIntent is
+// set). Chat and work coordinators also get the lease tools; integrate, pm and
+// watch do not.
 func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
 	reg, system := buildMode(mode, d, unattended)
 	reg.Add(coordinationTools(d)...)
-	if mode != "integrate" && d.Board != nil {
+	if mode != "integrate" && mode != "pm" && d.Board != nil {
 		reg.Add(boardTools(d)...)
 		system += boardGuidance
 	} else if mode == "work" && d.SetIntent != nil {
 		reg.Add(noticeTool(d.SetIntent, nil))
 	}
-	if mode != "integrate" {
+	if mode != "integrate" && mode != "pm" && mode != "watch" {
 		reg.Add(leaseTools(d)...)
 	}
 	return reg, system
@@ -146,7 +147,9 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		// pm maintains the project's design docs (plain files) so it keeps
 		// Write/Edit, but it does no implementation: no spawn_* / commit, and the
 		// prompt enforces a soft "no code edits" boundary (hard enforcement is
-		// future work).
+		// future work). Its Bash is foreground-only: without ws.Jobs it gets
+		// no run_in_background and no job tools.
+		ws.Jobs, ws.JobSupervisor = nil, nil
 		reg.Add(tools.Editing(ws)...)
 		reg.Add(listBacklog(d), getTask(d), createTask(d), updateTask(d),
 			proposePlan(d), switchToWork(d), askUser(d), remember(d), forget(d), tools.Finish())

@@ -602,7 +602,8 @@ explicit cursor/limit or tail requests read retained captured output. Peeks neve
 Automatic final notifications are claimed exactly once at a checkpoint; an explicit wait suppresses
 a later notification. A user message to the coordinator ends its blocking wait early so the message is
 delivered at the next checkpoint rather than queued behind the jobs. Final reports remain repeatable
-through either read path. A tracked process or subagent
+through either read path. pm sessions get none of these controls: their `Bash` runs foreground
+only, without `run_in_background` (§9). A tracked process or subagent
 publishes its terminal report before its execution ends, so its automatic notification only becomes
 claimable once that execution has actually stopped and released its leases. A coordinator that has
 already returned a final response while its jobs run is woken by the completion itself: every report
@@ -834,7 +835,8 @@ still lists exclusive lease holders (below). Work-loop sessions are the
 exception for session notices: they get the `notice` tool for their session notice alone, and it
 keeps working and their session notices stay shown when the setting is off or turned off (§9.1).
 
-- **`list_sessions`** is a read-only tool for coordinators and mutating subagents (implementers and
+- **`list_sessions`** is a read-only tool for coordinators (pm included, so it can see live sessions
+  before grooming) and mutating subagents (implementers and
   mutating generic agents), not read-only agents. Without arguments it lists the project's other
   top-level sessions in the primary tree and its workstreams, as the `list_backlog` footer does
   (sessions quiet for over an hour are omitted): id,
@@ -863,7 +865,8 @@ keeps working and their session notices stay shown when the setting is off or tu
   reproduce it; notices still pending are memory-only and are not restored after reopen or restart
   (`list_sessions` rediscovers the overlap).
 
-- **Notice board.** Coordinators also get one `notice` tool (not in integrate mode); subagents
+- **Notice board.** Coordinators also get one `notice` tool (not in integrate or pm mode; pm
+  still receives the board at checkpoints); subagents
   read the board through `list_sessions` and report to their coordinator. A notice is either
   session-scoped or timed, and the arguments choose which:
   - Without `expires_in`, `notice(text)` sets or replaces the session's **session notice**, its
@@ -915,8 +918,9 @@ keeps working and their session notices stay shown when the setting is off or tu
 Coordination stays advisory: there are no directed agent-to-agent messages, locks, or reservations,
 except for exclusive leases.
 
-- **Exclusive leases.** Coordinators outside integrate mode have `acquire_lease(name, reason, ttl,
-  job_id?)` and `release_lease(name)` whether or not session coordination is on. A lease is a
+- **Exclusive leases.** Chat and work coordinators have `acquire_lease(name, reason, ttl,
+  job_id?)` and `release_lease(name)` whether or not session coordination is on; integrate, pm and
+  watch sessions do not (a 2026-11-26 audit found no pm or watch lease calls). A lease is a
   project-wide exclusive hold on a named target such as a deploy target or a shared service. Names
   are one printable line of at most 80 characters, compared case-insensitively. The reason (at most
   200 characters) is required, and the ttl runs from 1 minute to 24 hours. The daemon keeps each
@@ -1096,7 +1100,8 @@ suggestions were clicked four times, and three of those were then cancelled.
   grooms: a bounded batch of tasks checked against the backlog rules in
   `docs/design/doc-style.md`, editing only backlog files and flagging what evidence does not
   settle). An optional preset-to-model binding supplies an independent editorial perspective
-  without changing role defaults.
+  without changing role defaults. pm has no lease, `notice` or background job tools, and its
+  `Bash` runs foreground only; it keeps read-only `list_sessions` (§7.3).
 
 `ListModes` reports the default mode and, per preset, its placement (onboarding, project, backlog,
 memory), so clients put each preset in its place without lists of preset names. New session
@@ -1323,7 +1328,10 @@ report does not resume the chat that created the watch or finish that chat's pen
 Runs act only on low-risk or pre-authorized actions and ask rather than act on anything
 attributable to another live session or an `in_progress` task. Users create, edit, pause, and
 delete watches through the clients or RPC; no agent mode offers watch-management tools (owner
-decision, 2026-11-26), so only watch runs see watch tools (`watch_report`). The first run of a new
+decision, 2026-11-26), so only watch runs see watch tools (`watch_report`). Watch runs keep
+`list_sessions`, `notice` (with session coordination on), generic subagents and the job tools, but
+not the lease tools (§7.3).
+The first run of a new
 watch is due immediately. Work needing follow-up in the creating
 session uses a tracked background job and `wait`, including a background completion monitor for
 remote work, rather than a watch. `docs/design/watches.md` records the rationale.
