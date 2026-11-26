@@ -325,23 +325,6 @@ func TestJobOutputFinalReportDoesNotClaimNotification(t *testing.T) {
 	}
 }
 
-func TestListJobsScopesOwnersAndShowsAgentActivity(t *testing.T) {
-	reg, jr, _ := jobsReg(t)
-	a := jr.Start("agent", "inspect safely", "coordinator")
-	a.UpdateActivity("Search", &jobs.Usage{Input: 12, Output: 3, Total: 15})
-	jr.Start("bash", "other actor", "implementer")
-
-	own := dispatch(t, reg, "list_jobs", `{}`)
-	if own.IsError || !strings.Contains(own.Content, "job_1 [running]") || !strings.Contains(own.Content, "owner=coordinator") ||
-		!strings.Contains(own.Content, `current_tool="Search"`) || !strings.Contains(own.Content, "total:15") || strings.Contains(own.Content, "job_2") {
-		t.Fatalf("owner list = %q", own.Content)
-	}
-	all := dispatch(t, reg, "list_jobs", `{"include_all_owners":true}`)
-	if all.IsError || !strings.Contains(all.Content, "job_2") || !strings.Contains(all.Content, "owner=implementer") {
-		t.Fatalf("all-owner list = %q", all.Content)
-	}
-}
-
 func TestWaitOmittedIDsDoesNotExpandEmptyOwnerScope(t *testing.T) {
 	for _, actor := range []string{"coordinator", "implementer"} {
 		t.Run(actor, func(t *testing.T) {

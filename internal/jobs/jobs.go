@@ -68,7 +68,7 @@ type Activity struct {
 	Usage       Usage
 }
 
-// Info is a deterministic list_jobs snapshot.
+// Info is a deterministic snapshot of one job, as List returns it.
 type Info struct {
 	ID, Kind, Label, Owner string
 	Purpose, Delivery      string // set when a child explicitly hands the job to its parent
@@ -791,7 +791,7 @@ func (r *Registry) signalCompletion() {
 }
 
 // NewRestored rebuilds durable job metadata, notification state, and terminal
-// results. Evidence remains available through list_jobs/job_output. Any later
+// results. Evidence remains available through job_output. Any later
 // Start continues after the greatest restored job_<n> id.
 func NewRestored(entries []Restored) *Registry {
 	r := NewRegistry()

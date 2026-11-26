@@ -46,7 +46,7 @@ const (
 // whose history owes no model response continues from.
 const restartContextText = "[ycc] Not a message from the user: the ycc daemon was restarted while your previous turn " +
 	"was still in progress, and that turn was cut short. Background jobs that were still running kept running " +
-	"(list_jobs shows them). Check where your work stood, and continue it."
+	"(their reports arrive automatically, and wait with no job ids waits on them). Check where your work stood, and continue it."
 
 // restartEntry is one session the next daemon reopens.
 type restartEntry struct {

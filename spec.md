@@ -597,10 +597,11 @@ results and need not re-review the code; any other change is reviewed as usual. 
 that did not come through `submit_review`, names no criteria, or covers another snapshot counts as
 unknown.
 
-Background shell commands and subagents share stable session-owned job ids and four controls:
-`list_jobs` discovers, `job_output` peeks, `wait` synchronizes/acknowledges completion, and `kill_job`
-cancels. `job_output` with only an id returns live output/activity or the terminal final report;
-explicit cursor/limit or tail requests read retained captured output. Peeks never affect notifications.
+Background shell commands and subagents share stable session-owned job ids, returned by the call
+that starts each job, and three controls: `job_output` peeks, `wait` synchronizes/acknowledges
+completion, and `kill_job` cancels. `job_output` with only an id returns live output/activity or the
+terminal final report; explicit cursor/limit or tail requests read retained captured output. Peeks
+never affect notifications.
 Automatic final notifications are claimed exactly once at a checkpoint; an explicit wait suppresses
 a later notification. A user message to the coordinator ends its blocking wait early so the message is
 delivered at the next checkpoint rather than queued behind the jobs. Final reports remain repeatable
@@ -628,8 +629,8 @@ is withheld until the post-wake report. Outcomes that nothing will wake stay ter
 those observers, so a blocked session never waits on delegated work forever.
 Output reads are non-consuming and use explicit absolute byte cursors/ranges or retained-tail
 requests, with retained intervals and
-eviction gaps reported. Job discovery is owner-scoped by default and includes lifecycle timing;
-agent progress exposes only bounded last-activity, current-tool, turn, and token-usage metadata, not
+eviction gaps reported. `wait` without ids targets the caller's live jobs; the daemon and clients
+keep the registry's job listing with lifecycle timing. Agent progress exposes only bounded last-activity, current-tool, turn, and token-usage metadata, not
 model text or reasoning. Completed shell jobs name their output file (up to 4 MiB, or its explicit
 storage loss or eviction) in the final report. Direct (unsupervised) background processes do not survive
 daemon restart, but replay restores durable job ids, owners, states, and final results; an unmatched

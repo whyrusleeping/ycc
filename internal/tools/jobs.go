@@ -14,10 +14,11 @@ import (
 	"github.com/whyrusleeping/ycc/internal/jobs"
 )
 
-// JobTools returns discovery, progress, repeatable evidence, synchronization,
-// and cancellation tools for the session job registry.
+// JobTools returns progress, repeatable evidence, synchronization, and
+// cancellation tools for the session job registry. Job ids come from the
+// tools that start the jobs.
 func JobTools(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{listJobsTool(ws), jobOutputTool(ws), waitTool(ws), killJobTool(ws)}
+	return []*gollama.Tool{jobOutputTool(ws), waitTool(ws), killJobTool(ws)}
 }
 
 func jobToolOwner(ws *Workspace) string {
@@ -25,60 +26,6 @@ func jobToolOwner(ws *Workspace) string {
 		return ""
 	}
 	return ws.Emitter.Actor()
-}
-
-func listJobsTool(ws *Workspace) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "list_jobs",
-		Description: "List this actor's live/completed jobs in start order: id, owner, state, elapsed, and activity. " +
-			"include_all_owners selects the whole session. Listing does not affect notifications.",
-		Params: obj(map[string]any{
-			"include_all_owners": BoolProp("include jobs owned by other actors in this session (default false)"),
-		}),
-		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
-			infos := ws.Jobs.List(jobToolOwner(ws), getBool(params, "include_all_owners", false))
-			if len(infos) == 0 {
-				return okResult("list_jobs: no matching jobs."), nil
-			}
-			now := time.Now()
-			var b strings.Builder
-			for i, info := range infos {
-				if i > 0 {
-					b.WriteByte('\n')
-				}
-				end := info.Finished
-				if end.IsZero() {
-					end = now
-				}
-				elapsed := end.Sub(info.Started)
-				if elapsed < 0 {
-					elapsed = 0
-				}
-				fmt.Fprintf(&b, "%s [%s] kind=%s owner=%s elapsed=%s mutates=%t label=%q",
-					info.ID, info.Status, info.Kind, info.Owner, elapsed.Round(time.Millisecond), info.Mutates, truncate(info.Label, 512))
-				if info.Purpose != "" {
-					fmt.Fprintf(&b, "\n  handoff: purpose=%q delivery=%q", truncate(info.Purpose, 512), info.Delivery)
-				}
-				if info.Kind == "agent" {
-					activity := info.Activity
-					fmt.Fprintf(&b, "\n  activity: turns=%d usage={input:%d output:%d cache_read:%d cache_write:%d total:%d}",
-						activity.Turns, activity.Usage.Input, activity.Usage.Output, activity.Usage.CacheRead,
-						activity.Usage.CacheWrite, activity.Usage.Total)
-					if activity.CurrentTool != "" {
-						fmt.Fprintf(&b, " current_tool=%q", truncate(activity.CurrentTool, 128))
-					}
-					if !activity.Last.IsZero() {
-						ago := now.Sub(activity.Last)
-						if ago < 0 {
-							ago = 0
-						}
-						fmt.Fprintf(&b, " last_activity_ago=%s", ago.Round(time.Millisecond))
-					}
-				}
-			}
-			return okResult(b.String()), nil
-		},
-	}
 }
 
 func jobOutputTool(ws *Workspace) *gollama.Tool {

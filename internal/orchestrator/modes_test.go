@@ -108,7 +108,7 @@ func (stubLeases) Release(name string) (string, error) { return "Released " + na
 // With the notice board, leases and a job registry all available, pm gets
 // none of the lease, notice or background job tools (it keeps read-only
 // list_sessions and a foreground-only Bash), and watch drops only the lease
-// tools. Chat and work keep everything.
+// tools. Chat and work keep everything else; no mode offers list_jobs.
 func TestModeCoordinationAndJobTools(t *testing.T) {
 	d := depsFor(t)
 	d.Board = &fakeBoard{}
@@ -123,9 +123,9 @@ func TestModeCoordinationAndJobTools(t *testing.T) {
 		want, gone []string
 	}{
 		{"pm", []string{"list_sessions", "Bash"}, append([]string{"acquire_lease", "release_lease", "notice"}, jobTools...)},
-		{"watch", []string{"list_sessions", "notice", "job_output", "wait", "kill_job", "spawn_agent"}, []string{"acquire_lease", "release_lease"}},
-		{"chat", []string{"list_sessions", "notice", "acquire_lease", "release_lease", "job_output", "wait", "kill_job"}, nil},
-		{"work", []string{"list_sessions", "notice", "acquire_lease", "release_lease", "job_output", "wait", "kill_job"}, nil},
+		{"watch", []string{"list_sessions", "notice", "job_output", "wait", "kill_job", "spawn_agent"}, []string{"acquire_lease", "release_lease", "list_jobs"}},
+		{"chat", []string{"list_sessions", "notice", "acquire_lease", "release_lease", "job_output", "wait", "kill_job"}, []string{"list_jobs"}},
+		{"work", []string{"list_sessions", "notice", "acquire_lease", "release_lease", "job_output", "wait", "kill_job"}, []string{"list_jobs"}},
 	}
 	for _, c := range cases {
 		reg, system := BuildMode(c.mode, d, false)

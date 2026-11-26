@@ -11,13 +11,15 @@ wait, inspect, cancel, and receive completion. It would also make replay orderin
 ## Decision
 
 A session owns one job registry for background shell commands and child agents. Jobs share a stable,
-monotonic id namespace, lifecycle, discovery, progress read, bounded wait, cancellation, and retained
+monotonic id namespace, lifecycle, progress read, bounded wait, cancellation, and retained
 final-result contract. Foreground execution remains the right choice when the result gates the next
 step; background execution exists to overlap meaningful independent work or leave a watcher running.
 
-`list_jobs` exposes jobs in deterministic start order with owner, state, elapsed time, and mutation
-metadata. Its default view is scoped to the calling actor; a session-wide view is explicit. Agent jobs
-also expose bounded last-activity, current-tool, turn-count, and token-usage summaries. These summaries
+Agents have no job-listing tool. Every tool that starts a job returns its id, completions arrive
+automatically, and `wait` without ids waits on all of the caller's live jobs. The registry still lists jobs
+in deterministic start order with owner, state, elapsed time, and mutation metadata for the daemon and
+clients, and `list_sessions` shows other sessions' running jobs. `job_output` on a running agent job
+reports bounded last-activity, current-tool, turn-count, and token-usage summaries. These summaries
 contain no prompts, tool arguments/results, model text, or private reasoning.
 
 Completion notification and evidence access are separate:
@@ -75,7 +77,7 @@ ownership; completed, previously unnotified reports are included in the subagent
 continue only when the subagent's finish control explicitly hands over its job id and purpose. That transfer
 records the parent owner and delivery contract: completion is offered exactly once at a parent checkpoint
 unless an explicit wait claims it first, while `job_output` reports and output evidence remain repeatable. Handoffs
-are durable and discoverable through `list_jobs`. A mutating handoff defers the delegated agent's final
+are durable, and the subagent's result names each handed-off job id. A mutating handoff defers the delegated agent's final
 changeset report, because the changeset is not settled while the handed-off process can still write. It does
 not lock the worktree. Error, blocked, cancellation, hard-stop, and session-shutdown paths apply the same cleanup-and-join
 rule; terminal report state alone is not proof that execution has stopped. Session shutdown closes job

@@ -10,16 +10,19 @@ import (
 	"github.com/whyrusleeping/ycc/internal/git"
 )
 
-// pm and watch sessions whose history calls tools those modes no longer
-// offer (leases; for pm also the notice and background job tools) reopen and
-// replay those calls, and the reopened session does not offer them.
-func TestReopenReplaysToolsPmAndWatchNoLongerOffer(t *testing.T) {
+// Sessions whose history calls tools their modes no longer offer (list_jobs
+// everywhere; leases in pm and watch; for pm also the notice and background
+// job tools) reopen and replay those calls, and the reopened session does not
+// offer them.
+func TestReopenReplaysToolsModesNoLongerOffer(t *testing.T) {
 	cases := []struct {
 		mode  string
 		tools []string
 	}{
 		{"pm", []string{"acquire_lease", "release_lease", "notice", "set_intent", "job_output", "wait", "kill_job", "list_jobs"}},
-		{"watch", []string{"acquire_lease", "release_lease"}},
+		{"watch", []string{"acquire_lease", "release_lease", "list_jobs"}},
+		{"chat", []string{"list_jobs"}},
+		{"work", []string{"list_jobs"}},
 	}
 	for _, c := range cases {
 		t.Run(c.mode, func(t *testing.T) {
