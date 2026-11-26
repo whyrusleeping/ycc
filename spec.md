@@ -776,11 +776,14 @@ shown when the setting is off or turned off (§9.1).
 
 - **Notice board.** Coordinators also get `set_intent`, `post_notice` and `clear_notice` (not in
   integrate mode); subagents read the board through `list_sessions` and report to their
-  coordinator. A session's one-line **intent** (at most 200 characters) is set, replaced or cleared
+  coordinator. A session's one-line **intent** (at most 300 characters; longer agent text is
+  clipped with a note in the tool result rather than rejected) is set, replaced or cleared
   with `set_intent`, lives only in the live session, and ends with it; a declared intent keeps a
   quiet session in session listings. A **notice** is posted with `post_notice(text, expires_in,
-  subject?)`: one line of at most 300 characters, an optional subject of at most 60 (a service, or
-  "master tests"), and a required expiry from 1 minute to 24 hours. The daemon records the poster's
+  subject?)`: one line of at most 500 characters, an optional subject of at most 60 (a service, or
+  "master tests"), and a required expiry from 1 minute to 24 hours; agent `post_notice` calls clip
+  over-long text or subject with a note in the tool result rather than dropping the notice, while
+  the user RPC validates the bounds strictly. The daemon records the poster's
   session, actor and focused tasks. A session may hold 3 active notices and post 6 in any hour. Any
   session (or the user, through `ClearProjectNotice`) may clear an active notice; the board records
   who cleared it and why. Notice, subject, reason and intent text is sanitized to one printable line.
@@ -790,8 +793,10 @@ shown when the setting is off or turned off (§9.1).
   Active notices and intents appear in `list_sessions` and the `list_backlog` footer; watch-run
   context lists intents with the live sessions. Every coordinator's first checkpoint, a watch run's
   included, delivers the current board and other sessions' intents as its opening context; later
-  checkpoints deliver a digest of notices posted or cleared by other sessions since the last one,
-  at most 20 changes each, the rest following at the next checkpoint. Expiry is silent; a clear
+  checkpoints deliver a digest of notices posted or cleared and intents set or updated by other
+  sessions since the last one,
+  at most 20 changes each, the rest following at the next checkpoint. Expiry and cleared/ended
+  intents are silent; a notice clear
   stays reportable for an hour. Nothing wakes a session or ends its `wait` for a notice. A digest enters history
   as a `coordination_notice` event (actor `system`) where it entered, so it replays identically;
   nothing pending is kept across a reopen, so a reopened session's first checkpoint delivers the
@@ -1011,9 +1016,11 @@ in the same workspace. A session holds every task it has focused while it is mid
 waiting on its own background work or a question; once it is idle between turns, an in_progress
 task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
 actionable and end with the project's other live sessions (mode, state such as running or idle
-since a time, focused tasks, running jobs; sessions not working and quiet for over an hour are
+since a time, focused tasks, running jobs, and a one-line title for sessions without a focus or
+declared intent; sessions not working and quiet for over an hour are
 omitted), so agents choose from daemon state rather than
-inferring parallel work from commit times or processes. Claiming a task is atomic: `update_task` to
+inferring parallel work from commit times or processes. Claiming a task is atomic: `create_task`
+with `in_progress`, `update_task` to
 in_progress, `spawn_implementer`, `spawn_reviewers`, `re_review` and `switch_to_work` check for
 another holder and record the session's focus as one step, serialized across the daemon's sessions
 in a workspace, and fail naming the holder when another live session holds the task. A Write or
@@ -1022,7 +1029,8 @@ Edit of a task's backlog file by a work session's coordinator or implementer rec
 holds the task, and the tool result names the holder. Loop sessions choose their own
 task; the loop never assigns one. Their opening prompt says other loop and live sessions may be
 working in parallel, asks for the best next task given backlog order and what those siblings are
-doing, says size is no reason to skip a task, allows splitting a task at most once per session
+doing (leaving tasks or areas visibly under active chat/pm discussion or redesign to that session),
+says size is no reason to skip a task, allows splitting a task at most once per session
 before working its first piece in the same session, and asks the session to state in `set_intent`
 the areas or files and external resources (hosts, services, GPUs, databases) its work will touch.
 Loop sessions have `set_intent`, and the `list_backlog` footer shows their intents (as

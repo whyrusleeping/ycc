@@ -29,10 +29,10 @@ import (
 
 // Notice board bounds.
 const (
-	noticeMaxText    = 300 // runes
+	noticeMaxText    = 500 // runes
 	noticeMaxSubject = 60
 	noticeMaxReason  = 200
-	intentMaxText    = 200
+	intentMaxText    = 300
 	noticeMinExpiry  = time.Minute
 	noticeMaxExpiry  = 24 * time.Hour
 	noticeMaxActive  = 3 // active notices per posting session
@@ -40,8 +40,8 @@ const (
 	// noticeRetention keeps finished records long enough to enforce the
 	// hourly post limit and to tell sessions of a clear.
 	noticeRetention = time.Hour
-	// boardDigestMaxLines bounds the notice lines of one digest; the board
-	// itself is bounded by the per-session caps.
+	// boardDigestMaxLines bounds the notice and intent lines of one digest;
+	// the board itself is bounded by the per-session caps.
 	boardDigestMaxLines = 20
 )
 
@@ -92,6 +92,29 @@ func (b boardState) pruned(now time.Time) boardState {
 		}
 	}
 	return out
+}
+
+// clipRunes shortens s to at most max runes, ending with "…" when clipped.
+// It returns the clipped string, the original rune count, and whether clipping
+// occurred.
+func clipRunes(s string, max int) (string, int, bool) {
+	n := utf8.RuneCountInString(s)
+	if n <= max || max <= 0 {
+		return s, n, false
+	}
+	if max == 1 {
+		return "…", n, true
+	}
+	var b strings.Builder
+	count := 0
+	for _, r := range s {
+		if count == max-1 {
+			break
+		}
+		b.WriteRune(r)
+		count++
+	}
+	return strings.TrimRight(b.String(), " ") + "…", n, true
 }
 
 // sanitizeLine makes untrusted text a single printable line: control, format
@@ -449,17 +472,21 @@ func (b *sessionBoard) SetIntent(text string) (string, error) {
 }
 
 // declareIntent sets, replaces, or (with empty text) clears the session's
-// one-line intent.
+// one-line intent. Over-long text is clipped rather than rejected so an intent
+// is not silently lost when a model miscounts characters.
 func (s *Session) declareIntent(text string) (string, error) {
 	text = sanitizeLine(text)
-	if n := utf8.RuneCountInString(text); n > intentMaxText {
-		return "", fmt.Errorf("intent is %d characters; the limit is %d", n, intentMaxText)
-	}
+	text, origLen, clipped := clipRunes(text, intentMaxText)
 	s.noticeMu.Lock()
 	s.intentText, s.intentAt = text, time.Now().UTC()
 	s.noticeMu.Unlock()
 	if text == "" {
 		return "Intent cleared.", nil
+	}
+	if clipped {
+		return fmt.Sprintf("Intent set (clipped from %d to %d characters; call set_intent again to shorten). "+
+			"Other sessions see it in list_sessions and list_backlog until you replace or clear it, or this session ends.",
+			origLen, intentMaxText), nil
 	}
 	return "Intent set. Other sessions see it in list_sessions and list_backlog until you replace or clear it, or this session ends.", nil
 }
@@ -467,6 +494,17 @@ func (s *Session) declareIntent(text string) (string, error) {
 func (b *sessionBoard) Post(text, subject string, expiresIn time.Duration) (string, error) {
 	if err := b.enabled(); err != nil {
 		return "", err
+	}
+	var notes []string
+	text = sanitizeLine(text)
+	if clipped, origLen, ok := clipRunes(text, noticeMaxText); ok {
+		text = clipped
+		notes = append(notes, fmt.Sprintf("text clipped from %d to %d characters", origLen, noticeMaxText))
+	}
+	subject = sanitizeLine(subject)
+	if clipped, origLen, ok := clipRunes(subject, noticeMaxSubject); ok {
+		subject = clipped
+		notes = append(notes, fmt.Sprintf("subject clipped from %d to %d characters", origLen, noticeMaxSubject))
 	}
 	tasks := focusTasks(b.s.Log().Snapshot())
 	if len(tasks) > 3 {
@@ -489,8 +527,12 @@ func (b *sessionBoard) Post(text, subject string, expiresIn time.Duration) (stri
 	}
 	b.s.boardSeen[n.ID] = true
 	b.s.noticeMu.Unlock()
-	return fmt.Sprintf("Posted notice %s, expiring %s. Other sessions see it at their next checkpoint and in list_sessions; "+
-		"clear it with clear_notice once it no longer applies.", n.ID, n.ExpiresAt.Format("2006-01-02 15:04 UTC")), nil
+	clipNote := ""
+	if len(notes) > 0 {
+		clipNote = " (" + strings.Join(notes, "; ") + "; clear and repost if truncated details matter)"
+	}
+	return fmt.Sprintf("Posted notice %s%s, expiring %s. Other sessions see it at their next checkpoint and in list_sessions; "+
+		"clear it with clear_notice once it no longer applies.", n.ID, clipNote, n.ExpiresAt.Format("2006-01-02 15:04 UTC")), nil
 }
 
 func (b *sessionBoard) Clear(id, reason string) (string, error) {
@@ -510,28 +552,33 @@ func (b *sessionBoard) Clear(id, reason string) (string, error) {
 
 // drainBoardDigest returns the notice board digest for this checkpoint: at the
 // session's first checkpoint the current board and other sessions' intents,
-// afterwards the notices posted or cleared by others since the last one. It is
-// recorded as a system-actor coordination_notice so replay places it where it
-// entered. Nothing pending survives a reopen: a reopened session starts again
-// from the current board, so expired notices are never delivered.
+// afterwards the notices posted or cleared and intents set or updated by other
+// sessions since the last one. It is recorded as a system-actor
+// coordination_notice so replay places it where it entered. Nothing pending
+// survives a reopen: a reopened session starts again from the current board,
+// so expired notices are never delivered.
 func (s *Session) drainBoardDigest(now time.Time) ([]string, error) {
 	if s.board == nil || s.coordinationOn == nil || !s.coordinationOn() {
 		return nil, nil
 	}
 	records := s.board.m.boardRecords(s.board.primary, now)
+	currentIntents := s.board.m.sessionIntents(s.board.primary, s.ID)
 	s.noticeMu.Lock()
 	opening := !s.boardOpened
 	s.boardOpened = true
 	if s.boardSeen == nil {
 		s.boardSeen = map[string]bool{}
 	}
-	var lines []string
-	var changes []any
+	if s.intentSeen == nil {
+		s.intentSeen = map[string]string{}
+	}
+	var lines, intentLines []string
+	var changes, intentChanges []any
 	deferred := 0
 	// add reports a change unless the digest is full; a change left out stays
 	// pending (the cursor is not advanced) for the next checkpoint.
 	add := func(id, change, line string) bool {
-		if len(lines) == boardDigestMaxLines {
+		if len(lines)+len(intentLines) == boardDigestMaxLines {
 			deferred++
 			return false
 		}
@@ -580,13 +627,43 @@ func (s *Session) drainBoardDigest(now time.Time) ([]string, error) {
 			delete(s.boardSeen, id)
 		}
 	}
+
+	var openingIntents []SessionIntent
+	if opening {
+		openingIntents = currentIntents
+		for _, in := range currentIntents {
+			s.intentSeen[in.SessionID] = in.Text
+		}
+	} else {
+		presentIntents := map[string]bool{}
+		for _, in := range currentIntents {
+			presentIntents[in.SessionID] = true
+			prev, seen := s.intentSeen[in.SessionID]
+			if seen && prev == in.Text {
+				continue
+			}
+			if len(lines)+len(intentLines) == boardDigestMaxLines {
+				deferred++
+				continue
+			}
+			change := "set"
+			if seen {
+				change = "updated"
+			}
+			intentChanges = append(intentChanges, map[string]any{"session": in.SessionID, "change": change})
+			intentLines = append(intentLines, fmt.Sprintf("- intent %s by %s: %q (set %s)", change, in.SessionID, in.Text, in.SetAt.UTC().Format("15:04 UTC")))
+			s.intentSeen[in.SessionID] = in.Text
+		}
+		// Clearing an intent or ending a session is silent.
+		for sid := range s.intentSeen {
+			if !presentIntents[sid] {
+				delete(s.intentSeen, sid)
+			}
+		}
+	}
 	s.noticeMu.Unlock()
 
-	var intents []SessionIntent
-	if opening {
-		intents = s.board.m.sessionIntents(s.board.primary, s.ID)
-	}
-	if len(lines) == 0 && len(intents) == 0 {
+	if len(lines) == 0 && len(openingIntents) == 0 && len(intentLines) == 0 {
 		return nil, nil
 	}
 	var b strings.Builder
@@ -595,18 +672,23 @@ func (s *Session) drainBoardDigest(now time.Time) ([]string, error) {
 		if len(lines) > 0 {
 			b.WriteString("Active notices:\n")
 		}
+	} else if len(intentLines) > 0 {
+		b.WriteString("[project notice board] Updates from other sessions since your last checkpoint:\n")
 	} else {
 		b.WriteString("[project notice board] Notices posted or cleared by other sessions since your last checkpoint:\n")
 	}
 	for _, line := range lines {
 		b.WriteString(line + "\n")
 	}
+	for _, line := range intentLines {
+		b.WriteString(line + "\n")
+	}
 	if deferred > 0 {
 		fmt.Fprintf(&b, "- … %d more changes follow at your next checkpoint; list_sessions shows the active board\n", deferred)
 	}
-	if len(intents) > 0 {
+	if len(openingIntents) > 0 {
 		b.WriteString("Intents of other live sessions:\n")
-		for _, in := range intents {
+		for _, in := range openingIntents {
 			fmt.Fprintf(&b, "- %s: %q (set %s)\n", in.SessionID, in.Text, in.SetAt.UTC().Format("15:04 UTC"))
 		}
 	}
@@ -615,6 +697,9 @@ func (s *Session) drainBoardDigest(now time.Time) ([]string, error) {
 	data := map[string]any{"text": text}
 	if len(changes) > 0 {
 		data["board"] = changes
+	}
+	if len(intentChanges) > 0 {
+		data["intents"] = intentChanges
 	}
 	s.emitter.EmitAs("system", event.CoordinationNotice, data)
 	if err := s.logFailure(); err != nil {

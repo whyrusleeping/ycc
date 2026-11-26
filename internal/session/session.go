@@ -254,12 +254,14 @@ type Session struct {
 	notices        []overlapNotice
 	// Notice board (noticeboard.go): board is set when coordination is.
 	// boardSeen holds the active notices this session has been told of;
+	// intentSeen holds each other live session's last delivered intent text;
 	// boardOpened is set once its first digest (the current board) is out.
 	// The intent line lives only as long as the live session. All under
 	// noticeMu.
 	board       *sessionBoard
 	boardOpened bool
 	boardSeen   map[string]bool
+	intentSeen  map[string]string
 	intentText  string
 	intentAt    time.Time
 	// leases backs the coordinator's lease tools (leases.go); the session's

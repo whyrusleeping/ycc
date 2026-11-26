@@ -270,7 +270,7 @@ func createTask(d *Deps) *gollama.Tool {
 			"title":       tools.StrProp("short title"),
 			"description": tools.StrProp("markdown description and acceptance criteria"),
 			"priority":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "description": "1 (highest) .. 5; default 3"},
-			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "todo (default) or in_progress (starting now) for accepted work; proposed for unaccepted ideas"},
+			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "todo (default, eligible for the work loop) or in_progress (starting now; claims focus for this session) for accepted work; proposed for unaccepted ideas"},
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "prerequisite task ids"},
 			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "entry-point spec section title or path#Section"},
 		}, "title"),
@@ -287,7 +287,13 @@ func createTask(d *Deps) *gollama.Tool {
 				return tools.ErrResult("create_task: %v", err), nil
 			}
 			d.Emitter.Emit(event.DocUpdated, map[string]any{"task": t.ID, "created": true, "status": string(t.Status)})
-			return tools.OkResult("created task " + t.ID + " [" + string(t.Status) + "]: " + t.Title), nil
+			msg := "created task " + t.ID + " [" + string(t.Status) + "]: " + t.Title
+			if t.Status == docs.StatusInProgress {
+				if holder := d.claimFocus(t.ID); holder != "" {
+					msg += fmt.Sprintf(" (notice: task %s is held by live session %s)", t.ID, holder)
+				}
+			}
+			return tools.OkResult(msg), nil
 		},
 	}
 }

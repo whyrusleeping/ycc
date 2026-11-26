@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
@@ -374,5 +375,166 @@ func TestNoticeBoardDigestOverflowAndLateClear(t *testing.T) {
 	}
 	if third, _ := s.drainBoardDigest(now.Add(63 * time.Minute)); third != nil {
 		t.Fatalf("third digest = %q", third)
+	}
+}
+
+// Agent set_intent and post_notice accept the raised bounds and soft-clip
+// over-long text/subject with a note instead of dropping the coordination
+// signal; the user RPC still rejects over-long text strictly.
+func TestNoticeBoardSoftClipping(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	ws := t.TempDir()
+	sessionGitAt(t, ws, "init", "-q")
+	m := NewManager(nil, ws)
+	m.SetProjects(project.NewMemory())
+	if _, err := m.AddProject(ws, "proj"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.ReclaimAll)
+	if err := m.SetSessionCoordination("proj", true); err != nil {
+		t.Fatal(err)
+	}
+	s := newStopSession(t)
+	s.ID, s.Workspace = "s_clip", ws
+	s.board = &sessionBoard{m: m, s: s, primary: ws}
+
+	// Within raised bounds: accepted without clipping.
+	okIntent := strings.Repeat("a", 250)
+	res, err := s.board.SetIntent(okIntent)
+	if err != nil || strings.Contains(res, "clipped") {
+		t.Fatalf("250-char intent: res=%q err=%v", res, err)
+	}
+	if got, _ := s.intent(); got != okIntent {
+		t.Fatalf("stored intent len = %d, want 250", len(got))
+	}
+
+	// Over-long multi-byte intent: clipped cleanly to intentMaxText runes with a note.
+	longIntent := strings.Repeat("é", intentMaxText+23)
+	res, err = s.board.SetIntent(longIntent)
+	if err != nil || !strings.Contains(res, "clipped from") {
+		t.Fatalf("over-long intent: res=%q err=%v", res, err)
+	}
+	if got, _ := s.intent(); utf8.RuneCountInString(got) != intentMaxText || !strings.HasSuffix(got, "…") {
+		t.Fatalf("clipped intent runes=%d suffix=%q", utf8.RuneCountInString(got), got[len(got)-3:])
+	}
+
+	// Within raised notice bound (400 <= 500): accepted unclipped.
+	okNotice := strings.Repeat("b", 400)
+	res, err = s.board.Post(okNotice, "subj", time.Hour)
+	if err != nil || strings.Contains(res, "clipped") {
+		t.Fatalf("400-char notice: res=%q err=%v", res, err)
+	}
+
+	// Over-long notice text and subject: clipped and posted with a note.
+	longNotice := strings.Repeat("é", noticeMaxText+11)
+	longSubj := strings.Repeat("s", noticeMaxSubject+5)
+	res, err = s.board.Post(longNotice, longSubj, time.Hour)
+	if err != nil || !strings.Contains(res, "text clipped from") || !strings.Contains(res, "subject clipped from") {
+		t.Fatalf("over-long notice: res=%q err=%v", res, err)
+	}
+	active := m.activeNotices(ws, time.Now())
+	if len(active) != 2 {
+		t.Fatalf("active notices = %d, want 2", len(active))
+	}
+	last := active[1]
+	if utf8.RuneCountInString(last.Text) != noticeMaxText || !strings.HasSuffix(last.Text, "…") {
+		t.Fatalf("clipped notice text runes=%d", utf8.RuneCountInString(last.Text))
+	}
+	if utf8.RuneCountInString(last.Subject) != noticeMaxSubject || !strings.HasSuffix(last.Subject, "…") {
+		t.Fatalf("clipped notice subject runes=%d", utf8.RuneCountInString(last.Subject))
+	}
+
+	// Empty text and out-of-range expiry still fail on agent post_notice.
+	if _, err := s.board.Post("   ", "", time.Hour); err == nil {
+		t.Fatal("empty notice accepted")
+	}
+	if _, err := s.board.Post("valid", "", 30*time.Second); err == nil {
+		t.Fatal("too-short expiry accepted")
+	}
+
+	// User RPC still enforces noticeMaxText strictly.
+	if _, err := m.PostProjectNotice("proj", strings.Repeat("u", noticeMaxText+1), "", time.Hour); err == nil {
+		t.Fatal("user RPC accepted over-long notice")
+	}
+}
+
+// Mid-session intent changes by other sessions reach running coordinators at
+// their next checkpoint; unchanged, cleared, and ended intents stay silent.
+func TestNoticeBoardIntentUpdatesInDigests(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	ws := t.TempDir()
+	sessionGitAt(t, ws, "init", "-q")
+	m := NewManager(nil, ws)
+	m.SetProjects(project.NewMemory())
+	t.Cleanup(m.ReclaimAll)
+	mk := func(id string) *Session {
+		s := newStopSession(t)
+		s.ID, s.Workspace = id, ws
+		s.board = &sessionBoard{m: m, s: s, primary: ws}
+		s.coordinationOn = func() bool { return true }
+		m.mu.Lock()
+		m.sessions[id] = s
+		m.mu.Unlock()
+		return s
+	}
+	a := mk("s_a")
+	b := mk("s_b")
+	now := time.Now()
+
+	// Opening checkpoint with no intents or notices produces nothing, but marks opened.
+	if texts, err := a.drainBoardDigest(now); err != nil || texts != nil {
+		t.Fatalf("empty opening = %q %v", texts, err)
+	}
+
+	// B sets an intent after A opened: A hears of it at its next checkpoint.
+	if _, err := b.declareIntent("redesigning discovery with owner"); err != nil {
+		t.Fatal(err)
+	}
+	texts, err := a.drainBoardDigest(now)
+	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `intent set by s_b: "redesigning discovery with owner"`) {
+		t.Fatalf("intent set digest = %q %v", texts, err)
+	}
+	evs := boardDigests(a)
+	if len(evs) != 1 || evs[0].Data["intents"] == nil {
+		t.Fatalf("coordination_notice lacks intents metadata: %+v", evs)
+	}
+
+	// Unchanged intent produces no digest.
+	if texts, err := a.drainBoardDigest(now); err != nil || texts != nil {
+		t.Fatalf("unchanged intent digest = %q %v", texts, err)
+	}
+
+	// B updates its intent: A hears of the update.
+	if _, err := b.declareIntent("coordinating overlap on 0515"); err != nil {
+		t.Fatal(err)
+	}
+	texts, err = a.drainBoardDigest(now)
+	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `intent updated by s_b: "coordinating overlap on 0515"`) {
+		t.Fatalf("intent updated digest = %q %v", texts, err)
+	}
+
+	// B clears its intent: silent.
+	if _, err := b.declareIntent(""); err != nil {
+		t.Fatal(err)
+	}
+	if texts, err := a.drainBoardDigest(now); err != nil || texts != nil {
+		t.Fatalf("cleared intent produced digest = %q %v", texts, err)
+	}
+
+	// B sets a fresh intent again: reported as set.
+	if _, err := b.declareIntent("back on 0515"); err != nil {
+		t.Fatal(err)
+	}
+	texts, err = a.drainBoardDigest(now)
+	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `intent set by s_b: "back on 0515"`) {
+		t.Fatalf("re-set intent digest = %q %v", texts, err)
+	}
+
+	// B ends: silent.
+	m.mu.Lock()
+	delete(m.sessions, b.ID)
+	m.mu.Unlock()
+	if texts, err := a.drainBoardDigest(now); err != nil || texts != nil {
+		t.Fatalf("ended session produced digest = %q %v", texts, err)
 	}
 }

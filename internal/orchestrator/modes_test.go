@@ -373,6 +373,40 @@ func TestCreateTaskDispatchRejectsInvalidPriorityWithoutMutation(t *testing.T) {
 	}
 }
 
+// Creating a task with status in_progress claims focus immediately so another
+// live session sees it as held right away; todo and proposed do not claim focus.
+func TestCreateTaskInProgressClaimsFocus(t *testing.T) {
+	rec := &captureRec{}
+	d := depsFor(t)
+	d.Emitter = event.NewEmitter(rec, "coordinator")
+	var claimed []string
+	d.ClaimTask = func(id string, record func()) string {
+		claimed = append(claimed, id)
+		record()
+		return ""
+	}
+	tool := createTask(d)
+	for _, status := range []string{"todo", "proposed"} {
+		res, err := tool.Call(context.Background(), map[string]any{"title": "task " + status, "status": status})
+		if err != nil || res.IsError {
+			t.Fatalf("create_task %s: %v %+v", status, err, res)
+		}
+	}
+	if len(claimed) != 0 || len(rec.focusTasks()) != 0 {
+		t.Fatalf("todo/proposed claimed focus: claimed=%v focus=%v", claimed, rec.focusTasks())
+	}
+	res, err := tool.Call(context.Background(), map[string]any{"title": "starting now", "status": "in_progress"})
+	if err != nil || res.IsError {
+		t.Fatalf("create_task in_progress: %v %+v", err, res)
+	}
+	if len(claimed) != 1 || claimed[0] != "0003" {
+		t.Fatalf("claimed = %v, want [0003]", claimed)
+	}
+	if got := rec.focusTasks(); len(got) != 1 || got[0] != "0003" {
+		t.Fatalf("focusTasks = %v, want [0003]", got)
+	}
+}
+
 // Writing spec.md through an authoring mode's Write tool persists the file and
 // emits a doc_updated event via the Workspace OnWrite hook.
 func TestSpecEditEmitsDocUpdated(t *testing.T) {

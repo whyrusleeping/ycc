@@ -1405,8 +1405,8 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 		ls.Activity = sessionActivity(s)
 		ls.State = activityProse(ls.Activity, evs)
 		ls.Focus = canonicalTasks(focusTasks(evs))
+		ls.Title = deriveTitle(evs)
 		if detail {
-			ls.Title = deriveTitle(evs)
 			claims, ok := claimsByTree[s.Workspace]
 			if !ok {
 				claims = m.ownership.ClaimDetails(s.Workspace)
@@ -1487,6 +1487,9 @@ func liveSessionText(sessions []LiveSession, now time.Time, detail bool) string 
 			}
 			b.WriteString(claimLines(s.Claims, now))
 		} else {
+			if len(s.Focus) == 0 && s.Intent == "" && s.Title != "" {
+				b.WriteString("    title: " + s.Title + "\n")
+			}
 			b.WriteString(ambiguousClaimNote(s.Claims))
 		}
 		for jn, j := range s.Jobs {

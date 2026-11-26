@@ -1196,6 +1196,26 @@ func TestOtherSessionsNoteSeparatesWorkingFromIdle(t *testing.T) {
 	if got := m.otherSessionsNote(ws, "s_self", later); strings.Contains(got, "s_chat") {
 		t.Fatalf("quiet idle session listed: %q", got)
 	}
+
+	// An unfocused chat session without a declared intent shows its title so
+	// work-loop sessions can see what the user is discussing.
+	topic := add("s_topic", "chat")
+	topic.emitter.Emit(event.UserInput, map[string]any{"text": "Let's rethink the daily discovery pass"})
+	topic.setStatus(event.StatusIdle)
+	if got := m.otherSessionsNote(ws, "s_self", now); !strings.Contains(got, "    title: Let's rethink the daily discovery pass\n") {
+		t.Fatalf("unfocused chat lacks title in footer:\n%s", got)
+	}
+	// Once coordination is on and it declares an intent, the footer shows the
+	// intent without the redundant title line.
+	if err := docs.SetSessionCoordination(ws, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := topic.declareIntent("redesigning discovery"); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.otherSessionsNote(ws, "s_self", now); !strings.Contains(got, `intent: "redesigning discovery"`) || strings.Contains(got, "    title: ") {
+		t.Fatalf("chat with intent should show intent without redundant title:\n%s", got)
+	}
 }
 
 func TestWorkLoopRetryableFailureWaitsThenResumes(t *testing.T) {
@@ -1428,8 +1448,8 @@ func TestWorkLoopNoProgressBackoffResetsOnProgress(t *testing.T) {
 // The loop prompt leaves the choice to the session, with sibling awareness.
 func TestWorkLoopPromptSiblingAwareChoice(t *testing.T) {
 	for _, want := range []string{"in parallel", "list_backlog", "what those\nsibling sessions are doing",
-		"size is not a reason to skip", "at most once in this session", "update_task in_progress",
-		"set_intent the areas or files", "GPUs, databases"} {
+		"recent chat or pm session", "size is not a reason to skip", "at most once in this session",
+		"update_task in_progress", "set_intent the areas or files", "GPUs, databases"} {
 		if !strings.Contains(workLoopPrompt, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, workLoopPrompt)
 		}

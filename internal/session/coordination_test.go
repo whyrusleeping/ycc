@@ -352,7 +352,8 @@ func TestOtherSessionsNoteFlagsAmbiguousClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	note := m.otherSessionsNote(ws, "", time.Now())
-	if !strings.Contains(note, "ambiguous claims on 5 path(s)") || !strings.Contains(note, ", … 2 more") || strings.Contains(note, "a.go") {
-		t.Fatalf("footer does not flag the ambiguous claims alone, bounded:\n%s", note)
+	if !strings.Contains(note, "ambiguous claims on 5 path(s)") || !strings.Contains(note, ", … 2 more") ||
+		strings.Contains(note, "    claims ") || !strings.Contains(note, "    title: write a.go\n") {
+		t.Fatalf("footer does not flag the ambiguous claims alone (with unfocused chat title), bounded:\n%s", note)
 	}
 }

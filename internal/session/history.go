@@ -360,7 +360,8 @@ func deriveTitle(evs []event.Event) string {
 
 func isDefaultPrompt(prompt string) bool {
 	prompt = strings.TrimSpace(prompt)
-	if prompt == strings.TrimSpace(workLoopPrompt) {
+	if prompt == strings.TrimSpace(workLoopPrompt) ||
+		strings.HasPrefix(prompt, "Work on the backlog as one session of an unattended work loop.") {
 		return true
 	}
 	for _, mode := range []string{"work", "chat", "pm"} {

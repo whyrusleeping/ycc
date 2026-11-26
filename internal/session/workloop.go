@@ -2016,7 +2016,8 @@ Other work-loop and live sessions may be working in this project in parallel: th
 footer lists them with their state, focused tasks and declared intents. Choose the best next ready
 task (one whose dependencies are all done), considering backlog priority and order and what those
 sibling sessions are doing; leave tasks they hold to them and avoid colliding with the areas they
-are changing. A task's size is not a reason to skip it. If a task genuinely needs splitting, split
+are changing. Leave tasks or areas that a recent chat or pm session is visibly discussing or
+redesigning with the user to that session rather than racing it. A task's size is not a reason to skip it. If a task genuinely needs splitting, split
 it at most once in this session, then work the first piece in this same session. Claim your choice
 with update_task in_progress; a claim fails when another live session holds the task, so choose
 again then. Once claimed, state in set_intent the areas or files and any external resources
