@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -80,15 +81,23 @@ func ownerGoneClaim(e *jobs.Restored) map[string]any {
 //     confirm it;
 //   - a job with terminal evidence keeps its report and claim; its execution
 //     is confirmed by an exit record, followed while the supervisor lives (a
-//     kill still unwinding is asked again), or restored as unknown.
+//     kill still unwinding is asked again), or restored as unknown;
+//   - a job an operator cleared as stopped (jobshim.Cleared) without an exit
+//     record is a loss whose execution is not followed further.
 //
-// coordinator names the actor whose jobs survive a reopen. Entries the
-// reconciliation does not handle (direct children, jobs without a job
-// directory) are left for FinalizeRestoredJobs' legacy loss.
-func ReconcileSupervisedJobs(sup *jobshim.Session, entries []jobs.Restored, coordinator string, now time.Time) *SupervisedReopen {
+// coordinator names the actor whose jobs survive a reopen. adopted holds the
+// handles a passive supervisor was already following (PassiveJobs.Take): they
+// are used instead of connecting again, and detached when the reconciliation
+// does not follow them. Entries the reconciliation does not handle (direct
+// children, jobs without a job directory) are left for FinalizeRestoredJobs'
+// legacy loss.
+func ReconcileSupervisedJobs(sup *jobshim.Session, entries []jobs.Restored, coordinator string, now time.Time, adopted map[string]*jobshim.Handle) *SupervisedReopen {
 	if sup == nil {
+		detachAll(adopted)
 		return nil
 	}
+	adopted = maps.Clone(adopted)
+	defer detachAll(adopted) // the handles no job below took
 	var order []int
 	for i := range entries {
 		if entries[i].Supervised && entries[i].Kind == "bash" {
@@ -121,7 +130,16 @@ func ReconcileSupervisedJobs(sup *jobshim.Session, entries []jobs.Restored, coor
 			r.exited(j, e, rec, terminal, dir)
 			continue
 		}
-		j.handle = sup.Attach(e.ID)
+		if jobshim.Cleared(dir) {
+			r.cleared(j, e, terminal, now)
+			continue
+		}
+		if h := adopted[e.ID]; h != nil {
+			j.handle = h
+			delete(adopted, e.ID)
+		} else {
+			j.handle = sup.Attach(e.ID)
+		}
 		select {
 		case <-j.handle.Done():
 			if out := j.handle.Outcome(); out.Exit != nil {
@@ -195,6 +213,24 @@ func (r *SupervisedReopen) lost(j *reopenedJob, e *jobs.Restored, reason string,
 		e.Result += fmt.Sprintf("\n[output artifact %s: not available until an exit record confirms the command stopped]", e.Artifact)
 	}
 	j.finish = reopenFinish(e, true, !j.owned)
+}
+
+// cleared reconciles a job an operator cleared as stopped without an exit
+// record: an unreported one is lost, and nothing follows its execution.
+func (r *SupervisedReopen) cleared(j *reopenedJob, e *jobs.Restored, terminal bool, now time.Time) {
+	if terminal {
+		return
+	}
+	e.Status, e.Finished, e.Notified = jobs.Lost, now, !j.owned
+	e.Result = "lost: supervision of this job was lost, and an operator cleared it as stopped"
+	j.finish = reopenFinish(e, false, !j.owned)
+}
+
+// detachAll stops following handles, leaving their supervisors running.
+func detachAll(handles map[string]*jobshim.Handle) {
+	for _, h := range handles {
+		h.Detach()
+	}
 }
 
 func jobNumber(id string) int {

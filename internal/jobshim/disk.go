@@ -51,19 +51,39 @@ func (s *Session) Probe(jobID string) ProbeResult {
 	return ProbeResult{Unknown: "the job supervisor exited without an exit record"}
 }
 
+// Cleared reports whether an operator explicitly cleared jobDir's job as
+// stopped (a "cleared" file in the job directory) while no supervisor holds
+// its shim.lock. A cleared job without an exit record no longer blocks GC or
+// worktree cleanup, and a reopen reports it lost without unknown execution.
+// The marker is the operator's assertion; a live supervisor overrides it.
+func Cleared(jobDir string) bool {
+	return exists(filepath.Join(jobDir, clearedFile)) && !lockHeld(jobDir)
+}
+
+// MarkCleared records the operator's confirmation that jobDir's command has
+// stopped (Cleared).
+func MarkCleared(jobDir, note string) error {
+	return writeMarker(jobDir, clearedFile, note+"\n")
+}
+
 // jobBusy reports why a job directory must not be deleted, or "".
 func jobBusy(dir string) string {
 	if lockHeld(dir) {
 		return "a job supervisor is still running"
 	}
+	harvested := exists(filepath.Join(dir, harvestedFile))
+	if exists(filepath.Join(dir, exitFile)) && !harvested {
+		// The operator's marker only stands in for a missing exit record.
+		return "a job's exit record has not been harvested"
+	}
+	if exists(filepath.Join(dir, clearedFile)) {
+		return ""
+	}
 	if exists(filepath.Join(dir, unknownFile)) {
 		return "a job's execution is unknown"
 	}
-	if exists(filepath.Join(dir, harvestedFile)) {
+	if harvested {
 		return ""
-	}
-	if exists(filepath.Join(dir, exitFile)) {
-		return "a job's exit record has not been harvested"
 	}
 	if exists(filepath.Join(dir, specFile)) {
 		return "a job supervisor exited without an exit record"
@@ -97,7 +117,8 @@ func SessionBusy(sessionDir string) string {
 // it has no valid exit record of its own and either a live supervisor holds
 // its shim.lock, its execution is marked unknown, or its supervisor exited
 // without one. A valid exit record settles the job even while its supervisor
-// is still exiting. Destructive cleanup of the worktree such a job runs in
+// is still exiting, as does an operator's cleared marker once no supervisor
+// holds the lock. Destructive cleanup of the worktree such a job runs in
 // must wait (docs/design/daemon-restart.md §2).
 func SessionUnsettled(sessionDir string) string {
 	entries, err := os.ReadDir(JobsDir(sessionDir))
@@ -118,6 +139,8 @@ func SessionUnsettled(sessionDir string) string {
 		switch {
 		case lockHeld(dir):
 			return e.Name() + ": a job supervisor is still running"
+		case exists(filepath.Join(dir, clearedFile)):
+			continue
 		case exists(filepath.Join(dir, unknownFile)):
 			return e.Name() + ": a job's execution is unknown"
 		case exists(filepath.Join(dir, specFile)):

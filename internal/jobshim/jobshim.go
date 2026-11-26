@@ -61,6 +61,7 @@ const (
 	harvestedFile  = "harvested"
 	unknownFile    = "execution_unknown"
 	evictedFile    = "evicted"
+	clearedFile    = "cleared" // an operator confirmed the command stopped
 	segmentPrefix  = "seg-"
 	segmentSuffix  = ".log"
 	jobsDirName    = "jobs"
@@ -132,7 +133,9 @@ func readJSON(path string, v any) error {
 	return json.Unmarshal(data, v)
 }
 
-// ReadExit returns the job directory's exit record, or os.ErrNotExist.
+// ReadExit returns the job directory's exit record, or os.ErrNotExist. A
+// record naming another job than the directory's is refused: it confirms
+// nothing about this job.
 func ReadExit(jobDir string) (*ExitRecord, error) {
 	var rec ExitRecord
 	if err := readJSON(filepath.Join(jobDir, exitFile), &rec); err != nil {
@@ -140,6 +143,9 @@ func ReadExit(jobDir string) (*ExitRecord, error) {
 	}
 	if rec.Version != ProtocolVersion {
 		return nil, fmt.Errorf("exit record version %d, want %d", rec.Version, ProtocolVersion)
+	}
+	if rec.JobID != filepath.Base(jobDir) {
+		return nil, fmt.Errorf("exit record names job %q, not %q", rec.JobID, filepath.Base(jobDir))
 	}
 	return &rec, nil
 }

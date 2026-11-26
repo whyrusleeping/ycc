@@ -200,6 +200,10 @@ bounded head capture and an atomic exit record, so the job can outlive the daemo
   when the session reopens idle and waiting on them.
 - When both fields are omitted, the reopen means what it always did: nothing survived it.
 
+Persistent startup holds the supervised jobs of sessions that stay closed in a passive table, and
+writes nothing to their logs. Those jobs guard their workstream's worktree and count as running
+shells there until their exit is confirmed or a reopen takes them over (`docs/design/async-jobs.md`).
+
 ### 5.2 Event contract
 
 A durable event has a monotonically increasing per-session `seq`, timestamp, session id, actor,

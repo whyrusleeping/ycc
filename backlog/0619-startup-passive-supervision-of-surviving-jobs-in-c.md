@@ -1,7 +1,7 @@
 ---
 id: "0619"
 title: Startup passive supervision of surviving jobs in closed sessions
-status: todo
+status: done
 priority: 2
 created: "2026-11-26"
 updated: "2026-11-26"
@@ -12,6 +12,7 @@ spec_refs:
 ---
 
 ## Description
+
 Split from 0615 (slice 3 of restart-safe daemon sessions, `docs/design/daemon-restart.md` §1 Phase 3 and §5 "Passive resource supervision"). 0615 reconciles supervised jobs when a session is reopened; this task covers sessions that stay closed after a daemon restart or crash, whose supervised jobs keep running with nothing watching them.
 
 ### Acceptance criteria
@@ -24,6 +25,8 @@ Split from 0615 (slice 3 of restart-safe daemon sessions, `docs/design/daemon-re
   - A crash in that window leaves a terminal entry.
   - Reordering the stop before those steps broke the event-ordering tests in `workstream_merge_test.go` and `workstream_integrate_test.go`.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+Startup phase 3 (Manager.SupervisePassiveJobs; runs only when a job launcher is set, until 0616) scans the session dirs of registered projects and every session dir in a verified workstream worktree. It reads only the committed log prefix and fails closed on an unreadable log. It writes nothing to logs. Subagent shells are killed and joined under one shared deadline. Other supervised jobs stay in tools.PassiveJobs, registered as running background shells, until an exit record (job id validated) or an operator `cleared` marker settles them. Reopen adopts the held handles, and session dirs are keyed by physical path. Merge, integration and discard now fence the worktree against new sessions and lock every worktree session id. They kill and join live jobs (jobs.Registry.Quiesce), with stopping instances counted as unsettled, before advancing the base or recording the discard. Sessions stop only afterwards, so workstream events still reach the live logs. Integration retry archives the previous attempt only under mergeMu inside the same fence. opus and sol accepted after 7 rounds. go test ./... and the race subsets pass.
+
+Commit: jobs: passive startup supervision of closed sessions' supervised jobs, and settle workstream execution before merge, integration and discard (0619)

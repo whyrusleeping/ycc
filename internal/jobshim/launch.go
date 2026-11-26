@@ -88,11 +88,42 @@ type Session struct {
 }
 
 // ForSession binds the launcher to sessionDir (<workspace>/.ycc/sessions/<id>).
+// The directory is taken in CanonicalSessionDir's form, so every spelling of
+// one workspace derives the same control socket names and identifies the
+// same jobs.
 func (l *Launcher) ForSession(sessionDir string) *Session {
-	if abs, err := filepath.Abs(sessionDir); err == nil {
-		sessionDir = abs
+	return &Session{l: l, dir: CanonicalSessionDir(sessionDir)}
+}
+
+// CanonicalSessionDir is a session directory (<workspace>/.ycc/sessions/<id>)
+// with its workspace taken by physical path (symlinks resolved). The
+// components below the workspace stay as spelled: Prepare refuses a symlink
+// there rather than following it.
+func CanonicalSessionDir(sessionDir string) string {
+	abs, err := filepath.Abs(sessionDir)
+	if err != nil {
+		return sessionDir
 	}
-	return &Session{l: l, dir: sessionDir}
+	sessions := filepath.Dir(abs)
+	ycc := filepath.Dir(sessions)
+	return filepath.Join(canonicalDir(filepath.Dir(ycc)), filepath.Base(ycc), filepath.Base(sessions), filepath.Base(abs))
+}
+
+// canonicalDir is dir made absolute with symlinks resolved, as far as it
+// exists: a missing tail is appended to its resolved parent.
+func canonicalDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		return abs
+	}
+	return filepath.Join(canonicalDir(parent), filepath.Base(abs))
 }
 
 // Dir returns the session directory.
@@ -473,6 +504,9 @@ func (h *Handle) watch() {
 			}
 		}
 		ctl.close()
+		if rec != nil && rec.JobID != h.jobID {
+			rec = nil // a record for another job confirms nothing about this one
+		}
 		if rec != nil {
 			h.outcome = Outcome{Exit: rec}
 			return

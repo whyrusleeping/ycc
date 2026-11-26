@@ -12,6 +12,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/engine"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
+	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
 // A human ask_user question must survive the live process that asked it. When a
@@ -299,6 +300,19 @@ func (m *Manager) persistedSessionProject(id string) (string, bool) {
 				if _, ok := m.projects.Resolve(ws.Project); ok {
 					return ws.Project, true
 				}
+			}
+		}
+		// So is one the workstream never recorded (an integration session a
+		// crash left before its id was stored), found by its log there.
+		for _, ws := range m.workstreams.List() {
+			if !ws.Status.InFlight() || workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath) != nil {
+				continue
+			}
+			if nonEmptyLog(filepath.Join(ws.WorktreePath, ".ycc", "sessions", id, "events.jsonl")) != nil {
+				continue
+			}
+			if _, ok := m.projects.Resolve(ws.Project); ok {
+				return ws.Project, true
 			}
 		}
 	}

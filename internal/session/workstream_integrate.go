@@ -477,8 +477,11 @@ func (m *Manager) integrationFastPath(id string) integrationOutcome {
 
 	// Advance to the immutable SHA that passed verify, never to the mutable branch
 	// name. AdvanceBranch retains its fast-forward-only ancestry and clean-tree
-	// checks for commit-ish targets.
-	if why := m.workstreamExecutionUnsettled(ws); why != "" {
+	// checks for commit-ish targets. Nothing may still run in the worktree once
+	// the base moves (settleWorkstreamExecution).
+	release, ids, why := m.settleWorkstreamExecution(ws, "workstream "+ws.ID+" is being integrated")
+	defer release()
+	if why != "" {
 		m.integrationNeedsAttention(ws, "integration blocked: "+why, nil)
 		return integrationOutcome{kind: integrationHandled}
 	}
@@ -523,7 +526,7 @@ func (m *Manager) integrationFastPath(id string) integrationOutcome {
 	if fresh, ok := m.workstreams.Get(ws.ID); ok {
 		ws = fresh
 	}
-	if unjoined := m.stopWorkstreamSessions(ws); unjoined != nil {
+	if unjoined := m.stopWorkstreamSessions(ws, ids); unjoined != nil {
 		m.keptAfterMerge(ws, commit, unjoined)
 	} else {
 		m.preserveWorkstreamSessions(ws)
@@ -535,54 +538,40 @@ func (m *Manager) integrationFastPath(id string) integrationOutcome {
 }
 
 // runIntegrateSession starts one normal unattended session rooted in the linked
-// worktree and waits for its control-tool result. It never holds mergeMu, so the
-// agent can run git in its worktree without giving it access to daemon-owned base
+// worktree and waits for its control-tool result. It holds mergeMu only while
+// it checks the stream is still ready and settled, archives the previous
+// attempt and publishes the new session, so a merge or discard cannot
+// interleave with that; it never holds it while the agent runs, so the agent
+// can run git in its worktree without giving it access to daemon-owned base
 // advancement.
 func (m *Manager) runIntegrateSession(ws workstream.Workstream, attempt int, out integrationOutcome) (result integrateAgentResult) {
-	current, ok := m.workstreams.Get(ws.ID)
-	if !ok || current.Status != workstream.StatusReady {
-		return integrateAgentResult{err: fmt.Errorf("workstream is no longer ready")}
-	}
-	ws = current
-
-	data := map[string]any{
-		"workstream": ws.ID, "branch": ws.Branch, "base_branch": out.base,
-		"agent": true, "attempt": attempt,
-	}
-	if len(out.conflicts) > 0 {
-		data["conflicts"] = out.conflicts
-	}
-	if out.verifyOutput != "" {
-		data["verify_output"] = boundedIntegrationOutput(out.verifyOutput)
-	}
-	m.emitWorkstreamEvent(ws, event.WorkstreamIntegrating, data)
-
 	failure := out.reason
 	if out.kind == integrationConflict {
 		failure += "\nThe daemon aborted the conflicted rebase and restored the worktree; re-run git rebase yourself."
 	}
-	seed := fmt.Sprintf(`Recover integration for workstream %s on branch %s.
+	s, err := m.prepareIntegrateSession(ws.ID, func(ws workstream.Workstream) string {
+		data := map[string]any{
+			"workstream": ws.ID, "branch": ws.Branch, "base_branch": out.base,
+			"agent": true, "attempt": attempt,
+		}
+		if len(out.conflicts) > 0 {
+			data["conflicts"] = out.conflicts
+		}
+		if out.verifyOutput != "" {
+			data["verify_output"] = boundedIntegrationOutput(out.verifyOutput)
+		}
+		m.emitWorkstreamEvent(ws, event.WorkstreamIntegrating, data)
+		return fmt.Sprintf(`Recover integration for workstream %s on branch %s.
 Base branch: %s
 Verify command: %s
 Failure to resolve:
 %s
 
 Work only in this linked worktree. Re-run the rebase onto the named base when needed, resolve or fix the failure, commit the result on the workstream branch, and run the verify command until green. Then call request_integration. Never check out, merge into, advance, reset, or otherwise modify the base branch; never push. The daemon will independently re-rebase and re-run verify and alone owns advancing base. If the correct resolution is not yours to decide, call report_blocked.`,
-		ws.ID, ws.Branch, out.base, out.verifyCmd, failure)
-
-	s, err := m.start(Config{Workspace: ws.WorktreePath, Mode: "integrate", Prompt: seed, Unattended: true}, false)
+			ws.ID, ws.Branch, out.base, out.verifyCmd, failure)
+	})
 	if err != nil {
-		return integrateAgentResult{err: fmt.Errorf("start integrate session: %w", err)}
-	}
-	// The registry exposes the latest recovery session for drill-in. Preserve an
-	// earlier attempt before replacing that hook so bounded retries do not lose
-	// their transcripts when the worktree is eventually removed.
-	if ws.IntegrateSessionID != "" && ws.IntegrateSessionID != s.ID {
-		m.preserveWorkstreamSessionID(ws, ws.IntegrateSessionID)
-	}
-	if err := m.workstreams.SetIntegrateSessionID(ws.ID, s.ID); err != nil {
-		_ = m.Stop(s.ID)
-		return integrateAgentResult{err: fmt.Errorf("record integrate session: %w", err)}
+		return integrateAgentResult{err: err}
 	}
 	defer func() {
 		if m.shuttingDown.Load() {
@@ -767,4 +756,75 @@ func (m *Manager) deferWorkstreamIntegration(ws workstream.Workstream, reason st
 	// stream again after the user's base worktree is clean.
 	m.Notify(notify.KindAttention, ws.Project, ws.SessionID,
 		fmt.Sprintf("workstream %s: %s", ws.ID, reason))
+}
+
+// prepareIntegrateSession starts the integration recovery session of stream
+// id under mergeMu, so no merge, integration or discard interleaves: the
+// stream must still be ready, the previous attempt's session closed, and no
+// job of a closed session in its worktree may still run, because that
+// attempt's log is archived and its id replaced. The previous session's
+// preparation lock keeps it closed until it is. seed records the attempt and
+// returns the session's prompt.
+func (m *Manager) prepareIntegrateSession(id string, seed func(workstream.Workstream) string) (*Session, error) {
+	m.mergeMu.Lock()
+	defer m.mergeMu.Unlock()
+	ws, ok := m.workstreams.Get(id)
+	if !ok || ws.Status != workstream.StatusReady {
+		return nil, fmt.Errorf("workstream is no longer ready")
+	}
+	if prior := ws.IntegrateSessionID; prior != "" {
+		unlock := m.lockSessionID(prior)
+		defer unlock()
+		if _, live := m.worktreeSession(ws, prior); live {
+			return nil, fmt.Errorf("previous integrate session %s is still open", prior)
+		}
+	}
+	if why := m.workstreamExecutionUnsettled(ws); why != "" {
+		return nil, fmt.Errorf("worktree not settled: %s", why)
+	}
+	// No session may start or reopen in the worktree until the previous
+	// attempt is archived. One still open there (an idle implementation
+	// session) may stay open, but not with a job running, and none starts one
+	// until the new attempt is published.
+	unfence, live := m.fenceWorktree(ws.WorktreePath)
+	defer unfence()
+	for _, s := range live {
+		if s.deps == nil || s.deps.Jobs == nil {
+			continue
+		}
+		defer s.deps.Jobs.Hold()()
+		for _, info := range s.deps.Jobs.List("", true) {
+			if job, ok := s.deps.Jobs.Get(info.ID); ok && job.ExecutionRunning() {
+				return nil, fmt.Errorf("worktree not settled: session %s: background job %s is still running", s.ID, info.ID)
+			}
+		}
+	}
+	// Checked again inside the fence and the holds: an instance that left the
+	// live map before the snapshot but is still joining its jobs (ending), or a
+	// job a closed session left, is seen now.
+	ids := m.workstreamSessionIDs(ws)
+	for _, s := range live {
+		ids = append(ids, s.ID)
+	}
+	if why := m.executionUnsettled(ws, ids); why != "" {
+		return nil, fmt.Errorf("worktree not settled: %s", why)
+	}
+	prompt := seed(ws)
+	// The registry exposes the latest recovery session for drill-in. Preserve an
+	// earlier attempt before replacing that hook so bounded retries do not lose
+	// their transcripts when the worktree is eventually removed.
+	if ws.IntegrateSessionID != "" {
+		m.preserveWorkstreamSessionID(ws, ws.IntegrateSessionID)
+	}
+	// The replacement is started under mergeMu, but no longer fenced out.
+	unfence()
+	s, err := m.start(Config{Workspace: ws.WorktreePath, Mode: "integrate", Prompt: prompt, Unattended: true}, false)
+	if err != nil {
+		return nil, fmt.Errorf("start integrate session: %w", err)
+	}
+	if err := m.workstreams.SetIntegrateSessionID(ws.ID, s.ID); err != nil {
+		_ = m.Stop(s.ID)
+		return nil, fmt.Errorf("record integrate session: %w", err)
+	}
+	return s, nil
 }

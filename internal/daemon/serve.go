@@ -224,6 +224,13 @@ func startPersistent(p *daemonParts, stopping func() bool) (stop func()) {
 	if stopping() {
 		return func() {}
 	}
+	// Supervised jobs of sessions that stay closed keep running with nothing
+	// following them: hold them passively (subagents' shells are stopped), so
+	// their worktrees stay guarded and their shells count as running there.
+	p.mgr.SupervisePassiveJobs()
+	if stopping() {
+		return func() {}
+	}
 	// Phase 4: release execution, then background scheduling.
 	p.mgr.ReleaseExecution()
 	p.mgr.DeriveWorkstreamReadiness()

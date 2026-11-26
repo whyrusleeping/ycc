@@ -110,7 +110,7 @@ func TestReopenReattachesSurvivingJob(t *testing.T) {
 	}
 	entries := restartEntries(rec.snapshot())
 	rec2 := &captureRec{}
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if !entries[0].Live || entries[0].Status != jobs.Running {
 		t.Fatalf("entry = %+v, want a live survivor", entries[0])
 	}
@@ -169,7 +169,7 @@ func TestReopenHarvestsDowntimeFinish(t *testing.T) {
 	}
 	waitExitRecord(t, sup, "job_1")
 	entries := restartEntries(rec.snapshot())
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	e := entries[0]
 	if e.Live || e.Status != jobs.Failed || e.Notified || !strings.Contains(e.Result, "exit 3") ||
 		!strings.Contains(e.Result, "late") || !strings.Contains(e.Result, recoveredAttributionNote) {
@@ -205,7 +205,7 @@ func TestReopenHarvestsDowntimeFinish(t *testing.T) {
 	evs := append(rec.snapshot(), rec2.snapshot()...)
 	evs = append(evs, event.Event{Type: event.JobNotified, Actor: "coordinator", Data: map[string]any{"id": "job_1"}})
 	entries = restartEntries(evs)
-	r = ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r = ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	rec3 := &captureRec{}
 	ws = reopenWorkspace(t, sup, entries, rec3)
 	r.Activate(ws)
@@ -268,7 +268,7 @@ func TestReopenSupervisorDiedIsExecutionUnknown(t *testing.T) {
 	}
 	waitLockReleased(t, sup, "job_1")
 	entries := restartEntries(rec.snapshot())
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if e := entries[0]; e.Status != jobs.Lost || !e.ExecutionUnknown || e.Notified {
 		t.Fatalf("entry = %+v", e)
 	}
@@ -312,7 +312,7 @@ func TestReopenKeepsClaimedReportWhenSupervisionLost(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "spec.json"), []byte(spec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if e := entries[0]; e.Status != jobs.Killed || e.Result != "killed" || !e.ExecutionUnknown {
 		t.Fatalf("entry = %+v", e)
 	}
@@ -341,7 +341,7 @@ func TestReopenKillsSubagentShell(t *testing.T) {
 	}
 	entries := restartEntries(rec.snapshot())
 	entries[0].Owner = "implementer"
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if e := entries[0]; e.Status != jobs.Killed || !e.Notified || !e.ExecutionPending || e.Live {
 		t.Fatalf("entry = %+v", e)
 	}
@@ -419,7 +419,7 @@ func TestReopenLostSupervisionKeepsOverlapUntilConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := restartEntries(rec.snapshot())
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if e := entries[0]; e.Status != jobs.Lost || !e.ExecutionUnknown {
 		t.Fatalf("entry = %+v", e)
 	}
@@ -458,7 +458,7 @@ func TestReopenResendsKillForUnwindingJob(t *testing.T) {
 	}
 	entries := restartEntries(rec.snapshot())
 	entries[0].Status, entries[0].Result, entries[0].Recorded = jobs.Killed, "killed", true
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if e := entries[0]; !e.ExecutionPending || e.Live || e.Status != jobs.Killed {
 		t.Fatalf("entry = %+v", e)
 	}
@@ -497,7 +497,7 @@ func TestReopenRepairsUnclaimedSubagentReport(t *testing.T) {
 	entries := restartEntries(rec.snapshot())
 	entries[0].Owner = "implementer"
 	entries[0].Status, entries[0].Result = jobs.Done, "exit 0"
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	rec2 := &captureRec{}
 	ws := reopenWorkspace(t, sup, entries, rec2)
 	r.Activate(ws)
@@ -519,7 +519,7 @@ func TestReattachedFinishNotHarvestedWithoutDurableRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := restartEntries(rec.snapshot())
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if !entries[0].Live {
 		t.Fatal("expected a survivor")
 	}
@@ -548,7 +548,7 @@ func TestSurvivorOutcomeWaitsForReopenMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := restartEntries(rec.snapshot())
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	rec2 := &captureRec{}
 	ws := reopenWorkspace(t, sup, entries, rec2)
 	r.Activate(ws)
@@ -573,7 +573,7 @@ func TestTeardownKillLeavesExitUnharvested(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := restartEntries(rec.snapshot())
-	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	r := ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	rec2 := &captureRec{}
 	ws := reopenWorkspace(t, sup, entries, rec2)
 	r.Activate(ws)
@@ -585,7 +585,7 @@ func TestTeardownKillLeavesExitUnharvested(t *testing.T) {
 		t.Fatalf("finished=%d harvested=%t: an in-memory kill consumed the exit record", rec2.count(event.JobFinished), sup.Harvested("job_1"))
 	}
 	entries = restartEntries(append(rec.snapshot(), rec2.snapshot()...))
-	ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now())
+	ReconcileSupervisedJobs(sup, entries, "coordinator", time.Now(), nil)
 	if e := entries[0]; e.Status != jobs.Failed || !strings.Contains(e.Result, "killed") {
 		t.Fatalf("next reopen entry = %+v, want the kill recorded from the exit record", e)
 	}

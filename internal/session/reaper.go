@@ -119,6 +119,11 @@ func (r *reaper) pruneLogs(now time.Time) {
 			if _, live := r.m.Get(id); live {
 				continue // never prune a live session's log
 			}
+			// A job held passively since startup blocks pruning too (a cleared
+			// one is retired first, so its registration goes with it).
+			if r.m.passiveJobs.Unsettled(sessionKey(filepath.Join(dir, id))) != "" {
+				continue
+			}
 			if why := jobshim.SessionBusy(filepath.Join(dir, id)); why != "" {
 				// A supervised job may still run, or its outcome is unharvested
 				// or unknown: its evidence must outlive the retention window.

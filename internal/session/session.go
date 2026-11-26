@@ -2343,6 +2343,17 @@ type Manager struct {
 	// supervisors (internal/jobshim). Nil (the default, and every production
 	// daemon until restart reconciliation lands) keeps direct child processes.
 	jobLauncher *jobshim.Launcher
+	// passiveJobs holds the supervised jobs of sessions that stayed closed
+	// after a daemon restart (SupervisePassiveJobs) until each exits or its
+	// session's reopen takes it over.
+	passiveJobs *tools.PassiveJobs
+	// ending counts, per session id, instances that left sessions but are
+	// still being torn down (endingLocked). Guarded by mu.
+	ending map[string]int
+	// fencedWorktrees counts, per absolute worktree path, workstream merges,
+	// integrations and discards settling it (settleWorkstreamExecution): no
+	// session rooted there may be started or reopened meanwhile. Guarded by mu.
+	fencedWorktrees map[string]int
 	// workstreamSpawnMu makes the max_parallel check and subsequent registration
 	// atomic with respect to other spawns.
 	workstreamSpawnMu sync.Mutex
@@ -2485,6 +2496,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		workstreams:       workstream.NewMemory(),
 		worktreesRoot:     workstream.DefaultWorktreesRoot(),
 		ownership:         persistentOwnership(),
+		passiveJobs:       tools.NewPassiveJobs(),
 		idAlloc:           docs.AllocatorFor(""),
 		workstreamWatches: map[string]workstreamWatch{},
 		integrators:       map[string]*workstreamIntegrator{},
@@ -2810,6 +2822,10 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace: %w", err)
 	}
+	wsKey := worktreeKey(absWS)
+	if m.insideWorktree(wsKey) {
+		return nil, fmt.Errorf("workspace %s is inside a workstream worktree: start the session at the worktree's root", absWS)
+	}
 	if err := m.validateSubagentModels(cfg.SubagentModels); err != nil {
 		return nil, err
 	}
@@ -2921,6 +2937,12 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		s.cancel()
 		log.Close()
 		return nil, ErrShuttingDown
+	}
+	if m.worktreeFencedLocked(wsKey) {
+		m.mu.Unlock()
+		s.cancel()
+		log.Close()
+		return nil, fmt.Errorf("%w: %s", ErrWorktreeSettling, absWS)
 	}
 	m.sessions[id] = s
 	m.mu.Unlock()
@@ -3301,7 +3323,8 @@ func (m *Manager) workstreamSessionLog(w workstream.Workstream) []event.Event {
 }
 
 // workstreamSessionBusy reports whether a workstream's session is live or its
-// log last went idle while still awaiting background jobs, so startup must not
+// log last went idle while still awaiting background jobs, or a job of one of
+// its sessions is held passively after a daemon restart, so startup must not
 // derive readiness from it or hand its tree to integration.
 func (m *Manager) workstreamSessionBusy(w workstream.Workstream) bool {
 	if w.SessionID == "" {
@@ -3309,6 +3332,13 @@ func (m *Manager) workstreamSessionBusy(w workstream.Workstream) bool {
 	}
 	if _, live := m.Get(w.SessionID); live {
 		return true
+	}
+	if workstream.VerifyUnderRoot(m.worktreesRoot, w.WorktreePath) == nil {
+		for _, id := range m.workstreamSessionIDs(w) {
+			if m.passiveUnsettled(w.WorktreePath, id) != "" {
+				return true
+			}
+		}
 	}
 	return idleAwaitingJobs(m.workstreamSessionLog(w))
 }
@@ -3751,15 +3781,24 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 	// Supervised background jobs may have outlived the daemon that started
 	// them: reconcile each one before the registry and history are rebuilt
-	// (docs/design/daemon-restart.md §3).
+	// (docs/design/daemon-restart.md §3). Jobs held passively since startup
+	// are taken over through the handles already following them.
 	entries := engine.RestoreJobEntries(events)
-	recovery := tools.ReconcileSupervisedJobs(s.deps.JobSupervisor, entries, "coordinator", time.Now())
+	var adopted map[string]*jobshim.Handle
+	endPassive := func() {}
+	if s.deps.JobSupervisor != nil {
+		adopted, endPassive = m.passiveJobs.Take(s.deps.JobSupervisor.Dir())
+	}
+	recovery := tools.ReconcileSupervisedJobs(s.deps.JobSupervisor, entries, "coordinator", time.Now(), adopted)
 	s.deps.Jobs = engine.FinalizeRestoredJobs(entries, events)
 	s.deps.CoordinatorArtifacts = tools.NewArtifactStore()
 	s.seedThinkLevels(replayThinkLevels(events))
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
 		recovery.Abandon()
+		endPassive()
+		// The session stays closed: hold its jobs passively again.
+		m.supervisePassively(id, s.deps.JobSupervisor, absWS, events)
 		log.Close()
 		return nil, err
 	}
@@ -3783,10 +3822,14 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	// runners can be stopped or detached. Reopen holds this id's preparation
 	// lock, so no other caller records or attaches for it meanwhile.
 	recovery.Activate(s.recoveryWorkspace())
+	// The reopen now registers its re-attached shells as running; the passive
+	// registrations they replace can go.
+	endPassive()
 	s.recovery = recovery
 	s.reopenSurviving = recovery.Surviving()
 	s.reopenAwaitingJobs = reopenAwaitingJobs(events) && s.deps.Jobs.PendingContinuation("coordinator")
 
+	wsKey := worktreeKey(absWS)
 	// Register atomically: re-check under the lock so a concurrent Reopen/Start
 	// that won the race keeps its live session. The loser closes its freshly
 	// opened log and abandons its (never-started) session — no goroutine or log
@@ -3805,6 +3848,15 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		s.cancel()
 		log.Close()
 		return nil, ErrShuttingDown
+	}
+	if m.worktreeFencedLocked(wsKey) {
+		m.mu.Unlock()
+		recovery.Abandon()
+		s.cancel()
+		log.Close()
+		// The session stays closed: hold its jobs passively again.
+		m.supervisePassively(id, s.deps.JobSupervisor, absWS, events)
+		return nil, fmt.Errorf("%w: %s", ErrWorktreeSettling, absWS)
 	}
 	m.sessions[id] = s
 	m.mu.Unlock()
@@ -3951,6 +4003,24 @@ func (m *Manager) workstreamSessionWorktree(absWS, id string) (string, bool) {
 			return "", false
 		}
 		return ws.WorktreePath, true
+	}
+	// A session whose log is in an in-flight worktree although the workstream
+	// never recorded it (an integration session a crash left before its id was
+	// stored) is that worktree's too.
+	for _, ws := range m.workstreams.List() {
+		if !ws.Status.InFlight() || workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath) != nil {
+			continue
+		}
+		if nonEmptyLog(filepath.Join(ws.WorktreePath, ".ycc", "sessions", id, "events.jsonl")) != nil {
+			continue
+		}
+		primary, ok := m.projects.Resolve(ws.Project)
+		if !ok {
+			continue
+		}
+		if p, err := filepath.Abs(primary); err == nil && p == absWS {
+			return ws.WorktreePath, true
+		}
 	}
 	return "", false
 }
@@ -4208,7 +4278,9 @@ func (m *Manager) Stop(id string) error {
 		return nil
 	}
 	delete(m.sessions, id)
+	ended := m.endingLocked(id)
 	m.mu.Unlock()
+	defer ended()
 	s.Stop()
 	// Write claims deliberately outlive the session: its uncommitted edits stay
 	// attributed to it (other sessions' changesets exclude and list them) until
@@ -4277,11 +4349,38 @@ func (m *Manager) reclaimIfCurrent(s *Session) bool {
 		return true
 	}
 	delete(m.sessions, s.ID)
+	ended := m.endingLocked(s.ID)
 	m.mu.Unlock()
+	defer ended()
 	s.reap()
 	m.endClaims(s)
 	m.waitWorkstreamWatcher(s.ID)
 	return true
+}
+
+// endingLocked records, until the returned func runs, that an instance of id
+// has left the live map but its teardown (joining its jobs) has not finished,
+// so workstream cleanup does not mistake it for a closed session (Ending).
+// The caller holds mu.
+func (m *Manager) endingLocked(id string) func() {
+	if m.ending == nil {
+		m.ending = map[string]int{}
+	}
+	m.ending[id]++
+	return func() {
+		m.mu.Lock()
+		if m.ending[id]--; m.ending[id] <= 0 {
+			delete(m.ending, id)
+		}
+		m.mu.Unlock()
+	}
+}
+
+// sessionEnding reports whether an instance of id is still being torn down.
+func (m *Manager) sessionEnding(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ending[id] > 0
 }
 
 // ReclaimAll releases every live session without writing session_stopped markers.

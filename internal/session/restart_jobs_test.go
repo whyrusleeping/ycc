@@ -301,6 +301,10 @@ func TestDiscardUnjoinedDuringStopStaysRetryable(t *testing.T) {
 	if _, statErr := os.Stat(w.WorktreePath); statErr != nil {
 		t.Fatalf("unjoined worktree removed: %v", statErr)
 	}
+	// The stop is confirmed before the discard is recorded, not after.
+	if _, ok := snapshotHasEvent(s, event.WorkstreamDiscarded); ok {
+		t.Fatal("workstream_discarded recorded although a job's stop was unconfirmed")
+	}
 	got, _ := m.workstreams.Get(w.ID)
 	if err == nil || got.Status != "needs_attention" || !got.Status.InFlight() {
 		t.Fatalf("discard error=%v status=%s, want a retryable needs_attention", err, got.Status)

@@ -124,6 +124,45 @@ worktree. A session whose last boundary was an idle
 report awaiting jobs, and which still has job deliveries pending, reopens into that same awaiting
 state (`session_reopened.awaiting_jobs`), so a survivor's completion or a downtime finish resumes it.
 
+A session can also stay closed after a restart or crash while its supervised jobs keep running.
+Persistent startup therefore scans every registered project's session directories, and every session
+directory in each workstream's verified worktree, for supervised jobs that have
+neither a valid exit record nor an operator's `cleared` marker. It writes nothing to their logs and
+starts no turns:
+
+- A subagent's shell is killed over its control socket and joined, with a bounded wait.
+- Everything else is held in the daemon's passive supervisor table until its exit record confirms
+  the stop. That includes a subagent shell whose stop was not confirmed and a job whose supervision
+  is lost.
+- While a job is held, it counts as a running background shell in its worktree for overlap. It
+  blocks merge, integration and discard of its workstream (`needs_attention`). Readiness is not
+  derived from its session.
+- A reopen of the session takes the held handles over into its reconciliation instead of
+  connecting again.
+
+The job directories of jobs that may still run are kept from GC on disk, across later restarts, until
+an exit record turns up. An operator who has confirmed that such a command stopped can write a `cleared`
+file into its job directory. That settles the job for GC and worktree cleanup, unless a supervisor
+still holds `shim.lock`. A reopen then reports the job `lost` without `execution_unknown`.
+
+Before any irreversible step, workstream merge, automatic integration and discard confirm that no
+background job can still run in the worktree. The steps are advancing the base branch and recording
+`workstream_discarded`; archiving the session logs into the primary comes after that confirmation.
+The workstream's live sessions stay live, so workstream events keep reaching their logs, but their
+jobs are killed and joined while new ones are held off (`jobs.Registry.Quiesce`). The sessions are
+stopped only after the step. Until the logs are archived, no session can be started or reopened in
+the worktree, and an instance that is still being stopped counts as unsettled. A live instance of the
+same id rooted elsewhere, such as an archived attempt reopened from the primary, is left alone. A
+stop that cannot be confirmed leaves the stream in flight as `needs_attention`, with the base, the
+worktree and its session logs untouched. A blocked attempt may already have stopped the live
+sessions' jobs. An integration retry checks, under the same lock as merge and discard, that the
+stream is still ready, the previous integration session is closed, and no closed session's job may
+still run in the worktree. Only then does it archive the previous log and start the next attempt.
+These checks cover every session directory in the worktree, including one whose id the workstream
+never recorded. Such a session also resolves to the worktree for a reopen, and its log is archived
+with the others. Worktrees are compared by physical path, so a symlinked spelling is the same
+worktree, and no session may be rooted strictly inside a workstream worktree.
+
 ## Mutation safety
 
 Agents and sessions may mutate one worktree concurrently. Read-only agents fan out; mutating agents,

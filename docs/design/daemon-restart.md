@@ -516,6 +516,15 @@ and client projections as its behavior lands:
    sessions (0619). 0615 also leaves coordinator-owned supervised jobs running across a graceful
    restart. It also reopens a session whose durable state was `session_idle(awaiting_jobs)` into
    wake-eligible idle (the Slice 4 rule below) so that `awaiting_jobs` is recorded truthfully.
+   0619 adds the startup scan and the manager's passive table (`tools.PassiveJobs`). The scan holds
+   jobs without writing to any log. Reopen adopts the held handles. The table and the on-disk state
+   guard workstream merge, integration, discard and readiness. An operator who has confirmed by
+   hand that a command stopped writes a `cleared` file into its job directory
+   (`<session-dir>/jobs/<job-id>/cleared`), which settles a job that has no exit record. Merge,
+   integration and discard now kill and join a live
+   session's jobs before advancing the base or recording the discard (`jobs.Registry.Quiesce`), and
+   stop the session only afterwards. Both features run only when a job launcher is set, until 0616
+   enables supervised launches in `Serve()`.
 4. **Persisted `wait`, wake-eligible idle continuation, idempotent restart manifest, and passive
    leases** *(depends on 1, 3; enables supervised bash launches by default in persistent `Serve()`,
    and excludes `OriginWorkLoop` sessions until Slice 5)*.

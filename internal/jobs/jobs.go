@@ -515,12 +515,13 @@ func (j *Job) SetTerminationHint(hint string) {
 // Kill terminates the job: it finalizes the job as Killed (recording a killed
 // report with the current tail) and cancels its context so the process tree is
 // signalled. It returns true if THIS call effected the transition.
-func (j *Job) Kill() bool {
+func (j *Job) Kill() bool { return j.kill("killed") }
+
+func (j *Job) kill(result string) bool {
 	tail := j.Tail(20)
 	j.mu.Lock()
 	hint := j.terminationHint
 	j.mu.Unlock()
-	result := "killed"
 	if strings.TrimSpace(tail) != "" {
 		result += "\n" + tail
 	}
@@ -730,6 +731,7 @@ type Registry struct {
 	ctx     context.Context
 	cancel  context.CancelCauseFunc
 	closing bool // registration barrier: KillAll has begun snapshotting runners
+	held    int  // Quiesce holds registration off while it is above zero
 	// completions coalesces terminal transitions into at most one pending wake
 	// for the single session owner that consumes them. Buffered so a completion
 	// that lands while the owner is running a turn is still observed when it
@@ -861,7 +863,7 @@ func (r *Registry) TryStartMutatingTracked(kind, label, owner string) (*Job, boo
 func (r *Registry) start(kind, label, owner string, mutates, tracked bool) *Job {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closing {
+	if r.closing || r.held > 0 {
 		return nil
 	}
 	r.seq++
@@ -1188,6 +1190,60 @@ func (r *Registry) ResolveOwner(owner, parent string, retain []RetainRequest) (r
 		}
 	}
 	return reports, handoffs, rejected, unjoined
+}
+
+// Hold holds new registrations off until release is called (once), without
+// stopping any job, so a caller can check what is running and act on it
+// before anything new starts.
+func (r *Registry) Hold() (release func()) {
+	r.mu.Lock()
+	r.held++
+	r.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.mu.Lock()
+			r.held--
+			r.mu.Unlock()
+		})
+	}
+}
+
+// Quiesce stops every job whose execution may still run and holds new
+// registrations off until release is called, leaving the registry usable
+// afterwards (unlike KillAll, its root context is not cancelled). Each such
+// job is killed with result "killed: <reason>" and joined. A job whose stop
+// cannot be confirmed (its supervision was lost) is returned in an
+// *UnjoinedError. A job detached for restart is not this registry's to stop.
+// Workstream merge and discard use it to confirm, before an irreversible
+// step, that nothing a live session started can still run in its worktree.
+func (r *Registry) Quiesce(reason string) (release func(), err error) {
+	release = r.Hold()
+	r.mu.Lock()
+	all := make([]*Job, 0, len(r.order))
+	for _, id := range r.order {
+		all = append(all, r.jobs[id])
+	}
+	r.mu.Unlock()
+	var running []*Job
+	for _, j := range all {
+		if !j.isDetached() && (j.executionRunning() || j.ExecutionUnknown()) {
+			running = append(running, j)
+		}
+	}
+	for _, j := range running {
+		j.kill("killed: " + reason)
+	}
+	var unjoined []string
+	for _, j := range running {
+		if j.WaitExecutionSettled() {
+			unjoined = append(unjoined, j.ID())
+		}
+	}
+	if len(unjoined) > 0 {
+		return release, &UnjoinedError{IDs: unjoined}
+	}
+	return release, nil
 }
 
 // KillAll cancels the root context, finalizes every running report as Killed,
