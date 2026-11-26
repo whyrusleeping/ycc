@@ -143,6 +143,20 @@ type Session struct {
 	// parent's model received the original.
 	forkAwaitsInput bool
 
+	// reopenSurviving, set by Reopen, lists the coordinator's supervised jobs
+	// still running after reconciliation; reopenAwaitingJobs marks a reopen
+	// straight into wake-eligible idle (reopenAwaitingJobs). run() records both
+	// on session_reopened.
+	reopenSurviving    []string
+	reopenAwaitingJobs bool
+	// noDetach makes a restart teardown kill and join supervised shells
+	// instead of leaving them running: the workstream they run in is being
+	// merged or discarded, so its worktree must be settled.
+	noDetach atomic.Bool
+	// recovery is the reopen's supervised-job reconciliation; its survivors'
+	// outcomes wait until session_reopened is recorded or teardown begins.
+	recovery *tools.SupervisedReopen
+
 	// messageCh is the single ordered queue of idle user input (text and any
 	// native attachments). One queue is what keeps serially accepted inputs in
 	// their accepted order when the run owner drains them.
@@ -988,13 +1002,20 @@ func (s *Session) drainJobNotes() ([]string, error) {
 // *jobs.UnjoinedError, also logged, when a job's supervision was lost so its
 // process could not be confirmed stopped.
 func (s *Session) killJobs() error {
+	// Survivors held back for the reopen marker must be able to finish before
+	// teardown joins them.
+	s.recovery.ReleaseMarker()
 	if s.deps == nil || s.deps.Jobs == nil {
 		return nil
 	}
 	var err error
-	if s.ctx != nil && jobs.RestartSuspended(s.ctx) {
-		// Restart suspension: subagent loops see the restart cause too.
+	if s.ctx != nil && jobs.RestartSuspended(s.ctx) && s.noDetach.Load() {
 		err = s.deps.Jobs.KillAllCause(jobs.ErrRestartSuspend)
+	} else if s.ctx != nil && jobs.RestartSuspended(s.ctx) {
+		// Restart suspension: subagent loops see the restart cause too, and
+		// the coordinator's supervised shells are left running for the next
+		// daemon to re-attach on reopen (docs/design/daemon-restart.md §1).
+		err = s.deps.Jobs.SuspendForRestart("coordinator")
 	} else {
 		err = s.deps.Jobs.KillAllCause(nil)
 	}
@@ -1819,7 +1840,18 @@ func (s *Session) run() {
 			// live (restored), not a stale gate to drop.
 			reopened["question_restored"] = true
 		}
+		// Recovery metadata (docs/design/daemon-restart.md §3); omitted fields
+		// keep the legacy meaning (nothing survived the reopen).
+		if len(s.reopenSurviving) > 0 {
+			reopened["surviving_jobs"] = s.reopenSurviving
+		}
+		awaiting := s.reopenAwaitingJobs && s.resumeQuestion == nil && !s.forkAwaitsInput &&
+			!s.contextModelSwitchRequired() && !s.currentLoop().PendingResponse()
+		if awaiting {
+			reopened["awaiting_jobs"] = true
+		}
 		s.emitter.Emit(event.SessionReopened, reopened)
+		s.recovery.ReleaseMarker()
 		for _, notice := range s.startupNotices {
 			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": notice, "level": "warning"})
 		}
@@ -1853,6 +1885,13 @@ func (s *Session) run() {
 		if s.contextModelSwitchRequired() {
 			s.setStatus(event.StatusError)
 			if !s.awaitNextRun(false) {
+				return
+			}
+		} else if awaiting {
+			// The session was idle waiting on its background jobs: their
+			// completion (a downtime finish at once) resumes it as before.
+			s.setIdle(true)
+			if !s.awaitNextRun(true) {
 				return
 			}
 		} else if !s.currentLoop().PendingResponse() || s.forkAwaitsInput {
@@ -3710,14 +3749,21 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	if startupNotice != "" {
 		s.startupNotices = append([]string{startupNotice}, s.startupNotices...)
 	}
-	s.deps.Jobs = engine.RestoreJobs(events)
+	// Supervised background jobs may have outlived the daemon that started
+	// them: reconcile each one before the registry and history are rebuilt
+	// (docs/design/daemon-restart.md §3).
+	entries := engine.RestoreJobEntries(events)
+	recovery := tools.ReconcileSupervisedJobs(s.deps.JobSupervisor, entries, "coordinator", time.Now())
+	s.deps.Jobs = engine.FinalizeRestoredJobs(entries, events)
+	s.deps.CoordinatorArtifacts = tools.NewArtifactStore()
 	s.seedThinkLevels(replayThinkLevels(events))
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
+		recovery.Abandon()
 		log.Close()
 		return nil, err
 	}
-	loop.SetHistory(engine.ReplayHistory(events))
+	loop.SetHistory(engine.ReplayHistoryReconciled(events, recovery.Reconciled()))
 	s.loop = loop
 	// A log that ended while the coordinator waited in ask_user restores that
 	// question as a live gate (armed before registration, so an answer RPC can
@@ -3731,6 +3777,16 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		s.restorePlanOnly(events)
 	}
 
+	// Record downtime finishes and losses (ahead of the run's session_reopened)
+	// and re-attach surviving jobs before the session is published, so a
+	// concurrent teardown (a restart, StopSession) only ever sees jobs whose
+	// runners can be stopped or detached. Reopen holds this id's preparation
+	// lock, so no other caller records or attaches for it meanwhile.
+	recovery.Activate(s.recoveryWorkspace())
+	s.recovery = recovery
+	s.reopenSurviving = recovery.Surviving()
+	s.reopenAwaitingJobs = reopenAwaitingJobs(events) && s.deps.Jobs.PendingContinuation("coordinator")
+
 	// Register atomically: re-check under the lock so a concurrent Reopen/Start
 	// that won the race keeps its live session. The loser closes its freshly
 	// opened log and abandons its (never-started) session — no goroutine or log
@@ -3738,12 +3794,14 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	m.mu.Lock()
 	if existing, ok := m.sessions[id]; ok {
 		m.mu.Unlock()
+		recovery.Abandon()
 		s.cancel()
 		log.Close()
 		return existing, nil
 	}
 	if m.shuttingDown.Load() {
 		m.mu.Unlock()
+		recovery.Abandon()
 		s.cancel()
 		log.Close()
 		return nil, ErrShuttingDown
@@ -3756,6 +3814,49 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 	m.launch(s)
 	return s, nil
+}
+
+// recoveryWorkspace is the coordinator's tool workspace over the reopened
+// registry, which reopen reconciliation uses to record and follow supervised
+// jobs. It shares the coordinator loop's artifact store.
+func (s *Session) recoveryWorkspace() *tools.Workspace {
+	d := s.deps
+	return &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...), Jobs: d.Jobs,
+		JobSupervisor: d.JobSupervisor, Emitter: d.Emitter, Ownership: d.Ownership,
+		MutationToken: d.CoordinatorToken, Artifacts: d.CoordinatorArtifacts}
+}
+
+// reopenAwaitingJobs reports whether the log's latest lifecycle boundary
+// leaves the coordinator idle waiting on its background jobs: a session_idle
+// with awaiting_jobs (or a reopen that recorded it), with no later turn,
+// input, pause, error, stop, fork, question, or context switch. The caller
+// also requires a job continuation still pending in the restored registry.
+func reopenAwaitingJobs(events []event.Event) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Transient {
+			continue
+		}
+		switch ev.Type {
+		case event.SessionIdle, event.SessionReopened:
+			return boolVal(ev.Data, "awaiting_jobs")
+		case event.UserInput:
+			if boolVal(ev.Data, "queued") {
+				continue
+			}
+			return false
+		case event.ModelTurn, event.ToolCall, event.ToolResult:
+			if ev.Actor != "coordinator" {
+				continue
+			}
+			return false
+		case event.UserInputDelivered, event.SessionError, event.SessionStopped, event.Interrupted,
+			event.PauseRequested, event.Resumed, event.SessionForked, event.QuestionAsked,
+			event.ContextViewChanged, event.SessionStarted:
+			return false
+		}
+	}
+	return false
 }
 
 // SessionLogPath resolves a session to its authoritative JSONL log and workspace.

@@ -506,8 +506,11 @@ func applyEvent(ctx context.Context, tx *sql.Tx, sid string, st *State, ev event
 		}
 		// Only the idle report that carried it keeps the awaiting qualifier: any
 		// later coordinator phase change (the wake's turn, input, pause, stop,
-		// error) or a reopen or fork (jobs do not survive one) ends it.
-		if st.Phase != "idle" || ev.Type == event.SessionReopened || ev.Type == event.SessionForked {
+		// error) or a fork ends it, and so does a reopen, unless the reopen
+		// records that the session is again idle waiting on surviving jobs.
+		if ev.Type == event.SessionReopened && st.Phase == "idle" {
+			st.AwaitingJobs, _ = ev.Data["awaiting_jobs"].(bool)
+		} else if st.Phase != "idle" || ev.Type == event.SessionReopened || ev.Type == event.SessionForked {
 			st.AwaitingJobs = false
 		}
 	}

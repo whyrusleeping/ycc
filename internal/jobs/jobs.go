@@ -12,6 +12,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -72,7 +73,11 @@ type Info struct {
 	Mutates                bool
 	Started, Finished      time.Time
 	Activity               Activity
-	Restored               bool // reconstructed from the log; no process or output survived the restart
+	Restored               bool // reconstructed from the log when the session was reopened
+	// OutputAvailable means job_output can read the job's output: its live
+	// buffer, or a supervised job's retained on-disk segments (which survive a
+	// reopen; a restored direct child's output does not).
+	OutputAvailable bool
 	// ExecutionUnknown means supervision of the job's process was lost without
 	// an exit record: it may still be running and was never joined.
 	ExecutionUnknown bool
@@ -95,6 +100,20 @@ type Restored struct {
 	Result                 string
 	Mutates, Notified      bool
 	Started, Finished      time.Time
+	// Supervised marks a job started through an out-of-process supervisor
+	// (job_started "supervised"); Artifact is its reserved output artifact id.
+	Supervised bool
+	Artifact   string
+	// Recorded means the log holds the job's terminal evidence (job_finished,
+	// or a claim or notification carrying the terminal report).
+	Recorded bool
+	// Reopen reconciliation of a supervised job (docs/design/daemon-restart.md
+	// §3) sets at most one of these. Live restores a still-running job as a
+	// tracked Running job whose runner is re-attached. ExecutionPending keeps
+	// a terminal job's execution tracked until its supervisor confirms the
+	// exit (a kill still unwinding). ExecutionUnknown restores a job whose
+	// supervision was lost: execution is never reported complete.
+	Live, ExecutionPending, ExecutionUnknown bool
 }
 
 // Handoff describes a running child job explicitly transferred to its parent.
@@ -159,6 +178,10 @@ type Job struct {
 	execUnknown     bool   // supervision was lost: execution may still be running
 	source          OutputSource
 	stopper         func() error // synchronous kill request (supervised jobs)
+	detacher        func() bool  // leaves the process running across a graceful restart
+	detached        bool         // detacher succeeded: nothing follows the job any more
+	stopPending     bool         // a stop was requested before the stopper was installed
+	recorded        bool         // the terminal report is durable in the session log
 	killErr         error        // the stopper's failure, if any
 	onNotified      func()       // runs once the automatic notification is claimed
 	signalled       bool         // registry completion signal already fired
@@ -314,12 +337,18 @@ func (j *Job) Info() Info {
 	return Info{ID: j.id, Kind: j.kind, Label: j.label, Owner: j.owner,
 		Purpose: j.purpose, Delivery: j.delivery, Status: j.status, Mutates: j.mutates,
 		Started: j.started, Finished: j.finished, Activity: j.activity, Restored: j.restored,
-		ExecutionUnknown: j.execUnknown}
+		OutputAvailable: !j.restored || j.source != nil, ExecutionUnknown: j.execUnknown}
 }
 
 // Tail returns the last n lines of the buffered output.
 func (j *Job) Tail(n int) string {
 	buf, _ := j.retained()
+	return TailText(buf, n)
+}
+
+// TailText is Job.Tail over buf: its last n lines as valid UTF-8, bounded to
+// the job report size.
+func TailText(buf []byte, n int) string {
 	tail := strings.ToValidUTF8(lastLines(string(buf), n), "�")
 	if len(tail) <= maxJobReportBytes {
 		return tail
@@ -500,18 +529,7 @@ func (j *Job) Kill() bool {
 	}
 	fired := j.finalize(Killed, result)
 	j.cancel()
-	j.mu.Lock()
-	stopper := j.stopper
-	j.mu.Unlock()
-	if stopper != nil {
-		if err := stopper(); err != nil {
-			j.mu.Lock()
-			if j.killErr == nil {
-				j.killErr = err
-			}
-			j.mu.Unlock()
-		}
-	}
+	j.requestStop()
 	return fired
 }
 
@@ -521,7 +539,92 @@ func (j *Job) Kill() bool {
 func (j *Job) SetStopper(stop func() error) {
 	j.mu.Lock()
 	j.stopper = stop
+	pending := j.stopPending && stop != nil
+	j.stopPending = false
 	j.mu.Unlock()
+	if pending {
+		// A kill or a restart teardown reached the job while it was still
+		// launching: it is waiting to join this execution.
+		j.runStopper(stop)
+	}
+}
+
+// requestStop makes the stopper's kill request, recording its failure. A job
+// whose runner has not installed its stopper yet (it is still launching)
+// keeps the request, and SetStopper honours it.
+func (j *Job) requestStop() {
+	j.mu.Lock()
+	stopper := j.stopper
+	if stopper == nil {
+		j.stopPending = true
+	}
+	j.mu.Unlock()
+	if stopper == nil {
+		return
+	}
+	j.runStopper(stopper)
+}
+
+func (j *Job) runStopper(stopper func() error) {
+	if err := stopper(); err != nil {
+		j.mu.Lock()
+		if j.killErr == nil {
+			j.killErr = err
+		}
+		j.mu.Unlock()
+	}
+}
+
+// SetDetacher installs fn, which a graceful daemon restart calls instead of
+// killing the running job (Registry.SuspendForRestart). fn stops following the
+// job while leaving its process running, and reports false when it could not
+// (the job finished first).
+func (j *Job) SetDetacher(fn func() bool) {
+	j.mu.Lock()
+	j.detacher = fn
+	j.mu.Unlock()
+}
+
+func (j *Job) isDetached() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.detached
+}
+
+// detachForRestart detaches a running job owned by keepOwner that has a
+// detacher, reporting whether the job is (now or already) detached.
+func (j *Job) detachForRestart(keepOwner string) bool {
+	j.mu.Lock()
+	if j.detached {
+		j.mu.Unlock()
+		return true
+	}
+	fn := j.detacher
+	ok := fn != nil && j.status == Running && j.owner == keepOwner
+	j.mu.Unlock()
+	if !ok || !fn() {
+		return false
+	}
+	j.mu.Lock()
+	j.detached = true
+	j.mu.Unlock()
+	return true
+}
+
+// MarkRecorded records that the job's terminal report is durable in the
+// session log. A report finalized only in memory (a teardown kill) is not,
+// so evidence that depends on it (a supervised exit record) is not consumed.
+func (j *Job) MarkRecorded() {
+	j.mu.Lock()
+	j.recorded = true
+	j.mu.Unlock()
+}
+
+// Recorded reports whether the job's terminal report is durable (MarkRecorded).
+func (j *Job) Recorded() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.recorded
 }
 
 // KillError returns the stopper's failure from the last Kill, if any: the kill
@@ -684,18 +787,41 @@ func NewRestored(entries []Restored) *Registry {
 			purpose: e.Purpose, delivery: e.Delivery, mutates: e.Mutates,
 			ctx: ctx, cancel: cancel, done: make(chan struct{}),
 			status: e.Status, result: e.Result, notified: e.Notified,
-			started: started, finished: finished, restored: true}
+			started: started, finished: finished, restored: true, recorded: e.Recorded}
 		if e.Kind == "agent" {
 			j.activity.Last = finished
 		}
-		if j.status == "" || j.status == Running {
+		if e.Live || e.ExecutionPending || e.ExecutionUnknown {
+			// Reconciled supervised execution stays tracked: its re-attached
+			// runner confirms the exit (ExecutionComplete), and teardown joins it.
+			j.tracked = true
+			j.executionDone = make(chan struct{})
+			j.settled = make(chan struct{})
+			j.onFinish = r.signalCompletion
+		}
+		switch {
+		case e.Live:
+			j.status, j.result, j.notified, j.finished = Running, "", false, time.Time{}
+		case j.status == "" || j.status == Running:
 			j.status = Lost
 			j.notified = true // ReplayHistory injects the lost-on-restart note.
 			if j.result == "" {
 				j.result = "job lost: daemon restarted"
 			}
 		}
-		j.once.Do(func() { close(j.done) })
+		if e.ExecutionUnknown && !e.Live {
+			j.execUnknown = true
+			j.settle()
+		}
+		if j.status != Running {
+			// A restored terminal report's completion edge is long past; a
+			// later confirmed exit must not fire it again. An undelivered
+			// report waiting on its execution is the exception: it becomes
+			// deliverable only when the exit is confirmed or found unknown,
+			// and that must wake the owner.
+			j.signalled = !(e.ExecutionPending && !e.Notified)
+			j.once.Do(func() { close(j.done) })
+		}
 		r.jobs[j.id] = j
 		r.order = append(r.order, j.id)
 		var n int
@@ -1076,20 +1202,45 @@ func (r *Registry) KillAll() error { return r.KillAllCause(nil) }
 // in wait exits without claiming reports, as its coordinator does. A job whose
 // supervision was lost cannot be joined: KillAllCause then returns an
 // *UnjoinedError naming it rather than reporting a clean join.
-func (r *Registry) KillAllCause(cause error) error {
+func (r *Registry) KillAllCause(cause error) error { return r.killAll(cause, "") }
+
+// SuspendForRestart is the graceful-restart teardown (cause ErrRestartSuspend)
+// with one difference from KillAllCause: a running job owned by keepOwner that
+// can detach (SetDetacher) is detached rather than killed, leaving its process
+// running for the next daemon to re-attach on reopen. A detached job records
+// no terminal report and is not joined. Every other job is killed (its
+// stopper asked directly, since a restart-cancelled context does not relay a
+// kill) and joined as KillAllCause does.
+func (r *Registry) SuspendForRestart(keepOwner string) error {
+	return r.killAll(ErrRestartSuspend, keepOwner)
+}
+
+func (r *Registry) killAll(cause error, keepOwner string) error {
 	r.mu.Lock()
 	// Linearize shutdown before taking the snapshot. A tracked start either
 	// registered before this point and is included below, or observes closing and
 	// declines without launching a runner.
 	r.closing = true
 	r.cancel(cause)
-	js := make([]*Job, 0, len(r.jobs))
+	all := make([]*Job, 0, len(r.jobs))
 	for _, id := range r.order {
-		js = append(js, r.jobs[id])
+		all = append(all, r.jobs[id])
 	}
 	r.mu.Unlock()
+	restart := errors.Is(cause, ErrRestartSuspend)
+	js := all[:0:0]
+	for _, j := range all {
+		// A detached job is no longer this registry's to kill or join.
+		if j.isDetached() || (restart && keepOwner != "" && j.detachForRestart(keepOwner)) {
+			continue
+		}
+		js = append(js, j)
+	}
 	for _, j := range js {
 		j.finalize(Killed, "killed: session ended")
+		if restart && j.executionRunning() {
+			j.requestStop()
+		}
 	}
 	var unjoined []string
 	for _, j := range js {

@@ -111,6 +111,11 @@ func TestAwaitingJobsQualifiesIdleUntilCoordinatorResumes(t *testing.T) {
 	add(ev(0, event.SessionIdle, map[string]any{"report": "again", "awaiting_jobs": true}), "idle", true)
 	add(ev(0, event.SessionReopened, nil), "idle", false)
 	add(ev(0, event.SessionIdle, map[string]any{"report": "again", "awaiting_jobs": true}), "idle", true)
+	// A restart reopen straight into awaiting idle keeps it; a downtime finish
+	// recorded just before changes nothing.
+	add(ev(0, event.JobFinished, map[string]any{"id": "job_1", "status": "done", "recovered": true}), "idle", true)
+	add(ev(0, event.SessionReopened, map[string]any{"surviving_jobs": []any{"job_2"}, "awaiting_jobs": true}), "idle", true)
+	add(ev(0, event.SessionReopened, map[string]any{}), "idle", false)
 	add(ev(0, event.SessionStopped, nil), "stopped", false)
 }
 

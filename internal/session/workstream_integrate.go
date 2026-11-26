@@ -478,6 +478,10 @@ func (m *Manager) integrationFastPath(id string) integrationOutcome {
 	// Advance to the immutable SHA that passed verify, never to the mutable branch
 	// name. AdvanceBranch retains its fast-forward-only ancestry and clean-tree
 	// checks for commit-ish targets.
+	if why := m.workstreamExecutionUnsettled(ws); why != "" {
+		m.integrationNeedsAttention(ws, "integration blocked: "+why, nil)
+		return integrationOutcome{kind: integrationHandled}
+	}
 	commit, err := repo.AdvanceBranch(base, verifiedTip)
 	if err != nil {
 		if errors.Is(err, git.ErrBaseTreeDirty) {
@@ -519,9 +523,12 @@ func (m *Manager) integrationFastPath(id string) integrationOutcome {
 	if fresh, ok := m.workstreams.Get(ws.ID); ok {
 		ws = fresh
 	}
-	m.stopWorkstreamSessions(ws)
-	m.preserveWorkstreamSessions(ws)
-	m.cleanupWorktree(repo, ws)
+	if unjoined := m.stopWorkstreamSessions(ws); unjoined != nil {
+		m.keptAfterMerge(ws, commit, unjoined)
+	} else {
+		m.preserveWorkstreamSessions(ws)
+		m.cleanupWorktree(repo, ws)
+	}
 	m.Notify(notify.KindMerged, ws.Project, ws.SessionID,
 		fmt.Sprintf("workstream %s merged into %s at %s", ws.ID, base, commit))
 	return integrationOutcome{kind: integrationHandled}

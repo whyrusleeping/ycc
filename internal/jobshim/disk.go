@@ -93,6 +93,40 @@ func SessionBusy(sessionDir string) string {
 	return ""
 }
 
+// SessionUnsettled reports why a job in sessionDir may still be executing:
+// it has no valid exit record of its own and either a live supervisor holds
+// its shim.lock, its execution is marked unknown, or its supervisor exited
+// without one. A valid exit record settles the job even while its supervisor
+// is still exiting. Destructive cleanup of the worktree such a job runs in
+// must wait (docs/design/daemon-restart.md §2).
+func SessionUnsettled(sessionDir string) string {
+	entries, err := os.ReadDir(JobsDir(sessionDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ""
+		}
+		return fmt.Sprintf("cannot inspect supervised jobs: %v", err)
+	}
+	for _, e := range entries {
+		dir := filepath.Join(JobsDir(sessionDir), e.Name())
+		if !e.IsDir() {
+			continue
+		}
+		if rec, err := ReadExit(dir); err == nil && rec.JobID == e.Name() {
+			continue
+		}
+		switch {
+		case lockHeld(dir):
+			return e.Name() + ": a job supervisor is still running"
+		case exists(filepath.Join(dir, unknownFile)):
+			return e.Name() + ": a job's execution is unknown"
+		case exists(filepath.Join(dir, specFile)):
+			return e.Name() + ": a job supervisor exited without a valid exit record"
+		}
+	}
+	return ""
+}
+
 func evidenceSize(dir string) int64 {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

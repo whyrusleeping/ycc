@@ -91,6 +91,7 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		WriteRoots:    tools.NormalizeRoots(d.WriteRoots),
 		Jobs:          d.Jobs,
 		JobSupervisor: d.JobSupervisor,
+		Artifacts:     d.CoordinatorArtifacts,
 		Emitter:       d.Emitter,
 		InputWake:     d.InputWake,
 		ShellWaitCap:  d.ShellWaitCap,

@@ -69,7 +69,8 @@ func isActivityLifecycle(t event.Type) bool {
 }
 
 var activityKeys = []string{"id", "kind", "label", "mutates", "status", "role", "agent_id", "model",
-	"logical_model", "job_id", "round", "context_mode", "error", "blocked", "mutating", "owner", "tail", "result", "prompt"}
+	"logical_model", "job_id", "round", "context_mode", "error", "blocked", "mutating", "owner", "tail", "result", "prompt",
+	"surviving_jobs"}
 
 func compactActivityEvent(ev event.Event) event.Event {
 	data := make(map[string]any)
@@ -312,9 +313,18 @@ func BuildActivity(events []event.Event, progress map[string]ActorProgress) []Ac
 		}
 		switch ev.Type {
 		case event.SessionReopened:
-			// Nothing in flight survives a reopen: the restored registry reports
-			// such jobs lost, and foreground rounds have no job to report at all.
+			// Nothing in flight survives a reopen except the supervised jobs it
+			// lists in surviving_jobs: the restored registry reports the rest
+			// lost (a downtime finish was recorded just before), and foreground
+			// rounds have no job to report at all.
+			surviving := map[string]bool{}
+			for _, id := range stringSlice(ev.Data["surviving_jobs"]) {
+				surviving[id] = true
+			}
 			for _, n := range order[1:] {
+				if n.Actor == "" && surviving[n.JobID] {
+					continue
+				}
 				for i := range n.Spans {
 					if n.Spans[i].Status == "running" {
 						finishSpan(n, &n.Spans[i], "lost", ev.TS)

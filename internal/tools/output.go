@@ -95,6 +95,20 @@ func (s *ArtifactStore) reserve() string {
 	return id
 }
 
+// reserveID reserves a capability id recorded earlier, so a supervised job's
+// capture can be re-hydrated into its owner's store after a reopen. A record
+// already present is kept.
+func (s *ArtifactStore) reserveID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.items[id]; ok {
+		return
+	}
+	s.items[id] = &outputArtifact{id: id}
+	s.recordOrder = append(s.recordOrder, id)
+	s.trimRecordsLocked()
+}
+
 func (s *ArtifactStore) put(data []byte, totalBytes, totalLines int64, digest, lost string) outputArtifact {
 	id := s.reserve()
 	return s.complete(id, data, totalBytes, totalLines, digest, lost)

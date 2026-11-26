@@ -57,7 +57,7 @@ func (s *Server) GetSessionActivity(ctx context.Context, req *connect.Request[v1
 		}
 		pn := activityNodeProto(*n)
 		if info, ok := infos[n.JobID]; ok && n.Actor == "" {
-			pn.OutputAvailable = !info.Restored
+			pn.OutputAvailable = info.OutputAvailable
 		}
 		out.Nodes = append(out.Nodes, pn)
 	}
@@ -216,7 +216,7 @@ func (s *Server) GetJobOutput(ctx context.Context, req *connect.Request[v1.GetJo
 	if !ok {
 		return connect.NewResponse(&v1.GetJobOutputResponse{UnavailableReason: "no such job in this session"}), nil
 	}
-	if info.Restored {
+	if !info.OutputAvailable {
 		return connect.NewResponse(&v1.GetJobOutputResponse{Status: string(info.Status),
 			UnavailableReason: "job output did not survive the daemon restart"}), nil
 	}

@@ -386,6 +386,9 @@ type Outcome struct {
 	// Unknown says why supervision was lost without an exit record. The child
 	// may still be running.
 	Unknown string
+	// Detached means the daemon stopped following the job (Detach) before its
+	// outcome was known; the supervisor and its child keep running.
+	Detached bool
 }
 
 // Handle is the daemon's attachment to a started supervised job.
@@ -394,12 +397,14 @@ type Handle struct {
 	jobID      string
 	dir        string
 	socket     string
-	procExited chan struct{}
+	procExited <-chan struct{}
+	stopWatch  chan struct{} // closed by Detach to end an attached handle's lock watch
 
-	mu      sync.Mutex
-	ctl     *controlConn
-	done    chan struct{}
-	outcome Outcome
+	mu       sync.Mutex
+	ctl      *controlConn
+	detached bool
+	done     chan struct{}
+	outcome  Outcome
 }
 
 // Dir returns the job directory.
@@ -472,6 +477,10 @@ func (h *Handle) watch() {
 			h.outcome = Outcome{Exit: rec}
 			return
 		}
+		if h.isDetached() {
+			h.outcome = Outcome{Detached: true}
+			return
+		}
 		if !vanished {
 			// The connection ended without an exit record. A supervisor that
 			// is exiting normally has already written exit.json.
@@ -500,9 +509,47 @@ func (h *Handle) watch() {
 			return
 		}
 		h.mu.Lock()
+		if h.detached {
+			h.mu.Unlock()
+			next.close()
+			h.outcome = Outcome{Detached: true}
+			return
+		}
 		h.ctl = next
 		h.mu.Unlock()
 	}
+}
+
+// isDetached reports whether Detach was called.
+func (h *Handle) isDetached() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.detached
+}
+
+// Detach stops following the job without deciding its outcome, leaving the
+// supervisor and its child running for a later daemon to attach (graceful
+// restart). It reports false when the outcome was already known (the job
+// finished first), in which case Outcome holds it.
+func (h *Handle) Detach() bool {
+	h.mu.Lock()
+	select {
+	case <-h.done:
+		h.mu.Unlock()
+		return h.outcome.Detached
+	default:
+	}
+	h.detached = true
+	ctl := h.ctl
+	h.mu.Unlock()
+	if ctl != nil {
+		ctl.close()
+	}
+	<-h.done
+	if h.outcome.Detached && h.stopWatch != nil {
+		close(h.stopWatch)
+	}
+	return h.outcome.Detached
 }
 
 // Kill asks the supervisor to kill its child. The daemon never signals the

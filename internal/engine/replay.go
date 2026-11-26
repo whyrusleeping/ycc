@@ -50,6 +50,15 @@ const DanglingToolResult = "(no result recorded; session was reopened)"
 // valid for the next turn (Anthropic/OpenAI require every tool_use to be
 // answered by the immediately following message).
 func ReplayHistory(events []event.Event) []gollama.Message {
+	return ReplayHistoryReconciled(events, nil)
+}
+
+// ReplayHistoryReconciled is ReplayHistory for a reopen that reconciled some
+// unfinished jobs itself (docs/design/daemon-restart.md §3): a supervised job
+// that survived the restart, or whose downtime finish or loss the reopen
+// records and delivers, gets no lost-on-restart note. Jobs not in reconciled
+// keep the legacy note.
+func ReplayHistoryReconciled(events []event.Event, reconciled map[string]bool) []gollama.Message {
 	var history []gollama.Message
 	// assistantIdx is the index in history of the current coordinator assistant
 	// message that subsequent coordinator tool_calls attach to (-1 if none yet).
@@ -406,7 +415,7 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 	if len(lostOrder) > 0 {
 		var parts []string
 		for _, id := range lostOrder {
-			if _, ok := lostJobs[id]; !ok {
+			if _, ok := lostJobs[id]; !ok || reconciled[id] {
 				continue
 			}
 			label := lostJobs[id]
@@ -433,6 +442,13 @@ func ReplayHistory(events []event.Event) []gollama.Message {
 // lifecycle events. In-flight jobs cannot survive reopen and become terminal
 // lost jobs; restored ids remain reserved so newly started work cannot collide.
 func RestoreJobs(events []event.Event) *jobs.Registry {
+	return FinalizeRestoredJobs(RestoreJobEntries(events), events)
+}
+
+// RestoreJobEntries reconstructs each job's durable state from the log in
+// start order. A job with no terminal evidence keeps status Running, for
+// reopen reconciliation to resolve before FinalizeRestoredJobs.
+func RestoreJobEntries(events []event.Event) []jobs.Restored {
 	var restored []jobs.Restored
 	byID := make(map[string]int)
 	finished := make(map[string]bool)
@@ -449,7 +465,8 @@ func RestoreJobs(events []event.Event) *jobs.Registry {
 			byID[id] = len(restored)
 			restored = append(restored, jobs.Restored{ID: id, Kind: str(ev.Data, "kind"),
 				Label: str(ev.Data, "label"), Owner: ev.Actor, Status: jobs.Running,
-				Mutates: boolv(ev.Data, "mutates"), Started: ev.TS})
+				Mutates: boolv(ev.Data, "mutates"), Started: ev.TS,
+				Supervised: boolv(ev.Data, "supervised"), Artifact: str(ev.Data, "artifact")})
 		case event.SubagentSpawned:
 			if idx, ok := byID[str(ev.Data, "job_id")]; ok && boolv(ev.Data, "mutating") {
 				restored[idx].Mutates = true
@@ -472,6 +489,11 @@ func RestoreJobs(events []event.Event) *jobs.Registry {
 			}
 			restoreTerminalReport(&restored[idx], ev, status, str(ev.Data, "tail"))
 			finished[id] = true
+			if str(ev.Data, "delivery") == "owner_gone" {
+				// A reopen recorded this outcome of a dead subagent's job for
+				// nobody (tools.OwnerGoneDelivery).
+				restored[idx].Notified = true
+			}
 		case event.JobClaimed, event.JobNotified:
 			id := str(ev.Data, "id")
 			idx, ok := byID[id]
@@ -497,8 +519,15 @@ func RestoreJobs(events []event.Event) *jobs.Registry {
 			restoreTerminalReport(&restored[idx], ev, status, result)
 		}
 	}
+	return restored
+}
+
+// FinalizeRestoredJobs builds the restored registry. A job still Running that
+// reconciliation did not restore as live is lost, as no direct child survives
+// a reopen.
+func FinalizeRestoredJobs(restored []jobs.Restored, events []event.Event) *jobs.Registry {
 	for i := range restored {
-		if restored[i].Status == jobs.Running {
+		if restored[i].Status == jobs.Running && !restored[i].Live {
 			restored[i].Status = jobs.Lost
 			restored[i].Result = "job lost: daemon restarted"
 			// ReplayHistory has already synthesized the one lost-on-restart note.
@@ -532,6 +561,7 @@ func restoreTerminalReport(dst *jobs.Restored, ev event.Event, status jobs.Statu
 	dst.Status = status
 	dst.Result = result
 	dst.Finished = ev.TS
+	dst.Recorded = true
 }
 
 // Before job_notified carried an explicit raw result, its text held the formatted

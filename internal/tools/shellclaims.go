@@ -291,6 +291,32 @@ func (w *Workspace) endShell(before *shellSnapshot) {
 	}
 }
 
+// recoveredShell registers a background shell that kept running across a
+// daemon restart as a running background job in its worktree, so other
+// scopes' shells see it overlap (the usual EndShell rules, including the
+// short-foreground exemption, apply). It takes no dirty snapshot: such a
+// shell's writes are never attributed automatically, and endShell only ends
+// its registration.
+func (w *Workspace) recoveredShell() *shellSnapshot {
+	if w.Ownership == nil || w.MutationToken.Scope() == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), shellSnapshotTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", w.Root, "rev-parse", "--show-toplevel")
+	cmd.Env = credenv.Scrub(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	key, err := workspacelease.Canonical(strings.TrimSpace(string(out)))
+	if err != nil {
+		return nil
+	}
+	return &shellSnapshot{top: strings.TrimSpace(string(out)), key: key,
+		run: w.Ownership.BeginShell(key, w.MutationToken, true)}
+}
+
 // boundedPaths joins at most limit paths, noting how many more there are.
 func boundedPaths(paths []string, limit int) string {
 	if len(paths) <= limit {

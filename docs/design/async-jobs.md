@@ -91,9 +91,38 @@ Job start, finish, explicit-wait notification claims, and injected completion ar
 and injected notifications carry the terminal metadata and raw result as well as the stable id, so a
 checkpoint or wait that races ahead of the worker's finish-event write still preserves repeatable evidence.
 On session reopen the registry restores stable ids, owners, lifecycle metadata, final reports, and
-notification state from those events. Jobs themselves do not survive a daemon restart: an unmatched
-start is restored terminal as `lost`, replay reports the restart loss to the conversation exactly once, and
-newly started jobs continue after the greatest restored id.
+notification state from those events, and newly started jobs continue after the greatest restored id.
+A direct child process does not survive a daemon restart: its unmatched start is restored terminal as
+`lost`, and replay reports the restart loss to the conversation exactly once.
+
+A background shell started through an out-of-process supervisor (`internal/jobshim`,
+`docs/design/daemon-restart.md` §2) keeps its output on disk under its session directory and can
+outlive the daemon. A graceful restart leaves the coordinator's supervised shells running, recording
+nothing for them; a subagent's shells are killed, since subagents do not survive. Reopen reconciles
+each supervised job before history is rebuilt, from its log events and its job directory:
+
+- Still running and owned by the coordinator: it is restored as a live job, re-attached, and listed in
+  `session_reopened.surviving_jobs`. Its outcome is recorded only after that marker.
+- Still running and owned by a subagent: it is killed over its control socket and its execution is joined
+  before the coordinator runs. It is recorded as killed with `delivery: "owner_gone"`, so no later run of
+  that actor receives the report. A subagent's report found unclaimed is claimed the same way.
+- Finished during the downtime: its `job_finished` is recorded before `session_reopened`, using the exit
+  record, the output tail and the head capture. It is delivered once like any completion.
+- Supervisor gone without an exit record: it is recorded as `lost` with `execution_unknown`, and the
+  one notification says the command may still be running.
+- Already terminal: the recorded report and claim stand. Execution is confirmed by an exit record,
+  followed while the supervisor lives (a kill still unwinding is sent again), or restored as unknown.
+
+None of these jobs gets the lost-on-restart replay note. Their output stays readable through
+`job_output`, and the coordinator's captures return to its `tool_output` store on every reopen. A
+re-attached shell counts as a running background shell in its worktree for overlap, but its writes
+are never claimed automatically, and its report says so. A job whose execution is unknown keeps that
+registration until an exit record confirms it. While one of a workstream's sessions has such a job,
+the workstream is not merged, integrated or discarded and becomes `needs_attention` instead. The same
+holds while a session that is no longer live still has a supervised job that may be running in the
+worktree. A session whose last boundary was an idle
+report awaiting jobs, and which still has job deliveries pending, reopens into that same awaiting
+state (`session_reopened.awaiting_jobs`), so a survivor's completion or a downtime finish resumes it.
 
 ## Mutation safety
 

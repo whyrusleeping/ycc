@@ -215,6 +215,10 @@ type Deps struct {
 	// JobSupervisor, when set, runs background Bash out of process (see
 	// tools.Workspace.JobSupervisor).
 	JobSupervisor *jobshim.Session
+	// CoordinatorArtifacts, when set, is the coordinator workspace's output
+	// artifact store, so a reopen can re-hydrate supervised jobs' captures into
+	// it before the loop runs. Nil gives the workspace its own store.
+	CoordinatorArtifacts *tools.ArtifactStore
 	// InputWake is the coordinator workspace's tools.Workspace.InputWake: it lets
 	// a user message cut the coordinator's blocking wait short. Nil disables it.
 	InputWake func() <-chan struct{}

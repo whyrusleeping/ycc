@@ -188,6 +188,18 @@ A persisted session reported as running without a matching in-memory session is 
 stopped after daemon restart. Optional GC settings can reclaim idle in-memory sessions and old
 on-disk logs; retention is disabled unless configured.
 
+A supervised background job keeps its evidence in `<session-dir>/jobs/<job-id>/`, which is
+owner-only. The directory holds the spec (never the environment), rotating tail segments, a
+bounded head capture and an atomic exit record, so the job can outlive the daemon
+(`docs/design/daemon-restart.md` §2). Reopen reconciles these jobs before replay
+(`docs/design/async-jobs.md`):
+
+- A downtime finish or a loss of supervision is recorded as `job_finished` (`recovered: true`)
+  ahead of `session_reopened`.
+- `session_reopened` lists the jobs still running in `surviving_jobs`. It sets `awaiting_jobs`
+  when the session reopens idle and waiting on them.
+- When both fields are omitted, the reopen means what it always did: nothing survived it.
+
 ### 5.2 Event contract
 
 A durable event has a monotonically increasing per-session `seq`, timestamp, session id, actor,

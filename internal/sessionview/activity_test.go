@@ -51,7 +51,11 @@ func TestBuildActivityTree(t *testing.T) {
 		ev("coordinator", event.SubagentFinished, map[string]any{"role": "reviewer", "model": "A", "job_id": "job_4"}),
 		ev("coordinator", event.JobFinished, map[string]any{"id": "job_4", "kind": "agent", "status": "killed", "tail": "both"}),
 		ev("coordinator", event.JobStarted, map[string]any{"id": "job_5", "kind": "bash", "label": "watch"}),
-		ev("coordinator", event.SessionReopened, nil),
+		// Supervised jobs: one survives the restart, one finished during it.
+		ev("coordinator", event.JobStarted, map[string]any{"id": "job_6", "kind": "bash", "label": "long", "supervised": true}),
+		ev("coordinator", event.JobStarted, map[string]any{"id": "job_7", "kind": "bash", "label": "short", "supervised": true}),
+		ev("coordinator", event.JobFinished, map[string]any{"id": "job_7", "kind": "bash", "status": "done", "tail": "exit 0", "recovered": true}),
+		ev("coordinator", event.SessionReopened, map[string]any{"surviving_jobs": []any{"job_6"}}),
 	}
 	// Go through the index so progress aggregation and compaction are covered.
 	dir := t.TempDir()
@@ -81,7 +85,7 @@ func TestBuildActivityTree(t *testing.T) {
 	for _, n := range nodes {
 		byID[n.ID] = n
 	}
-	if len(nodes) != 7 || nodes[0].ID != "coordinator" {
+	if len(nodes) != 9 || nodes[0].ID != "coordinator" {
 		t.Fatalf("nodes = %+v", nodes)
 	}
 	if root := nodes[0]; root.OverallTokens != 40 || root.ContextTokens != 30 {
@@ -114,6 +118,9 @@ func TestBuildActivityTree(t *testing.T) {
 	}
 	if watch := byID["job_5"]; watch.Status != "lost" {
 		t.Fatalf("watch = %+v", watch)
+	}
+	if long, short := byID["job_6"], byID["job_7"]; long.Status != "running" || short.Status != "done" {
+		t.Fatalf("survivor = %+v, downtime finish = %+v", long, short)
 	}
 }
 

@@ -407,7 +407,10 @@ export class SessionProjection {
         if (this.phase.kind !== "paused") this.phase = { kind: "running" };
         break;
     }
-    if (this.phase.kind !== "idle" || type === "session_reopened") this.awaitingJobs = false;
+    // A reopen ends the qualifier unless it records that the session is again
+    // idle waiting on background jobs that survived a daemon restart.
+    if (type === "session_reopened" && this.phase.kind === "idle") this.awaitingJobs = data.awaiting_jobs === true;
+    else if (this.phase.kind !== "idle" || type === "session_reopened") this.awaitingJobs = false;
   }
 
   private foldCoordinatorModel(type: string, actor: string, data: Data) {

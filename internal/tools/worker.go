@@ -1678,10 +1678,13 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 // actor, carrying its final status and report tail.
 func emitJobFinished(em *event.Emitter, owner string, job *jobs.Job) {
 	rep := job.Report()
-	em.EmitAs(owner, event.JobFinished, map[string]any{
+	ev := em.EmitAs(owner, event.JobFinished, map[string]any{
 		"id": rep.ID, "kind": rep.Kind, "label": rep.Label,
 		"status": string(rep.Status), "tail": rep.Result,
 	})
+	if ev.Seq != 0 && em.Err() == nil {
+		job.MarkRecorded()
+	}
 }
 
 // Finish is the top-level control tool: it ends the agent loop and returns the

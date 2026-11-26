@@ -779,8 +779,12 @@ public struct SessionProjection: Sendable, Equatable {
             break
         }
         // Only the idle report that carried it keeps the qualifier; any later
-        // coordinator phase change, or a reopen (jobs never survive one), ends it.
-        if phase != .idle || type == "session_reopened" || type == "session_forked" {
+        // coordinator phase change or fork ends it, and so does a reopen, unless
+        // it records that the session is again idle waiting on background jobs
+        // that survived a daemon restart.
+        if type == "session_reopened" && phase == .idle {
+            awaitingJobs = (data["awaiting_jobs"] as? Bool) == true
+        } else if phase != .idle || type == "session_reopened" || type == "session_forked" {
             awaitingJobs = false
         }
     }

@@ -512,6 +512,10 @@ and client projections as its behavior lands:
    legacy loss synthesis, adopt conservative post-restart shell attribution, and update
    `SessionReopened` (`surviving_jobs`, `awaiting_jobs`), `sessionview`,
    `internal/server/activity.go` (including `GetJobOutput`), and web/iOS projections.
+   Implemented in two tasks: reopen reconciliation (0615) and startup passive supervision of closed
+   sessions (0619). 0615 also leaves coordinator-owned supervised jobs running across a graceful
+   restart. It also reopens a session whose durable state was `session_idle(awaiting_jobs)` into
+   wake-eligible idle (the Slice 4 rule below) so that `awaiting_jobs` is recorded truthfully.
 4. **Persisted `wait`, wake-eligible idle continuation, idempotent restart manifest, and passive
    leases** *(depends on 1, 3; enables supervised bash launches by default in persistent `Serve()`,
    and excludes `OriginWorkLoop` sessions until Slice 5)*.

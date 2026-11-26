@@ -1,13 +1,17 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
+	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/workstream"
 )
 
@@ -238,6 +242,10 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if !ws.Status.InFlight() {
 		return MergeOutcome{}, fmt.Errorf("workstream %q is not in flight (status %s)", id, ws.Status)
 	}
+	if why := m.workstreamExecutionUnsettled(ws); why != "" {
+		m.integrationNeedsAttentionFrom(ws, "merge blocked: "+why, nil, workstream.StatusActive, workstream.StatusReady, workstream.StatusNeedsAttention)
+		return MergeOutcome{}, fmt.Errorf("workstream %q cannot be merged yet: %s", id, why)
+	}
 	token := m.ownership.NewToken("workstream " + id + " merge")
 	worktreeLease, err := m.acquireSection(ws.WorktreePath, token)
 	if err != nil {
@@ -322,7 +330,10 @@ func (m *Manager) MergeWorkstream(id string, accept bool) (MergeOutcome, error) 
 	if fresh, ok := m.workstreams.Get(ws.ID); ok {
 		ws = fresh
 	}
-	m.stopWorkstreamSessions(ws)
+	if unjoined := m.stopWorkstreamSessions(ws); unjoined != nil {
+		m.keptAfterMerge(ws, commit, unjoined)
+		return MergeOutcome{Merged: true, Commit: commit}, nil
+	}
 	m.preserveWorkstreamSessions(ws)
 	m.cleanupWorktree(repo, ws)
 	return MergeOutcome{Merged: true, Commit: commit}, nil
@@ -344,13 +355,84 @@ func (m *Manager) surfaceConflict(ws workstream.Workstream, conflicts []string) 
 // stopWorkstreamSessions ensures neither the implementation session nor the
 // integrate recovery session can write while transcripts are copied and the
 // linked worktree is removed. Stops are best-effort because a completed recovery
-// session is normally already stopped by its runner.
-func (m *Manager) stopWorkstreamSessions(ws workstream.Workstream) {
+// session is normally already stopped by its runner, except that a stop which
+// could not join a background job (its supervision was lost, so it may still
+// write in the worktree), or a supervised job left running, is returned: the
+// caller must keep the worktree.
+func (m *Manager) stopWorkstreamSessions(ws workstream.Workstream) error {
+	var unjoined error
 	for _, id := range []string{ws.SessionID, ws.IntegrateSessionID} {
 		if id != "" {
-			_ = m.Stop(id)
+			if s, ok := m.Get(id); ok {
+				// Even a stop during graceful shutdown kills and joins the
+				// shells of a workstream being merged or discarded.
+				s.noDetach.Store(true)
+			}
+			var u *jobs.UnjoinedError
+			if err := m.Stop(id); errors.As(err, &u) && unjoined == nil {
+				unjoined = err
+			}
 		}
 	}
+	if unjoined == nil {
+		// The sessions are no longer live, so what remains on disk decides: a
+		// stop during graceful shutdown detaches supervised shells, which keep
+		// running in the worktree.
+		if why := m.workstreamExecutionUnsettled(ws); why != "" {
+			unjoined = errors.New(why)
+		}
+	}
+	if unjoined != nil {
+		log.Printf("workstream %s: worktree %s kept: %v", ws.ID, ws.WorktreePath, unjoined)
+	}
+	return unjoined
+}
+
+// keptAfterMerge records that a merged workstream's worktree was kept because
+// a background job may still run in it: the stream needs attention, and
+// discarding it once the job's stop is confirmed removes the tree and branch.
+// The session logs are not archived meanwhile: the worktree's stay
+// authoritative for a reopen.
+func (m *Manager) keptAfterMerge(ws workstream.Workstream, commit string, why error) {
+	m.integrationNeedsAttentionFrom(ws, fmt.Sprintf("merged at %s, but the worktree was kept: %v; discard the workstream once the job's stop is confirmed", commit, why),
+		nil, workstream.StatusMerged)
+}
+
+// workstreamExecutionUnsettled reports why a workstream's worktree must not be
+// merged away or removed yet: one of its sessions has a background job whose
+// supervision was lost (it may still write there) or that is still running
+// after being re-attached across a daemon restart, or a session that is not
+// live left a supervised job that may still run in it. A live session's other
+// running jobs do not count: stopping the session kills and joins them.
+func (m *Manager) workstreamExecutionUnsettled(ws workstream.Workstream) string {
+	for _, id := range []string{ws.SessionID, ws.IntegrateSessionID} {
+		if id == "" {
+			continue
+		}
+		if s, ok := m.Get(id); ok {
+			if s.deps != nil && s.deps.Jobs != nil {
+				for _, info := range s.deps.Jobs.List("", true) {
+					if info.ExecutionUnknown {
+						return fmt.Sprintf("session %s: supervision of background job %s was lost and its command may still be running", id, info.ID)
+					}
+					// A supervised job re-attached across a daemon restart is
+					// only followed, so the operation waits for it to finish
+					// (or be killed) rather than stopping it after the fact.
+					if job, ok := s.deps.Jobs.Get(info.ID); ok && info.Restored && job.ExecutionRunning() {
+						return fmt.Sprintf("session %s: background job %s kept running across a daemon restart and has not finished", id, info.ID)
+					}
+				}
+			}
+			continue
+		}
+		if ws.WorktreePath == "" || workstream.VerifyUnderRoot(m.worktreesRoot, ws.WorktreePath) != nil {
+			continue
+		}
+		if why := jobshim.SessionUnsettled(filepath.Join(ws.WorktreePath, ".ycc", "sessions", id)); why != "" {
+			return fmt.Sprintf("session %s: %s", id, why)
+		}
+	}
+	return ""
 }
 
 // preserveWorkstreamSessions copies both normal and integrate-agent transcripts
@@ -469,6 +551,10 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	if !ws.Status.InFlight() && ws.Status != workstream.StatusStale {
 		return fmt.Errorf("workstream %q cannot be discarded (status %s)", id, ws.Status)
 	}
+	if why := m.workstreamExecutionUnsettled(ws); why != "" {
+		m.integrationNeedsAttentionFrom(ws, "discard blocked: "+why, nil, workstream.StatusActive, workstream.StatusReady, workstream.StatusNeedsAttention)
+		return fmt.Errorf("workstream %q cannot be discarded yet: %s", id, why)
+	}
 	token := m.ownership.NewToken("workstream " + id + " discard")
 	if primary, projectOK := m.projects.Resolve(ws.Project); projectOK {
 		primaryLease, err := m.acquireSection(primary, token)
@@ -494,7 +580,14 @@ func (m *Manager) DiscardWorkstream(id string) error {
 	if fresh, ok := m.workstreams.Get(ws.ID); ok {
 		ws = fresh
 	}
-	m.stopWorkstreamSessions(ws)
+	if unjoined := m.stopWorkstreamSessions(ws); unjoined != nil {
+		// A job may still be writing in the tree: keep it, the branch and the
+		// session logs there (still authoritative for a reopen), and leave the
+		// stream in flight (needs attention) so discard can be retried once
+		// the stop is confirmed.
+		m.integrationNeedsAttentionFrom(ws, "discard incomplete: "+unjoined.Error(), nil, workstream.StatusDiscarded)
+		return fmt.Errorf("workstream %q was not discarded: %w", id, unjoined)
+	}
 	m.preserveWorkstreamSessions(ws)
 	// Cleanup is best-effort; a stale entry's tree may already be gone. Persisted
 	// paths are untrusted, so an out-of-root path is never passed to git. Branch

@@ -8,6 +8,7 @@ updated: "2026-11-26"
 depends_on:
     - "0613"
     - "0615"
+    - "0619"
 spec_refs:
     - docs/design/daemon-restart.md#4. Persisted wait and wake-eligible idle continuation
     - docs/design/daemon-restart.md#5. Passive resource ownership, restart manifest, leases, and crash policy
@@ -16,6 +17,8 @@ spec_refs:
 
 ## Description
 Slice 4 of restart-safe daemon sessions (`docs/design/daemon-restart.md` §4–§5), building on 0613 (graceful daemon shutdown and phased startup) and 0615 (passive job supervision and idempotent reopen reconciliation). Persists in-flight `wait` calls without adding a new agent tool, restores wake-eligible idle sessions, adds generation-bound idempotent restart-manifest recovery with passive lease ownership and crash-safe job-bound leases, and enables supervised bash launches by default in persistent `Serve()`. Excludes `OriginWorkLoop` sessions from automatic restart recovery until Slice 5 installs work-loop scheduler checkpoints.
+
+Note (2026-11-26): 0615 already reopens a session into wake-eligible idle when its last lifecycle boundary is `session_idle(awaiting_jobs)` (or a reopen that recorded `awaiting_jobs`) and `PendingContinuation("coordinator")` holds: `setIdle(true)` + `awaitNextRun(true)`, recorded as `session_reopened.awaiting_jobs` (`reopenAwaitingJobs` in `internal/session/session.go`). This task wires that rule into restart-manifest recovery and checks its human-boundary list rather than re-implementing it. Startup passive supervision of closed sessions is 0619.
 
 ### Acceptance criteria
 - `wait` records a durable `wait_started` event carrying `call_id`, resolved `job_ids` (already expanded when omitted), `for`, effective RFC3339 `deadline` (incorporating the 600s default and `ShellWaitCap`), and `shell_only`.
