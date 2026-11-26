@@ -318,10 +318,18 @@ func killJobTool(ws *Workspace) *gollama.Tool {
 			if !ok {
 				return errResult("kill_job: no such job %q", id), nil
 			}
+			if job.ExecutionUnknown() {
+				return errResult("kill_job: supervision of job %s was lost, so its process could not be confirmed stopped "+
+					"and may still be running; ycc can no longer signal it", id), nil
+			}
 			if job.Kill() {
 				// This call terminated it: emit job_finished (killed) exactly once,
 				// tagged with the owning actor so drain/replay stay consistent.
 				emitJobFinished(ws.Emitter, job.Owner(), job)
+				if err := job.KillError(); err != nil {
+					return okResult(fmt.Sprintf("marked %s killed, but the kill request could not reach its supervisor (%v): "+
+						"the process could not be confirmed stopped and may still be running\n%s", id, err, job.Report().Result)), nil
+				}
 				return okResult(fmt.Sprintf("killed %s\n%s", id, job.Report().Result)), nil
 			}
 			return okResult(fmt.Sprintf("job %s was already %s", id, job.Status())), nil

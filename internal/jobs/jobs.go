@@ -28,7 +28,7 @@ const (
 	Done    Status = "done"   // process exited 0
 	Failed  Status = "failed" // process exited non-zero or failed to run
 	Killed  Status = "killed" // terminated by kill_job or session end
-	Lost    Status = "lost"   // was running when the daemon restarted
+	Lost    Status = "lost"   // was running when the daemon restarted, or its supervision was lost
 )
 
 // maxJobBuf caps the retained output buffer of a single job. When exceeded the
@@ -73,6 +73,9 @@ type Info struct {
 	Started, Finished      time.Time
 	Activity               Activity
 	Restored               bool // reconstructed from the log; no process or output survived the restart
+	// ExecutionUnknown means supervision of the job's process was lost without
+	// an exit record: it may still be running and was never joined.
+	ExecutionUnknown bool
 }
 
 // Output is a repeatable absolute-byte view over a job's retained output.
@@ -106,6 +109,22 @@ type Handoff struct {
 // parent ownership instead of applying default cleanup.
 type RetainRequest struct{ ID, Purpose string }
 
+// OutputSource supplies a job's retained output from outside its in-memory
+// buffer, such as a supervised job's on-disk tail segments. Retained returns
+// the retained bytes and the absolute stream offset of the first one.
+type OutputSource interface {
+	Retained() (data []byte, start int64)
+}
+
+// UnjoinedError reports tracked jobs whose execution could not be confirmed
+// stopped because their supervision was lost.
+type UnjoinedError struct{ IDs []string }
+
+func (e *UnjoinedError) Error() string {
+	return fmt.Sprintf("supervision of background job(s) %s was lost: their processes could not be confirmed stopped and may still be running",
+		strings.Join(e.IDs, ", "))
+}
+
 // Job is one unit of background work.
 type Job struct {
 	id       string
@@ -123,8 +142,12 @@ type Job struct {
 	onFinish      func()        // registry-level completion signal, fired once
 	executionDone chan struct{} // tracked process/agent has actually stopped
 	executionOnce sync.Once
-	tracked       bool
-	restored      bool
+	// settled is closed once execution either stopped or became unknown, the
+	// point past which teardown cannot learn more by waiting.
+	settled     chan struct{}
+	settledOnce sync.Once
+	tracked     bool
+	restored    bool
 
 	mu              sync.Mutex
 	status          Status
@@ -133,8 +156,13 @@ type Job struct {
 	terminationHint string // retrieval/readiness detail included if killed
 	notified        bool   // exactly-once automatic notification claim
 	execStopped     bool   // tracked execution has actually stopped
-	signalled       bool   // registry completion signal already fired
-	dropped         int64  // absolute offset of the retained output's first byte
+	execUnknown     bool   // supervision was lost: execution may still be running
+	source          OutputSource
+	stopper         func() error // synchronous kill request (supervised jobs)
+	killErr         error        // the stopper's failure, if any
+	onNotified      func()       // runs once the automatic notification is claimed
+	signalled       bool         // registry completion signal already fired
+	dropped         int64        // absolute offset of the retained output's first byte
 	started         time.Time
 	finished        time.Time
 	activity        Activity
@@ -188,6 +216,27 @@ func (j *Job) Append(p []byte) {
 	j.mu.Unlock()
 }
 
+// SetOutputSource makes Output and Tail read from src instead of the job's
+// in-memory buffer.
+func (j *Job) SetOutputSource(src OutputSource) {
+	j.mu.Lock()
+	j.source = src
+	j.mu.Unlock()
+}
+
+// retained returns the job's retained output and its absolute start offset.
+// The caller must not hold j.mu.
+func (j *Job) retained() ([]byte, int64) {
+	j.mu.Lock()
+	src := j.source
+	if src == nil {
+		defer j.mu.Unlock()
+		return append([]byte(nil), j.buf...), j.dropped
+	}
+	j.mu.Unlock()
+	return src.Retained()
+}
+
 // Writer returns an io.Writer that appends to the job's output buffer, for
 // wiring a process's combined stdout/stderr.
 func (j *Job) Writer() io.Writer { return jobWriter{j} }
@@ -204,14 +253,12 @@ func (w jobWriter) Write(p []byte) (int, error) {
 // RetainedStart reports the missing interval in GapStart/GapEnd and resumes at
 // the first retained byte. tailLines > 0 selects the retained tail instead.
 func (j *Job) Output(offset int64, limit, tailLines int) Output {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	retainedStart := j.dropped
-	retainedEnd := retainedStart + int64(len(j.buf))
+	buf, retainedStart := j.retained()
+	retainedEnd := retainedStart + int64(len(buf))
 	start := offset
 	var gapStart, gapEnd int64
 	if tailLines > 0 {
-		idx := tailLineStart(j.buf, tailLines)
+		idx := tailLineStart(buf, tailLines)
 		start = retainedStart + int64(idx)
 	} else if start < retainedStart {
 		gapStart, gapEnd = start, retainedStart
@@ -237,7 +284,7 @@ func (j *Job) Output(offset int64, limit, tailLines int) Output {
 		end = retainedEnd
 		start = end - int64(limit)
 	}
-	data := append([]byte(nil), j.buf[start-retainedStart:end-retainedStart]...)
+	data := append([]byte(nil), buf[start-retainedStart:end-retainedStart]...)
 	return Output{Data: data, Start: start, End: end, RetainedStart: retainedStart,
 		RetainedEnd: retainedEnd, GapStart: gapStart, GapEnd: gapEnd,
 		TailTruncated: tailLines > 0 && start > selectedStart}
@@ -266,14 +313,14 @@ func (j *Job) Info() Info {
 	defer j.mu.Unlock()
 	return Info{ID: j.id, Kind: j.kind, Label: j.label, Owner: j.owner,
 		Purpose: j.purpose, Delivery: j.delivery, Status: j.status, Mutates: j.mutates,
-		Started: j.started, Finished: j.finished, Activity: j.activity, Restored: j.restored}
+		Started: j.started, Finished: j.finished, Activity: j.activity, Restored: j.restored,
+		ExecutionUnknown: j.execUnknown}
 }
 
 // Tail returns the last n lines of the buffered output.
 func (j *Job) Tail(n int) string {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	tail := strings.ToValidUTF8(lastLines(string(j.buf), n), "�")
+	buf, _ := j.retained()
+	tail := strings.ToValidUTF8(lastLines(string(buf), n), "�")
 	if len(tail) <= maxJobReportBytes {
 		return tail
 	}
@@ -302,10 +349,12 @@ func (j *Job) ExecutionComplete() {
 		return
 	}
 	j.executionOnce.Do(func() { close(j.executionDone) })
+	j.settle()
 	// Report-then-release is the common order, so this is usually where a tracked
 	// job becomes deliverable and the owner's wake fires.
 	j.mu.Lock()
 	j.execStopped = true
+	j.execUnknown = false // an exit record confirmed what supervision lost
 	signal := j.status != Running && !j.signalled
 	if signal {
 		j.signalled = true
@@ -316,13 +365,77 @@ func (j *Job) ExecutionComplete() {
 	}
 }
 
+func (j *Job) settle() {
+	if j.settled != nil {
+		j.settledOnce.Do(func() { close(j.settled) })
+	}
+}
+
+// MarkExecutionUnknown records that supervision of a tracked job's process was
+// lost without an exit record. Execution is NOT complete: WaitExecution keeps
+// blocking, and ExecutionRunning stays true, until a later ExecutionComplete
+// confirms an exit. Teardown stops waiting (WaitExecutionSettled), and the
+// job's terminal report becomes deliverable so its owner hears of the loss.
+// A non-empty note is appended to a terminal report not yet delivered (e.g. a
+// killed report whose kill could not be confirmed); a report already claimed
+// keeps its delivery and is not notified twice.
+func (j *Job) MarkExecutionUnknown(note string) {
+	if !j.tracked {
+		return
+	}
+	j.mu.Lock()
+	if j.execStopped {
+		j.mu.Unlock()
+		return
+	}
+	if note != "" && j.status != Running && !j.notified && !strings.Contains(j.result, note) {
+		j.result += "\n" + note
+	}
+	j.execUnknown = true
+	signal := j.status != Running && !j.signalled
+	if signal {
+		j.signalled = true
+	}
+	j.mu.Unlock()
+	j.settle()
+	if signal && j.onFinish != nil {
+		j.onFinish()
+	}
+}
+
+// ExecutionUnknown reports whether supervision of the job's process was lost
+// without confirming that it stopped.
+func (j *Job) ExecutionUnknown() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.execUnknown
+}
+
+// Notified reports whether the job's single automatic notification was
+// delivered or suppressed by an explicit wait.
+func (j *Job) Notified() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.notified
+}
+
 // WaitExecution waits until a tracked process/agent has actually stopped. Jobs
 // created through Start/StartMutating have no separately tracked execution and
-// return immediately.
+// return immediately. It keeps waiting while execution is unknown.
 func (j *Job) WaitExecution() {
 	if j.tracked {
 		<-j.executionDone
 	}
+}
+
+// WaitExecutionSettled waits until a tracked job's execution has stopped or
+// become unknown, and reports whether it is unknown (never joined).
+func (j *Job) WaitExecutionSettled() (unknown bool) {
+	if !j.tracked {
+		return false
+	}
+	<-j.settled
+	return j.ExecutionUnknown()
 }
 
 // ExecutionRunning reports whether the job's work may still be executing: a
@@ -387,7 +500,44 @@ func (j *Job) Kill() bool {
 	}
 	fired := j.finalize(Killed, result)
 	j.cancel()
+	j.mu.Lock()
+	stopper := j.stopper
+	j.mu.Unlock()
+	if stopper != nil {
+		if err := stopper(); err != nil {
+			j.mu.Lock()
+			if j.killErr == nil {
+				j.killErr = err
+			}
+			j.mu.Unlock()
+		}
+	}
 	return fired
+}
+
+// SetStopper installs a synchronous kill request that Kill makes after
+// cancelling the job's context, so a failure to reach the process can be
+// reported (KillError) instead of discarded.
+func (j *Job) SetStopper(stop func() error) {
+	j.mu.Lock()
+	j.stopper = stop
+	j.mu.Unlock()
+}
+
+// KillError returns the stopper's failure from the last Kill, if any: the kill
+// request did not reach the process, so it may still be running.
+func (j *Job) KillError() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.killErr
+}
+
+// SetNotifiedHook installs fn to run (outside job locks) once the job's
+// automatic notification is claimed or suppressed by a wait.
+func (j *Job) SetNotifiedHook(fn func()) {
+	j.mu.Lock()
+	j.onNotified = fn
+	j.mu.Unlock()
 }
 
 func (j *Job) finalize(status Status, result string) bool {
@@ -402,7 +552,7 @@ func (j *Job) finalize(status Status, result string) bool {
 		// report long before the process exits), so its completion
 		// signal is deferred to ExecutionComplete. Otherwise a woken owner could
 		// start a turn against execution that has not released ownership.
-		if !j.tracked || j.execStopped {
+		if !j.tracked || j.execStopped || j.execUnknown {
 			j.signalled, signal = true, true
 		}
 		j.mu.Unlock()
@@ -423,7 +573,9 @@ func (j *Job) finalize(status Status, result string) bool {
 func (j *Job) completionReady() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return !j.tracked || j.execStopped
+	// Lost supervision is delivered on its own authority: nothing will ever
+	// confirm the stop, and the owner must hear that the child may still run.
+	return !j.tracked || j.execStopped || j.execUnknown
 }
 
 // isDone reports whether the job has reached a terminal state.
@@ -440,11 +592,16 @@ func (j *Job) isDone() bool {
 // access through Report/Output remains repeatable and independent of this flag.
 func (j *Job) claimNotification() bool {
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	if j.notified || j.status == Running {
+		j.mu.Unlock()
 		return false
 	}
 	j.notified = true
+	hook := j.onNotified
+	j.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return true
 }
 
@@ -588,7 +745,7 @@ func (r *Registry) start(kind, label, owner string, mutates, tracked bool) *Job 
 	j := &Job{
 		id: id, kind: kind, label: label, owner: owner, mutates: mutates,
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),
-		executionDone: make(chan struct{}), tracked: tracked,
+		executionDone: make(chan struct{}), settled: make(chan struct{}), tracked: tracked,
 		status: Running, started: started, onFinish: r.signalCompletion,
 	}
 	if kind == "agent" {
@@ -864,7 +1021,10 @@ func (r *Registry) DrainFinished(owner string) []Report {
 // purpose and delivery contract. Every other running owned job is killed and its
 // tracked execution joined. Newly claimed terminal reports are returned for
 // inclusion in the child's result; retained evidence remains repeatable.
-func (r *Registry) ResolveOwner(owner, parent string, retain []RetainRequest) (reports []Report, handoffs []Handoff, rejected []string) {
+//
+// unjoined lists killed jobs whose supervision was lost, so their execution was
+// never confirmed stopped.
+func (r *Registry) ResolveOwner(owner, parent string, retain []RetainRequest) (reports []Report, handoffs []Handoff, rejected, unjoined []string) {
 	r.mu.Lock()
 	js := make([]*Job, 0, len(r.order))
 	byID := make(map[string]*Job, len(r.order))
@@ -894,23 +1054,29 @@ func (r *Registry) ResolveOwner(owner, parent string, retain []RetainRequest) (r
 		if j.Status() == Running {
 			j.Kill()
 		}
-		j.WaitExecution()
+		if j.WaitExecutionSettled() {
+			unjoined = append(unjoined, j.ID())
+		}
 		if j.claimNotification() {
 			reports = append(reports, j.Report())
 		}
 	}
-	return reports, handoffs, rejected
+	return reports, handoffs, rejected, unjoined
 }
 
 // KillAll cancels the root context, finalizes every running report as Killed,
 // and joins tracked processes/agents. It does not return while mutation lifetime
-// ownership can still be held by a terminating job.
-func (r *Registry) KillAll() { r.KillAllCause(nil) }
+// ownership can still be held by a terminating job. A job whose supervision was
+// lost cannot be joined: KillAll then returns an *UnjoinedError naming it
+// rather than reporting a clean join.
+func (r *Registry) KillAll() error { return r.KillAllCause(nil) }
 
 // KillAllCause is KillAll with a cancellation cause for every job context. A
 // graceful restart passes ErrRestartSuspend, so an in-process subagent blocked
-// in wait exits without claiming reports, as its coordinator does.
-func (r *Registry) KillAllCause(cause error) {
+// in wait exits without claiming reports, as its coordinator does. A job whose
+// supervision was lost cannot be joined: KillAllCause then returns an
+// *UnjoinedError naming it rather than reporting a clean join.
+func (r *Registry) KillAllCause(cause error) error {
 	r.mu.Lock()
 	// Linearize shutdown before taking the snapshot. A tracked start either
 	// registered before this point and is included below, or observes closing and
@@ -925,9 +1091,16 @@ func (r *Registry) KillAllCause(cause error) {
 	for _, j := range js {
 		j.finalize(Killed, "killed: session ended")
 	}
+	var unjoined []string
 	for _, j := range js {
-		j.WaitExecution()
+		if j.WaitExecutionSettled() {
+			unjoined = append(unjoined, j.ID())
+		}
 	}
+	if len(unjoined) > 0 {
+		return &UnjoinedError{IDs: unjoined}
+	}
+	return nil
 }
 
 // lastLines returns the last n non-empty-trailing lines of s.

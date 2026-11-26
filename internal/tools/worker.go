@@ -1400,7 +1400,16 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				}
 				timeout = time.Duration(timeoutSeconds) * time.Second
 			}
-			job, artifactID := startBackgroundBash(ws, cmdStr, timeout)
+			var job *jobs.Job
+			var artifactID string
+			if ws.JobSupervisor != nil {
+				var err error
+				if job, artifactID, err = startSupervisedBash(ws, cmdStr, timeout); err != nil {
+					return errResult("bash: %v", err), nil
+				}
+			} else {
+				job, artifactID = startBackgroundBash(ws, cmdStr, timeout)
+			}
 			if job == nil {
 				return errResult("bash: session is shutting down; background job was not started"), nil
 			}

@@ -25,7 +25,7 @@ func jobSession(t *testing.T, id, ws, task, kind string) (*Session, *jobs.Regist
 	s.ID = id
 	s.Workspace = ws
 	jr := jobs.NewRegistry()
-	t.Cleanup(jr.KillAll)
+	t.Cleanup(func() { _ = jr.KillAll() })
 	s.deps = &orchestrator.Deps{Jobs: jr, Emitter: s.emitter}
 	job := jr.Start(kind, "background "+kind, "coordinator")
 	if task != "" {

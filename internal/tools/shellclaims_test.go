@@ -32,7 +32,7 @@ func newClaimTestTree(t *testing.T) (root, syncDir string, ownership *workspacel
 	ownership = workspacelease.NewService()
 	open = func(scope string) claimTestSession {
 		jr := jobs.NewRegistry()
-		t.Cleanup(jr.KillAll)
+		t.Cleanup(func() { _ = jr.KillAll() })
 		reg := New()
 		reg.Add(Worker(&Workspace{Root: root, Ownership: ownership, Jobs: jr,
 			Emitter: event.NewEmitter(&captureRec{}, "coordinator"), MutationToken: ownership.NewScopedToken(scope, scope)})...)
@@ -250,7 +250,7 @@ func TestBackgroundJobExitWaitsForForegroundAttribution(t *testing.T) {
 	bg := open("s_bg")
 	reached, allow := make(chan struct{}), make(chan struct{})
 	fgJobs := jobs.NewRegistry()
-	t.Cleanup(fgJobs.KillAll)
+	t.Cleanup(func() { _ = fgJobs.KillAll() })
 	fg := New()
 	fg.Add(Worker(&Workspace{Root: root, Ownership: ownership, Jobs: fgJobs, Emitter: event.NewEmitter(&captureRec{}, "coordinator"),
 		MutationToken: ownership.NewScopedToken("s_fg", "s_fg"), SharedBookkeeping: func(path string) bool {

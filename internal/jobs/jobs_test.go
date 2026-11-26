@@ -449,7 +449,7 @@ func TestResolveOwnerAccountsFinishedAndJoinsCancelledExecution(t *testing.T) {
 	}
 	resolved := make(chan outcome, 1)
 	go func() {
-		reports, handoffs, rejected := r.ResolveOwner("implementer", "coordinator", nil)
+		reports, handoffs, rejected, _ := r.ResolveOwner("implementer", "coordinator", nil)
 		resolved <- outcome{reports, handoffs, rejected}
 	}()
 	<-cancelled

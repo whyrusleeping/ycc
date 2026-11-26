@@ -27,7 +27,7 @@ func TestBashScrubsCredentials(t *testing.T) {
 					t.Skip("reviewer shell unavailable")
 				}
 				jr := jobs.NewRegistry()
-				t.Cleanup(jr.KillAll)
+				t.Cleanup(func() { _ = jr.KillAll() })
 				ws := &Workspace{Root: t.TempDir(), Jobs: jr, Emitter: event.NewEmitter(&captureRec{}, "coordinator")}
 				expected := "creds=unset,unset ordinary=ordinary workspace=unset"
 				if overrides {

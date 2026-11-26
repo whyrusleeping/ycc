@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 )
 
 // GCConfig configures the background session reaper. A zero IdleTimeout disables
@@ -24,7 +26,9 @@ import (
 // modified within the retention window. It is OFF by default because those logs
 // back the durable session index / history + reopen view:
 // enabling retention discards logs a user could otherwise reopen or inspect.
-// Live sessions' directories are never pruned.
+// Live sessions' directories are never pruned, nor are directories holding a
+// supervised job that is still running, whose exit record is unharvested, or
+// whose execution is unknown (see jobshim.SessionBusy).
 type GCConfig struct {
 	Interval     time.Duration
 	IdleTimeout  time.Duration
@@ -114,6 +118,11 @@ func (r *reaper) pruneLogs(now time.Time) {
 			id := e.Name()
 			if _, live := r.m.Get(id); live {
 				continue // never prune a live session's log
+			}
+			if why := jobshim.SessionBusy(filepath.Join(dir, id)); why != "" {
+				// A supervised job may still run, or its outcome is unharvested
+				// or unknown: its evidence must outlive the retention window.
+				continue
 			}
 			logPath := filepath.Join(dir, id, "events.jsonl")
 			fi, err := os.Stat(logPath)

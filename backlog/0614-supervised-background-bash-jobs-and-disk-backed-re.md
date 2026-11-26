@@ -1,7 +1,7 @@
 ---
 id: "0614"
 title: Supervised background bash jobs and disk-backed retained evidence
-status: todo
+status: done
 priority: 2
 created: "2026-11-26"
 updated: "2026-11-26"
@@ -13,6 +13,7 @@ spec_refs:
 ---
 
 ## Description
+
 Slice 2 of restart-safe daemon sessions (`docs/design/daemon-restart.md` §2), building on 0613 (graceful daemon shutdown and phased startup). Introduces an out-of-process detached bash job supervisor (`internal/jobshim`) and disk-backed output/artifact storage so background shell commands can survive daemon restarts and crashes without losing repeatable evidence. Detached launches remain opt-in/gated off in production `Serve()` until Slice 4 adds crash-safe job-bound leases alongside Slice 3 reconciliation.
 
 ### Acceptance criteria
@@ -24,6 +25,8 @@ Slice 2 of restart-safe daemon sessions (`docs/design/daemon-restart.md` §2), b
 - Each session bounds total retained disk bytes across finished, notified job directories by evicting the oldest finished evidence first without resurrecting evicted data; session GC never deletes a session directory while any job holds a live `shim.lock`, an unharvested exit record, or an uncleared `execution_unknown` state.
 - Detached launches stay gated off in production `Serve()` in this slice and are exercised through opt-in/unit/integration tests.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+New internal/jobshim: ycc re-execs as a detached job supervisor (dispatched before CLI parsing). It runs in its own session, holds shim.lock, serves a version-checked, peer-UID-checked control socket in an owner-only runtime dir outside the workspace, and starts `sh -c` in its own process group only after a durable job_started (stamped event and healthy log), enforcing timeout_s and WaitDelay. Output goes to rotating 256 KiB segments (max 2) plus a 4 MiB artifact.bin with full-stream stats, then an atomic exit.json; dirs are 0700 and files 0600, with no env persisted. Losing a supervisor or socket gives Lost plus execution_unknown, never ExecutionComplete. kill_job, KillAll/KillAllCause, ResolveOwner and Manager.Stop/StopSession (FailedPrecondition) report jobs they could not join. Per-session retention evicts the oldest finished, notified evidence with eviction markers. Session GC skips busy job dirs. Manager.SetJobLauncher is opt-in; Serve and InProcess never call it. Restart detach and reconciliation are left to 0615/0616. Reviewed by sol (3 rounds, accepted).
+
+Commit: jobshim: supervised background bash jobs with disk-backed retained evidence, gated off in Serve (0614)

@@ -19,7 +19,7 @@ func TestUserInputInterruptsCoordinatorWait(t *testing.T) {
 	s, _ := newSteerSession()
 	s.setRunning(true)
 	jr := jobs.NewRegistry()
-	t.Cleanup(jr.KillAll)
+	t.Cleanup(func() { _ = jr.KillAll() })
 	job := jr.Start("bash", "sleep", "coordinator")
 	reg := tools.New()
 	reg.Add(tools.JobTools(&tools.Workspace{Root: t.TempDir(), Jobs: jr, Emitter: s.emitter, InputWake: s.inputWake})...)

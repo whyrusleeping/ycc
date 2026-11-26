@@ -30,6 +30,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/health"
 	"github.com/whyrusleeping/ycc/internal/imagefit"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/session"
 	"github.com/whyrusleeping/ycc/internal/sessionview"
@@ -1170,6 +1171,11 @@ func (s *Server) StopSession(_ context.Context, req *connect.Request[v1.StopSess
 	if err := s.mgr.Stop(req.Msg.SessionId); err != nil {
 		if errors.Is(err, session.ErrUnknownSession) {
 			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		var unjoined *jobs.UnjoinedError
+		if errors.As(err, &unjoined) {
+			// The session stopped, but a job's process could not be confirmed stopped.
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
@@ -319,6 +320,10 @@ type Workspace struct {
 	// Nil ⇒ background jobs are unavailable and
 	// run_in_background is rejected with a clear error.
 	Jobs *jobs.Registry
+	// JobSupervisor, when set, runs background Bash through out-of-process
+	// supervisors (internal/jobshim) whose evidence lives under the session
+	// directory. Nil runs background commands as direct child processes.
+	JobSupervisor *jobshim.Session
 	// Emitter is the owning agent's emitter, used to emit job_started/job_finished
 	// events tagged with that actor (which also owns the job for checkpoint drain).
 	// Required alongside Jobs for background bash.

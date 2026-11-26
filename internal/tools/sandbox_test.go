@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 )
 
@@ -20,6 +21,8 @@ import (
 // which is this test binary). Otherwise it runs the suite normally.
 func TestMain(m *testing.M) {
 	sandbox.MaybeHelper()
+	maybeDelayedShim()    // a supervisor test double (supervised_retention_test.go)
+	jobshim.MaybeHelper() // supervised background Bash re-execs this binary too
 	os.Exit(m.Run())
 }
 

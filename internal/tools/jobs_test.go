@@ -45,7 +45,7 @@ func jobsReg(t *testing.T) (*Registry, *jobs.Registry, *captureRec) {
 	t.Helper()
 	rec := &captureRec{}
 	jr := jobs.NewRegistry()
-	t.Cleanup(jr.KillAll)
+	t.Cleanup(func() { _ = jr.KillAll() })
 	ws := &Workspace{Root: t.TempDir(), Jobs: jr, Emitter: event.NewEmitter(rec, "coordinator")}
 	reg := New()
 	reg.Add(Editing(ws)...)
@@ -80,7 +80,7 @@ func TestWaitDefaultsToAny(t *testing.T) {
 func TestShellWaitCapBoundsShellOnlyWait(t *testing.T) {
 	rec := &captureRec{}
 	jr := jobs.NewRegistry()
-	t.Cleanup(jr.KillAll)
+	t.Cleanup(func() { _ = jr.KillAll() })
 	ws := &Workspace{Root: t.TempDir(), Jobs: jr, Emitter: event.NewEmitter(rec, "coordinator"),
 		ShellWaitCap: 300 * time.Millisecond}
 	reg := New()

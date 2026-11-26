@@ -90,6 +90,7 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		Env:           append([]string(nil), d.Env...),
 		WriteRoots:    tools.NormalizeRoots(d.WriteRoots),
 		Jobs:          d.Jobs,
+		JobSupervisor: d.JobSupervisor,
 		Emitter:       d.Emitter,
 		InputWake:     d.InputWake,
 		ShellWaitCap:  d.ShellWaitCap,

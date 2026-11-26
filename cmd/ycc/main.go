@@ -38,6 +38,7 @@ import (
 
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/daemon"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/secrets"
 	v1 "github.com/whyrusleeping/ycc/proto/ycc/v1"
@@ -59,6 +60,9 @@ func main() {
 	// confinement, see internal/sandbox), apply the policy and exec the wrapped
 	// command before any CLI parsing. This never returns in the helper case.
 	sandbox.MaybeHelper()
+	// Likewise for a detached background-job supervisor (internal/jobshim):
+	// it runs the job and exits without parsing the CLI.
+	jobshim.MaybeHelper()
 
 	a := &app{}
 	root := newRootCommand(a)

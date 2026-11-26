@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +30,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/orchestrator"
 	"github.com/whyrusleeping/ycc/internal/project"
@@ -174,6 +176,10 @@ type Session struct {
 	// stopOnce guards Stop so a hard terminate runs at most once even if both a
 	// StopSession RPC and a manager teardown race to call it.
 	stopOnce sync.Once
+	// stopErr is the honest outcome of Stop's job join: an *jobs.UnjoinedError
+	// when supervision of a background job was lost, so its process may still
+	// be running. Written inside stopOnce.
+	stopErr error
 
 	mu          sync.Mutex
 	status      event.Status
@@ -725,7 +731,7 @@ func (s *Session) Stop() {
 		s.cancel()
 		// Job cancellation has a separate execution-join boundary: keep the log and
 		// mutation ownership alive until every tracked process/agent has stopped.
-		s.killJobs()
+		s.stopErr = s.killJobs()
 		s.releaseLeases()
 		s.log.Close()
 	})
@@ -978,16 +984,24 @@ func (s *Session) drainJobNotes() ([]string, error) {
 }
 
 // killJobs terminates every background job for this session (session end). It is
-// nil-safe so minimally-constructed sessions (tests) can call it.
-func (s *Session) killJobs() {
-	if s.deps != nil && s.deps.Jobs != nil {
-		if s.ctx != nil && jobs.RestartSuspended(s.ctx) {
-			// Restart suspension: subagent loops see the restart cause too.
-			s.deps.Jobs.KillAllCause(jobs.ErrRestartSuspend)
-			return
-		}
-		s.deps.Jobs.KillAll()
+// nil-safe so minimally-constructed sessions (tests) can call it. It returns an
+// *jobs.UnjoinedError, also logged, when a job's supervision was lost so its
+// process could not be confirmed stopped.
+func (s *Session) killJobs() error {
+	if s.deps == nil || s.deps.Jobs == nil {
+		return nil
 	}
+	var err error
+	if s.ctx != nil && jobs.RestartSuspended(s.ctx) {
+		// Restart suspension: subagent loops see the restart cause too.
+		err = s.deps.Jobs.KillAllCause(jobs.ErrRestartSuspend)
+	} else {
+		err = s.deps.Jobs.KillAllCause(nil)
+	}
+	if err != nil {
+		log.Printf("session %s: %v", s.ID, err)
+	}
+	return err
 }
 
 // jobCompletions is the registry's coalescing completion signal, or nil (a
@@ -2286,6 +2300,10 @@ type Manager struct {
 	// notifier pushes best-effort daemon-side notifications when an agent needs
 	// the user. Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
+	// jobLauncher, when set, runs sessions' background Bash through detached
+	// supervisors (internal/jobshim). Nil (the default, and every production
+	// daemon until restart reconciliation lands) keeps direct child processes.
+	jobLauncher *jobshim.Launcher
 	// workstreamSpawnMu makes the max_parallel check and subsequent registration
 	// atomic with respect to other spawns.
 	workstreamSpawnMu sync.Mutex
@@ -2474,6 +2492,12 @@ func (m *Manager) SetProjects(p *project.Registry) {
 // (the default / unconfigured case) disables notifications; every session watcher
 // and the Notify RPC are nil-safe.
 func (m *Manager) SetNotifier(n *notify.Notifier) { m.notifier = n }
+
+// SetJobLauncher opts sessions created afterwards into supervised background
+// Bash jobs (docs/design/daemon-restart.md §2). Production Serve() does not
+// call it yet: detached jobs need reopen reconciliation and crash-safe
+// job-bound leases first. Nil restores direct child processes.
+func (m *Manager) SetJobLauncher(l *jobshim.Launcher) { m.jobLauncher = l }
 
 // Notify pushes a best-effort notification for the given kind via the configured
 // notifier, returning whether it was delivered (false when no notifier is
@@ -3351,6 +3375,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		Ownership:          m.ownership,
 		PromptCacheScope:   id,
 	}
+	if m.jobLauncher != nil {
+		deps.JobSupervisor = m.jobLauncher.ForSession(filepath.Join(absWS, ".ycc", "sessions", id))
+	}
 	// The session id is the attribution scope shared by the coordinator and every
 	// agent it delegates to (see workspacelease claims).
 	deps.CoordinatorToken = m.ownership.NewScopedToken(id, fmt.Sprintf("session %s coordinator", id))
@@ -4088,6 +4115,10 @@ func (m *Manager) Stop(id string) error {
 	// Only its ambiguous claims go (endClaims).
 	m.endClaims(s)
 	m.waitWorkstreamWatcher(id)
+	if s.stopErr != nil {
+		// Stopped, but not cleanly joined: say so rather than report success.
+		return fmt.Errorf("session %s stopped, but %w", id, s.stopErr)
+	}
 	return nil
 }
 

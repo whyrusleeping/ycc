@@ -20,6 +20,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/event"
 	"github.com/whyrusleeping/ycc/internal/git"
 	"github.com/whyrusleeping/ycc/internal/jobs"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 	"github.com/whyrusleeping/ycc/internal/tools"
 	"github.com/whyrusleeping/ycc/internal/workspacelease"
@@ -211,6 +212,9 @@ type Deps struct {
 	// When set it enables background bash plus job discovery, progress, retained
 	// result, wait, and cancellation tools; the session kills all jobs on end.
 	Jobs *jobs.Registry
+	// JobSupervisor, when set, runs background Bash out of process (see
+	// tools.Workspace.JobSupervisor).
+	JobSupervisor *jobshim.Session
 	// InputWake is the coordinator workspace's tools.Workspace.InputWake: it lets
 	// a user message cut the coordinator's blocking wait short. Nil disables it.
 	InputWake func() <-chan struct{}
@@ -1064,7 +1068,7 @@ func resolveSubagentJobs(d *Deps, owner string, res *engine.Result) subagentJobL
 	if res != nil {
 		retain = res.HandoffJobs
 	}
-	reports, handoffs, rejected := d.Jobs.ResolveOwner(owner, d.Emitter.Actor(), retain)
+	reports, handoffs, rejected, unjoined := d.Jobs.ResolveOwner(owner, d.Emitter.Actor(), retain)
 	var b strings.Builder
 	if len(reports) > 0 {
 		b.WriteString("\n\nBACKGROUND JOBS RESOLVED BEFORE SUBAGENT EXIT:")
@@ -1087,6 +1091,10 @@ func resolveSubagentJobs(d *Deps, owner string, res *engine.Result) subagentJobL
 	}
 	if len(rejected) > 0 {
 		b.WriteString("\n\nREJECTED BACKGROUND JOB HANDOFFS (jobs received default cleanup): " + strings.Join(rejected, "; "))
+	}
+	if len(unjoined) > 0 {
+		b.WriteString("\n\nBACKGROUND JOBS NOT CONFIRMED STOPPED: supervision of " + strings.Join(unjoined, ", ") +
+			" was lost, so their processes may still be running")
 	}
 	lifecycle := subagentJobLifecycle{note: b.String(), handoffs: handoffs}
 	for _, handoff := range handoffs {
@@ -1337,7 +1345,7 @@ func (d *Deps) implementerWorkspace(token *workspacelease.Token) *tools.Workspac
 	em := d.Emitter.With("implementer")
 	return &tools.Workspace{
 		Root: d.Workspace, Env: append([]string(nil), d.Env...),
-		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs,
+		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs, JobSupervisor: d.JobSupervisor,
 		Emitter: em, Ownership: d.Ownership,
 		MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
 		OnWrite: func(path string) string { return d.onBacklogEdit(em, path) },

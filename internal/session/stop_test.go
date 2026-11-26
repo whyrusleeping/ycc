@@ -163,3 +163,27 @@ func TestManagerStop(t *testing.T) {
 		t.Fatalf("second Stop err = %v, want ErrUnknownSession", err)
 	}
 }
+
+// StopSession on a session whose job lost supervision stops it but reports the
+// unjoined execution instead of a clean join.
+func TestManagerStopReportsUnjoinedExecution(t *testing.T) {
+	m := NewManager(nil, t.TempDir())
+	s := newStopSession(t)
+	s.ID = "s_unjoined"
+	jr := jobs.NewRegistry()
+	s.deps = &orchestrator.Deps{Jobs: jr}
+	job, _ := jr.TryStartTracked("bash", "sleep 30", "coordinator")
+	job.Finish(jobs.Lost, "lost: supervision lost")
+	job.MarkExecutionUnknown("")
+	m.mu.Lock()
+	m.sessions[s.ID] = s
+	m.mu.Unlock()
+	err := m.Stop(s.ID)
+	var unjoined *jobs.UnjoinedError
+	if !errors.As(err, &unjoined) || len(unjoined.IDs) != 1 || unjoined.IDs[0] != job.ID() {
+		t.Fatalf("Stop = %v, want job_1 reported unjoined", err)
+	}
+	if _, live := m.Get(s.ID); live {
+		t.Fatal("session still registered after Stop")
+	}
+}

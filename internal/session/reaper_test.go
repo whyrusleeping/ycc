@@ -201,12 +201,35 @@ func TestReaperPruneLogs(t *testing.T) {
 	mk("s_stale", 30*24*time.Hour) // older than retention => pruned
 	mk("s_recent", 1*24*time.Hour) // within retention => kept
 	mk("s_live", 30*24*time.Hour)  // stale on disk but currently live => kept
+	// Stale, but a supervised job's outcome is unharvested (or unknown) => kept;
+	// once harvested the directory may go.
+	mk("s_job", 30*24*time.Hour)
+	mk("s_harvested", 30*24*time.Hour)
+	for _, id := range []string{"s_job", "s_harvested"} {
+		jobDir := filepath.Join(sessionsDir, id, "jobs", "job_1")
+		if err := os.MkdirAll(jobDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(jobDir, "spec.json"), []byte(`{"version":1}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sessionsDir, "s_harvested", "jobs", "job_1", "harvested"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// Mark s_live as a live session.
 	live := idleSession(t, m, "s_live")
 	_ = live
 
 	r.pruneLogs(clk.Now())
+
+	if _, err := os.Stat(filepath.Join(sessionsDir, "s_job")); err != nil {
+		t.Fatal("session dir with an unharvested supervised job was pruned")
+	}
+	if _, err := os.Stat(filepath.Join(sessionsDir, "s_harvested")); !os.IsNotExist(err) {
+		t.Fatal("session dir whose supervised job was harvested was not pruned")
+	}
 
 	if _, err := os.Stat(filepath.Join(sessionsDir, "s_stale")); !os.IsNotExist(err) {
 		t.Fatal("stale session dir was not pruned")
