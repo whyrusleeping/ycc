@@ -5,8 +5,7 @@ import YccProto
 /// A project's watches (docs/design/watches.md): daemon-scheduled recurring
 /// checks, each listed with its latest status, when it runs next and any
 /// question a run is waiting on. Rows drill into ``WatchDetailView``; swipe
-/// and context actions edit, pause/resume, run now and delete; + creates one
-/// (agents can also propose one with `schedule_watch`).
+/// and context actions edit, pause/resume, run now and delete; + creates one.
 struct WatchesView: View {
     @Environment(AppModel.self) private var app
     @Environment(HomeRouter.self) private var router
