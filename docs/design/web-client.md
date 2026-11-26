@@ -201,6 +201,10 @@ A chat (in the project's tree) can also start with **Plan only** on. In an open 
 shows the requested value until the durable state confirms it; while it is on, the composer is
 outlined in the accent and the header shows a **plan only** marker. The palette offers the same
 toggle, and the transcript shows each change as a lifecycle line.
+In the session composer and the new-session prompt, typing `#` and digits opens a popover of the
+project's backlog tasks whose id starts with them (id, title, status; an exact id first, then newest).
+Arrow keys move, Enter or Tab inserts the zero-padded `#0613`, Escape dismisses, and a click also
+inserts. The backlog loads on the first such mention.
 An unsent new-session draft keeps its prompt, project, mode, model, preset, and picture previews in
 memory for the life of the tab, across route changes but not reload or tab closure. Reopening it
 through a project route (New session with a sidebar project selected, or switching that project

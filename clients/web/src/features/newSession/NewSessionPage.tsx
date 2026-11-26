@@ -6,7 +6,7 @@
 // with "Separate workstream" on → SpawnWorkstream (plus an optional task and
 // base ref). On success it navigates straight into the live session.
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router";
 import { client, errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
@@ -24,6 +24,7 @@ import { spawnableTasks } from "../workstreams/model";
 import { NewSessionDraftStore } from "./drafts";
 import { clampThinking, levelsNamed, thinkingTitle } from "../session/settings";
 import { ThinkingSelect } from "../session/ThinkingSelect";
+import { useTaskMentions } from "../session/TaskMentions";
 import {
   applyPreset,
   buildStartRequest,
@@ -128,7 +129,16 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
     loadingPictures: pictures.loading,
   });
   const drop = useDropZone((files) => void pictures.add(files), !asking && !starting);
-  const backlog = useBacklog(draft.project, draft.workstream && draft.project !== "");
+  // The backlog feeds the workstream task picker and `#123` mentions (loaded once one is typed).
+  const [mentioning, setMentioning] = useState(false);
+  const startMentioning = useCallback(() => setMentioning(true), []);
+  const backlog = useBacklog(draft.project, (draft.workstream || mentioning) && draft.project !== "");
+  const mentions = useTaskMentions(
+    area,
+    draft.prompt,
+    (prompt) => setDraft((d) => ({ ...d, prompt })),
+    draft.project ? { tasks: backlog.data, onWanted: startMentioning } : undefined,
+  );
   const tasks = useMemo(() => spawnableTasks(backlog.data ?? []), [backlog.data]);
 
   useEffect(() => {
@@ -523,6 +533,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
         <PictureStrip pictures={pictures.pictures} onRemove={pictures.remove} disabled={starting} />
         {pictures.error && <p className="error small">{pictures.error}</p>}
         <div className="composer-row">
+          {mentions.popover}
           <AttachButton
             onFiles={(f) => {
               track.action("new_session.attach_image", "click", { source: "button" });
@@ -544,7 +555,12 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
                   ? "What should the agent do? (optional — it picks the next ready task) · Enter to start, Shift+Enter for a newline"
                   : "What should the agent do? · Enter to start, Shift+Enter for a newline"
             }
-            onChange={(e) => setDraft((d) => ({ ...d, prompt: e.target.value }))}
+            {...mentions.inputProps}
+            onChange={(e) => {
+              const prompt = e.target.value;
+              setDraft((d) => ({ ...d, prompt }));
+              mentions.sync(e.target);
+            }}
             onPaste={(e) => {
               const files = filesFrom(e.clipboardData).filter((f) => f.type.startsWith("image/"));
               if (!files.length) return;
@@ -553,6 +569,7 @@ export function NewSessionPage({ routeProject }: { routeProject: string | null }
               void pictures.add(files);
             }}
             onKeyDown={(e) => {
+              if (mentions.onKeyDown(e)) return;
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void start("keyboard");

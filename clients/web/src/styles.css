@@ -2135,6 +2135,66 @@ pre.clamp {
   border-color: var(--fg-muted);
 }
 
+/* `#123` task mentions (TaskMentions.tsx): a listbox just above the message box. */
+.composer-row {
+  position: relative;
+}
+
+.task-mentions {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: min(50vh, 320px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+
+div.task-mentions {
+  padding: 8px 10px;
+}
+
+.task-mention {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.task-mention.cursor {
+  background: var(--bg-sunk);
+}
+
+.task-mention-id {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+}
+
+.task-mention-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-mention .status-pill {
+  flex: none;
+}
+
 .composer-row textarea,
 .composer-row textarea:hover,
 .composer-row textarea:focus {

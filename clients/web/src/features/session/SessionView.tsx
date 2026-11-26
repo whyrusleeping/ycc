@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { needsAnthropicReconnect } from "../settings/anthropic";
 import { openAnthropicLogin } from "../settings/AnthropicLogin";
 import { useQueryClient } from "@tanstack/react-query";
-import { queryKeys, useQuickReplies } from "../../api/queries";
+import { queryKeys, useBacklog, useQuickReplies } from "../../api/queries";
 import { openQuickReplies } from "../projects/ProjectDialogs";
 import { useInspector } from "../inspector/inspector";
 import { ConfirmDialog } from "../../ui/ConfirmDialog";
@@ -295,6 +295,10 @@ export function SessionView({
   const ctx = snap.contextTokens !== null ? compactTokenCount(snap.contextTokens) : null;
   // A persisted session accepts input too: sending re-opens it transparently.
   const canCompose = snap.mode === "persisted" || (snap.mode === "live" && snap.conn !== "finished");
+  // The backlog loads once the user first types a `#123` mention.
+  const [mentioning, setMentioning] = useState(false);
+  const backlog = useBacklog(project, mentioning && project !== "");
+  const startMentioning = useCallback(() => setMentioning(true), []);
   const drop = useDropZone((files) => composer.current?.addFiles(files), canCompose);
   const settingsOpen =
     inspector.item?.kind === "sessionSettings" &&
@@ -506,6 +510,7 @@ export function SessionView({
             onSend={(t, pictures) => void controller.send(t, pictures)}
             quickReplies={quickReplyIdle ? quickReplies : undefined}
             onEditQuickReplies={() => openQuickReplies(project)}
+            taskMentions={project ? { tasks: backlog.data, onWanted: startMentioning } : undefined}
             planOnly={
               planOnlyToggle
                 ? { on: snap.planOnly, pending: snap.planOnlyPending, onToggle: (on) => void controller.setPlanOnly(on) }

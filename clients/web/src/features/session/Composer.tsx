@@ -2,11 +2,13 @@
 // be attached with the paperclip, pasted, or dropped onto the session view.
 // Drafts (text and pictures) are kept per session while the page is open.
 // While the draft is empty, quick-reply chips send a canned message in one click.
+// Typing `#` and a number offers matching backlog tasks (TaskMentions.tsx).
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import type { DraftPicture } from "../attachments/attachments";
 import { AttachButton, PictureStrip, filesFrom, usePictureDraft } from "../attachments/pictures";
 import { track, type Attrs, type Via } from "../../app/analytics";
 import { Icon } from "../../ui/icons";
+import { useTaskMentions, type TaskMentionSource } from "./TaskMentions";
 
 const drafts = new Map<string, string>();
 const pictureDrafts = new Map<string, DraftPicture[]>();
@@ -50,9 +52,11 @@ export const Composer = forwardRef<
     onEditQuickReplies?: () => void;
     /** The chat's plan-only toggle (omit to hide it). */
     planOnly?: { on: boolean; pending: boolean; onToggle: (on: boolean) => void };
+    /** Backlog tasks `#123` mentions offer (omit to turn them off). */
+    taskMentions?: TaskMentionSource;
   }
 >(function Composer(
-  { sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs, quickReplies, onEditQuickReplies, planOnly },
+  { sessionKey, placeholder, onSend, disabled, picturesBlocked, sendAttrs, quickReplies, onEditQuickReplies, planOnly, taskMentions },
   ref,
 ) {
   const [text, setText] = useState(() => drafts.get(sessionKey) ?? "");
@@ -61,6 +65,8 @@ export const Composer = forwardRef<
     if (next.length) pictureDrafts.set(sessionKey, next);
     else pictureDrafts.delete(sessionKey);
   });
+
+  const mentions = useTaskMentions(area, text, setText, taskMentions);
 
   useImperativeHandle(ref, () => ({
     setDraft: (t: string, pictures?: DraftPicture[]) => {
@@ -164,6 +170,7 @@ export const Composer = forwardRef<
         </div>
       )}
       <div className="composer-row">
+        {mentions.popover}
         <AttachButton
           onFiles={(f) => {
             track.action("composer.attach_image", "click", { source: "button" });
@@ -196,7 +203,11 @@ export const Composer = forwardRef<
           value={text}
           placeholder={placeholder}
           aria-label="Message"
-          onChange={(e) => setText(e.target.value)}
+          {...mentions.inputProps}
+          onChange={(e) => {
+            setText(e.target.value);
+            mentions.sync(e.target);
+          }}
           onPaste={(e) => {
             const files = filesFrom(e.clipboardData).filter((f) => f.type.startsWith("image/"));
             if (!files.length) return;
@@ -205,6 +216,7 @@ export const Composer = forwardRef<
             void draft.add(files);
           }}
           onKeyDown={(e) => {
+            if (mentions.onKeyDown(e)) return;
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               submit("keyboard");
