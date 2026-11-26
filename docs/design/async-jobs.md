@@ -160,6 +160,39 @@ an exit record turns up. An operator who has confirmed that such a command stopp
 file into its job directory. That settles the job for GC and worktree cleanup, unless a supervisor
 still holds `shim.lock`. A reopen then reports the job `lost` without `execution_unknown`.
 
+An exclusive lease acquired with `job_id` (spec §7.3) follows the job's execution, not its report.
+It is released once the job's execution has stopped (`Done`, then `ExecutionDone`), so a killed
+job holds it until its process has actually exited. A job whose execution is unknown holds it until
+an exit record confirms the stop, the lease expires, or its holder releases it. For a closed
+session's job held in the passive supervisor table, an operator's `cleared` marker also ends it. A
+lease belongs to its holder's session id, not to one in-memory instance. When the session stops or
+the daemon restarts while the job may still run, the lease stays held for the closed session. A
+reopen of the session takes it over. It then follows the reopened registry's reconciled job while
+that executes, and is released when the reopen's reconciliation of a job it took over from the
+passive table found an exit record or a `cleared` marker. Otherwise it keeps following the old
+execution while that may still run.
+
+The daemon writes its job-bound leases to `<state-dir>/leases.json` (`0600`, atomic rename). An
+acquire or renewal is acknowledged, and an explicit release takes effect, only after the file
+records it. An automatic release (expiry, the job's exit) whose removal cannot be saved is not
+recorded; the record left on disk is released by the next startup. Persistent startup restores the
+file after passive job supervision and before any session reopens:
+
+- A lease whose job the passive supervisor table holds stays held until that job's exit is
+  confirmed or an operator clears it.
+- A lease whose job left an exit record or a `cleared` marker, or that expired while the daemon was
+  down, is released.
+- A lease whose job nothing can follow stays held until it expires or its holder, reopened,
+  releases it. A direct child process of a crashed daemon can still be running, and so can a
+  supervised job that was not held.
+- A record naming no registered project or verified worktree is dropped.
+
+Startup saves the reconciled set before it records any release or starts any watcher, so a crash
+during startup replays the same records. A release while the holder is closed is written to the
+closed session's log under its session id's lock, so it never races a reopen. Because the file is
+rewritten before a release is recorded, a crash can lose a `lease_released` but never record one
+twice. Leases without a job are not persisted, and an unplanned crash does not restore them.
+
 Before any irreversible step, workstream merge, automatic integration and discard confirm that no
 background job can still run in the worktree. The steps are advancing the base branch and recording
 `workstream_discarded`; archiving the session logs into the primary comes after that confirmation.

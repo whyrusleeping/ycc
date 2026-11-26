@@ -1426,15 +1426,19 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 		}
 		out = append(out, ls)
 	}
-	// A stopping session has left the live map while its job, and so its
-	// lease, is still running: list it until the lease ends.
+	// A stopping or closed session has left the live map while its job, and
+	// so its lease, is still running: list it until the lease ends.
 	for id, held := range leases {
 		if listed[id] {
 			continue
 		}
-		h := held[0].holder
-		out = append(out, LiveSession{ID: id, Mode: h.Mode, State: "stopping; its job still holds a lease", Activity: string(event.StatusStopped),
-			Workspace: h.Workspace, InPrimary: canonicalPath(h.Workspace) == primary, Leases: held})
+		h := held[0]
+		state := "stopping; its job still holds a lease"
+		if h.restored {
+			state = "closed; its job still holds a lease"
+		}
+		out = append(out, LiveSession{ID: id, Mode: h.mode, State: state, Activity: string(event.StatusStopped),
+			Workspace: h.workspace, InPrimary: canonicalPath(h.workspace) == primary, Leases: held})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

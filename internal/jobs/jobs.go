@@ -472,6 +472,17 @@ func (j *Job) WaitExecutionSettled() (unknown bool) {
 // an untracked one while its status is running.
 func (j *Job) ExecutionRunning() bool { return j.executionRunning() }
 
+// ExecutionDone returns a channel closed once the job's work has stopped
+// executing (ExecutionRunning turns false): for a tracked job at
+// ExecutionComplete, never while its execution is unknown; for an untracked
+// one with its report (Done).
+func (j *Job) ExecutionDone() <-chan struct{} {
+	if j.tracked {
+		return j.executionDone
+	}
+	return j.done
+}
+
 func (j *Job) executionRunning() bool {
 	if !j.tracked {
 		return j.Status() == Running

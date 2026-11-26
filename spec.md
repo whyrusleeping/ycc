@@ -874,15 +874,22 @@ except for exclusive leases.
   are one printable line of at most 80 characters, compared case-insensitively. The reason (at most
   200 characters) is required, and the ttl runs from 1 minute to 24 hours. The daemon keeps each
   project's leases in memory, keyed by the primary tree, and records the holder session, its
-  focused tasks, the reason, and the acquired and expiry times. Acquiring a lease another live
+  focused tasks, the reason, and the acquired and expiry times. Acquiring a lease another
   session holds fails at once, naming the holder, its reason and the expiry. Nothing waits or polls.
   Acquiring a lease the session already holds renews it with the new reason and ttl. A session may
   hold 8 leases. With `job_id`, a running background job of the session, the lease is also
   released when that job exits, so it outlives the turn; a renewal without `job_id` keeps the job.
-  A lease is released by `release_lease` (holder only), at expiry, when its job exits, and when
-  the holder session ends (stopped or reclaimed, which also kills its jobs). A daemon restart
-  releases every lease. The holder's log records `lease_acquired` (name, reason, expires_at, job,
-  renewed) and `lease_released` (name, why: released, expired, job_exited or session_ended).
+  A lease is released by `release_lease` (holder only), at expiry, when its job's execution has
+  stopped, and when the holder session ends (stopped or reclaimed, which also kills its jobs). A
+  lease belongs to the holder's session id: while its job may still run, it stays held for a
+  closed session, a reopen of that session takes it over, and job-bound leases survive a daemon
+  restart or crash in `<state-dir>/leases.json` (`docs/design/async-jobs.md`). A job-bound
+  acquire, renewal or release is acknowledged only once that file records it. A job whose
+  execution is unknown, or that the restarted daemon cannot follow, holds its lease until a
+  confirmed exit, expiry or the holder's release (or an operator's `cleared` marker on a closed
+  session's job). A daemon restart releases every lease without a job. The holder's log records
+  `lease_acquired` (name, reason, expires_at, job, renewed) and `lease_released` (name, why:
+  released, expired, job_exited or session_ended), including a release while the holder is closed.
   A refusal points to the `list_backlog` footer, which shows held leases under their holder, as
   `list_sessions` and `ListProjectNotices` sessions (as `leases`) do; a held lease keeps a quiet
   session listed. While session coordination is off, `list_sessions` is still offered and lists
@@ -891,7 +898,8 @@ except for exclusive leases.
   and iOS Live sessions views show them below the coordination-off note, and the iOS More menu
   always offers that view (the web sidebar line appears only while a lease is held). A stopping
   session's job-attached lease stays held until the job's execution has actually stopped, and the
-  listings keep showing that session, as stopping, until the lease ends.
+  listings keep showing that session, as stopping (or as closed after a daemon restart), until the
+  lease ends.
 
 ### 7.4 Reasoning settings
 

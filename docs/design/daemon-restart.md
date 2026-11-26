@@ -539,6 +539,12 @@ and client projections as its behavior lands:
    Implemented in three tasks: persisted `wait` and the wake-eligible idle check (0616), passive
    lease ownership and `leases.json` (0621), and the restart manifest with supervised launches on
    by default (0622).
+   0621 keys a lease by its holder's session id, holds a closed session's job-bound lease passively
+   (following its in-process job, or the passive table's held job through `PassiveJobs.Watch`), and
+   transfers it in `Reopen`. Persistent startup restores `leases.json` right after
+   `SupervisePassiveJobs`. A restored lease whose job nothing can follow is held until expiry or the
+   reopened holder's release. A lease restored without a job is held until expiry; only 0622's
+   `unbound_leases` will create one.
 5. **Work-loop continuity across graceful restart** *(depends on 1, 4)*.
    Revise `spec.md` §9.1 for planned graceful restarts, add working- and waiting-slot restart
    release, persist and restore the generation-bound full scheduler checkpoint

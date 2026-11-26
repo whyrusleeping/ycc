@@ -2448,10 +2448,16 @@ type Manager struct {
 	boardMu sync.Mutex
 	boards  map[string]boardState
 	// leases holds each project's exclusive leases (leases.go), keyed by
-	// canonical primary tree and lease name. Memory only: a daemon restart
-	// releases them.
-	leaseMu sync.Mutex
-	leases  map[string]map[string]*leaseEntry
+	// canonical primary tree and lease name. Job-bound ones are also saved in
+	// leasesFile (leases.json; leasesSaved is its last written content) to
+	// survive a daemon restart or crash. leasesClosed stops lease activity at
+	// manager shutdown; leaseWG joins closed holders' release records.
+	leaseMu      sync.Mutex
+	leases       map[string]map[string]*leaseEntry
+	leasesFile   string
+	leasesSaved  []byte
+	leasesClosed bool
+	leaseWG      sync.WaitGroup
 
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
@@ -3906,6 +3912,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 	}
 	m.sessions[id] = s
 	m.mu.Unlock()
+	// Leases a closed instance of this session still holds (a job-bound one
+	// held passively across a restart, say) belong to this instance now.
+	m.adoptLeases(s)
 
 	if linked, ok := m.workstreams.BySession(id); ok && linked.Status.InFlight() {
 		m.startWorkstreamWatcher(linked, log)
@@ -4481,6 +4490,7 @@ func (m *Manager) ReclaimAll() {
 		// running past the drain deadline.
 		m.joinBackground()
 		m.gitSyncWG.Wait()
+		m.closeLeases()
 		return
 	}
 	sessions := m.sessions
@@ -4495,6 +4505,7 @@ func (m *Manager) ReclaimAll() {
 	for id := range sessions {
 		m.waitWorkstreamWatcher(id)
 	}
+	m.closeLeases()
 }
 
 // stopBackground stops and joins, in order, the manager-owned background

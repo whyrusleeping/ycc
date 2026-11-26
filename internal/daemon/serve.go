@@ -129,6 +129,9 @@ func buildHandler(o Options, adm *server.Admission) (*daemonParts, error) {
 		mgr.SetIDStateFile(docs.DefaultIDStateFile())
 		mgr.SetQuickRepliesFile(filepath.Join(filepath.Dir(project.StateFile()), "quick-replies.json"))
 		mgr.SetPublicationsFile(filepath.Join(filepath.Dir(project.StateFile()), "publications.json"))
+		// Job-bound exclusive leases survive a restart or crash while their
+		// job runs (startPersistent restores them).
+		mgr.SetLeasesFile(filepath.Join(filepath.Dir(project.StateFile()), "leases.json"))
 		// The startup workspace is not a privileged "default"; register it as a
 		// normal named project so every RPC/UI uses the same project model. A
 		// daemon is often started from wherever the shell happens to be, so only
@@ -228,6 +231,10 @@ func startPersistent(p *daemonParts, stopping func() bool) (stop func()) {
 	// following them: hold them passively (subagents' shells are stopped), so
 	// their worktrees stay guarded and their shells count as running there.
 	p.mgr.SupervisePassiveJobs()
+	// Job-bound leases (leases.json) are held again: passively while their
+	// session stays closed and its job runs, and released when it no longer
+	// does. Other leases ended with the previous daemon.
+	p.mgr.RestoreLeases()
 	if stopping() {
 		return func() {}
 	}

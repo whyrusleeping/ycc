@@ -29,6 +29,7 @@ type passiveJob struct {
 	ws      *Workspace     // the session's worktree, for the shell registration
 	shell   *shellSnapshot // its running-shell registration
 	taken   chan struct{}  // closed when a reopen takes the job over
+	settled chan struct{}  // closed when its exit is confirmed or an operator cleared it
 }
 
 // NewPassiveJobs returns an empty table.
@@ -72,7 +73,7 @@ func (p *PassiveJobs) Supervise(sup *jobshim.Session, entries []jobs.Restored, c
 		if held {
 			continue
 		}
-		j := &passiveJob{id: e.ID, dir: dir, handle: sup.Attach(e.ID), ws: ws, taken: make(chan struct{})}
+		j := &passiveJob{id: e.ID, dir: dir, handle: sup.Attach(e.ID), ws: ws, taken: make(chan struct{}), settled: make(chan struct{})}
 		j.shell = ws.recoveredShell()
 		p.mu.Lock()
 		if p.sessions[key] == nil {
@@ -147,7 +148,26 @@ func (p *PassiveJobs) retire(key string, j *passiveJob) {
 	p.mu.Unlock()
 	if held {
 		j.ws.endShell(j.shell)
+		close(j.settled)
 	}
+}
+
+// Watch reports whether the session's job id is held and, if so, returns two
+// channels: settled closes once the job's exit is confirmed or an operator
+// cleared it (never while its execution is unknown), and taken closes when a
+// reopen takes the job over (Take), after which settled never closes. A
+// passive lease follows its job through them (docs/design/daemon-restart.md §5).
+func (p *PassiveJobs) Watch(sessionDir, id string) (settled, taken <-chan struct{}, ok bool) {
+	if p == nil {
+		return nil, nil, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	j := p.sessions[sessionDir][id]
+	if j == nil {
+		return nil, nil, false
+	}
+	return j.settled, j.taken, true
 }
 
 // Take hands the session's held jobs to its reopen, which follows them through
