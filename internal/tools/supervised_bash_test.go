@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -68,7 +69,7 @@ func TestSupervisedBackgroundBash(t *testing.T) {
 	}
 	res = dispatch(t, reg, "wait", `{"job_ids":["job_1"],"timeout_s":30}`)
 	if !strings.Contains(res.Content, "[job job_1 failed]") || !strings.Contains(res.Content, "exit 2") ||
-		!strings.Contains(res.Content, "two") || !strings.Contains(res.Content, "full output artifact") {
+		!strings.Contains(res.Content, "two") || !strings.Contains(res.Content, "[full output: ") {
 		t.Fatalf("wait = %q", res.Content)
 	}
 	job, _ := jr.Get("job_1")
@@ -80,13 +81,39 @@ func TestSupervisedBackgroundBash(t *testing.T) {
 	if !strings.HasPrefix(out.Content, "job job_1 [failed]\ntwo\n") || !strings.Contains(out.Content, "output bytes 4-8") {
 		t.Fatalf("job_output = %q", out.Content)
 	}
-	artifactID := between(res.Content, "full output artifact ", ":")
-	art := dispatch(t, reg, "tool_output", `{"artifact_id":"`+artifactID+`"}`)
-	if art.IsError || !strings.HasPrefix(art.Content, "one\ntwo\n") {
-		t.Fatalf("tool_output = %q", art.Content)
+	path := between(res.Content, "[full output: ", ": ")
+	if path != jobshim.ArtifactPath(sup.JobDir("job_1")) {
+		t.Fatalf("report names output file %q", path)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "one\ntwo\n" {
+		t.Fatalf("output file = %q, %v", data, err)
 	}
 	if why := jobshim.SessionBusy(sup.Dir()); why != "" {
 		t.Fatalf("harvested job still protects its session: %q", why)
+	}
+}
+
+// A supervised job's over-budget output is the job directory's output file,
+// named when the job starts and in its report, and readable with Read.
+func TestSupervisedBackgroundBashOutputFile(t *testing.T) {
+	rec := &captureRec{}
+	reg, _, sup := supervisedWorkspace(t, rec)
+	started := dispatch(t, reg, "Bash", `{"command":"seq 1 30000 | sed 's/^/row /'","run_in_background":true}`)
+	path := between(started.Content, "Its output is written to ", " while it runs")
+	if path != jobshim.ArtifactPath(sup.JobDir("job_1")) {
+		t.Fatalf("start result names %q: %q", path, started.Content)
+	}
+	report := dispatch(t, reg, "wait", `{"job_ids":["job_1"],"timeout_s":30}`)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("[full output: %s: %d bytes/30000 lines, sha256 %s]", path, len(data), digestHex(data)); !strings.Contains(report.Content, want) {
+		t.Fatalf("report = %q, want %q", report.Content, want)
+	}
+	window := dispatch(t, reg, "Read", fmt.Sprintf(`{"file_path":%q,"offset":15000,"limit":2}`, path))
+	if window.IsError || !strings.Contains(window.Content, "row 15000") || !strings.Contains(window.Content, "row 15001") || strings.Contains(window.Content, "row 15002") {
+		t.Fatalf("Read window = %q", window.Content)
 	}
 }
 

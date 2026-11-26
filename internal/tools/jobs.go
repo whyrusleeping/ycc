@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 
@@ -440,8 +443,15 @@ func killJobTool(ws *Workspace) *gollama.Tool {
 // followed by the exit line + output tail.
 func FormatJobReport(r jobs.Report) string {
 	head := fmt.Sprintf("[job %s %s] %s", r.ID, r.Status, r.Label)
-	if strings.TrimSpace(r.Result) == "" {
-		return head
+	text := head
+	if strings.TrimSpace(r.Result) != "" {
+		text += "\n" + r.Result
 	}
-	return head + "\n" + r.Result
+	// The report names its output file; one evicted since is said to be gone.
+	if r.OutputFile != "" && strings.Contains(r.Result, r.OutputFile) && !strings.Contains(r.Result, "was evicted") {
+		if _, err := os.Stat(r.OutputFile); errors.Is(err, fs.ErrNotExist) {
+			text += fmt.Sprintf("\n[output file %s no longer exists: the session's output retention evicted it]", r.OutputFile)
+		}
+	}
+	return text
 }

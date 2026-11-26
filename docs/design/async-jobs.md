@@ -84,8 +84,10 @@ cancelled and joined, or is declined before launch and releases any mutation lea
 
 Bash output is retained as a bounded tail addressed by absolute byte cursors. Reads can request a
 forward cursor range or retained line tail, identify the retained absolute interval and any eviction
-gap, and return a truthful next cursor. Completed Bash reports continue to advertise the fuller output
-artifact when one was captured; basic retained job output does not depend on artifact availability.
+gap, and return a truthful next cursor. A background Bash job also writes its first 4 MiB of output
+to a file named when it starts and in its report (a supervised job's `artifact.bin`, otherwise a
+file in the session's `output/` directory), which agents read with `Read`, `Search` or the shell
+while it runs and after; basic retained job output does not depend on that file.
 
 Job start, finish, explicit-wait notification claims, and injected completion are durable events. Claims
 and injected notifications carry the terminal metadata and raw result as well as the stable id, so a
@@ -115,7 +117,7 @@ each supervised job before history is rebuilt, from its log events and its job d
   followed while the supervisor lives (a kill still unwinding is sent again), or restored as unknown.
 
 None of these jobs gets the lost-on-restart replay note. Their output stays readable through
-`job_output`, and the coordinator's captures return to its `tool_output` store on every reopen. A
+`job_output`, and their reports name their output files in the job directory. A
 re-attached shell counts as a running background shell in its worktree for overlap, but its writes
 are never claimed automatically, and its report says so. A job whose execution is unknown keeps that
 registration until an exit record confirms it. While one of a workstream's sessions has such a job,

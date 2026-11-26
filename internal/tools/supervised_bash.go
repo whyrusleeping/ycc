@@ -25,12 +25,12 @@ func startSupervisedBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		return nil, "", nil
 	}
 	sup := ws.JobSupervisor
-	artifactID := ws.artifactStore().reserve()
-	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
-	// The artifact id lets a reopen re-hydrate the capture into the owner's
-	// store (docs/design/daemon-restart.md §3).
+	// The supervisor streams the head capture to the job directory's output
+	// file, which the start result and the report name.
+	outputPath := jobshim.ArtifactPath(sup.JobDir(job.ID()))
+	job.SetTerminationHint(outputTerminationHint(outputPath))
 	started := map[string]any{"id": job.ID(), "kind": job.Kind(), "label": cmdStr, "mutates": job.Mutates(),
-		"supervised": true, "artifact": artifactID}
+		"supervised": true, "output_file": outputPath}
 
 	before := ws.snapshotShell(cmdStr, true)
 	pending, err := sup.Prepare(jobshim.Request{JobID: job.ID(), Command: cmdStr, Dir: ws.Root,
@@ -38,19 +38,17 @@ func startSupervisedBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	if err != nil {
 		ws.endShell(before)
 		ws.Emitter.EmitAs(owner, event.JobStarted, started)
-		ws.artifactStore().complete(artifactID, nil, 0, 0, digestHex(nil), "the command was not started")
 		if job.Finish(jobs.Failed, "exit: failed to start: "+err.Error()) {
 			emitJobFinished(ws.Emitter, owner, job)
 		}
 		job.ExecutionComplete()
-		return job, artifactID, nil
+		return job, "", nil
 	}
 	// Only a stamped event from a healthy recorder is durable: a closed or
 	// failed event.Log returns an unstamped one.
 	if ev := ws.Emitter.EmitAs(owner, event.JobStarted, started); ev.Seq == 0 || ws.Emitter.Err() != nil {
 		pending.Abort()
 		ws.endShell(before)
-		ws.artifactStore().complete(artifactID, nil, 0, 0, digestHex(nil), "the command was not started")
 		job.Finish(jobs.Failed, "not started: job_started could not be recorded durably")
 		job.ExecutionComplete()
 		reason := "the session event log is closed"
@@ -64,30 +62,39 @@ func startSupervisedBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		// the command (the teardown has already finalized its report).
 		pending.Abort()
 		ws.endShell(before)
-		ws.artifactStore().complete(artifactID, nil, 0, 0, digestHex(nil), "the command was not started")
 		job.Finish(jobs.Killed, "killed: the session ended before the command started")
 		job.ExecutionComplete()
-		return job, artifactID, nil
+		return job, "", nil
 	}
 	handle, err := pending.Start()
 	if err == nil {
 		job.SetOutputSource(handle.Reader())
+		job.SetOutputFile(outputPath)
 	}
 	// kill_job's request goes straight to the supervisor so a failure to reach
 	// it is reported; session-end cancellation is relayed in superviseBash.
-	attachSupervisedBash(ws, owner, job, handle, before, artifactID, timeout, false, nil)
-	return job, artifactID, nil
+	attachSupervisedBash(ws, owner, job, handle, before, timeout, false, nil)
+	if err != nil {
+		return job, "", nil
+	}
+	ws.noteOutputFile(outputPath)
+	return job, outputPath, nil
+}
+
+// outputTerminationHint is a killed background job's note on its output.
+func outputTerminationHint(outputPath string) string {
+	return fmt.Sprintf("[output file %s: complete once the process has exited]", outputPath)
 }
 
 // attachSupervisedBash wires a supervised job to its handle and follows it.
 // recovered marks a job re-attached after a daemon restart; a non-nil gate
 // holds the job's outcome back until it closes (see SupervisedReopen.ReleaseMarker).
-func attachSupervisedBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle, before *shellSnapshot, artifactID string, timeout time.Duration, recovered bool, gate <-chan struct{}) {
+func attachSupervisedBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle, before *shellSnapshot, timeout time.Duration, recovered bool, gate <-chan struct{}) {
 	job.SetStopper(h.Kill)
 	// A graceful restart leaves the command running for the next daemon.
 	job.SetDetacher(h.Detach)
 	job.SetNotifiedHook(func() { go enforceSupervisedRetention(ws) })
-	go superviseBash(ws, owner, job, h, before, artifactID, timeout, recovered, gate)
+	go superviseBash(ws, owner, job, h, before, timeout, recovered, gate)
 }
 
 // enforceSupervisedRetention bounds the session's finished, notified evidence.
@@ -102,7 +109,7 @@ func enforceSupervisedRetention(ws *Workspace) {
 // outcome. A lost supervision fails closed: the job is reported lost with its
 // execution unknown, its shell stays registered as running, and only a later
 // exit record confirms that execution stopped.
-func superviseBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle, before *shellSnapshot, artifactID string, timeout time.Duration, recovered bool, gate <-chan struct{}) {
+func superviseBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle, before *shellSnapshot, timeout time.Duration, recovered bool, gate <-chan struct{}) {
 	go func() {
 		select {
 		case <-job.Context().Done():
@@ -128,7 +135,7 @@ func superviseBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle
 		<-gate
 	}
 	if out.Exit != nil {
-		harvestSupervisedBash(ws, owner, job, h, out.Exit, before, artifactID, timeout, true, recovered)
+		harvestSupervisedBash(ws, owner, job, h, out.Exit, before, timeout, true, recovered)
 		return
 	}
 	_ = h.MarkUnknown(out.Unknown)
@@ -137,7 +144,7 @@ func superviseBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle
 	if tail := job.Tail(20); strings.TrimSpace(tail) != "" {
 		result += "\n" + tail
 	}
-	result += fmt.Sprintf("\n[output artifact %s: not available until an exit record confirms the command stopped]", artifactID)
+	result += "\n" + unconfirmedOutputNote(h.Dir())
 	note := ""
 	if job.Finish(jobs.Lost, result) {
 		rep := job.Report()
@@ -154,7 +161,7 @@ func superviseBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle
 	}
 	job.MarkExecutionUnknown(note)
 	if rec := h.Confirm(); rec != nil {
-		harvestSupervisedBash(ws, owner, job, h, rec, before, artifactID, timeout, false, recovered)
+		harvestSupervisedBash(ws, owner, job, h, rec, before, timeout, false, recovered)
 	}
 }
 
@@ -170,14 +177,15 @@ func emitDurable(em *event.Emitter, actor string, t event.Type, data map[string]
 // post-restart one would claim writes made by others meanwhile.
 const recoveredAttributionNote = "[automatic write attribution was skipped: this command ran across a daemon restart, so its writes are left unclaimed]"
 
-// harvestSupervisedBash turns an exit record into the job's final report and
-// artifact, attributes the shell's writes, and releases execution. The exit
+// harvestSupervisedBash turns an exit record into the job's final report,
+// naming its output file, attributes the shell's writes, and releases
+// execution. The exit
 // record is marked consumed (harvested, so GC may later remove it) only once
 // the job's terminal report is durable in the log (Job.Recorded): the
 // job_finished this call records, an earlier one, or the restored log's. A
 // report finalized only in memory (a teardown kill) leaves the record for the
 // next reopen. Execution is released either way.
-func harvestSupervisedBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle, rec *jobshim.ExitRecord, before *shellSnapshot, artifactID string, timeout time.Duration, report, recovered bool) {
+func harvestSupervisedBash(ws *Workspace, owner string, job *jobs.Job, h *jobshim.Handle, rec *jobshim.ExitRecord, before *shellSnapshot, timeout time.Duration, report, recovered bool) {
 	notice := recoveredAttributionNote
 	if recovered {
 		ws.endShell(before)
@@ -185,7 +193,7 @@ func harvestSupervisedBash(ws *Workspace, owner string, job *jobs.Job, h *jobshi
 		notice = ws.claimShellChanges(before)
 	}
 	status, exitInfo := supervisedExit(rec, timeout)
-	artifact := completeSupervisedArtifact(ws.artifactStore(), artifactID, h.Dir())
+	artifact := describeSupervisedArtifact(h.Dir())
 	if report {
 		if job.Finish(status, supervisedReport(exitInfo, job.Tail(20), artifact, notice)) {
 			emitJobFinished(ws.Emitter, owner, job)
@@ -205,26 +213,29 @@ func harvestSupervisedBash(ws *Workspace, owner string, job *jobs.Job, h *jobshi
 }
 
 // supervisedReport is a finished supervised job's report: exit summary,
-// output tail, artifact reference, and attribution notice.
+// output tail, output file reference, and attribution notice.
 func supervisedReport(exitInfo, tail string, artifact outputArtifact, notice string) string {
 	result := exitInfo
 	if strings.TrimSpace(tail) != "" {
 		result += "\n" + tail
 	}
-	switch {
-	case artifact.id == "":
-		// A job recorded before job_started named its artifact.
-	case artifact.lost != "":
-		result += fmt.Sprintf("\n[output artifact %s unavailable: %s; captured %d bytes/%d lines, sha256 %s]",
-			artifact.id, artifact.lost, artifact.bytes, artifact.lines, artifact.digest)
-	default:
-		result += fmt.Sprintf("\n[full output artifact %s: %d bytes/%d lines, sha256 %s; retrieve ranges with tool_output]",
-			artifact.id, artifact.bytes, artifact.lines, artifact.digest)
+	if artifact.lost != "" {
+		result += fmt.Sprintf("\n[output file %s %s; captured %d bytes/%d lines, sha256 %s]",
+			artifact.path, artifact.lost, artifact.bytes, artifact.lines, artifact.digest)
+	} else {
+		result += fmt.Sprintf("\n[full output: %s: %d bytes/%d lines, sha256 %s]",
+			artifact.path, artifact.bytes, artifact.lines, artifact.digest)
 	}
 	if notice != "" {
 		result += "\n" + notice
 	}
 	return result
+}
+
+// unconfirmedOutputNote describes the output file of a job whose stop is not
+// yet confirmed.
+func unconfirmedOutputNote(jobDir string) string {
+	return fmt.Sprintf("[output file %s: may be incomplete until an exit record confirms the command stopped]", jobshim.ArtifactPath(jobDir))
 }
 
 func supervisedExit(rec *jobshim.ExitRecord, timeout time.Duration) (jobs.Status, string) {
@@ -250,47 +261,23 @@ func supervisedExit(rec *jobshim.ExitRecord, timeout time.Duration) (jobs.Status
 	}
 }
 
-// completeSupervisedArtifact moves the supervisor's head capture into the
-// actor's artifact store. A capture that was truncated or lost bytes is
-// recorded as unavailable, never presented as the complete output.
-func completeSupervisedArtifact(store *ArtifactStore, artifactID, jobDir string) outputArtifact {
-	data, a := readSupervisedArtifact(artifactID, jobDir)
-	if artifactID == "" {
-		return a // no capability was recorded for this job
-	}
-	return store.complete(artifactID, data, a.bytes, a.lines, a.digest, a.lost)
-}
-
-// readSupervisedArtifact reads the supervisor's head capture and describes it
-// as artifact id, without storing it.
-func readSupervisedArtifact(artifactID, jobDir string) ([]byte, outputArtifact) {
-	data, stats, complete, err := jobshim.ReadArtifact(jobDir)
-	if stats.SHA256 == "" {
-		stats.SHA256 = digestHex(data)
-	}
-	return data, supervisedArtifact(artifactID, jobDir, stats, complete, err)
-}
-
-// describeSupervisedArtifact is readSupervisedArtifact without reading the
-// capture, for a report that must not hold every capture in memory.
-func describeSupervisedArtifact(artifactID, jobDir string) outputArtifact {
+// describeSupervisedArtifact describes a job directory's output file. A
+// capture that was truncated, lost bytes, or was evicted is described as such,
+// never presented as the complete output.
+func describeSupervisedArtifact(jobDir string) outputArtifact {
 	stats, complete, err := jobshim.DescribeArtifact(jobDir)
-	return supervisedArtifact(artifactID, jobDir, stats, complete, err)
-}
-
-func supervisedArtifact(artifactID, jobDir string, stats jobshim.OutputStats, complete bool, err error) outputArtifact {
 	lost := ""
 	switch {
 	case err != nil && jobshim.Evicted(jobDir):
-		lost = "evicted by the session's retained job evidence bound"
+		lost = "was evicted by the session's retained job evidence bound and is gone"
 	case err != nil:
-		lost = "capture unavailable: " + err.Error()
+		lost = "is unavailable: " + err.Error()
 	case stats.Truncated:
-		lost = fmt.Sprintf("capture exceeded the %d-byte per-artifact storage limit", maxCapturedCommandBytes)
+		lost = fmt.Sprintf("holds only the first %d bytes (the per-command limit)", maxCapturedCommandBytes)
 	case stats.Loss != "":
-		lost = "capture incomplete: " + stats.Loss
+		lost = "is incomplete: " + stats.Loss
 	case !complete:
-		lost = "capture incomplete"
+		lost = "is incomplete"
 	}
-	return outputArtifact{id: artifactID, bytes: stats.Bytes, lines: stats.Lines, digest: stats.SHA256, lost: lost}
+	return outputArtifact{path: jobshim.ArtifactPath(jobDir), bytes: stats.Bytes, lines: stats.Lines, digest: stats.SHA256, lost: lost}
 }

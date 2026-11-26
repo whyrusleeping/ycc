@@ -571,7 +571,7 @@ func TestBash(t *testing.T) {
 	}
 }
 
-func TestBashLargeOutputKeepsUTF8HeadTailAndRetrievesArtifact(t *testing.T) {
+func TestBashLargeOutputKeepsUTF8HeadTail(t *testing.T) {
 	root := t.TempDir()
 	reg := workerReg(root)
 	res := dispatch(t, reg, "Bash", `{"command":"python3 -c \"print('HEAD界'); print('x'*70000); print('TAIL診断')\"; printf 'terminal diagnostic\\n' >&2; exit 7"}`)
@@ -583,29 +583,89 @@ func TestBashLargeOutputKeepsUTF8HeadTailAndRetrievesArtifact(t *testing.T) {
 		t.Fatalf("bounded Bash did not preserve UTF-8 head/tail: %q", res.Content)
 	}
 	if !strings.Contains(res.Content, "omitted") || !strings.Contains(res.Content, "budget 65536 bytes/2000 lines") ||
-		!strings.Contains(res.Content, "Retrieve without rerunning") {
-		t.Fatalf("bounded Bash did not advertise counts/retrieval: %q", res.Content)
+		!strings.Contains(res.Content, "full output not retained: this agent has no session output directory") {
+		t.Fatalf("bounded Bash without an output directory did not say the output is not retained: %q", res.Content)
 	}
-	meta := OutputMetadataOf(res)
-	if meta == nil || !meta.Truncated || meta.ArtifactID == "" || meta.CapturedBytes <= maxBashBytes {
+	if meta := OutputMetadataOf(res); meta == nil || !meta.Truncated || meta.OutputFile != "" || meta.CapturedBytes <= maxBashBytes {
 		t.Fatalf("capture metadata = %+v", meta)
 	}
-	rangeRes := dispatch(t, reg, "tool_output", fmt.Sprintf(`{"artifact_id":%q,"offset":65000,"limit":8192}`, meta.ArtifactID))
-	if rangeRes.IsError || !utf8.ValidString(rangeRes.Content) || !strings.Contains(rangeRes.Content, "TAIL診断") ||
-		!strings.Contains(rangeRes.Content, "bytes 65000-") {
-		t.Fatalf("artifact range = %q (err=%v)", rangeRes.Content, rangeRes.IsError)
+}
+
+// An over-budget foreground capture is written to a file in the session's
+// output directory; the result names it, and Read windows into it.
+func TestBashLargeOutputIsSavedToANamedFile(t *testing.T) {
+	root := t.TempDir()
+	outDir := filepath.Join(t.TempDir(), "output")
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: root, OutputDir: outDir})...)
+	res := dispatch(t, reg, "Bash", `{"command":"seq 1 5000 | sed 's/^/line /'"}`)
+	path := between(res.Content, "full output: ", " (use Read")
+	if res.IsError || filepath.Dir(path) != outDir {
+		t.Fatalf("bounded Bash did not name an output file in %s: %q", outDir, res.Content)
 	}
-	other := workerReg(t.TempDir())
-	unauthorized := dispatch(t, other, "tool_output", fmt.Sprintf(`{"artifact_id":%q}`, meta.ArtifactID))
-	if !unauthorized.IsError || !strings.Contains(unauthorized.Content, "not available in this agent session") {
-		t.Fatalf("cross-session artifact access = %+v", unauthorized)
+	meta := OutputMetadataOf(res)
+	if meta == nil || !meta.Truncated || meta.OutputFile != path || meta.CaptureLost != "" {
+		t.Fatalf("capture metadata = %+v", meta)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || digestHex(data) != meta.SHA256 || !strings.Contains(res.Content, "sha256 "+meta.SHA256) {
+		t.Fatalf("output file sha256 %s, capture %+v, err %v", digestHex(data), meta, err)
+	}
+	window := dispatch(t, reg, "Read", fmt.Sprintf(`{"file_path":%q,"offset":2500,"limit":3}`, path))
+	if window.IsError {
+		t.Fatalf("Read window: %s", window.Content)
+	}
+	for _, want := range []string{"line 2500", "line 2501", "line 2502"} {
+		if !strings.Contains(window.Content, want) {
+			t.Fatalf("Read window lacks %q: %q", want, window.Content)
+		}
+	}
+	if strings.Contains(window.Content, "line 2503") || strings.Contains(window.Content, "line 2499\n") {
+		t.Fatalf("Read window exceeds offset/limit: %q", window.Content)
+	}
+	if small := dispatch(t, reg, "Bash", `{"command":"echo short"}`); OutputMetadataOf(small).OutputFile != "" || strings.Contains(small.Content, "full output:") {
+		t.Fatalf("an in-budget result named an output file: %q", small.Content)
+	}
+	if entries, _ := os.ReadDir(outDir); len(entries) != 1 {
+		t.Fatalf("output dir holds %d files, want only the over-budget capture", len(entries))
+	}
+}
+
+// The session's output files are bounded: the oldest are evicted, and a later
+// result names the evicted files so no result points at a missing file unsaid.
+func TestBashOutputFileRetentionReportsEviction(t *testing.T) {
+	old := maxSessionOutputBytes
+	maxSessionOutputBytes = 150 * 1024
+	t.Cleanup(func() { maxSessionOutputBytes = old })
+	outDir := filepath.Join(t.TempDir(), "output")
+	reg := New()
+	reg.Add(Worker(&Workspace{Root: t.TempDir(), OutputDir: outDir})...)
+	big := `{"command":"head -c 100000 /dev/zero | tr '\\0' x"}`
+	first := dispatch(t, reg, "Bash", big)
+	firstPath := OutputMetadataOf(first).OutputFile
+	if firstPath == "" {
+		t.Fatalf("first capture has no output file: %q", first.Content)
+	}
+	second := dispatch(t, reg, "Bash", big)
+	secondPath := OutputMetadataOf(second).OutputFile
+	if _, err := os.Stat(firstPath); !os.IsNotExist(err) {
+		t.Fatalf("retention kept %s beyond the bound: %v", firstPath, err)
+	}
+	if _, err := os.Stat(secondPath); err != nil {
+		t.Fatalf("retention evicted the newest capture: %v", err)
+	}
+	if !strings.Contains(second.Content, "evicted by the session's output retention") || !strings.Contains(second.Content, firstPath) {
+		t.Fatalf("eviction was not reported: %q", second.Content)
+	}
+	if third := dispatch(t, reg, "Bash", `{"command":"echo later"}`); strings.Contains(third.Content, "evicted") {
+		t.Fatalf("eviction was reported twice: %q", third.Content)
 	}
 }
 
 func TestCommandPreviewTrimsSplitUTF8Boundaries(t *testing.T) {
 	capture := newCommandCapture()
 	_, _ = capture.Write([]byte(strings.Repeat("ab界", maxBashContentBytes/2)))
-	res, _ := commandResult(NewArtifactStore(), capture)
+	res := commandResult(&Workspace{}, capture)
 	if !utf8.ValidString(res.Content) || !strings.Contains(res.Content, "showing command head and tail") {
 		t.Fatalf("command projection split UTF-8: %q", res.Content)
 	}
@@ -618,7 +678,7 @@ func TestCommandPreviewManyShortLinesPreservesTerminalDiagnostic(t *testing.T) {
 	output.WriteString(strings.Repeat("x\n", 2998))
 	output.WriteString("FINAL DIAGNOSTIC\n")
 	_, _ = capture.Write([]byte(output.String()))
-	res, _ := commandResult(NewArtifactStore(), capture)
+	res := commandResult(&Workspace{}, capture)
 	if !strings.Contains(res.Content, "HEAD") || !strings.Contains(res.Content, "FINAL DIAGNOSTIC") {
 		t.Fatalf("line-bounded preview lost useful head/tail output: %q", res.Content)
 	}
@@ -644,7 +704,7 @@ func TestCommandPreviewInvalidHeadExpansionPreservesFinalDiagnostic(t *testing.T
 func TestCommandResultNormalizesShortInvalidUTF8WithoutDuplicatingIt(t *testing.T) {
 	capture := newCommandCapture()
 	_, _ = capture.Write([]byte{'o', 'k', 0xff, '!'})
-	res, _ := commandResult(NewArtifactStore(), capture)
+	res := commandResult(&Workspace{}, capture)
 	if !utf8.ValidString(res.Content) || !strings.HasPrefix(res.Content, "ok�!") || strings.Contains(res.Content, "omitted") {
 		t.Fatalf("short invalid UTF-8 was not normalized directly: %q", res.Content)
 	}
@@ -654,7 +714,7 @@ func TestCommandPreviewBoundsInvalidUTF8AndCountsSourceBytes(t *testing.T) {
 	capture := newCommandCapture()
 	data := bytes.Repeat([]byte{0xff, 'x'}, maxBashContentBytes/2)
 	_, _ = capture.Write(data)
-	res, _ := commandResult(NewArtifactStore(), capture)
+	res := commandResult(&Workspace{}, capture)
 	if !utf8.ValidString(res.Content) || len(res.Content) > maxBashBytes || !strings.Contains(res.Content, "source bytes") {
 		t.Fatalf("invalid UTF-8 projection was not safely bounded: bytes=%d valid=%t result=%q", len(res.Content), utf8.ValidString(res.Content), res.Content)
 	}
@@ -669,9 +729,13 @@ func TestCommandCaptureStorageLimitIsExplicit(t *testing.T) {
 	for written := 0; written <= maxCapturedCommandBytes; written += len(chunk) {
 		_, _ = capture.Write(chunk)
 	}
-	res, artifact := commandResult(NewArtifactStore(), capture)
-	if artifact.lost == "" || !strings.Contains(res.Content, "artifact storage loss") || !utf8.ValidString(res.Content) {
-		t.Fatalf("oversize capture did not report loss safely: artifact=%+v result=%q", artifact, res.Content)
+	res := commandResult(&Workspace{OutputDir: t.TempDir()}, capture)
+	meta := OutputMetadataOf(res)
+	if meta.CaptureLost == "" || !strings.Contains(res.Content, "first 4194304 bytes of output: "+meta.OutputFile) || !utf8.ValidString(res.Content) {
+		t.Fatalf("oversize capture did not report loss safely: meta=%+v result=%q", meta, res.Content)
+	}
+	if info, err := os.Stat(meta.OutputFile); err != nil || info.Size() != maxCapturedCommandBytes {
+		t.Fatalf("oversize capture file = %v, %v; want its first %d bytes", info, err, maxCapturedCommandBytes)
 	}
 }
 

@@ -3485,6 +3485,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		Jobs:               jobs.NewRegistry(),
 		Ownership:          m.ownership,
 		PromptCacheScope:   id,
+		OutputDir:          filepath.Join(absWS, ".ycc", "sessions", id, "output"),
 	}
 	if m.jobLauncher != nil {
 		deps.JobSupervisor = m.jobLauncher.ForSession(filepath.Join(absWS, ".ycc", "sessions", id))
@@ -3839,7 +3840,6 @@ func (m *Manager) reopen(project, id string, unattended bool) (*Session, error) 
 	}
 	recovery := tools.ReconcileSupervisedJobs(s.deps.JobSupervisor, entries, "coordinator", time.Now(), adopted)
 	s.deps.Jobs = engine.FinalizeRestoredJobs(entries, events)
-	s.deps.CoordinatorArtifacts = tools.NewArtifactStore()
 	s.seedThinkLevels(replayThinkLevels(events))
 	loop, err := s.buildLoop(mode, "")
 	if err != nil {
@@ -3925,12 +3925,12 @@ func (m *Manager) reopen(project, id string, unattended bool) (*Session, error) 
 
 // recoveryWorkspace is the coordinator's tool workspace over the reopened
 // registry, which reopen reconciliation uses to record and follow supervised
-// jobs. It shares the coordinator loop's artifact store.
+// jobs.
 func (s *Session) recoveryWorkspace() *tools.Workspace {
 	d := s.deps
 	return &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...), Jobs: d.Jobs,
-		JobSupervisor: d.JobSupervisor, Emitter: d.Emitter, Ownership: d.Ownership,
-		MutationToken: d.CoordinatorToken, Artifacts: d.CoordinatorArtifacts}
+		JobSupervisor: d.JobSupervisor, OutputDir: d.OutputDir, Emitter: d.Emitter, Ownership: d.Ownership,
+		MutationToken: d.CoordinatorToken}
 }
 
 // reopenAwaitingJobs reports whether the log's latest lifecycle boundary

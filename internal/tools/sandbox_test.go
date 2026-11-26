@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/jobs"
 	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/sandbox"
 )
@@ -55,22 +56,50 @@ func TestWebToolsetMembership(t *testing.T) {
 	}
 }
 
-func TestInspectToolsetsIncludeAdvertisedOutputRetrieval(t *testing.T) {
-	ws := &Workspace{Root: t.TempDir()}
+// No toolset offers tool_output: over-budget Bash output is a file the result
+// names, read with Read, Search, or the shell.
+func TestNoToolsetOffersToolOutput(t *testing.T) {
+	ws := &Workspace{Root: t.TempDir(), Jobs: jobs.NewRegistry()}
 	for name, toolset := range map[string][]*gollama.Tool{
 		"inspect":           Inspect(ws),
 		"read-only inspect": ReadOnlyInspect(ws),
 		"reviewer":          Reviewer(ws),
+		"editing":           Editing(ws),
+		"worker":            Worker(ws),
 	} {
-		found := false
 		for _, tool := range toolset {
 			if tool.Name == "tool_output" {
-				found = true
-				break
+				t.Errorf("%s toolset offers tool_output", name)
 			}
 		}
-		if !found {
-			t.Errorf("%s toolset advertises retained Bash captures but lacks tool_output", name)
+	}
+}
+
+// A sandboxed reviewer's Bash can read an output file named in a result,
+// including one its own over-budget command produced.
+func TestReviewerBashReadsOutputFiles(t *testing.T) {
+	if runtime.GOOS != "linux" || sandbox.Available() == sandbox.None {
+		t.Skip("no sandbox mechanism available; reviewer Bash fails closed")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "ws")
+	outDir := filepath.Join(root, ".ycc", "sessions", "s_test", "output")
+	if err := os.MkdirAll(filepath.Dir(outDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	worker := New()
+	worker.Add(Worker(&Workspace{Root: root, OutputDir: outDir})...)
+	reviewer := New()
+	reviewer.Add(Reviewer(&Workspace{Root: root, OutputDir: outDir})...)
+	for name, reg := range map[string]*Registry{"worker": worker, "reviewer": reviewer} {
+		res := dispatch(t, reg, "Bash", `{"command":"seq 1 20000"}`)
+		meta := OutputMetadataOf(res)
+		if res.IsError || meta == nil || meta.OutputFile == "" {
+			t.Fatalf("%s Bash named no output file: %q", name, res.Content)
+		}
+		cat := dispatch(t, reviewer, "Bash", `{"command":"cat '`+meta.OutputFile+`' | sha256sum; sed -n 10000p '`+meta.OutputFile+`'"}`)
+		if cat.IsError || !strings.Contains(cat.Content, meta.SHA256) || !strings.Contains(cat.Content, "\n10000\n") {
+			t.Fatalf("reviewer cat of the %s output file %s (sha256 %s) = %q", name, meta.OutputFile, meta.SHA256, cat.Content)
 		}
 	}
 }

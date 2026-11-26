@@ -554,11 +554,13 @@ material, or a different model.
 Model-facing text reads are bounded by both lines and bytes and identify the shown line range,
 whether more exists, and the next offset. A bounded source scan reports an unknown total rather than
 claiming EOF. Foreground shell output uses a UTF-8-safe bounded head/tail projection with captured
-byte/line counts and a digest. Command captures up to 4 MiB receive an agent-session-scoped random
-artifact reference supporting bounded byte-range retrieval without rerunning; the in-memory store is
-bounded to 16 MiB and reports per-capture loss, eviction, and expiration explicitly. Durable tool
+byte/line counts and a digest. An over-budget capture (its first 4 MiB) is written to a file in
+`<session-dir>/output/` that the result names, so agents page it with `Read`, `Search` or the shell
+instead of rerunning; a background job's report names its output file the same way. These files are
+bounded to 64 MiB per session (oldest evicted first, a later result naming any evicted file), and
+agents without a session directory get the preview only. Durable tool
 result events retain the exact delivered projection separately from capture metadata, and replay uses
-that projection rather than a capture or subsequently retrieved range.
+that projection rather than a capture or a later read of its file.
 
 ### 7.3 Subagents and asynchronous jobs
 
@@ -628,8 +630,8 @@ Output reads are non-consuming and use explicit absolute byte cursors/ranges or 
 requests, with retained intervals and
 eviction gaps reported. Job discovery is owner-scoped by default and includes lifecycle timing;
 agent progress exposes only bounded last-activity, current-tool, turn, and token-usage metadata, not
-model text or reasoning. Completed shell jobs continue to advertise their fuller retained output
-artifact (or explicit storage loss) in the final report. Processes and output artifacts do not survive
+model text or reasoning. Completed shell jobs name their output file (up to 4 MiB, or its explicit
+storage loss or eviction) in the final report. Direct (unsupervised) background processes do not survive
 daemon restart, but replay restores durable job ids, owners, states, and final results; an unmatched
 start becomes terminal `lost`, and id allocation continues without collisions.
 Clients see the same structure as an activity graph. It contains the coordinator, one node per

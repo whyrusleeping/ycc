@@ -202,10 +202,10 @@ type Deps struct {
 	// JobSupervisor, when set, runs background Bash out of process (see
 	// tools.Workspace.JobSupervisor).
 	JobSupervisor *jobshim.Session
-	// CoordinatorArtifacts, when set, is the coordinator workspace's output
-	// artifact store, so a reopen can re-hydrate supervised jobs' captures into
-	// it before the loop runs. Nil gives the workspace its own store.
-	CoordinatorArtifacts *tools.ArtifactStore
+	// OutputDir is the session's Bash output-file directory, given to every
+	// agent workspace (see tools.Workspace.OutputDir). Empty keeps the
+	// over-budget Bash results of every agent preview-only.
+	OutputDir string
 	// InputWake is the coordinator workspace's tools.Workspace.InputWake: it lets
 	// a user message cut the coordinator's blocking wait short. Nil disables it.
 	InputWake func() <-chan struct{}
@@ -1337,7 +1337,7 @@ func (d *Deps) implementerWorkspace(token *workspacelease.Token) *tools.Workspac
 	return &tools.Workspace{
 		Root: d.Workspace, Env: append([]string(nil), d.Env...),
 		WriteRoots: tools.NormalizeRoots(d.WriteRoots), Jobs: d.Jobs, JobSupervisor: d.JobSupervisor,
-		Emitter: em, Ownership: d.Ownership,
+		OutputDir: d.OutputDir, Emitter: em, Ownership: d.Ownership,
 		MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping(),
 		OnWrite: func(path string) string { return d.onBacklogEdit(em, path) },
 	}
@@ -1494,7 +1494,7 @@ func spawnReviewers(d *Deps) *gollama.Tool {
 				reg := tools.New()
 				actor := "reviewer:" + spec.label()
 				ws := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
-					ReviewSnapshot: preloadedDiff.SnapshotID, ReviewTree: preloadedDiff.Tree,
+					ReviewSnapshot: preloadedDiff.SnapshotID, ReviewTree: preloadedDiff.Tree, OutputDir: d.OutputDir,
 					Ownership: d.Ownership, MutationToken: d.mutationToken(actor)}
 				reg.Add(tools.Reviewer(ws)...)
 				loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)
@@ -1719,7 +1719,7 @@ func freshReviewerLoop(d *Deps, spec AgentSpec, t *docs.Task, handoff string, pr
 	reg := tools.New()
 	actor := "reviewer:" + spec.label()
 	ws := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
-		ReviewSnapshot: preloadedDiff.SnapshotID, ReviewTree: preloadedDiff.Tree,
+		ReviewSnapshot: preloadedDiff.SnapshotID, ReviewTree: preloadedDiff.Tree, OutputDir: d.OutputDir,
 		Ownership: d.Ownership, MutationToken: d.mutationToken(actor)}
 	reg.Add(tools.Reviewer(ws)...)
 	loop := d.newLoop(spec, inspectSys(reviewerSystemFocused(spec.Focus), d.Workspace), reg, actor)

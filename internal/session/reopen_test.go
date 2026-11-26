@@ -245,6 +245,100 @@ func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 	}
 }
 
+// A session whose history pages a Bash capture with the retired tool_output
+// tool reopens and replays it, and the reopened coordinator no longer offers it.
+func TestReopenReplaysRetiredToolOutputCalls(t *testing.T) {
+	ws := t.TempDir()
+	if _, err := git.Open(ws); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _ := filepath.Abs(ws)
+	id := "s_tool_output"
+	events := []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "chat", "workspace": absWS}},
+		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "run the suite"}},
+		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "running it"}},
+		{Seq: 4, TS: ts(4), Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "Bash", "args": `{"command":"go test ./..."}`, "id": "call_bash",
+		}},
+		{Seq: 5, TS: ts(5), Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "Bash", "id": "call_bash", "result": "ok\n[output projection: ...; artifact output_ab12]",
+			"result_kind": "bounded_projection", "capture": map[string]any{"artifact_id": "output_ab12", "captured_bytes": 90000},
+		}},
+		{Seq: 6, TS: ts(6), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "paging the capture"}},
+		{Seq: 7, TS: ts(7), Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{
+			"name": "tool_output", "args": `{"artifact_id":"output_ab12","offset":0}`, "id": "call_output",
+		}},
+		{Seq: 8, TS: ts(8), Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{
+			"name": "tool_output", "id": "call_output", "result": "FAIL TestX\n[artifact output_ab12: bytes 0-11 of 90000]",
+		}},
+		{Seq: 9, TS: ts(9), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "TestX fails"}},
+		{Seq: 10, TS: ts(10), Type: event.SessionIdle, Data: map[string]any{"report": "TestX fails"}},
+	}
+	writeSession(t, ws, id, events)
+
+	m := NewManager(testRegistry(), ws)
+	t.Cleanup(m.ReclaimAll)
+	sess, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer sess.Stop()
+
+	loop := sess.currentLoop()
+	got := loop.History()
+	if want := engine.ReplayHistory(events); !reflect.DeepEqual(got, want) {
+		t.Fatalf("history mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+	var called, answered bool
+	for _, msg := range got {
+		for _, call := range msg.ToolCalls {
+			called = called || call.Function.Name == "tool_output"
+		}
+		answered = answered || (msg.Role == "tool" && msg.ToolCallID == "call_output" && strings.HasPrefix(msg.Content, "FAIL TestX"))
+	}
+	if !called || !answered {
+		t.Fatalf("replayed history lost the tool_output call (%v) or its result (%v): %+v", called, answered, got)
+	}
+	for _, def := range loop.Tools.APIDefs() {
+		if def.Function != nil && def.Function.Name == "tool_output" {
+			t.Fatal("reopened chat session offers tool_output")
+		}
+	}
+}
+
+// A reopened session's job report still checks the output file its
+// job_started recorded: one evicted meanwhile is said to be gone.
+func TestReopenedJobReportChecksItsOutputFile(t *testing.T) {
+	root := t.TempDir()
+	if _, err := git.Open(root); err != nil {
+		t.Fatal(err)
+	}
+	absWS, _ := filepath.Abs(root)
+	id := "s_evicted_job"
+	path := filepath.Join(absWS, ".ycc", "sessions", id, "output", "20261126T200000.000000000Z-aabbccdd.out")
+	events := []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "chat", "workspace": absWS}},
+		{Seq: 2, TS: ts(2), Actor: "coordinator", Type: event.JobStarted, Data: map[string]any{"id": "job_1", "kind": "bash", "label": "seq 1 5000", "output_file": path}},
+		{Seq: 3, TS: ts(3), Actor: "coordinator", Type: event.JobFinished, Data: map[string]any{"id": "job_1", "kind": "bash", "status": "done", "tail": "exit 0\n[full output: " + path + ": 23893 bytes/5000 lines]"}},
+		{Seq: 4, TS: ts(4), Actor: "coordinator", Type: event.JobClaimed, Data: map[string]any{"id": "job_1", "kind": "bash", "reason": "wait"}},
+		{Seq: 5, TS: ts(5), Type: event.SessionIdle, Data: map[string]any{"report": "done"}},
+	}
+	writeSession(t, root, id, events)
+	m := NewManager(testRegistry(), root)
+	t.Cleanup(m.ReclaimAll)
+	sess, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Stop()
+	got := sess.currentLoop().Tools.Dispatch(context.Background(), gollama.ToolCall{ID: "x", Type: "function",
+		Function: gollama.ToolCallFunction{Name: "job_output", Arguments: `{"job_id":"job_1"}`}})
+	if got.IsError || !strings.Contains(got.Content, "[output file "+path+" no longer exists") {
+		t.Fatalf("reopened job report presents its missing output file as available: %q", got.Content)
+	}
+}
+
 func TestReopenAfterContextRolloverUsesDurablySelectedView(t *testing.T) {
 	ws := t.TempDir()
 	if _, err := git.Open(ws); err != nil {

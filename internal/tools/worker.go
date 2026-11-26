@@ -69,7 +69,7 @@ var imageMediaTypes = map[string]string{
 // is set, job discovery/progress/result/wait/cancellation tools are included too
 // and Bash gains run_in_background.
 func Editing(ws *Workspace) []*gollama.Tool {
-	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws), toolOutput(ws)}, Web()...)
+	ts := append([]*gollama.Tool{readFile(ws), search(ws), writeFile(ws), editFile(ws), bash(ws)}, Web()...)
 	if ws.Jobs != nil {
 		ts = append(ts, JobTools(ws)...)
 	}
@@ -1024,8 +1024,8 @@ func editFile(ws *Workspace) *gollama.Tool {
 
 func bash(ws *Workspace) *gollama.Tool {
 	desc := "Run a command in a fresh shell at the workspace root; shell state does not persist. " +
-		"Returns a UTF-8-safe stdout/stderr head/tail preview (64 KiB/2000 lines); captures up to 4 MiB " +
-		"are retrievable with tool_output, with capture loss reported. Foreground timeout defaults to " +
+		"Returns a UTF-8-safe stdout/stderr head/tail preview (64 KiB/2000 lines); longer output (up to 4 MiB) " +
+		"is saved to a file the result names. Foreground timeout defaults to " +
 		"120 seconds (maximum 3600); background jobs have no runtime limit unless timeout_s is set."
 	params := map[string]any{
 		"command": strProp("shell command to execute via 'sh -c'"),
@@ -1401,19 +1401,25 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				timeout = time.Duration(timeoutSeconds) * time.Second
 			}
 			var job *jobs.Job
-			var artifactID string
+			var outputFile string
 			if ws.JobSupervisor != nil {
 				var err error
-				if job, artifactID, err = startSupervisedBash(ws, cmdStr, timeout); err != nil {
+				if job, outputFile, err = startSupervisedBash(ws, cmdStr, timeout); err != nil {
 					return errResult("bash: %v", err), nil
 				}
 			} else {
-				job, artifactID = startBackgroundBash(ws, cmdStr, timeout)
+				job, outputFile = startBackgroundBash(ws, cmdStr, timeout)
 			}
 			if job == nil {
 				return errResult("bash: session is shutting down; background job was not started"), nil
 			}
-			artifactNote := fmt.Sprintf(" Output capture %s is stable but not ready until the process exits; then retrieve ranges with tool_output.", artifactID)
+			artifactNote := ""
+			if outputFile != "" {
+				artifactNote = fmt.Sprintf("\nIts output is written to %s while it runs (up to 4 MiB); Read, grep, or tail it.", outputFile)
+			}
+			if notice := ws.outputEvictionNotice(); notice != "" {
+				artifactNote += "\n" + notice
+			}
 			if bgAutoDelivered(ws) {
 				return okResult(fmt.Sprintf("started background job %s: %s\nIt runs in the background — do NOT poll it. "+
 					"Its report arrives automatically when it finishes, or call wait([%q]) when you need the result; "+
@@ -1525,7 +1531,7 @@ func bashCall(ws *Workspace, sandboxed bool) func(context.Context, any) (*gollam
 				}
 			}
 		}
-		result, _ := commandResult(ws.artifactStore(), capture)
+		result := withNotice(commandResult(ws, capture), ws.outputEvictionNotice())
 		executionOutcome := reviewExecutionResult(err, cctx.Err())
 		if sourceBound && executionRan {
 			ws.recordReviewExecution(reviewExecutionReceipt{
@@ -1591,11 +1597,41 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	if !ok {
 		return nil, ""
 	}
-	artifactID := ws.artifactStore().reserve()
-	job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", artifactID))
-	ws.Emitter.EmitAs(owner, event.JobStarted, map[string]any{
-		"id": job.ID(), "kind": job.Kind(), "label": cmdStr, "mutates": job.Mutates(),
-	})
+	// The capture streams to an output file, so it can be read while the job
+	// runs; without one the report keeps only the job's tail.
+	out, outErr := ws.createOutputFile(maxCapturedCommandBytes)
+	file := &cappedFile{f: out}
+	outputPath := ""
+	if out != nil {
+		outputPath = out.Name()
+		ws.noteOutputFile(outputPath)
+		job.SetOutputFile(outputPath)
+		job.SetTerminationHint(outputTerminationHint(outputPath))
+	}
+	finishOutput := func(c *commandCapture) string {
+		_, _, _, total, lines, digest, _ := c.snapshot()
+		if out == nil {
+			return fmt.Sprintf("[full output not retained: %v; captured %d bytes/%d lines, sha256 %s]", outErr, total, lines, digest)
+		}
+		closeErr := finishOutputFile(out)
+		switch {
+		case file.err != nil || closeErr != nil:
+			err := file.err
+			if err == nil {
+				err = closeErr
+			}
+			return fmt.Sprintf("[output file %s is incomplete: write failed: %v; captured %d bytes/%d lines, sha256 %s]", outputPath, err, total, lines, digest)
+		case total > maxCapturedCommandBytes:
+			return fmt.Sprintf("[output file %s holds only the first %d bytes (the per-command limit); captured %d bytes/%d lines, sha256 %s]", outputPath, maxCapturedCommandBytes, total, lines, digest)
+		}
+		return fmt.Sprintf("[full output: %s: %d bytes/%d lines, sha256 %s]", outputPath, total, lines, digest)
+	}
+	started := map[string]any{"id": job.ID(), "kind": job.Kind(), "label": cmdStr, "mutates": job.Mutates()}
+	if outputPath != "" {
+		// A reopen restores it, so a later rendered report can check the file.
+		started["output_file"] = outputPath
+	}
+	ws.Emitter.EmitAs(owner, event.JobStarted, started)
 
 	cmdCtx := job.Context()
 	cancelTimeout := func() {}
@@ -1606,7 +1642,8 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 	cmd.Dir = ws.Root
 	cmd.Env = append(credenv.Scrub(os.Environ()), ws.Env...)
 	capture := newCommandCapture()
-	combined := io.MultiWriter(job.Writer(), capture)
+	capture.headTailOnly = true // the output file holds the capture
+	combined := io.MultiWriter(job.Writer(), capture, file)
 	cmd.Stdout = combined
 	cmd.Stderr = combined
 	// Own process group so a kill or runtime timeout signals the whole tree
@@ -1623,13 +1660,12 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		cancelTimeout()
 		ws.endShell(before)
 		result := "exit: failed to start: " + err.Error()
-		_, artifact := commandResultForArtifact(ws.artifactStore(), capture, artifactID)
-		result += fmt.Sprintf("\n[output artifact %s: %d bytes/%d lines, sha256 %s]", artifact.id, artifact.bytes, artifact.lines, artifact.digest)
+		result += "\n" + finishOutput(capture)
 		if job.Finish(jobs.Failed, result) {
 			emitJobFinished(ws.Emitter, owner, job)
 		}
 		job.ExecutionComplete()
-		return job, artifactID
+		return job, outputPath
 	}
 	go func() {
 		defer job.ExecutionComplete()
@@ -1654,14 +1690,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 		if strings.TrimSpace(tail) != "" {
 			result += "\n" + tail
 		}
-		_, artifact := commandResultForArtifact(ws.artifactStore(), capture, artifactID)
-		if artifact.lost != "" {
-			result += fmt.Sprintf("\n[output artifact %s unavailable: %s; captured %d bytes/%d lines, sha256 %s]",
-				artifact.id, artifact.lost, artifact.bytes, artifact.lines, artifact.digest)
-		} else {
-			result += fmt.Sprintf("\n[full output artifact %s: %d bytes/%d lines, sha256 %s; retrieve ranges with tool_output]",
-				artifact.id, artifact.bytes, artifact.lines, artifact.digest)
-		}
+		result += "\n" + finishOutput(capture)
 		if notice != "" {
 			result += "\n" + notice
 		}
@@ -1671,7 +1700,7 @@ func startBackgroundBash(ws *Workspace, cmdStr string, timeout time.Duration) (*
 			emitJobFinished(ws.Emitter, owner, job)
 		}
 	}()
-	return job, artifactID
+	return job, outputPath
 }
 
 // emitJobFinished records a job_finished event for job tagged with the owner

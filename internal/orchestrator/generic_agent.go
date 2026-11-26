@@ -342,7 +342,7 @@ func sendToGenericAgent(d *Deps, readOnlyOnly bool) *gollama.Tool {
 
 func newGenericAgentLoop(d *Deps, spec AgentSpec, actor string, writeAccess bool, token *workspacelease.Token) *engine.Loop {
 	reg := tools.New()
-	agentWS := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...),
+	agentWS := &tools.Workspace{Root: d.Workspace, Env: append([]string(nil), d.Env...), OutputDir: d.OutputDir,
 		Ownership: d.Ownership, MutationToken: token, DocsWriteLock: d.docsWriteLock(), SharedBookkeeping: d.sharedBookkeeping()}
 	var system string
 	if writeAccess {

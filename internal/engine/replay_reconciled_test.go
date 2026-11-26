@@ -10,7 +10,7 @@ import (
 
 // Jobs a reopen reconciled itself (survivors, downtime finishes, losses) get
 // no lost-on-restart note; other unfinished jobs keep the legacy note, and
-// RestoreJobEntries carries the supervised flag and artifact through.
+// RestoreJobEntries carries the supervised flag through (a historical "artifact" id is ignored).
 func TestReplayHistoryReconciledSkipsReconciledJobs(t *testing.T) {
 	events := []event.Event{
 		{Seq: 1, Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "run them"}},
@@ -28,7 +28,7 @@ func TestReplayHistoryReconciledSkipsReconciledJobs(t *testing.T) {
 		t.Fatalf("reconciled replay tail = %q", last)
 	}
 	entries := RestoreJobEntries(events)
-	if len(entries) != 2 || !entries[0].Supervised || entries[0].Artifact != "output_ab" || entries[0].Status != jobs.Running || entries[1].Supervised {
+	if len(entries) != 2 || !entries[0].Supervised || entries[0].Status != jobs.Running || entries[1].Supervised {
 		t.Fatalf("entries = %+v", entries)
 	}
 	entries[0].Live = true

@@ -467,7 +467,7 @@ func RestoreJobEntries(events []event.Event) []jobs.Restored {
 			restored = append(restored, jobs.Restored{ID: id, Kind: str(ev.Data, "kind"),
 				Label: str(ev.Data, "label"), Owner: ev.Actor, Status: jobs.Running,
 				Mutates: boolv(ev.Data, "mutates"), Started: ev.TS,
-				Supervised: boolv(ev.Data, "supervised"), Artifact: str(ev.Data, "artifact")})
+				Supervised: boolv(ev.Data, "supervised"), OutputFile: str(ev.Data, "output_file")})
 		case event.SubagentSpawned:
 			if idx, ok := byID[str(ev.Data, "job_id")]; ok && boolv(ev.Data, "mutating") {
 				restored[idx].Mutates = true

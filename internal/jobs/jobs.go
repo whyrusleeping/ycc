@@ -49,6 +49,9 @@ type Report struct {
 	Status              Status
 	Result              string // exit code + output tail (bash), or the agent report
 	ClaimedNotification bool   // this wait newly suppressed automatic delivery
+	// OutputFile is the file a background shell's output is written to, which
+	// a rendered report checks still exists (see tools.FormatJobReport).
+	OutputFile string
 }
 
 // Usage is the bounded, non-reasoning token summary retained for an agent job.
@@ -101,9 +104,10 @@ type Restored struct {
 	Mutates, Notified      bool
 	Started, Finished      time.Time
 	// Supervised marks a job started through an out-of-process supervisor
-	// (job_started "supervised"); Artifact is its reserved output artifact id.
+	// (job_started "supervised").
 	Supervised bool
-	Artifact   string
+	// OutputFile is the job's output file (job_started "output_file").
+	OutputFile string
 	// Recorded means the log holds the job's terminal evidence (job_finished,
 	// or a claim or notification carrying the terminal report).
 	Recorded bool
@@ -173,6 +177,7 @@ type Job struct {
 	buf             []byte
 	result          string // retained final report
 	terminationHint string // retrieval/readiness detail included if killed
+	outputFile      string // the background shell's output file, if any
 	notified        bool   // exactly-once automatic notification claim
 	execStopped     bool   // tracked execution has actually stopped
 	execUnknown     bool   // supervision was lost: execution may still be running
@@ -353,7 +358,7 @@ func TailText(buf []byte, n int) string {
 	if len(tail) <= maxJobReportBytes {
 		return tail
 	}
-	const notice = "…[job report tail truncated to 64 KiB; use the retained output artifact for ranges]\n"
+	const notice = "…[job report tail truncated to 64 KiB; use the output file the report names]\n"
 	start := len(tail) - (maxJobReportBytes - len(notice))
 	for start < len(tail) && !utf8.RuneStart(tail[start]) {
 		start++
@@ -520,6 +525,13 @@ func (j *Job) Handoff(parent, purpose string) (Handoff, bool) {
 func (j *Job) SetTerminationHint(hint string) {
 	j.mu.Lock()
 	j.terminationHint = hint
+	j.mu.Unlock()
+}
+
+// SetOutputFile records the file the job's output is written to (Report.OutputFile).
+func (j *Job) SetOutputFile(path string) {
+	j.mu.Lock()
+	j.outputFile = path
 	j.mu.Unlock()
 }
 
@@ -728,7 +740,7 @@ func (j *Job) Report() Report {
 }
 
 func (j *Job) reportLocked() Report {
-	return Report{ID: j.id, Kind: j.kind, Label: j.label, Status: j.status, Result: j.result}
+	return Report{ID: j.id, Kind: j.kind, Label: j.label, Status: j.status, Result: j.result, OutputFile: j.outputFile}
 }
 
 // Registry is the session-scoped set of jobs. All jobs derive their context from
@@ -799,7 +811,7 @@ func NewRestored(entries []Restored) *Registry {
 		j := &Job{id: e.ID, kind: e.Kind, label: e.Label, owner: e.Owner,
 			purpose: e.Purpose, delivery: e.Delivery, mutates: e.Mutates,
 			ctx: ctx, cancel: cancel, done: make(chan struct{}),
-			status: e.Status, result: e.Result, notified: e.Notified,
+			status: e.Status, result: e.Result, notified: e.Notified, outputFile: e.OutputFile,
 			started: started, finished: finished, restored: true, recorded: e.Recorded}
 		if e.Kind == "agent" {
 			j.activity.Last = finished

@@ -30,10 +30,9 @@ func restartEntries(evs []event.Event) []jobs.Restored {
 		case event.JobStarted:
 			idx[id] = len(out)
 			sup, _ := ev.Data["supervised"].(bool)
-			art, _ := ev.Data["artifact"].(string)
 			label, _ := ev.Data["label"].(string)
 			out = append(out, jobs.Restored{ID: id, Kind: "bash", Label: label, Owner: ev.Actor,
-				Status: jobs.Running, Supervised: sup, Artifact: art})
+				Status: jobs.Running, Supervised: sup})
 		case event.JobFinished:
 			if i, ok := idx[id]; ok {
 				status, _ := ev.Data["status"].(string)
@@ -86,18 +85,22 @@ func waitReport(t *testing.T, jr *jobs.Registry, id string) jobs.Report {
 	return reports[0]
 }
 
-func artifactOf(t *testing.T, ws *Workspace, id string) outputArtifact {
+// checkOutputFile fails unless report names job id's output file and the
+// file holds want.
+func checkOutputFile(t *testing.T, sup *jobshim.Session, id, report, want string) {
 	t.Helper()
-	a, ok := ws.artifactStore().get(id)
-	if !ok {
-		t.Fatalf("artifact %s not in the reopened store", id)
+	path := jobshim.ArtifactPath(sup.JobDir(id))
+	if !strings.Contains(report, "[full output: "+path+": ") {
+		t.Fatalf("report does not name %s: %q", path, report)
 	}
-	return a
+	if data, err := os.ReadFile(path); err != nil || !strings.Contains(string(data), want) {
+		t.Fatalf("output file %s = %q, %v; want %q", path, data, err, want)
+	}
 }
 
 // A graceful restart detaches the coordinator's supervised job, recording no
 // result; the reopen re-attaches it as a live tracked job whose report, output
-// and artifact come back as if no restart happened, minus write attribution.
+// and output file come back as if no restart happened, minus write attribution.
 func TestReopenReattachesSurvivingJob(t *testing.T) {
 	rec := &captureRec{}
 	reg, jr, sup := supervisedWorkspace(t, rec)
@@ -135,10 +138,7 @@ func TestReopenReattachesSurvivingJob(t *testing.T) {
 	if fin := rec2.find(event.JobFinished); fin == nil || fin.Data["status"] != "done" {
 		t.Fatalf("job_finished = %+v", fin)
 	}
-	art := artifactOf(t, ws, entries[0].Artifact)
-	if !art.ready || art.lost != "" || !strings.Contains(string(art.data), "before\nsurvived") {
-		t.Fatalf("artifact = %+v", art)
-	}
+	checkOutputFile(t, sup, "job_1", rep.Result, "before\nsurvived")
 }
 
 func waitExitRecord(t *testing.T, sup *jobshim.Session, id string) {
@@ -157,9 +157,8 @@ func waitExitRecord(t *testing.T, sup *jobshim.Session, id string) {
 
 // A job that finished while no daemon was attached is a downtime finish: the
 // reopen records its job_finished from the exit record and on-disk output,
-// leaves it for one automatic delivery, and re-hydrates its capture. A second
-// reopen of the same log neither records nor delivers it again but still
-// re-hydrates the capture.
+// leaves it for one automatic delivery, and names its output file. A second
+// reopen of the same log neither records nor delivers it again.
 func TestReopenHarvestsDowntimeFinish(t *testing.T) {
 	rec := &captureRec{}
 	reg, jr, sup := supervisedWorkspace(t, rec)
@@ -192,10 +191,7 @@ func TestReopenHarvestsDowntimeFinish(t *testing.T) {
 	if len(delivered) != 1 || delivered[0].ID != "job_1" || len(ws.Jobs.DrainFinished("coordinator")) != 0 {
 		t.Fatalf("delivered = %+v, want exactly one delivery", delivered)
 	}
-	art := artifactOf(t, ws, e.Artifact)
-	if !strings.Contains(string(art.data), "late") {
-		t.Fatalf("artifact = %+v", art)
-	}
+	checkOutputFile(t, sup, "job_1", e.Result, "late")
 	out := dispatchWith(t, ws, "job_output", `{"job_id":"job_1"}`)
 	if !strings.Contains(out.Content, "late") {
 		t.Fatalf("job_output = %q", out.Content)
@@ -211,9 +207,6 @@ func TestReopenHarvestsDowntimeFinish(t *testing.T) {
 	r.Activate(ws)
 	if rec3.count(event.JobFinished) != 0 || len(ws.Jobs.DrainFinished("coordinator")) != 0 {
 		t.Fatal("a repeated reopen recorded or delivered the downtime finish again")
-	}
-	if art := artifactOf(t, ws, e.Artifact); !strings.Contains(string(art.data), "late") {
-		t.Fatalf("repeated reopen artifact = %+v", art)
 	}
 }
 

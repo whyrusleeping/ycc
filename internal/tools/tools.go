@@ -369,10 +369,14 @@ type Workspace struct {
 	// WriteWait bounds how long a Write/Edit waits for an operation-scoped
 	// worktree section held by another scope (zero means fileWriteWait).
 	WriteWait time.Duration
-	// Artifacts retains bounded Bash captures for range retrieval. A nil store is
-	// initialized lazily and remains scoped to this Workspace/agent.
-	Artifacts  *ArtifactStore
-	artifactMu sync.Mutex
+	// OutputDir, when set, is the session directory for Bash output files
+	// (.ycc/sessions/<id>/output): an over-budget foreground capture, or a
+	// direct background job's capture, is written there and named in the
+	// result. Empty keeps such results preview-only.
+	OutputDir string
+
+	outputMu    sync.Mutex
+	outputFiles []string // output files named in results, for eviction notices
 
 	reviewMu        sync.Mutex
 	reviewReceipts  map[string]reviewExecutionReceipt
@@ -421,15 +425,6 @@ func (w *Workspace) reviewExecution(id, snapshot, tree string) (reviewExecutionR
 		return reviewExecutionReceipt{}, false
 	}
 	return receipt, true
-}
-
-func (w *Workspace) artifactStore() *ArtifactStore {
-	w.artifactMu.Lock()
-	defer w.artifactMu.Unlock()
-	if w.Artifacts == nil {
-		w.Artifacts = NewArtifactStore()
-	}
-	return w.Artifacts
 }
 
 // fileWriteWait is the default bound on how long one Write/Edit waits for an

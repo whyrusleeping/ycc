@@ -14,7 +14,7 @@ import (
 // reviewers and authoring modes can understand a workspace without write/edit
 // tools.
 func Inspect(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), search(ws), bash(ws), toolOutput(ws)}
+	return []*gollama.Tool{readFile(ws), search(ws), bash(ws)}
 }
 
 // ReadOnly returns a minimal read-only tool set: just the file Read tool (no
@@ -31,7 +31,7 @@ func ReadOnly(ws *Workspace) []*gollama.Tool {
 // byte-and-mode confinement the shell fails closed while Read and Search remain
 // available. The web tools report an error when EXA_API_KEY is unset.
 func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
-	return append([]*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws)}, Web()...)
+	return append([]*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws)}, Web()...)
 }
 
 // Reviewer returns the tool set for a review subagent: Read, Search, a sandboxed
@@ -43,7 +43,7 @@ func ReadOnlyInspect(ws *Workspace) []*gollama.Tool {
 // snapshot and its source-bound evidence, and the coordinator supplies any
 // external facts in the review handoff.
 func Reviewer(ws *Workspace) []*gollama.Tool {
-	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), toolOutput(ws), submitReview(ws)}
+	return []*gollama.Tool{readFile(ws), search(ws), sandboxedBash(ws), submitReview(ws)}
 }
 
 // submitReview is a control tool. It serializes the reviewer's structured verdict

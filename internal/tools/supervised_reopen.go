@@ -29,20 +29,18 @@ type SupervisedReopen struct {
 
 // reopenedJob is one supervised job's reconciliation.
 type reopenedJob struct {
-	id, owner, artifact string
-	owned               bool // owned by the surviving coordinator
-	survivor            bool // still running and re-attached as a live job
-	timeout             time.Duration
-	handle              *jobshim.Handle // nil when the exit record was already on disk
-	follow              bool            // re-attach a runner (execution not yet confirmed)
-	kill                bool            // ask the supervisor to kill its child once followed
-	durable             bool            // the job's terminal evidence is (or became) durable
-	finish              map[string]any  // job_finished to record before session_reopened
-	claim               map[string]any  // job_claimed for an outcome no owner will be told of
-	harvest             bool            // mark the exit record harvested once durable
-	unknown             string          // record that execution is unknown, with this reason
-	hydrate             bool            // re-hydrate the head capture into the owner's store
-	art                 outputArtifact  // the capture's description (data is read at Activate)
+	id, owner string
+	owned     bool // owned by the surviving coordinator
+	survivor  bool // still running and re-attached as a live job
+	timeout   time.Duration
+	handle    *jobshim.Handle // nil when the exit record was already on disk
+	follow    bool            // re-attach a runner (execution not yet confirmed)
+	kill      bool            // ask the supervisor to kill its child once followed
+	durable   bool            // the job's terminal evidence is (or became) durable
+	finish    map[string]any  // job_finished to record before session_reopened
+	claim     map[string]any  // job_claimed for an outcome no owner will be told of
+	harvest   bool            // mark the exit record harvested once durable
+	unknown   string          // record that execution is unknown, with this reason
 }
 
 // supervisionLostWarning states that supervision ended while the child may
@@ -114,7 +112,7 @@ func ReconcileSupervisedJobs(sup *jobshim.Session, entries []jobs.Restored, coor
 			continue
 		}
 		terminal := e.Status != jobs.Running
-		j := &reopenedJob{id: e.ID, owner: e.Owner, artifact: e.Artifact, owned: e.Owner == coordinator,
+		j := &reopenedJob{id: e.ID, owner: e.Owner, owned: e.Owner == coordinator,
 			timeout: time.Duration(spec.TimeoutMS) * time.Millisecond, durable: terminal}
 		r.jobs = append(r.jobs, j)
 		if terminal && !e.Notified && !j.owned {
@@ -178,14 +176,12 @@ func ReconcileSupervisedJobs(sup *jobshim.Session, entries []jobs.Restored, coor
 // exited reconciles a job whose supervisor left an exit record.
 func (r *SupervisedReopen) exited(j *reopenedJob, e *jobs.Restored, rec *jobshim.ExitRecord, terminal bool, dir string) {
 	j.harvest = !r.sup.Harvested(e.ID)
-	j.art = describeSupervisedArtifact(e.Artifact, dir)
-	j.hydrate = j.owned && e.Artifact != ""
 	if terminal {
 		return
 	}
 	status, info := supervisedExit(rec, j.timeout)
 	e.Status, e.Finished, e.Notified = status, rec.Finished, !j.owned
-	e.Result = supervisedReport(info, recoveredTail(dir), j.art, recoveredAttributionNote)
+	e.Result = supervisedReport(info, recoveredTail(dir), describeSupervisedArtifact(dir), recoveredAttributionNote)
 	j.finish = reopenFinish(e, false, !j.owned)
 }
 
@@ -209,9 +205,7 @@ func (r *SupervisedReopen) lost(j *reopenedJob, e *jobs.Restored, reason string,
 	if tail := recoveredTail(dir); strings.TrimSpace(tail) != "" {
 		e.Result += "\n" + tail
 	}
-	if e.Artifact != "" {
-		e.Result += fmt.Sprintf("\n[output artifact %s: not available until an exit record confirms the command stopped]", e.Artifact)
-	}
+	e.Result += "\n" + unconfirmedOutputNote(dir)
 	j.finish = reopenFinish(e, true, !j.owned)
 }
 
@@ -324,9 +318,8 @@ const subagentJoinWait = jobshim.WaitDelay + 5*time.Second
 //     jobs nobody will be told of;
 //   - it marks exit records harvested once their terminal evidence is durable,
 //     and records unknown execution on disk;
-//   - it re-hydrates the coordinator's captures into its artifact store one at
-//     a time, under the store's bounds, and points every job at its on-disk
-//     output with retention re-applied after delivery;
+//   - it points every job at its on-disk output with retention re-applied
+//     after delivery;
 //   - it re-attaches a runner to each job whose execution is not yet
 //     confirmed. That shell is registered as running in its worktree for
 //     overlap, but its writes are never claimed automatically.
@@ -359,6 +352,7 @@ func (r *SupervisedReopen) Activate(ws *Workspace) {
 		}
 		dir := r.sup.JobDir(j.id)
 		job.SetOutputSource(jobshim.NewReader(dir))
+		job.SetOutputFile(jobshim.ArtifactPath(dir))
 		job.SetNotifiedHook(func() { go enforceSupervisedRetention(ws) })
 		if j.harvest && j.durable {
 			_ = r.sup.MarkHarvested(j.id)
@@ -366,32 +360,24 @@ func (r *SupervisedReopen) Activate(ws *Workspace) {
 		if j.unknown != "" {
 			_ = r.sup.MarkUnknown(j.id, j.unknown)
 		}
-		// The coordinator's captures return to its store; a subagent's die
-		// with it, never exposed to another actor.
-		owner := ws
-		if !j.owned {
-			owner = &Workspace{Root: ws.Root, Jobs: ws.Jobs, JobSupervisor: ws.JobSupervisor, Emitter: ws.Emitter,
-				Ownership: ws.Ownership, MutationToken: ws.MutationToken, Artifacts: NewArtifactStore()}
-		}
-		if j.hydrate {
-			store := owner.artifactStore()
-			store.reserveID(j.artifact)
-			completeSupervisedArtifact(store, j.artifact, dir)
-		}
 		if !j.follow {
 			continue
 		}
-		if j.owned && j.artifact != "" {
-			owner.artifactStore().reserveID(j.artifact)
+		// A subagent's job is followed in a workspace of its own, whose
+		// results no surviving actor reads.
+		owner := ws
+		if !j.owned {
+			owner = &Workspace{Root: ws.Root, Jobs: ws.Jobs, JobSupervisor: ws.JobSupervisor, Emitter: ws.Emitter,
+				Ownership: ws.Ownership, MutationToken: ws.MutationToken}
 		}
 		if j.survivor {
-			job.SetTerminationHint(fmt.Sprintf("[output artifact %s: capture finalizes after the process exits; retrieve ranges with tool_output; a not-ready response is temporary]", j.artifact))
+			job.SetTerminationHint(outputTerminationHint(jobshim.ArtifactPath(dir)))
 		}
 		var gate <-chan struct{}
 		if j.survivor {
 			gate = r.marker
 		}
-		attachSupervisedBash(owner, j.owner, job, j.handle, owner.recoveredShell(), j.artifact, j.timeout, true, gate)
+		attachSupervisedBash(owner, j.owner, job, j.handle, owner.recoveredShell(), j.timeout, true, gate)
 		if j.kill {
 			_ = j.handle.Kill()
 			if !j.owned {

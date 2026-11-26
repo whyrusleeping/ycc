@@ -2,24 +2,31 @@ package tools
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/whyrusleeping/gollama"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
+	"golang.org/x/sys/unix"
 )
 
 const (
-	maxCapturedCommandBytes = 4 * 1024 * 1024
-	maxArtifactStoreBytes   = 16 * 1024 * 1024
-	maxArtifactRangeBytes   = 128 * 1024
-	maxArtifactRecords      = 64
+	// maxCapturedCommandBytes bounds one command's output file, as
+	// jobshim.MaxArtifactBytes bounds a supervised job's.
+	maxCapturedCommandBytes = jobshim.MaxArtifactBytes
 	maxBashLines            = 2000
 	maxBashContentBytes     = maxBashBytes - 1024 // reserve result metadata inside the 64 KiB envelope
 	maxBashPreviewPayload   = maxBashContentBytes - 256
@@ -29,7 +36,7 @@ const (
 // Content remains the exact text delivered to the model; this metadata is only
 // used to make the durable event distinguish that projection from its capture.
 type OutputMetadata struct {
-	ArtifactID    string `json:"artifact_id,omitempty"`
+	OutputFile    string `json:"output_file,omitempty"`
 	CapturedBytes int64  `json:"captured_bytes"`
 	CapturedLines int64  `json:"captured_lines"`
 	SHA256        string `json:"sha256"`
@@ -46,225 +53,270 @@ func OutputMetadataOf(res *gollama.ToolResult) *OutputMetadata {
 	return m
 }
 
+// outputArtifact describes a command's retained output file: its path, the
+// capture's size and digest, and any loss (a missing, evicted, or partial
+// file is named together with what happened to it).
 type outputArtifact struct {
-	id      string
-	data    []byte
-	bytes   int64
-	lines   int64
-	digest  string
-	lost    string
-	evicted bool
-	ready   bool
+	path   string
+	bytes  int64
+	lines  int64
+	digest string
+	lost   string
 }
 
-// ArtifactStore is a session/tool-scope command-output store. IDs are random
-// capabilities and stores are not shared between agent workspaces. Both each
-// capture and total retained bytes are bounded; old captures become explicit
-// tombstones rather than silently resolving to unrelated output.
-type ArtifactStore struct {
-	mu          sync.Mutex
-	items       map[string]*outputArtifact
-	order       []string // retained data, oldest first
-	recordOrder []string // all live records/tombstones, oldest first
-	retained    int
-}
+// maxSessionOutputBytes bounds the bytes of a session output directory's
+// files (foreground Bash and direct background captures), counting each file
+// still being written at the bytes reserved for it. It mirrors, and is kept
+// apart from, jobshim's bound on supervised jobs' evidence. A variable so
+// tests can lower it.
+var maxSessionOutputBytes int64 = jobshim.DefaultSessionRetainedBytes
 
-func NewArtifactStore() *ArtifactStore {
-	return &ArtifactStore{items: make(map[string]*outputArtifact)}
-}
+// maxSessionOutputFiles bounds how many files a session output directory
+// holds, so captures of empty or tiny output cannot accumulate without bound.
+const maxSessionOutputFiles = 256
 
-func artifactID() string {
-	idBytes := make([]byte, 12)
-	if _, err := rand.Read(idBytes); err != nil {
-		sum := sha256.Sum256([]byte(fmt.Sprintf("%p", &idBytes)))
-		copy(idBytes, sum[:])
+// maxTrackedOutputFiles bounds the output files a workspace remembers naming,
+// so a later result can report the ones evicted since.
+const maxTrackedOutputFiles = 64
+
+// outputFileName matches the files createOutputFile makes; retention never
+// touches anything else in the directory.
+var outputFileName = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}\.[0-9]{9}Z-[0-9a-f]{8}\.out$`)
+
+var (
+	// outputDirMu orders file creation, reservation, and eviction across every
+	// workspace of the daemon.
+	outputDirMu sync.Mutex
+	// activeOutputFiles maps each file still being written to the bytes
+	// reserved for it; retention never evicts one.
+	activeOutputFiles = map[string]int64{}
+)
+
+var errNoOutputDir = errors.New("this agent has no session output directory")
+
+// createOutputFile creates a new private file in the workspace's output
+// directory and reserves reserve bytes for it, first evicting the oldest
+// finished files until the directory's bounds hold. Its name sorts by
+// creation time, which eviction follows. It fails, evicting nothing, when the
+// reservations of files still being written leave no room.
+func (w *Workspace) createOutputFile(reserve int64) (*os.File, error) {
+	if w.OutputDir == "" {
+		return nil, errNoOutputDir
 	}
-	return "output_" + hex.EncodeToString(idBytes)
-}
-
-// reserve allocates a stable capability before an asynchronous command starts,
-// so killed commands still have a discoverable retrieval path while cmd.Wait
-// drains and finalizes their capture.
-func (s *ArtifactStore) reserve() string {
-	id := artifactID()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.items[id] = &outputArtifact{id: id}
-	s.recordOrder = append(s.recordOrder, id)
-	s.trimRecordsLocked()
-	return id
-}
-
-// reserveID reserves a capability id recorded earlier, so a supervised job's
-// capture can be re-hydrated into its owner's store after a reopen. A record
-// already present is kept.
-func (s *ArtifactStore) reserveID(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.items[id]; ok {
-		return
+	dir := filepath.Clean(w.OutputDir)
+	outputDirMu.Lock()
+	defer outputDirMu.Unlock()
+	d, err := openOutputDir(dir, true)
+	if err != nil {
+		return nil, err
 	}
-	s.items[id] = &outputArtifact{id: id}
-	s.recordOrder = append(s.recordOrder, id)
-	s.trimRecordsLocked()
+	defer d.Close()
+	if err := makeOutputRoomLocked(d, dir, reserve); err != nil {
+		return nil, err
+	}
+	suffix := make([]byte, 4)
+	_, _ = rand.Read(suffix)
+	name := time.Now().UTC().Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(suffix) + ".out"
+	fd, err := unix.Openat(int(d.Fd()), name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("create output file: %w", err)
+	}
+	f := os.NewFile(uintptr(fd), filepath.Join(dir, name))
+	activeOutputFiles[f.Name()] = reserve
+	return f, nil
 }
 
-func (s *ArtifactStore) put(data []byte, totalBytes, totalLines int64, digest, lost string) outputArtifact {
-	id := s.reserve()
-	return s.complete(id, data, totalBytes, totalLines, digest, lost)
-}
-
-func (s *ArtifactStore) complete(id string, data []byte, totalBytes, totalLines int64, digest, lost string) outputArtifact {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.items[id]
-	if !ok {
-		// The reservation aged out while the command was running. Keep the stable
-		// capability as an explicit tombstone rather than silently retaining output
-		// beyond the record policy.
-		a = &outputArtifact{id: id, lost: "artifact reference expired before capture completed"}
-		s.items[id] = a
-		s.recordOrder = append(s.recordOrder, id)
-	} else if len(a.data) > 0 {
-		s.retained -= len(a.data)
-		s.removeRetainedIDLocked(id)
-	}
-	a.bytes, a.lines, a.digest, a.ready = totalBytes, totalLines, digest, true
-	if a.lost == "" {
-		a.lost = lost
-	}
-	if a.lost == "" {
-		for s.retained+len(data) > maxArtifactStoreBytes && len(s.order) > 0 {
-			oldID := s.order[0]
-			s.order = s.order[1:]
-			old, ok := s.items[oldID]
-			if !ok || len(old.data) == 0 {
-				continue
+// openOutputDir opens dir as a directory handle pinned against substitution:
+// starting from the workspace that holds its .ycc directory (or, for a dir
+// outside one, from its parent), each component is opened relative to the
+// previous one without following symlinks, so workspace content cannot
+// redirect where captures are written or which files eviction removes. With
+// create, the output directory itself is created owner-only if missing; its
+// parent (the session directory, which holds the event log) must exist.
+func openOutputDir(dir string, create bool) (*os.File, error) {
+	base, rel := filepath.Dir(dir), []string{filepath.Base(dir)}
+	for d := filepath.Dir(dir); d != filepath.Dir(d); d = filepath.Dir(d) {
+		if filepath.Base(d) == ".ycc" {
+			base = filepath.Dir(d)
+			r, err := filepath.Rel(base, dir)
+			if err != nil {
+				return nil, err
 			}
-			s.retained -= len(old.data)
-			old.data = nil
-			old.evicted = true
-			old.lost = "evicted by the bounded artifact retention limit"
-		}
-		a.data = append([]byte(nil), data...)
-		if len(a.data) > 0 {
-			s.order = append(s.order, id)
-			s.retained += len(a.data)
+			rel = strings.Split(r, string(filepath.Separator))
+			break
 		}
 	}
-	s.trimRecordsLocked()
-	return cloneArtifact(a)
+	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", base, err)
+	}
+	at := base
+	for i, name := range rel {
+		at = filepath.Join(at, name)
+		const flags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+		next, err := unix.Openat(fd, name, flags, 0)
+		if errors.Is(err, unix.ENOENT) && create && i == len(rel)-1 {
+			if err = unix.Mkdirat(fd, name, 0o700); err == nil || errors.Is(err, unix.EEXIST) {
+				next, err = unix.Openat(fd, name, flags, 0)
+			}
+		}
+		unix.Close(fd)
+		if errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ENOTDIR) {
+			return nil, fmt.Errorf("output directory component %s is not a directory (symlinks are refused)", at)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("open %s: %w", at, err)
+		}
+		fd = next
+	}
+	return os.NewFile(uintptr(fd), dir), nil
 }
 
-func (s *ArtifactStore) trimRecordsLocked() {
-	for len(s.recordOrder) > maxArtifactRecords {
-		id := s.recordOrder[0]
-		s.recordOrder = s.recordOrder[1:]
-		old, ok := s.items[id]
-		if !ok {
+// makeOutputRoomLocked evicts the oldest finished output files of d (the
+// pinned handle of dir) until one more file reserving reserve bytes fits both
+// bounds. A file that cannot fit beside the active reservations even with
+// every finished file gone is refused before anything is evicted.
+func makeOutputRoomLocked(d *os.File, dir string, reserve int64) error {
+	var reserved int64
+	active := 0
+	for path, n := range activeOutputFiles {
+		if filepath.Dir(path) == dir {
+			reserved += n
+			active++
+		}
+	}
+	if reserved+reserve > maxSessionOutputBytes || active+1 > maxSessionOutputFiles {
+		return fmt.Errorf("the session's output files are full with captures still being written")
+	}
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return err
+	}
+	sort.Strings(names) // names sort by creation time
+	type file struct {
+		name string
+		size int64
+	}
+	var finished []file
+	var total int64
+	for _, name := range names {
+		if !outputFileName.MatchString(name) {
 			continue
 		}
-		s.retained -= len(old.data)
-		s.removeRetainedIDLocked(id)
-		delete(s.items, id)
-	}
-}
-
-func (s *ArtifactStore) removeRetainedIDLocked(id string) {
-	for i, candidate := range s.order {
-		if candidate == id {
-			copy(s.order[i:], s.order[i+1:])
-			s.order = s.order[:len(s.order)-1]
-			return
+		if _, ok := activeOutputFiles[filepath.Join(dir, name)]; ok {
+			continue
 		}
+		var st unix.Stat_t
+		if unix.Fstatat(int(d.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG {
+			continue
+		}
+		finished = append(finished, file{name, st.Size})
+		total += st.Size
+	}
+	for len(finished) > 0 && (total+reserved+reserve > maxSessionOutputBytes || len(finished)+active+1 > maxSessionOutputFiles) {
+		if err := unix.Unlinkat(int(d.Fd()), finished[0].name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("evict output file: %w", err)
+		}
+		total -= finished[0].size
+		finished = finished[1:]
+	}
+	return nil
+}
+
+// finishOutputFile closes f, releasing its reservation; the file is then
+// finished and evictable. It returns the close error.
+func finishOutputFile(f *os.File) error {
+	err := f.Close()
+	outputDirMu.Lock()
+	delete(activeOutputFiles, f.Name())
+	outputDirMu.Unlock()
+	return err
+}
+
+// removeOutputFile unlinks a file createOutputFile made, through the pinned
+// output directory.
+func removeOutputFile(path string) {
+	outputDirMu.Lock()
+	defer outputDirMu.Unlock()
+	d, err := openOutputDir(filepath.Dir(path), false)
+	if err != nil {
+		return
+	}
+	defer d.Close()
+	_ = unix.Unlinkat(int(d.Fd()), filepath.Base(path), 0)
+}
+
+// saveOutput writes data to a new output file and returns its path.
+func (w *Workspace) saveOutput(data []byte) (string, error) {
+	f, err := w.createOutputFile(int64(len(data)))
+	if err != nil {
+		return "", err
+	}
+	_, werr := f.Write(data)
+	if cerr := finishOutputFile(f); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		removeOutputFile(f.Name())
+		return "", werr
+	}
+	w.noteOutputFile(f.Name())
+	return f.Name(), nil
+}
+
+// noteOutputFile remembers a file this workspace's results named, so a later
+// result can report that it was evicted.
+func (w *Workspace) noteOutputFile(path string) {
+	w.outputMu.Lock()
+	defer w.outputMu.Unlock()
+	w.outputFiles = append(w.outputFiles, path)
+	if n := len(w.outputFiles) - maxTrackedOutputFiles; n > 0 {
+		w.outputFiles = append([]string(nil), w.outputFiles[n:]...)
 	}
 }
 
-func cloneArtifact(a *outputArtifact) outputArtifact {
-	copy := *a
-	copy.data = append([]byte(nil), a.data...)
-	return copy
+// outputEvictionNotice reports, once, the files named in earlier results that
+// no longer exist: the session's retention bound evicted them.
+func (w *Workspace) outputEvictionNotice() string {
+	w.outputMu.Lock()
+	defer w.outputMu.Unlock()
+	var gone []string
+	kept := w.outputFiles[:0]
+	for _, path := range w.outputFiles {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			gone = append(gone, path)
+			continue
+		}
+		kept = append(kept, path)
+	}
+	w.outputFiles = kept
+	if len(gone) == 0 {
+		return ""
+	}
+	return "[output files named in earlier results were evicted by the session's output retention and are gone: " +
+		strings.Join(gone, ", ") + "]"
 }
 
-func (s *ArtifactStore) get(id string) (outputArtifact, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	a, ok := s.items[id]
-	if !ok {
-		return outputArtifact{}, false
-	}
-	return cloneArtifact(a), true
+// cappedFile writes the first maxCapturedCommandBytes of a stream to a file.
+// Write never fails, so a full disk cannot break the command's pipe; the
+// first error is kept instead.
+type cappedFile struct {
+	f   *os.File
+	n   int64
+	err error
 }
 
-func toolOutput(ws *Workspace) *gollama.Tool {
-	return &gollama.Tool{
-		Name: "tool_output",
-		Description: "Read a retained Bash output artifact by byte range without rerunning. Access is agent-scoped; " +
-			"captures/lifetime storage are bounded and loss or eviction is reported. For running jobs use job_output.",
-		Params: obj(map[string]any{
-			"artifact_id": strProp("the output artifact id advertised by Bash, e.g. output_ab12..."),
-			"offset":      map[string]any{"type": "integer", "minimum": 0, "description": "zero-based source byte offset (default 0)"},
-			"limit":       map[string]any{"type": "integer", "minimum": 1, "maximum": maxArtifactRangeBytes, "description": "maximum source bytes to retrieve (default and maximum 128 KiB)"},
-		}, "artifact_id"),
-		Call: func(_ context.Context, params any) (*gollama.ToolResult, error) {
-			id, ok := getString(params, "artifact_id")
-			if !ok {
-				return errResult("tool_output: missing 'artifact_id'"), nil
-			}
-			a, ok := ws.artifactStore().get(id)
-			if !ok {
-				return errResult("tool_output: artifact %q is not available in this agent session (it may have expired)", id), nil
-			}
-			if !a.ready {
-				return errResult("tool_output: artifact %s capture is not ready; the background process is still exiting. Retry this range after the job process has exited; the command does not need to be rerun", id), nil
-			}
-			if a.lost != "" {
-				return errResult("tool_output: artifact %s is unavailable: %s; capture was %d bytes/%d lines, sha256 %s", id, a.lost, a.bytes, a.lines, a.digest), nil
-			}
-			offset := getInt(params, "offset", 0)
-			if offset < 0 {
-				offset = 0
-			}
-			limit := getInt(params, "limit", maxArtifactRangeBytes)
-			if limit < 1 || limit > maxArtifactRangeBytes {
-				limit = maxArtifactRangeBytes
-			}
-			if offset >= len(a.data) {
-				return okResult(fmt.Sprintf("artifact %s: offset %d is at/past end (%d bytes)", id, offset, len(a.data))), nil
-			}
-			start, sourceEnd := utf8Window(a.data, offset, limit)
-			renderBudget := limit
-			if renderBudget > 1024 {
-				renderBudget -= 512
-			}
-			if sourceEnd == start && start < len(a.data) {
-				_, size := utf8.DecodeRune(a.data[start:])
-				sourceEnd = start + size
-			}
-			body, end := renderUTF8Range(a.data, start, sourceEnd, renderBudget)
-			more := end < len(a.data)
-			note := fmt.Sprintf("\n[artifact %s: bytes %d-%d of %d; more: %t; sha256 %s]", id, start, end, len(a.data), more, a.digest)
-			if more {
-				note += fmt.Sprintf("\nNext: tool_output({artifact_id:%q, offset:%d, limit:%d})", id, end, limit)
-			}
-			return okResult(body + note), nil
-		},
+func (c *cappedFile) Write(p []byte) (int, error) {
+	if c.f != nil && c.err == nil && c.n < maxCapturedCommandBytes {
+		k := int64(len(p))
+		if room := maxCapturedCommandBytes - c.n; k > room {
+			k = room
+		}
+		written, err := c.f.Write(p[:k])
+		c.n += int64(written)
+		c.err = err
 	}
-}
-
-func utf8Window(data []byte, offset, limit int) (int, int) {
-	start := offset
-	for start < len(data) && start > 0 && !utf8.RuneStart(data[start]) {
-		start++
-	}
-	end := start + limit
-	if end > len(data) {
-		end = len(data)
-	}
-	for end > start && end < len(data) && !utf8.RuneStart(data[end]) {
-		end--
-	}
-	return start, end
+	return len(p), nil
 }
 
 func renderUTF8Range(data []byte, start, end, budget int) (string, int) {
@@ -305,14 +357,17 @@ func digestHex(data []byte) string {
 }
 
 type commandCapture struct {
-	mu       sync.Mutex
-	hash     hash.Hash
-	full     []byte
-	head     []byte
-	tail     []byte
-	bytes    int64
-	newlines int64
-	last     byte
+	// headTailOnly skips retaining the full capture, which a background job
+	// streams to its output file instead.
+	headTailOnly bool
+	mu           sync.Mutex
+	hash         hash.Hash
+	full         []byte
+	head         []byte
+	tail         []byte
+	bytes        int64
+	newlines     int64
+	last         byte
 }
 
 func newCommandCapture() *commandCapture { return &commandCapture{hash: sha256.New()} }
@@ -339,12 +394,12 @@ func (c *commandCapture) Write(p []byte) (int, error) {
 	if len(c.tail) > tailKeep {
 		c.tail = append([]byte(nil), c.tail[len(c.tail)-tailKeep:]...)
 	}
-	if c.full != nil || c.bytes == int64(len(p)) {
-		if c.bytes <= maxCapturedCommandBytes {
-			c.full = append(c.full, p...)
-		} else {
-			c.full = nil
+	if room := maxCapturedCommandBytes - len(c.full); room > 0 && !c.headTailOnly {
+		n := len(p)
+		if n > room {
+			n = room
 		}
+		c.full = append(c.full, p[:n]...)
 	}
 	return len(p), nil
 }
@@ -362,23 +417,15 @@ func (c *commandCapture) snapshot() (full, head, tail []byte, bytes, lines int64
 	head = append([]byte(nil), c.head...)
 	tail = append([]byte(nil), c.tail...)
 	if c.bytes > maxCapturedCommandBytes {
-		lost = fmt.Sprintf("capture exceeded the %d-byte per-artifact storage limit", maxCapturedCommandBytes)
+		lost = fmt.Sprintf("capture exceeded the %d-byte per-command limit; the file holds only its first %d bytes", maxCapturedCommandBytes, maxCapturedCommandBytes)
 	}
 	return
 }
 
-func commandResult(store *ArtifactStore, c *commandCapture) (*gollama.ToolResult, outputArtifact) {
-	return commandResultForArtifact(store, c, "")
-}
-
-func commandResultForArtifact(store *ArtifactStore, c *commandCapture, artifactID string) (*gollama.ToolResult, outputArtifact) {
+// commandResult projects a finished foreground capture into a bounded result.
+// An over-budget capture is written to an output file the result names.
+func commandResult(ws *Workspace, c *commandCapture) *gollama.ToolResult {
 	full, head, tail, totalBytes, totalLines, digest, lost := c.snapshot()
-	var a outputArtifact
-	if artifactID == "" {
-		a = store.put(full, totalBytes, totalLines, digest, lost)
-	} else {
-		a = store.complete(artifactID, full, totalBytes, totalLines, digest, lost)
-	}
 	var preview string
 	normalized := strings.ToValidUTF8(string(full), "�")
 	truncated := totalBytes > maxBashContentBytes || totalLines > maxBashLines || len(normalized) > maxBashContentBytes
@@ -390,22 +437,30 @@ func commandResultForArtifact(store *ArtifactStore, c *commandCapture, artifactI
 	if strings.TrimSpace(preview) == "" {
 		preview = "(no output)"
 	}
+	var file string
 	if truncated {
-		preview += fmt.Sprintf("\n[output projection: captured %d bytes/%d lines; budget %d bytes/%d lines; sha256 %s; artifact %s]",
-			totalBytes, totalLines, maxBashBytes, maxBashLines, digest, a.id)
-		if lost != "" || a.lost != "" {
-			preview += "\n[artifact storage loss: " + a.lost + "; omitted output cannot be retrieved]"
-		} else {
-			preview += fmt.Sprintf("\nRetrieve without rerunning: tool_output({artifact_id:%q, offset:0, limit:%d})", a.id, maxArtifactRangeBytes)
+		preview += fmt.Sprintf("\n[output projection: captured %d bytes/%d lines; budget %d bytes/%d lines; sha256 %s]",
+			totalBytes, totalLines, maxBashBytes, maxBashLines, digest)
+		path, err := ws.saveOutput(full)
+		switch {
+		case err != nil:
+			lost = "full output not retained: " + err.Error()
+			preview += "\n[" + lost + "; omitted output cannot be retrieved]"
+		case lost != "":
+			file = path
+			preview += fmt.Sprintf("\nfirst %d bytes of output: %s (%s; use Read with offset/limit, or grep/sed/tail)", len(full), path, lost)
+		default:
+			file = path
+			preview += "\nfull output: " + path + " (use Read with offset/limit, or grep/sed/tail)"
 		}
 	} else {
-		preview += fmt.Sprintf("\n[output capture: %d bytes/%d lines; budget %d bytes/%d lines; sha256 %s; artifact %s]",
-			totalBytes, totalLines, maxBashBytes, maxBashLines, digest, a.id)
+		preview += fmt.Sprintf("\n[output capture: %d bytes/%d lines; budget %d bytes/%d lines; sha256 %s]",
+			totalBytes, totalLines, maxBashBytes, maxBashLines, digest)
 	}
 	res := okResult(preview)
-	res.Structured = &OutputMetadata{ArtifactID: a.id, CapturedBytes: totalBytes, CapturedLines: totalLines,
-		SHA256: digest, Truncated: truncated, CaptureLost: a.lost}
-	return res, a
+	res.Structured = &OutputMetadata{OutputFile: file, CapturedBytes: totalBytes, CapturedLines: totalLines,
+		SHA256: digest, Truncated: truncated, CaptureLost: lost}
+	return res
 }
 
 func commandPreview(head, tail []byte, totalBytes, totalLines int64) string {

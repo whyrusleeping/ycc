@@ -382,7 +382,7 @@ func TestLoopRecordsCaptureMetadataSeparatelyFromDeliveredProjection(t *testing.
 	reg := tools.New()
 	reg.Add(&gollama.Tool{Name: "capture", Params: tools.Obj(map[string]any{}), Call: func(context.Context, any) (*gollama.ToolResult, error) {
 		return &gollama.ToolResult{Content: "HEAD\n…omitted…\nTAIL", Structured: &tools.OutputMetadata{
-			ArtifactID: "output_ref", CapturedBytes: 100000, CapturedLines: 4000, SHA256: "digest", Truncated: true,
+			OutputFile: "/s/output/ref.out", CapturedBytes: 100000, CapturedLines: 4000, SHA256: "digest", Truncated: true,
 		}}, nil
 	}})
 	reg.Add(tools.Finish())
@@ -402,7 +402,7 @@ func TestLoopRecordsCaptureMetadataSeparatelyFromDeliveredProjection(t *testing.
 			t.Fatalf("bounded projection was duplicated in durable event: %+v", ev.Data)
 		}
 		meta, ok := ev.Data["capture"].(*tools.OutputMetadata)
-		if !ok || meta.ArtifactID != "output_ref" || meta.CapturedBytes != 100000 {
+		if !ok || meta.OutputFile != "/s/output/ref.out" || meta.CapturedBytes != 100000 {
 			t.Fatalf("capture metadata = %#v", ev.Data["capture"])
 		}
 		return

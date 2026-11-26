@@ -1,7 +1,7 @@
 ---
 id: "0623"
 title: Replace tool_output with per-session output files that Bash names in its result
-status: todo
+status: done
 priority: 3
 created: "2026-11-26"
 updated: "2026-11-26"
@@ -10,6 +10,8 @@ spec_refs:
     - docs/design/async-jobs.md
     - docs/design/daemon-restart.md
 ---
+
+## Description
 
 ## Description
 ## Status
@@ -38,5 +40,17 @@ Related history: on 2026-11-10 the owner declined folding `tool_output` into a m
 - An existing session whose history contains `tool_output` calls still reopens and replays (test, following 0538's `TestReopenReplaysToolTheModeNoLongerOffers`).
 - `go test ./internal/...` passes.
 
+## Acceptance criteria
 
-## Work log
+- No agent role is offered `tool_output`; prompts, spec and design docs do not name it as a current tool.
+- A foreground and a background `Bash` command whose output exceeds the budget each print a path; a test reads the middle of that output with `Read` offset/limit and gets bytes matching the capture's sha256.
+- A sandboxed read-only (reviewer or generic) agent's `Bash` can `cat` that path (test, or a manual check on a host with the sandbox, recorded here).
+- Per-session output-file disk use is bounded and eviction is reported in later results (test).
+- An existing session whose history contains `tool_output` calls still reopens and replays (test, following 0538's `TestReopenReplaysToolTheModeNoLongerOffers`).
+- `go test ./internal/...` passes.
+
+## Outcome
+
+tool_output and ArtifactStore are gone from every toolset. An over-budget foreground Bash capture (its first 4 MiB) is written to <session-dir>/output/*.out, and the result names the file. Background jobs name their output file when they start and in their reports: artifact.bin for supervised jobs, a streamed output file for direct ones. The path is recorded in job_started and restored on reopen. Output files are bounded to 64 MiB and 256 files per session, with live writers reserved and evicted oldest-first through a pinned no-follow directory handle. Later Bash results and rendered job reports say when a named file was evicted. Agents without a session dir get the preview only. Tests cover Read windows with sha256 checks (foreground, direct and supervised), the sandboxed reviewer cat, eviction and reservations, symlink refusal, and reopen replay of tool_output history. The spec, async-jobs and daemon-restart docs are updated, and go test ./internal/... passes.
+
+Commit: 0623: replace tool_output with per-session Bash output files named in results

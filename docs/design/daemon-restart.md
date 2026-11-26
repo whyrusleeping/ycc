@@ -26,7 +26,7 @@ without changing the agent tool surface.
 ### Goals
 
 1. Background shell jobs keep executing across `ycc daemon` restarts (and unplanned daemon crashes),
-   with repeatable tail reads (`job_output`) and bounded head captures (`tool_output`) preserved.
+   with repeatable tail reads (`job_output`) and bounded head captures (output files) preserved.
 2. Sessions waiting on background shell jobs — whether idle-waiting for automatic wake or blocked
    inside `wait` — resume automatically after a planned restart without adding a new agent tool.
 3. Graceful daemon shutdown (`SIGINT`/`SIGTERM`) fences new work, drains active model turns
@@ -193,13 +193,14 @@ supervision, and crash-safe job-bound leases together (0622 turned them on).
   segments (256–512 KiB retained tail, >= `maxJobBuf`). Readers open segment files directly and
   retry once on `ENOENT` if rotation unlinked the oldest segment, preserving exact absolute
   offsets and eviction gaps across live reads and reopens.
-- **Head capture (`tool_output`):** The supervisor captures up to `maxCapturedCommandBytes` (4 MiB)
+- **Head capture (output file):** The supervisor captures up to `maxCapturedCommandBytes` (4 MiB)
   into `artifact.bin` while tracking total bytes, total lines, and SHA-256 over the full stream.
-  Truncated captures always record their loss metadata and are never presented as complete.
-- **Re-hydration and store bounds:** Disk-backed tail and artifact evidence are re-hydrated on any
-  reopen while the job directory remains on disk (not only for downtime finishes), scoped to the
-  owning actor's `ArtifactStore` (never exposing one actor's capture to another and preserving the
-  existing 16 MiB / 64-record store limits).
+  The start result and the report name that file, which agents read directly (`Read`, `Search`,
+  the shell) while the job runs and after. Truncated captures always record their loss metadata
+  and are never presented as complete.
+- **Reopen:** A reopen reads nothing into memory: a recovered report names the job directory's
+  `artifact.bin` and describes it from the exit record (complete, truncated, incomplete, or
+  evicted) while the job directory remains on disk.
 - **Disk caps and GC safety:** Each session bounds retained disk bytes for *finished, notified*
   job directories by evicting the oldest finished artifacts/segments first, without resurrecting
   evicted data. Session retention / GC never deletes a session directory while any job directory

@@ -125,6 +125,9 @@ func MaybeHelper() {
 // JobsDir is the directory holding a session's supervised job directories.
 func JobsDir(sessionDir string) string { return filepath.Join(sessionDir, jobsDirName) }
 
+// ArtifactPath is a job directory's head capture, written while the job runs.
+func ArtifactPath(jobDir string) string { return filepath.Join(jobDir, artifactFile) }
+
 func readJSON(path string, v any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
