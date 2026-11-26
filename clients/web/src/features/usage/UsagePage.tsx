@@ -1,6 +1,7 @@
 // The usage dashboard (`/usage` for every project, `/p/<project>/usage` for
 // one): GetUsage rollups grouped by any mix of task / model / role / session /
-// day over a UTC date range, a spend timeline, the provider-side subscription
+// day over a UTC date range, a spend timeline, a local-time week heatmap
+// (GetUsageHours), the provider-side subscription
 // allowance (GetSubscriptionUsage), and the spend-guard caps (GetBudget). The
 // query lives in the URL so views are linkable. Mirrors iOS UsageView, and the
 // breakdown table prints exactly what `ycc cost` prints for the same scope.
@@ -8,20 +9,23 @@ import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import type { SubscriptionUsageAccount, UsageRow } from "../../gen/ycc/v1/ycc_pb";
+import type { SubscriptionUsageAccount, UsageHour, UsageRow } from "../../gen/ycc/v1/ycc_pb";
 import { errorMessage, isUnauthorized } from "../../api/client";
 import { authStore } from "../../api/auth";
-import { queryKeys, refreshSubscriptionUsage, useBudget, useProjects, useSubscriptionUsage, useUsageReport } from "../../api/queries";
+import { queryKeys, refreshSubscriptionUsage, useBudget, useProjects, useSubscriptionUsage, useUsageHours, useUsageReport } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { toast } from "../../ui/toast";
 import { track } from "../../app/analytics";
 import { TaskLink } from "../backlog/parts";
 import {
+  HEAT_METRICS,
   RANGE_PRESETS,
+  WEEKDAYS,
   USAGE_DIMS,
   accountBadge,
   anyPartial,
   budgetRows,
+  buildHeatmap,
   buildTimeline,
   capitalize,
   cellLabel,
@@ -29,6 +33,8 @@ import {
   costCell,
   dimTitle,
   headlineCost,
+  heatLabel,
+  heatValue,
   parseUsageQuery,
   rangeError,
   resetText,
@@ -40,6 +46,7 @@ import {
   usageSearch,
   windowPercent,
   windowTone,
+  type HeatMetric,
   type RangePreset,
   type SortKey,
   type UsageDim,
@@ -62,6 +69,7 @@ export function UsagePage({ project }: { project: string }) {
   const timelineReq = usageRequest(project, query, new Date(), ["day"]);
   const timeline = useUsageReport(timelineReq, !invalidRange && !dayOnly);
   const timelineData = dayOnly ? report.data : timeline.data;
+  const hours = useUsageHours({ project, since: req.since, until: req.until, task: req.task }, !invalidRange);
   const budget = useBudget();
   const subscription = useSubscriptionUsage();
   const [refreshing, setRefreshing] = useState(false);
@@ -186,6 +194,7 @@ export function UsagePage({ project }: { project: string }) {
           {timelineData && timelineData.rows.length > 0 && (
             <Timeline rows={timelineData.rows} since={req.since} until={req.until} loading={!dayOnly && timeline.isFetching} />
           )}
+          {hours.data && hours.data.hours.length > 0 && <WeekHeatmap hours={hours.data.hours} loading={hours.isFetching} />}
           <Breakdown
             rows={data.rows}
             total={total}
@@ -426,6 +435,64 @@ function Timeline({ rows, since, until, loading }: { rows: UsageRow[]; since: st
           peak {m === "cost" ? `$${max.toFixed(max > 0 && max < 0.01 ? 4 : 2)}` : `${shortTokens(max)} tokens`}
         </span>
         <span>{buckets[buckets.length - 1].label}</span>
+      </div>
+    </section>
+  );
+}
+
+function WeekHeatmap({ hours, loading }: { hours: UsageHour[]; loading: boolean }) {
+  const grid = useMemo(() => buildHeatmap(hours), [hours]);
+  const [metric, setMetric] = useState<HeatMetric>("tokens");
+  const max = Math.max(0, ...grid.flat().map((c) => heatValue(c, metric)));
+  return (
+    <section className="usage-card usage-heatmap" aria-labelledby="usage-heatmap">
+      <div className="timeline-head">
+        <h2 id="usage-heatmap">
+          Week by hour <span className="muted small">local time, summed over the range</span>
+          {loading && <span className="muted small"> · updating…</span>}
+        </h2>
+        <div className="segmented compact" role="group" aria-label="Heatmap metric">
+          {HEAT_METRICS.map((m) => (
+            <button key={m.value} type="button" aria-pressed={metric === m.value} className={metric === m.value ? "selected" : ""}
+              onClick={() => {
+                track.action("usage.heatmap_metric", "click", { metric: m.value });
+                setMetric(m.value);
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="heatmap-grid" role="table" aria-label={`${HEAT_METRICS.find((m) => m.value === metric)?.label} by weekday and hour`}>
+        <div className="heatmap-row" role="row">
+          <span role="columnheader" />
+          {Array.from({ length: 24 }, (_, h) => (
+            <span key={h} role="columnheader" className="heatmap-hour muted small">
+              {h % 3 === 0 ? String(h).padStart(2, "0") : ""}
+            </span>
+          ))}
+        </div>
+        {grid.map((row, d) => (
+          <div key={d} className="heatmap-row" role="row">
+            <span role="rowheader" className="heatmap-day muted small">{WEEKDAYS[d]}</span>
+            {row.map((c, h) => {
+              const v = heatValue(c, metric);
+              // Square root keeps quieter hours visible beside a heavy-tailed peak.
+              const level = max > 0 ? Math.sqrt(v / max) : 0;
+              const label = `${WEEKDAYS[d]} ${String(h).padStart(2, "0")}:00: ${heatLabel(v, metric)}`;
+              return (
+                <span key={h} role="cell" className={`heatmap-cell${v > 0 ? "" : " empty"}`} title={label} aria-label={label}
+                  style={v > 0 ? { opacity: 0.15 + 0.85 * level } : undefined}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="timeline-axis muted small">
+        <span>Darker is more</span>
+        <span>peak {heatLabel(max, metric)}</span>
       </div>
     </section>
   );

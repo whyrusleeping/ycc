@@ -4181,6 +4181,70 @@ public nonisolated struct Ycc_V1_GetUsageResponse: Sendable {
   fileprivate var _total: Ycc_V1_UsageRow? = nil
 }
 
+/// Hourly agent activity for the usage page's week heatmap, recomputed from
+/// the same event-log scan as GetUsage and scoped the same way (an omitted
+/// project is the all-project rollup). Hours are UTC; clients bucket them into
+/// local time. Hours with no activity are omitted.
+public nonisolated struct Ycc_V1_GetUsageHoursRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// registered project; empty = all projects
+  public var project: String = String()
+
+  /// YYYY-MM-DD inclusive (UTC), optional
+  public var since: String = String()
+
+  /// YYYY-MM-DD inclusive (UTC), optional
+  public var until: String = String()
+
+  /// restrict to one backlog task id, optional
+  public var task: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_UsageHour: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// start of the UTC hour
+  public var startUnix: Int64 = 0
+
+  /// UsageRow.total of the model turns that finished in the hour
+  public var tokens: Int64 = 0
+
+  /// model turns that finished in the hour
+  public var turns: Int64 = 0
+
+  /// per-session wall time with a model turn or tool call running (not ask_user), summed over sessions
+  public var busySeconds: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Ycc_V1_GetUsageHoursResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// ascending
+  public var hours: [Ycc_V1_UsageHour] = []
+
+  /// empty for the all-project rollup
+  public var workspace: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// Daemon-owned Anthropic subscription login. These authenticated RPCs are
 /// deliberately separate from sessions: never record their payloads in event logs.
 /// One pending attempt per daemon; beginning again supersedes the previous attempt.
@@ -13919,6 +13983,131 @@ nonisolated extension Ycc_V1_GetUsageResponse: SwiftProtobuf.Message, SwiftProto
   public static func ==(lhs: Ycc_V1_GetUsageResponse, rhs: Ycc_V1_GetUsageResponse) -> Bool {
     if lhs.rows != rhs.rows {return false}
     if lhs._total != rhs._total {return false}
+    if lhs.workspace != rhs.workspace {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetUsageHoursRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetUsageHoursRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}project\0\u{1}since\0\u{1}until\0\u{1}task\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.project) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.since) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.until) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.task) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.project.isEmpty {
+      try visitor.visitSingularStringField(value: self.project, fieldNumber: 1)
+    }
+    if !self.since.isEmpty {
+      try visitor.visitSingularStringField(value: self.since, fieldNumber: 2)
+    }
+    if !self.until.isEmpty {
+      try visitor.visitSingularStringField(value: self.until, fieldNumber: 3)
+    }
+    if !self.task.isEmpty {
+      try visitor.visitSingularStringField(value: self.task, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetUsageHoursRequest, rhs: Ycc_V1_GetUsageHoursRequest) -> Bool {
+    if lhs.project != rhs.project {return false}
+    if lhs.since != rhs.since {return false}
+    if lhs.until != rhs.until {return false}
+    if lhs.task != rhs.task {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_UsageHour: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".UsageHour"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}start_unix\0\u{1}tokens\0\u{1}turns\0\u{3}busy_seconds\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.startUnix) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.tokens) }()
+      case 3: try { try decoder.decodeSingularInt64Field(value: &self.turns) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.busySeconds) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.startUnix != 0 {
+      try visitor.visitSingularInt64Field(value: self.startUnix, fieldNumber: 1)
+    }
+    if self.tokens != 0 {
+      try visitor.visitSingularInt64Field(value: self.tokens, fieldNumber: 2)
+    }
+    if self.turns != 0 {
+      try visitor.visitSingularInt64Field(value: self.turns, fieldNumber: 3)
+    }
+    if self.busySeconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.busySeconds, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_UsageHour, rhs: Ycc_V1_UsageHour) -> Bool {
+    if lhs.startUnix != rhs.startUnix {return false}
+    if lhs.tokens != rhs.tokens {return false}
+    if lhs.turns != rhs.turns {return false}
+    if lhs.busySeconds != rhs.busySeconds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Ycc_V1_GetUsageHoursResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetUsageHoursResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}hours\0\u{1}workspace\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.hours) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.workspace) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.hours.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.hours, fieldNumber: 1)
+    }
+    if !self.workspace.isEmpty {
+      try visitor.visitSingularStringField(value: self.workspace, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Ycc_V1_GetUsageHoursResponse, rhs: Ycc_V1_GetUsageHoursResponse) -> Bool {
+    if lhs.hours != rhs.hours {return false}
     if lhs.workspace != rhs.workspace {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

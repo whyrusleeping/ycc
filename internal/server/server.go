@@ -2104,6 +2104,39 @@ func (s *Server) GetUsage(_ context.Context, req *connect.Request[v1.GetUsageReq
 	return connect.NewResponse(out), nil
 }
 
+// GetUsageHours returns hourly agent activity (tokens, model turns, busy time)
+// for the usage page's week heatmap, scoped like GetUsage.
+func (s *Server) GetUsageHours(_ context.Context, req *connect.Request[v1.GetUsageHoursRequest]) (*connect.Response[v1.GetUsageHoursResponse], error) {
+	opts := usage.Options{Task: strings.TrimSpace(req.Msg.Task)}
+	for _, d := range []struct {
+		wire string
+		dst  *time.Time
+	}{{req.Msg.Since, &opts.Since}, {req.Msg.Until, &opts.Until}} {
+		if d.wire == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", d.wire)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		*d.dst = t
+	}
+	hours, ws, err := s.mgr.UsageHours(req.Msg.Project, opts)
+	if err != nil {
+		if errors.Is(err, session.ErrUnknownProject) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	out := &v1.GetUsageHoursResponse{Workspace: ws}
+	for _, h := range hours {
+		out.Hours = append(out.Hours, &v1.UsageHour{
+			StartUnix: h.Hour.Unix(), Tokens: int64(h.Tokens), Turns: int64(h.Turns), BusySeconds: int64(h.BusySeconds),
+		})
+	}
+	return connect.NewResponse(out), nil
+}
+
 // GetSubscriptionUsage returns cached, best-effort provider-side allowance for
 // configured OAuth accounts. Provider failures are represented as account state,
 // not RPC failures, so awareness telemetry cannot disrupt the rest of the UI.

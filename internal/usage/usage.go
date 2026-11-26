@@ -165,34 +165,44 @@ type reducer struct {
 	focus   string
 	buckets map[entryKey]*Entry
 	order   []entryKey
+	hours   map[hourKey]*hourBucket
 }
 
 type entryKey struct{ task, model, agent, day string }
 
 func newReducer(sessionID string) *reducer {
-	return &reducer{session: sessionID, buckets: map[entryKey]*Entry{}}
+	return &reducer{session: sessionID, buckets: map[entryKey]*Entry{}, hours: map[hourKey]*hourBucket{}}
 }
 
 func (r *reducer) add(events []event.Event) {
 	for _, ev := range events {
-		r.observe(ev.Type, ev.Actor, ev.TS, ev.Data["task"], ev.Data["model_name"], ev.Data["usage"])
+		rec := usageRecord{TS: ev.TS, Actor: ev.Actor, Type: ev.Type}
+		rec.Data.Task, rec.Data.ModelName, rec.Data.Usage = ev.Data["task"], ev.Data["model_name"], ev.Data["usage"]
+		rec.Data.Name, rec.Data.DurationMS, rec.Data.Synthetic = ev.Data["name"], ev.Data["duration_ms"], ev.Data["synthetic"]
+		r.observe(rec)
 	}
 }
 
-// observe folds one event given just the fields usage depends on (data.task,
-// data.model_name and data.usage as decoded into any).
-func (r *reducer) observe(typ event.Type, actor string, ts time.Time, task, modelName, usage any) {
-	switch typ {
+// observe folds one event given just the fields usage depends on.
+func (r *reducer) observe(rec usageRecord) {
+	ts, actor, d := rec.TS, rec.Actor, rec.Data
+	switch rec.Type {
 	case event.TaskFocus:
-		r.focus, _ = task.(string)
+		r.focus, _ = d.Task.(string)
 	case event.SessionForked:
 		// Turns before a fork marker were copied from the parent, which already
 		// accounts for them. The focus carries over to the fork's own turns.
 		r.buckets = map[entryKey]*Entry{}
 		r.order = nil
+		r.hours = map[hourKey]*hourBucket{}
+	case event.ToolResult:
+		// Time blocked on the user is not agent activity.
+		if n, _ := d.Name.(string); n != "ask_user" {
+			r.markBusy(ts, d.DurationMS)
+		}
 	case event.ModelTurn:
-		u := usageFromData(usage)
-		model, _ := modelName.(string)
+		u := usageFromData(d.Usage)
+		model, _ := d.ModelName.(string)
 		day := ts.UTC().Format("2006-01-02")
 		k := entryKey{task: r.focus, model: model, agent: actor, day: day}
 		e, ok := r.buckets[k]
@@ -202,6 +212,13 @@ func (r *reducer) observe(typ event.Type, actor string, ts time.Time, task, mode
 			r.order = append(r.order, k)
 		}
 		e.Tokens.addUsage(u)
+		a := r.hour(ts)
+		a.tokens += u.Total
+		// A synthetic turn (a task preload) records an exchange no model ran.
+		if synthetic, _ := d.Synthetic.(bool); !synthetic {
+			a.turns++
+			r.markBusy(ts, d.DurationMS)
+		}
 	}
 }
 
@@ -289,10 +306,21 @@ const maxScanWorkers = 8
 // Scan is the cached equivalent of the package-level Scan. Logs that need
 // reading are decoded in parallel.
 func (s *Scanner) Scan(workspace string) ([]Entry, error) {
+	var out []Entry
+	err := s.scan(workspace, func(r *reducer) { out = append(out, r.entries()...) })
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// scan refreshes every log under workspace and passes each up-to-date reducer
+// to collect while the scan lock is held.
+func (s *Scanner) scan(workspace string, collect func(*reducer)) error {
 	sessionsDir := filepath.Join(workspace, ".ycc", "sessions")
 	paths, err := filepath.Glob(filepath.Join(sessionsDir, "*", "events.jsonl"))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	sort.Strings(paths)
 	s.mu.Lock()
@@ -322,7 +350,6 @@ func (s *Scanner) Scan(workspace string) ([]Entry, error) {
 	wg.Wait()
 
 	seen := make(map[string]bool, len(paths))
-	var out []Entry
 	var firstErr error
 	for i, path := range paths {
 		seen[path] = true
@@ -335,7 +362,7 @@ func (s *Scanner) Scan(workspace string) ([]Entry, error) {
 			continue
 		}
 		s.logs[path] = logs[i]
-		out = append(out, logs[i].r.entries()...)
+		collect(logs[i].r)
 	}
 	// The glob is the source of truth for removals (e.g. reaped sessions).
 	prefix := sessionsDir + string(os.PathSeparator)
@@ -344,10 +371,7 @@ func (s *Scanner) Scan(workspace string) ([]Entry, error) {
 			delete(s.logs, path)
 		}
 	}
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	return out, nil
+	return firstErr
 }
 
 // refreshLog brings the cached state lg (nil when uncached) for one log up to
@@ -376,7 +400,7 @@ func refreshLog(path string, lg *scannedLog) (*scannedLog, error) {
 		if err := json.Unmarshal(line, &rec); err != nil {
 			return fmt.Errorf("corrupt event log %s: %w", path, err)
 		}
-		lg.r.observe(rec.Type, rec.Actor, rec.TS, rec.Data.Task, rec.Data.ModelName, rec.Data.Usage)
+		lg.r.observe(rec)
 		return nil
 	})
 	if err != nil {
@@ -394,18 +418,21 @@ type usageRecord struct {
 	Actor string     `json:"actor"`
 	Type  event.Type `json:"type"`
 	Data  struct {
-		Task      any `json:"task"`
-		ModelName any `json:"model_name"`
-		Usage     any `json:"usage"`
+		Task       any `json:"task"`
+		ModelName  any `json:"model_name"`
+		Usage      any `json:"usage"`
+		Name       any `json:"name"`
+		DurationMS any `json:"duration_ms"`
+		Synthetic  any `json:"synthetic"`
 	} `json:"data"`
 }
 
 // mayAffectUsage cheaply rejects log lines that cannot be a usage-relevant
-// event, so tool output (the bulk of a log) is not decoded. It is a superset
-// filter: the reducer still switches on the decoded type.
+// event, so tool calls, reasoning and stream deltas are not decoded. It is a
+// superset filter: the reducer still switches on the decoded type.
 func mayAffectUsage(line []byte) bool {
 	return bytes.Contains(line, []byte(`"model_turn"`)) || bytes.Contains(line, []byte(`"task_focus"`)) ||
-		bytes.Contains(line, []byte(`"session_forked"`))
+		bytes.Contains(line, []byte(`"session_forked"`)) || bytes.Contains(line, []byte(`"tool_result"`))
 }
 
 // Aggregate groups entries by the selected dimensions (default: task), filters

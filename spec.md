@@ -1789,7 +1789,11 @@ re-focusing the current task records nothing.
 ### 20.3 Aggregation
 
 Cross-session/project summaries are recomputed from logs rather than kept in a separate ledger.
-They can group by project, session, task, model, actor, and time.
+They can group by project, session, task, model, actor, and time. Hourly activity (`GetUsageHours`)
+reports, per UTC hour, tokens and model turns plus busy time: the wall time during which a
+session had a model turn or a tool call other than `ask_user` running, counted once per session
+however many of its agents overlap and summed across sessions. The web usage page sums it into a
+local-time weekday × hour heatmap.
 
 ### 20.4 Pricing
 

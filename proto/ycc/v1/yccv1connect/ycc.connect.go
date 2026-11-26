@@ -237,6 +237,9 @@ const (
 	SessionServiceCaptureBacklogItemProcedure = "/ycc.v1.SessionService/CaptureBacklogItem"
 	// SessionServiceGetUsageProcedure is the fully-qualified name of the SessionService's GetUsage RPC.
 	SessionServiceGetUsageProcedure = "/ycc.v1.SessionService/GetUsage"
+	// SessionServiceGetUsageHoursProcedure is the fully-qualified name of the SessionService's
+	// GetUsageHours RPC.
+	SessionServiceGetUsageHoursProcedure = "/ycc.v1.SessionService/GetUsageHours"
 	// SessionServiceBeginAnthropicLoginProcedure is the fully-qualified name of the SessionService's
 	// BeginAnthropicLogin RPC.
 	SessionServiceBeginAnthropicLoginProcedure = "/ycc.v1.SessionService/BeginAnthropicLogin"
@@ -482,6 +485,7 @@ type SessionServiceClient interface {
 	// Usage/cost breakdown: aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	GetUsageHours(context.Context, *connect.Request[v1.GetUsageHoursRequest]) (*connect.Response[v1.GetUsageHoursResponse], error)
 	// Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
 	BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error)
 	CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error)
@@ -968,6 +972,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 			connect.WithClientOptions(opts...),
 		),
+		getUsageHours: connect.NewClient[v1.GetUsageHoursRequest, v1.GetUsageHoursResponse](
+			httpClient,
+			baseURL+SessionServiceGetUsageHoursProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetUsageHours")),
+			connect.WithClientOptions(opts...),
+		),
 		beginAnthropicLogin: connect.NewClient[v1.BeginAnthropicLoginRequest, v1.BeginAnthropicLoginResponse](
 			httpClient,
 			baseURL+SessionServiceBeginAnthropicLoginProcedure,
@@ -1235,6 +1245,7 @@ type sessionServiceClient struct {
 	getMemory              *connect.Client[v1.GetMemoryRequest, v1.GetMemoryResponse]
 	captureBacklogItem     *connect.Client[v1.CaptureBacklogItemRequest, v1.Event]
 	getUsage               *connect.Client[v1.GetUsageRequest, v1.GetUsageResponse]
+	getUsageHours          *connect.Client[v1.GetUsageHoursRequest, v1.GetUsageHoursResponse]
 	beginAnthropicLogin    *connect.Client[v1.BeginAnthropicLoginRequest, v1.BeginAnthropicLoginResponse]
 	completeAnthropicLogin *connect.Client[v1.CompleteAnthropicLoginRequest, v1.CompleteAnthropicLoginResponse]
 	cancelAnthropicLogin   *connect.Client[v1.CancelAnthropicLoginRequest, v1.CancelAnthropicLoginResponse]
@@ -1619,6 +1630,11 @@ func (c *sessionServiceClient) GetUsage(ctx context.Context, req *connect.Reques
 	return c.getUsage.CallUnary(ctx, req)
 }
 
+// GetUsageHours calls ycc.v1.SessionService.GetUsageHours.
+func (c *sessionServiceClient) GetUsageHours(ctx context.Context, req *connect.Request[v1.GetUsageHoursRequest]) (*connect.Response[v1.GetUsageHoursResponse], error) {
+	return c.getUsageHours.CallUnary(ctx, req)
+}
+
 // BeginAnthropicLogin calls ycc.v1.SessionService.BeginAnthropicLogin.
 func (c *sessionServiceClient) BeginAnthropicLogin(ctx context.Context, req *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error) {
 	return c.beginAnthropicLogin.CallUnary(ctx, req)
@@ -1928,6 +1944,7 @@ type SessionServiceHandler interface {
 	// Usage/cost breakdown: aggregated, priced token usage by task ×
 	// model × day so clients can render the cost breakdown.
 	GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error)
+	GetUsageHours(context.Context, *connect.Request[v1.GetUsageHoursRequest]) (*connect.Response[v1.GetUsageHoursResponse], error)
 	// Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
 	BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error)
 	CompleteAnthropicLogin(context.Context, *connect.Request[v1.CompleteAnthropicLoginRequest]) (*connect.Response[v1.CompleteAnthropicLoginResponse], error)
@@ -2410,6 +2427,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetUsage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetUsageHoursHandler := connect.NewUnaryHandler(
+		SessionServiceGetUsageHoursProcedure,
+		svc.GetUsageHours,
+		connect.WithSchema(sessionServiceMethods.ByName("GetUsageHours")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceBeginAnthropicLoginHandler := connect.NewUnaryHandler(
 		SessionServiceBeginAnthropicLoginProcedure,
 		svc.BeginAnthropicLogin,
@@ -2744,6 +2767,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceCaptureBacklogItemHandler.ServeHTTP(w, r)
 		case SessionServiceGetUsageProcedure:
 			sessionServiceGetUsageHandler.ServeHTTP(w, r)
+		case SessionServiceGetUsageHoursProcedure:
+			sessionServiceGetUsageHoursHandler.ServeHTTP(w, r)
 		case SessionServiceBeginAnthropicLoginProcedure:
 			sessionServiceBeginAnthropicLoginHandler.ServeHTTP(w, r)
 		case SessionServiceCompleteAnthropicLoginProcedure:
@@ -3095,6 +3120,10 @@ func (UnimplementedSessionServiceHandler) CaptureBacklogItem(context.Context, *c
 
 func (UnimplementedSessionServiceHandler) GetUsage(context.Context, *connect.Request[v1.GetUsageRequest]) (*connect.Response[v1.GetUsageResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsage is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetUsageHours(context.Context, *connect.Request[v1.GetUsageHoursRequest]) (*connect.Response[v1.GetUsageHoursResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("ycc.v1.SessionService.GetUsageHours is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) BeginAnthropicLogin(context.Context, *connect.Request[v1.BeginAnthropicLoginRequest]) (*connect.Response[v1.BeginAnthropicLoginResponse], error) {

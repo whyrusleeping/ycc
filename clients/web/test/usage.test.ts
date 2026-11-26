@@ -1,14 +1,16 @@
 // Usage dashboard: URL query round-trips, the GetUsage request, CLI-identical
 // cells (labels, counts, costs), price-status merging, sorting and shares, the
-// gap-filled timeline, subscription windows, and budget caps.
+// gap-filled timeline, the local-time week heatmap, subscription windows, and
+// budget caps.
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { GetBudgetResponseSchema, SubscriptionUsageAccountSchema, SubscriptionUsageWindowSchema, UsageRowSchema } from "../src/gen/ycc/v1/ycc_pb";
+import { GetBudgetResponseSchema, SubscriptionUsageAccountSchema, SubscriptionUsageWindowSchema, UsageHourSchema, UsageRowSchema } from "../src/gen/ycc/v1/ycc_pb";
 import {
   DEFAULT_QUERY,
   accountBadge,
   budgetRows,
   bucketSizeFor,
+  buildHeatmap,
   buildTimeline,
   cellLabel,
   commas,
@@ -157,6 +159,23 @@ describe("timeline", () => {
     // 2026-06-03 is a Wednesday: its week starts Monday 2026-06-01 and holds both June days.
     expect(t.buckets[0]).toMatchObject({ start: "2026-06-01", end: "2026-06-07", tokens: 3n });
     expect(t.buckets.reduce((s, b) => s + b.tokens, 0n)).toBe(7n);
+  });
+});
+
+describe("week heatmap", () => {
+  it("sums UTC hours into Monday-first local weekday × hour cells", () => {
+    // Local times, so the expectation holds in any test time zone.
+    const hour = (d: Date, tokens: number, turns: number, busy: number) =>
+      create(UsageHourSchema, { startUnix: BigInt(d.getTime() / 1000), tokens: BigInt(tokens), turns: BigInt(turns), busySeconds: BigInt(busy) });
+    const grid = buildHeatmap([
+      hour(new Date(2026, 10, 23, 14), 100, 2, 60), // Monday 14:00
+      hour(new Date(2026, 10, 30, 14), 50, 1, 30), // the next Monday 14:00
+      hour(new Date(2026, 10, 29, 23), 7, 1, 10), // Sunday 23:00
+    ]);
+    expect(grid).toHaveLength(7);
+    expect(grid[0][14]).toEqual({ tokens: 150, turns: 3, busySeconds: 90 });
+    expect(grid[6][23]).toEqual({ tokens: 7, turns: 1, busySeconds: 10 });
+    expect(grid.flat().filter((c) => c.turns > 0)).toHaveLength(2);
   });
 });
 

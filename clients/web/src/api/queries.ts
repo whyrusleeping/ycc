@@ -27,7 +27,9 @@ export const queryKeys = {
   /** GetUsage for the dashboard: scope ("" = all projects) and request. */
   usageReport: (project: string, groupBy: readonly string[], since: string, until: string, task: string) =>
     ["usage", "report", project, groupBy.join(","), since, until, task] as const,
-  /** Every GetUsage result (a refresh revalidates them all). */
+  /** GetUsageHours for the week heatmap. */
+  usageHours: (project: string, since: string, until: string, task: string) => ["usage", "hours", project, since, until, task] as const,
+  /** Every GetUsage and GetUsageHours result (a refresh revalidates them all). */
   usageAll: ["usage"] as const,
   /** GetSubscriptionUsage: provider-side allowance of OAuth accounts. */
   subscriptionUsage: ["subscriptionUsage"] as const,
@@ -402,6 +404,16 @@ export function useUsageReport(req: { project: string; groupBy: string[]; since:
     staleTime: 15_000,
     placeholderData: keepPreviousData,
     queryFn: ({ signal }) => client.getUsage(req, { signal }),
+  });
+}
+
+export function useUsageHours(req: { project: string; since: string; until: string; task: string }, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.usageHours(req.project, req.since, req.until, req.task),
+    enabled,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
+    queryFn: ({ signal }) => client.getUsageHours(req, { signal }),
   });
 }
 

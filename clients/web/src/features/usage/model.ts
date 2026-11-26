@@ -1,9 +1,10 @@
 // Pure usage-dashboard logic (mirrors YccKit UsageModel and the CLI's `ycc
 // cost`): the URL-held query (grouping, date range, task filter), the GetUsage
 // request it maps to, CLI-identical cell formatting (so the browser and the
-// CLI read the same), a gap-filled spend timeline, row sorting and shares,
-// subscription-window and budget-cap presentation.
-import type { GetBudgetResponse, SubscriptionUsageAccount, SubscriptionUsageWindow, UsageRow } from "../../gen/ycc/v1/ycc_pb";
+// CLI read the same), a gap-filled spend timeline, the local-time week
+// heatmap, row sorting and shares, subscription-window and budget-cap
+// presentation.
+import type { GetBudgetResponse, SubscriptionUsageAccount, SubscriptionUsageWindow, UsageHour, UsageRow } from "../../gen/ycc/v1/ycc_pb";
 
 /** GetUsage group_by dimensions, in the CLI's vocabulary. */
 export const USAGE_DIMS = [
@@ -350,6 +351,57 @@ export function buildTimeline(
   }
   for (const { b, statuses } of byKey.values()) b.status = statuses.length ? mergePriceStatus(statuses) : "priced";
   return { size, buckets };
+}
+
+// ---- Week heatmap -------------------------------------------------------------
+
+export type HeatMetric = "tokens" | "turns" | "busy";
+
+export const HEAT_METRICS: { value: HeatMetric; label: string }[] = [
+  { value: "tokens", label: "Tokens" },
+  { value: "turns", label: "Turns" },
+  { value: "busy", label: "Busy time" },
+];
+
+export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+export interface HeatCell {
+  tokens: number;
+  turns: number;
+  busySeconds: number;
+}
+
+/**
+ * Sum UTC hours into a Monday-first [weekday][hour] grid in the browser's
+ * local time zone (a half-hour zone files each UTC hour under the local hour
+ * it starts in).
+ */
+export function buildHeatmap(hours: readonly UsageHour[]): HeatCell[][] {
+  const grid = WEEKDAYS.map(() => Array.from({ length: 24 }, () => ({ tokens: 0, turns: 0, busySeconds: 0 })));
+  for (const h of hours) {
+    const d = new Date(Number(h.startUnix) * 1000);
+    const c = grid[(d.getDay() + 6) % 7][d.getHours()];
+    c.tokens += Number(h.tokens);
+    c.turns += Number(h.turns);
+    c.busySeconds += Number(h.busySeconds);
+  }
+  return grid;
+}
+
+export function heatValue(c: HeatCell, m: HeatMetric): number {
+  return m === "tokens" ? c.tokens : m === "turns" ? c.turns : c.busySeconds;
+}
+
+/** "3h 05m", "12m", "40s". */
+export function shortDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+export function heatLabel(v: number, m: HeatMetric): string {
+  return m === "tokens" ? `${shortTokens(v)} tokens` : m === "turns" ? `${commas(v)} turns` : `${shortDuration(v)} busy`;
 }
 
 // ---- Subscription allowance -------------------------------------------------

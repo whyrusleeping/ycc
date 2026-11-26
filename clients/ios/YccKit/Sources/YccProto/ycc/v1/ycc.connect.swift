@@ -298,6 +298,9 @@ public protocol Ycc_V1_SessionServiceClientInterface: Sendable {
     @available(iOS 13, *)
     func `getUsage`(request: Ycc_V1_GetUsageRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetUsageResponse>
 
+    @available(iOS 13, *)
+    func `getUsageHours`(request: Ycc_V1_GetUsageHoursRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_GetUsageHoursResponse>
+
     /// Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
     @available(iOS 13, *)
     func `beginAnthropicLogin`(request: Ycc_V1_BeginAnthropicLoginRequest, headers: Connect.Headers) async -> ResponseMessage<Ycc_V1_BeginAnthropicLoginResponse>
@@ -775,6 +778,11 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
     }
 
     @available(iOS 13, *)
+    public func `getUsageHours`(request: Ycc_V1_GetUsageHoursRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_GetUsageHoursResponse> {
+        return await self.client.unary(path: "/ycc.v1.SessionService/GetUsageHours", idempotencyLevel: .unknown, request: request, headers: headers)
+    }
+
+    @available(iOS 13, *)
     public func `beginAnthropicLogin`(request: Ycc_V1_BeginAnthropicLoginRequest, headers: Connect.Headers = [:]) async -> ResponseMessage<Ycc_V1_BeginAnthropicLoginResponse> {
         return await self.client.unary(path: "/ycc.v1.SessionService/BeginAnthropicLogin", idempotencyLevel: .unknown, request: request, headers: headers)
     }
@@ -1006,6 +1014,7 @@ public final class Ycc_V1_SessionServiceClient: Ycc_V1_SessionServiceClientInter
             public static let getMemory = Connect.MethodSpec(name: "GetMemory", service: "ycc.v1.SessionService", type: .unary)
             public static let captureBacklogItem = Connect.MethodSpec(name: "CaptureBacklogItem", service: "ycc.v1.SessionService", type: .serverStream)
             public static let getUsage = Connect.MethodSpec(name: "GetUsage", service: "ycc.v1.SessionService", type: .unary)
+            public static let getUsageHours = Connect.MethodSpec(name: "GetUsageHours", service: "ycc.v1.SessionService", type: .unary)
             public static let beginAnthropicLogin = Connect.MethodSpec(name: "BeginAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
             public static let completeAnthropicLogin = Connect.MethodSpec(name: "CompleteAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)
             public static let cancelAnthropicLogin = Connect.MethodSpec(name: "CancelAnthropicLogin", service: "ycc.v1.SessionService", type: .unary)

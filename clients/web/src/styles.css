@@ -6915,6 +6915,45 @@ button.chip-x {
   margin-top: 4px;
 }
 
+.usage-heatmap {
+  margin-bottom: 16px;
+  background: var(--bg);
+}
+
+.usage-heatmap .segmented button {
+  white-space: nowrap;
+}
+
+.heatmap-grid {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.heatmap-row {
+  display: grid;
+  grid-template-columns: 36px repeat(24, minmax(8px, 1fr));
+  gap: 2px;
+  align-items: center;
+}
+
+.heatmap-hour {
+  font-family: var(--mono);
+  line-height: 1;
+}
+
+.heatmap-cell {
+  display: block;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.heatmap-cell.empty {
+  background: var(--bg-sunk);
+}
+
 .usage-breakdown h2 .count {
   font-weight: 400;
   margin-left: 4px;

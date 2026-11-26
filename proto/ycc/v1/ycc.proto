@@ -1340,6 +1340,27 @@ message GetUsageResponse {
   string workspace = 3;
 }
 
+// Hourly agent activity for the usage page's week heatmap, recomputed from
+// the same event-log scan as GetUsage and scoped the same way (an omitted
+// project is the all-project rollup). Hours are UTC; clients bucket them into
+// local time. Hours with no activity are omitted.
+message GetUsageHoursRequest {
+  string project = 1; // registered project; empty = all projects
+  string since = 2;   // YYYY-MM-DD inclusive (UTC), optional
+  string until = 3;   // YYYY-MM-DD inclusive (UTC), optional
+  string task = 4;    // restrict to one backlog task id, optional
+}
+message UsageHour {
+  int64 start_unix = 1;   // start of the UTC hour
+  int64 tokens = 2;       // UsageRow.total of the model turns that finished in the hour
+  int64 turns = 3;        // model turns that finished in the hour
+  int64 busy_seconds = 4; // per-session wall time with a model turn or tool call running (not ask_user), summed over sessions
+}
+message GetUsageHoursResponse {
+  repeated UsageHour hours = 1; // ascending
+  string workspace = 2;         // empty for the all-project rollup
+}
+
 // Daemon-owned Anthropic subscription login. These authenticated RPCs are
 // deliberately separate from sessions: never record their payloads in event logs.
 // One pending attempt per daemon; beginning again supersedes the previous attempt.
@@ -2130,6 +2151,7 @@ service SessionService {
   // Usage/cost breakdown: aggregated, priced token usage by task ×
   // model × day so clients can render the cost breakdown.
   rpc GetUsage(GetUsageRequest) returns (GetUsageResponse);
+  rpc GetUsageHours(GetUsageHoursRequest) returns (GetUsageHoursResponse);
   // Browser-and-paste subscription login; access/refresh tokens never leave the daemon.
   rpc BeginAnthropicLogin(BeginAnthropicLoginRequest) returns (BeginAnthropicLoginResponse);
   rpc CompleteAnthropicLogin(CompleteAnthropicLoginRequest) returns (CompleteAnthropicLoginResponse);
