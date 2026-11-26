@@ -561,14 +561,19 @@ func (m *Manager) wakeWatches() {
 // stopWatches cancels the scheduler and run followers and joins them. Live run
 // sessions are reaped with the rest of the session map.
 func (m *Manager) stopWatches() {
+	m.cancelWatches()
+	m.watchWG.Wait()
+}
+
+// cancelWatches stops the watch scheduler and run followers without joining.
+func (m *Manager) cancelWatches() {
 	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
 	if !m.watchStop {
 		m.watchStop = true
 		m.watchRunning.Store(false)
 		m.watchCancel()
 	}
-	m.watchMu.Unlock()
-	m.watchWG.Wait()
 }
 
 func (m *Manager) tickWatches() {

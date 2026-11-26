@@ -500,3 +500,45 @@ func TestWaitAnyAndTimeout(t *testing.T) {
 		t.Fatalf("timeout wait = reports %+v running %v", reports, running)
 	}
 }
+
+// A wait cut short by a graceful restart claims nothing: finished targets keep
+// their single automatic notification for the reopened session.
+func TestWaitRestartSuspendClaimsNothing(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+	done := r.Start("bash", "quick", "coordinator")
+	r.Start("bash", "slow", "coordinator")
+	done.Finish(Done, "ok")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel(ErrRestartSuspend)
+	}()
+	reports, running := r.Wait(ctx, nil, "all", 0)
+	if reports != nil || running != nil {
+		t.Fatalf("Wait = (%v, %v), want nothing on restart suspension", reports, running)
+	}
+	if !RestartSuspended(ctx) {
+		t.Fatal("RestartSuspended = false for the restart cause")
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 1 || got[0].ID != done.ID() {
+		t.Fatalf("DrainFinished = %v, want the unclaimed finished report", got)
+	}
+}
+
+// A wait whose context a restart already cancelled claims nothing even when its
+// targets are already satisfied.
+func TestWaitRestartSuspendSatisfiedClaimsNothing(t *testing.T) {
+	r := NewRegistry()
+	defer r.KillAll()
+	j := r.Start("bash", "done", "coordinator")
+	j.Finish(Done, "ok")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(ErrRestartSuspend)
+	if reports, running := r.Wait(ctx, []string{j.ID()}, "all", 0); reports != nil || running != nil {
+		t.Fatalf("Wait = (%v, %v), want nothing", reports, running)
+	}
+	if got := r.DrainFinished("coordinator"); len(got) != 1 {
+		t.Fatalf("DrainFinished = %v, want the unclaimed report", got)
+	}
+}

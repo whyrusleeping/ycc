@@ -76,6 +76,11 @@ func (m *Manager) runGitSyncPoller() {
 			}
 			timer.Reset(m.currentGitSyncInterval())
 		case <-timer.C:
+			if m.executionHeld() {
+				// Startup has not released background work yet.
+				timer.Reset(initialGitSyncDelay)
+				continue
+			}
 			m.refreshProjectGitRefs()
 			timer.Reset(m.currentGitSyncInterval())
 		}

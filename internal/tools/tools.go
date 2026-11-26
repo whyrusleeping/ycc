@@ -6,6 +6,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +52,21 @@ func ControlOf(res *gollama.ToolResult) *Control {
 		return c
 	}
 	return nil
+}
+
+// restartSuspended marks the result of a call a graceful daemon restart
+// suspended (the tool returned jobs.ErrRestartSuspend).
+type restartSuspended struct{}
+
+// RestartSuspendedResult reports whether a tool result is a restart
+// suspension rather than an outcome: the agent loop records no tool_result for
+// it, leaving the call unresolved for recovery.
+func RestartSuspendedResult(res *gollama.ToolResult) bool {
+	if res == nil {
+		return false
+	}
+	_, ok := res.Structured.(restartSuspended)
+	return ok
 }
 
 // Registry holds the tools available to an agent and dispatches calls.
@@ -106,6 +122,9 @@ func (r *Registry) Dispatch(ctx context.Context, call gollama.ToolCall) *gollama
 		return errResult("tool %q has invalid arguments: %v", call.Function.Name, err)
 	}
 	res, err := gollama.HandleToolCall(ctx, []*gollama.Tool{t}, call)
+	if errors.Is(err, jobs.ErrRestartSuspend) {
+		return &gollama.ToolResult{Content: err.Error(), IsError: true, Structured: restartSuspended{}}
+	}
 	if err != nil {
 		return errResult("tool %q failed: %v", call.Function.Name, err)
 	}

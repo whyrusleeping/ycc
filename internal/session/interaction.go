@@ -87,7 +87,7 @@ func (in *interaction) Ask(ctx context.Context, question string, options []strin
 		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans})
 		return ans, nil
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return "", context.Cause(ctx)
 	}
 }
 
@@ -131,7 +131,7 @@ func (in *interaction) AskMany(ctx context.Context, questions []orchestrator.Que
 		in.emitter.Emit(event.QuestionAnswered, map[string]any{"answers": answers})
 		return answers, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, context.Cause(ctx)
 	}
 }
 
@@ -162,7 +162,7 @@ func (in *interaction) restore(questions []orchestrator.Question, batch bool) fu
 				in.emitter.Emit(event.QuestionAnswered, map[string]any{"answers": answers})
 				return answers, nil
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, context.Cause(ctx)
 			}
 		}
 	}
@@ -187,7 +187,7 @@ func (in *interaction) restore(questions []orchestrator.Question, batch bool) fu
 			in.emitter.Emit(event.QuestionAnswered, map[string]any{"answer": ans})
 			return []string{ans}, nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, context.Cause(ctx)
 		}
 	}
 }

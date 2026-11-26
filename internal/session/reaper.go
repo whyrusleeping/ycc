@@ -130,7 +130,8 @@ func (r *reaper) pruneLogs(now time.Time) {
 // StartReaper launches the background GC reaper for the manager, governed by cfg.
 // It returns immediately without starting a goroutine when the reaper is fully
 // disabled (both IdleTimeout and LogRetention zero). The goroutine stops when ctx
-// is cancelled. Interval defaults to one minute and Now defaults to time.Now.
+// is cancelled or the manager stops its background workers (stopBackground joins
+// it). Interval defaults to one minute and Now defaults to time.Now.
 func (m *Manager) StartReaper(ctx context.Context, cfg GCConfig) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -142,12 +143,16 @@ func (m *Manager) StartReaper(ctx context.Context, cfg GCConfig) {
 		return // disabled — nothing to do
 	}
 	r := newReaper(m, cfg)
+	m.reaperWG.Add(1)
 	go func() {
+		defer m.reaperWG.Done()
 		t := time.NewTicker(cfg.Interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-m.reaperCtx.Done():
 				return
 			case <-t.C:
 				r.tick()

@@ -80,8 +80,16 @@ func (m *Manager) evaluateWorkstreamReadiness(wsID string, sessStatus event.Stat
 		fmt.Sprintf("workstream %s needs attention: %s", ws.ID, reason))
 }
 
+// workstreamWatch is a live workstream watcher: done closes when it exits, and
+// stop ends its log subscription.
+type workstreamWatch struct {
+	done chan struct{}
+	stop func()
+}
+
 // startWorkstreamWatcher maps terminal session events into durable workstream
 // completion state. Activity after completion returns the stream to active.
+
 func (m *Manager) startWorkstreamWatcher(ws workstream.Workstream, log *event.Log) {
 	done := make(chan struct{})
 	m.mu.Lock()
@@ -89,15 +97,15 @@ func (m *Manager) startWorkstreamWatcher(ws workstream.Workstream, log *event.Lo
 		m.mu.Unlock()
 		return
 	}
-	m.workstreamWatches[ws.SessionID] = done
+	ch, cancel := log.Subscribe(log.LastSeq())
+	m.workstreamWatches[ws.SessionID] = workstreamWatch{done: done, stop: cancel}
 	m.mu.Unlock()
 
-	ch, cancel := log.Subscribe(log.LastSeq())
 	go func() {
 		defer func() {
 			cancel()
 			m.mu.Lock()
-			if m.workstreamWatches[ws.SessionID] == done {
+			if m.workstreamWatches[ws.SessionID].done == done {
 				delete(m.workstreamWatches, ws.SessionID)
 			}
 			close(done)
@@ -154,6 +162,21 @@ func workstreamTerminalStatus(events []event.Event) event.Status {
 		}
 	}
 	return event.StatusStopped
+}
+
+// idleAwaitingJobs reports whether the log's latest lifecycle state is an idle
+// recorded while the session still awaited its background jobs.
+func idleAwaitingJobs(events []event.Event) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Type {
+		case event.SessionIdle:
+			awaiting, _ := events[i].Data["awaiting_jobs"].(bool)
+			return awaiting
+		case event.SessionError, event.UserInput, event.UserInputDelivered, event.Resumed, event.ModelTurn, event.JobNotified:
+			return false
+		}
+	}
+	return false
 }
 
 // workstreamRunBlocked reports whether the terminal run was preceded by a

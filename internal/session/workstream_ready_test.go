@@ -143,7 +143,7 @@ func TestWorkstreamWatcherWaitsForDelegatedJobs(t *testing.T) {
 			}
 			m.startWorkstreamWatcher(ws, s.log)
 			m.mu.Lock()
-			done := m.workstreamWatches[s.ID]
+			done := m.workstreamWatches[s.ID].done
 			m.mu.Unlock()
 			s.emitter.Emit(event.SessionIdle, map[string]any{"report": "progress", "awaiting_jobs": awaiting})
 			// Closing drains the durable event through the watcher before we assert.

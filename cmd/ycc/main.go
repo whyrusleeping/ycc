@@ -638,7 +638,7 @@ func daemonCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "daemon",
 		Usage: "run the explicit, persistent, foreground daemon",
-		Description: "Runs the workspace daemon in the foreground until killed. It serves the\n" +
+		Description: "Runs the workspace daemon in the foreground until SIGINT/SIGTERM. It serves the\n" +
 			"Connect API (session control + event streaming) that clients attach to.\n\n" +
 			"Remote access (spec §12/§14): the deployment model is a private network\n" +
 			"(Tailscale/VPN). Bearer authentication is REQUIRED to bind any non-loopback\n" +
@@ -654,7 +654,11 @@ func daemonCommand() *cli.Command {
 			"Clients should attach with YCC_TOKEN in their environment, e.g.\n" +
 			"`YCC_TOKEN=… ycc --addr http://100.64.0.1:8787 list`. The same endpoints\n" +
 			"are reachable over the Connect HTTP/JSON protocol with curl by presenting\n" +
-			"the `Authorization: Bearer <token>` header.",
+			"the `Authorization: Bearer <token>` header.\n\n" +
+			"SIGINT/SIGTERM shut down gracefully: new RPCs are refused, background\n" +
+			"workers stop, active turns get --shutdown-drain to reach a clean boundary,\n" +
+			"and sessions are suspended so they reopen where they left off. A second\n" +
+			"signal ends the drain; one more exits at once.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "addr", Value: "127.0.0.1:8787", Usage: "`address` to listen on (non-loopback requires bearer authentication)"},
 			&cli.StringFlag{Name: "workspace", Value: ".", Usage: "startup project directory (registered by basename; the default . only when it is a git repository other than $HOME)"},
@@ -667,6 +671,7 @@ func daemonCommand() *cli.Command {
 			&cli.StringFlag{Name: "tls-cert", Usage: "TLS certificate `file` (enables HTTPS; optional on a private tailnet)"},
 			&cli.StringFlag{Name: "tls-key", Usage: "TLS key `file`"},
 			&cli.BoolFlag{Name: "web", Usage: "serve the embedded web client at / (requires a token; static assets are unauthenticated, RPCs require the token)"},
+			&cli.DurationFlag{Name: "shutdown-drain", Value: 30 * time.Second, Usage: "on SIGINT/SIGTERM, wait up to this `duration` for active model turns and foreground tools to reach a clean boundary (0 skips; a second signal ends the wait)"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			// Like the in-process and background-daemon paths, fall back to the
@@ -679,16 +684,6 @@ func daemonCommand() *cli.Command {
 			if configPath == "" {
 				configPath = daemon.DiscoverConfig(workspace)
 			}
-			token := cmd.String("token")
-			tokenFile := ""
-			if token == "" && daemon.IsLoopback(cmd.String("addr")) {
-				var err error
-				token, err = daemon.EnsureLocalToken()
-				if err != nil {
-					return fmt.Errorf("daemon: %w", err)
-				}
-				tokenFile = daemon.LocalTokenFile()
-			}
 			err := daemon.Serve(daemon.Options{
 				Addr:              cmd.String("addr"),
 				Workspace:         workspace,
@@ -698,12 +693,13 @@ func daemonCommand() *cli.Command {
 				BaseURL:           cmd.String("base-url"),
 				KeyEnv:            cmd.String("key-env"),
 				MaxTokens:         int(cmd.Int("max-tokens")),
-				Token:             token,
-				TokenFile:         tokenFile,
+				Token:             cmd.String("token"),
+				LocalToken:        true,
 				TLSCert:           cmd.String("tls-cert"),
 				TLSKey:            cmd.String("tls-key"),
 				Web:               cmd.Bool("web"),
 				Persist:           true,
+				ShutdownDrain:     cmd.Duration("shutdown-drain"),
 			})
 			if err != nil {
 				return fmt.Errorf("daemon: %w", err)

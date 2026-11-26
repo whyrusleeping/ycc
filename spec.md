@@ -85,6 +85,28 @@ omit the project only when exactly one project is
 registered; ambiguity is an error. The exception is `GetUsage`: an omitted project requests the
 all-project rollup even when several projects are registered.
 
+A persistent daemon starts in four phases (`docs/design/daemon-restart.md` §1). It first takes an
+exclusive lock on `<state-dir>/daemon.lock` and binds its listener; if either fails it exits
+without writing state, so a second daemon on the same state directory cannot start. It then loads
+its registries and validates workstream worktrees, prepares recovered state while session
+execution is held, and finally releases held sessions, derives workstream readiness (skipping
+sessions idle while awaiting background jobs), and starts watches, the GC reaper, and the health
+monitor. RPCs return `Unavailable` until startup finishes.
+
+`SIGINT` or `SIGTERM` shuts a persistent daemon down gracefully, and so does a signal received
+during startup, which then releases nothing further and never opens RPC admission. Every new RPC
+returns `Unavailable`; open subscriptions last until their sessions close. Git sync, work loops
+(which end as interrupted), the integration queue, grooms, watches, and the GC reaper stop, leaving
+their sessions running. Admitted RPCs, active model turns, foreground tools, and subagents then get
+one window, `--shutdown-drain` from the signal (default `30s`, `0` skips it), to finish or reach a
+clean boundary. A coordinator that is idle, paused, parked on `ask_user`, or blocked in `wait` does
+not delay the drain, and neither does a subagent blocked in `wait`. A second signal ends the drain,
+and a later one exits at once. Every session is then suspended for restart. A blocked `wait` (the
+coordinator's or a subagent's) or `ask_user` exits with no result and claims no job report, so the
+coordinator's `tool_call` stays unresolved in the log. Background jobs and subagents are killed and
+joined without `session_stopped`, workstream watchers are joined, and the log closes last. Stop,
+idle reaping, fail-stop, and the one-shot in-process daemon keep ordinary cancel-and-kill teardown.
+
 Project status is computed from local workspace state without blocking on the network. Project
 metadata reports whether onboarding is still needed (no substantive configured spec entry point and
 no backlog tasks), allowing clients to omit the onboarding suggestion for established projects. Git

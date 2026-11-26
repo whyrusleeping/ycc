@@ -233,7 +233,12 @@ func waitTool(ws *Workspace) *gollama.Tool {
 					}
 				}()
 			}
-			reports, running := ws.Jobs.Wait(waitCtx, ids, mode, timeout)
+			reports, running, suspended := ws.Jobs.WaitSuspendable(waitCtx, ids, mode, timeout)
+			if suspended {
+				// Suspended by a graceful daemon restart: nothing was claimed, so
+				// record no result and reopen restores this wait.
+				return nil, jobs.ErrRestartSuspend
+			}
 			interrupted := false
 			if len(running) > 0 && wake != nil {
 				select {

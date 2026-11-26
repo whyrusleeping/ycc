@@ -468,7 +468,7 @@ type Registry struct {
 	jobs    map[string]*Job
 	order   []string
 	ctx     context.Context
-	cancel  context.CancelFunc
+	cancel  context.CancelCauseFunc
 	closing bool // registration barrier: KillAll has begun snapshotting runners
 	// completions coalesces terminal transitions into at most one pending wake
 	// for the single session owner that consumes them. Buffered so a completion
@@ -479,7 +479,7 @@ type Registry struct {
 
 // NewRegistry returns an empty registry with a fresh root context.
 func NewRegistry() *Registry {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancelCause(context.Background())
 	return &Registry{jobs: map[string]*Job{}, ctx: ctx, cancel: cancel,
 		completions: make(chan struct{}, 1)}
 }
@@ -685,9 +685,18 @@ func (r *Registry) targets(ids []string) []*Job {
 // It never holds the registry mutex while blocking (lock-ordering discipline
 // from the design's deadlock lesson).
 func (r *Registry) Wait(ctx context.Context, ids []string, mode string, timeout time.Duration) (reports []Report, running []string) {
+	reports, running, _ = r.WaitSuspendable(ctx, ids, mode, timeout)
+	return reports, running
+}
+
+// WaitSuspendable is Wait that also reports a graceful-restart suspension: when
+// ctx carries ErrRestartSuspend at the moment the wait would collect, it claims
+// nothing and returns suspended=true. That single decision is the caller's
+// commit point: a wait that collected must deliver what it claimed.
+func (r *Registry) WaitSuspendable(ctx context.Context, ids []string, mode string, timeout time.Duration) (reports []Report, running []string, suspended bool) {
 	targets := r.targets(ids)
 	if len(targets) == 0 {
-		return nil, nil
+		return nil, nil, false
 	}
 	waitAll := mode != "any"
 	satisfied := func() bool {
@@ -723,13 +732,24 @@ func (r *Registry) Wait(ctx context.Context, ids []string, mode string, timeout 
 			select {
 			case <-notify:
 			case <-ctx.Done():
-				return r.collect(targets)
+				return r.collectUnlessSuspended(ctx, targets)
 			case <-timer:
-				return r.collect(targets)
+				return r.collectUnlessSuspended(ctx, targets)
 			}
 		}
 	}
-	return r.collect(targets)
+	return r.collectUnlessSuspended(ctx, targets)
+}
+
+// collectUnlessSuspended collects the wait's reports, except that a wait whose
+// context a graceful restart cancelled claims nothing: delivery of its reports
+// belongs to the reopened session.
+func (r *Registry) collectUnlessSuspended(ctx context.Context, targets []*Job) (reports []Report, running []string, suspended bool) {
+	if RestartSuspended(ctx) {
+		return nil, nil, true
+	}
+	reports, running = r.collect(targets)
+	return reports, running, false
 }
 
 func (r *Registry) collect(targets []*Job) (reports []Report, running []string) {
@@ -885,13 +905,18 @@ func (r *Registry) ResolveOwner(owner, parent string, retain []RetainRequest) (r
 // KillAll cancels the root context, finalizes every running report as Killed,
 // and joins tracked processes/agents. It does not return while mutation lifetime
 // ownership can still be held by a terminating job.
-func (r *Registry) KillAll() {
+func (r *Registry) KillAll() { r.KillAllCause(nil) }
+
+// KillAllCause is KillAll with a cancellation cause for every job context. A
+// graceful restart passes ErrRestartSuspend, so an in-process subagent blocked
+// in wait exits without claiming reports, as its coordinator does.
+func (r *Registry) KillAllCause(cause error) {
 	r.mu.Lock()
 	// Linearize shutdown before taking the snapshot. A tracked start either
 	// registered before this point and is included below, or observes closing and
 	// declines without launching a runner.
 	r.closing = true
-	r.cancel()
+	r.cancel(cause)
 	js := make([]*Job, 0, len(r.jobs))
 	for _, id := range r.order {
 		js = append(js, r.jobs[id])

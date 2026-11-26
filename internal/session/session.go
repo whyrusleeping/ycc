@@ -159,6 +159,17 @@ type Session struct {
 	rolloverCh chan *rolloverRequest
 	ctx        context.Context
 	cancel     context.CancelFunc
+	// cancelCause cancels ctx with a cause; a graceful daemon restart uses
+	// jobs.ErrRestartSuspend so blocked tools exit without results.
+	cancelCause context.CancelCauseFunc
+	// runDone is closed when the run owner goroutine returns, so restart
+	// teardown can join it before closing the event log. Under launchMu,
+	// launched records that the run owner was started and retired that restart
+	// teardown claimed the session, so a late launch never starts it.
+	runDone  chan struct{}
+	launchMu sync.Mutex
+	launched bool
+	retired  bool
 
 	// stopOnce guards Stop so a hard terminate runs at most once even if both a
 	// StopSession RPC and a manager teardown race to call it.
@@ -970,6 +981,11 @@ func (s *Session) drainJobNotes() ([]string, error) {
 // nil-safe so minimally-constructed sessions (tests) can call it.
 func (s *Session) killJobs() {
 	if s.deps != nil && s.deps.Jobs != nil {
+		if s.ctx != nil && jobs.RestartSuspended(s.ctx) {
+			// Restart suspension: subagent loops see the restart cause too.
+			s.deps.Jobs.KillAllCause(jobs.ErrRestartSuspend)
+			return
+		}
 		s.deps.Jobs.KillAll()
 	}
 }
@@ -1764,6 +1780,11 @@ func (s *Session) reviewTiers() []orchestrator.ReviewTierInfo {
 }
 
 func (s *Session) run() {
+	// Deferred first so it runs last: teardown that joins the run owner also
+	// observes the job kill below as finished.
+	if s.runDone != nil {
+		defer close(s.runDone)
+	}
 	// Kill every background job when the coordinator loop's lifetime ends, so a
 	// session leaves no orphan processes. Also release an RPC waiting on a rollover
 	// request that cancellation prevented this owner from reaching.
@@ -2253,7 +2274,7 @@ type Manager struct {
 	worktreesRoot     string
 	ownership         *workspacelease.Service
 	idAlloc           *docs.IDAllocator
-	workstreamWatches map[string]chan struct{}
+	workstreamWatches map[string]workstreamWatch
 	integrators       map[string]*workstreamIntegrator
 	integrationWG     sync.WaitGroup
 	integrationCtx    context.Context
@@ -2357,6 +2378,20 @@ type Manager struct {
 	startWatchSession func(primary string, def WatchDefinition, runCtx string) (*Session, error)
 	watchNow          func() time.Time
 	watchPoll         time.Duration
+
+	// Graceful daemon shutdown and phased startup (shutdown.go). shuttingDown
+	// refuses new session registration and routes teardown through restart
+	// suspension; execHeld (under mu) defers run owners prepared during startup
+	// into heldRuns until ReleaseExecution.
+	shuttingDown atomic.Bool
+	execHeld     bool
+	heldRuns     []*Session
+	// idLocks serializes Reopen per session id (under mu).
+	idLocks map[string]*idLock
+	// The GC reaper (reaper.go) runs under reaperCtx and joins reaperWG.
+	reaperCtx    context.Context
+	reaperCancel context.CancelFunc
+	reaperWG     sync.WaitGroup
 }
 
 // NewManager creates a session manager backed by the given model registry. It
@@ -2375,7 +2410,10 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 	loopCtx, loopCancel := context.WithCancel(context.Background())
 	groomCtx, groomCancel := context.WithCancel(context.Background())
 	watchCtx, watchCancel := context.WithCancel(context.Background())
+	reaperCtx, reaperCancel := context.WithCancel(context.Background())
 	m := &Manager{
+		reaperCtx:         reaperCtx,
+		reaperCancel:      reaperCancel,
 		watchBusy:         map[string]bool{},
 		watchActive:       map[string]string{},
 		watchFollowed:     map[string]bool{},
@@ -2391,7 +2429,7 @@ func NewManager(reg *config.Registry, initialWorkspace string) *Manager {
 		worktreesRoot:     workstream.DefaultWorktreesRoot(),
 		ownership:         persistentOwnership(),
 		idAlloc:           docs.AllocatorFor(""),
-		workstreamWatches: map[string]chan struct{}{},
+		workstreamWatches: map[string]workstreamWatch{},
 		integrators:       map[string]*workstreamIntegrator{},
 		integrationCtx:    integrationCtx,
 		integrationCancel: integrationCancel,
@@ -2691,6 +2729,9 @@ func (m *Manager) initialCoordinator(preset, explicit string) (coordinator, warn
 // Workstream sessions pass false so an ephemeral worktree path never
 // pollutes the user-facing project picker.
 func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) {
+	if m.shuttingDown.Load() {
+		return nil, ErrShuttingDown
+	}
 	ws := cfg.Workspace
 	// A named project resolves to its registered workspace, overriding ws. With
 	// neither field, permit the sole registered project but never guess among
@@ -2812,6 +2853,12 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 	s.loop = loop
 
 	m.mu.Lock()
+	if m.shuttingDown.Load() {
+		m.mu.Unlock()
+		s.cancel()
+		log.Close()
+		return nil, ErrShuttingDown
+	}
 	m.sessions[id] = s
 	m.mu.Unlock()
 	if !cfg.Unattended && s.origin != OriginWatch {
@@ -2820,7 +2867,7 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		m.TouchProjectWorkspace(absWS)
 	}
 
-	go s.run()
+	m.launch(s)
 	return s, nil
 }
 
@@ -3062,11 +3109,22 @@ func (m *Manager) Workstreams(project string) []workstream.Workstream {
 }
 
 // ReconcileWorkstreams reconciles the workstream registry against git and the
-// durable session log on startup. In-root in-flight states retain
-// a live worktree; missing trees become stale, while out-of-root legacy entries
-// become needs-attention with a manual migration reason. Non-live terminal
-// session logs have readiness re-derived so daemon restarts cannot lose completion.
+// durable session log on startup: ValidateWorkstreamTrees followed by
+// DeriveWorkstreamReadiness. A persistent daemon runs the two in separate startup
+// phases (docs/design/daemon-restart.md §1).
 func (m *Manager) ReconcileWorkstreams() error {
+	if err := m.ValidateWorkstreamTrees(); err != nil {
+		return err
+	}
+	m.DeriveWorkstreamReadiness()
+	return nil
+}
+
+// ValidateWorkstreamTrees is the static half of startup reconciliation. In-root
+// in-flight states retain a live worktree; missing trees become stale, while
+// out-of-root legacy entries become needs-attention with a manual migration
+// reason. It derives no readiness and enqueues no integration.
+func (m *Manager) ValidateWorkstreamTrees() error {
 	all := m.workstreams.List()
 	// Group all worktree-owning states by project. Persisted paths are untrusted:
 	// pre-upgrade unsafe project names may have created a still-live worktree beyond
@@ -3128,24 +3186,19 @@ func (m *Manager) ReconcileWorkstreams() error {
 			}
 		}
 	}
+	return nil
+}
 
-	// Reduce worktree-local logs after stale detection. This re-derives completion
-	// before any session is reopened following a daemon restart.
+// DeriveWorkstreamReadiness re-derives completion from the worktree-local logs
+// of non-live sessions, so daemon restarts cannot lose it, then re-enqueues every
+// ready stream for auto-integration. A session idle while awaiting background
+// jobs is still waiting, not finished, and is skipped, as is any live session.
+func (m *Manager) DeriveWorkstreamReadiness() {
 	for _, w := range m.workstreams.List() {
-		if !w.Status.InFlight() || w.SessionID == "" {
+		if !w.Status.InFlight() || w.SessionID == "" || m.workstreamSessionBusy(w) {
 			continue
 		}
-		if err := workstream.VerifyUnderRoot(m.worktreesRoot, w.WorktreePath); err != nil {
-			continue
-		}
-		m.mu.Lock()
-		_, live := m.sessions[w.SessionID]
-		m.mu.Unlock()
-		if live {
-			continue
-		}
-		logPath := filepath.Join(w.WorktreePath, ".ycc", "sessions", w.SessionID, "events.jsonl")
-		events := readEventsTolerant(logPath)
+		events := m.workstreamSessionLog(w)
 		if len(events) == 0 {
 			continue
 		}
@@ -3156,10 +3209,12 @@ func (m *Manager) ReconcileWorkstreams() error {
 	}
 
 	// A ready state is durable while the queue is in-memory. Re-enqueue every
-	// eligible stream after reconciliation so daemon restarts cannot strand it.
+	// eligible stream after reconciliation so daemon restarts cannot strand it,
+	// with the same exclusions: integration must not take over a tree whose
+	// session is live or still waiting on its jobs.
 	var ready []workstream.Workstream
 	for _, w := range m.workstreams.List() {
-		if w.Status == workstream.StatusReady {
+		if w.Status == workstream.StatusReady && !m.workstreamSessionBusy(w) {
 			ready = append(ready, w)
 		}
 	}
@@ -3168,7 +3223,31 @@ func (m *Manager) ReconcileWorkstreams() error {
 			m.enqueueWorkstreamIntegration(w)
 		}
 	}
-	return nil
+}
+
+// workstreamSessionLog reads a workstream session's worktree-local log, or nil
+// when it has no session, its persisted path is untrusted, or there is no log.
+func (m *Manager) workstreamSessionLog(w workstream.Workstream) []event.Event {
+	if w.SessionID == "" {
+		return nil
+	}
+	if err := workstream.VerifyUnderRoot(m.worktreesRoot, w.WorktreePath); err != nil {
+		return nil
+	}
+	return readEventsTolerant(filepath.Join(w.WorktreePath, ".ycc", "sessions", w.SessionID, "events.jsonl"))
+}
+
+// workstreamSessionBusy reports whether a workstream's session is live or its
+// log last went idle while still awaiting background jobs, so startup must not
+// derive readiness from it or hand its tree to integration.
+func (m *Manager) workstreamSessionBusy(w workstream.Workstream) bool {
+	if w.SessionID == "" {
+		return false
+	}
+	if _, live := m.Get(w.SessionID); live {
+		return true
+	}
+	return idleAwaitingJobs(m.workstreamSessionLog(w))
 }
 
 // newSession assembles a Session (emitter, interaction, deps, role specs, the
@@ -3293,7 +3372,7 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		m.configureChatWatches(absWS, deps)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancelCause := context.WithCancelCause(context.Background())
 	s := &Session{
 		ID:             id,
 		Workspace:      absWS,
@@ -3310,7 +3389,9 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 		switchRetryCh:  make(chan struct{}, 1),
 		rolloverCh:     make(chan *rolloverRequest, 1),
 		ctx:            ctx,
-		cancel:         cancel,
+		cancel:         func() { cancelCause(nil) },
+		cancelCause:    cancelCause,
+		runDone:        make(chan struct{}),
 		status:         event.StatusRunning,
 		coordinator:    coordName,
 		startupNotices: startupNotices,
@@ -3518,6 +3599,10 @@ func firstLine(s string) string {
 // the daemon's sole project; an unknown/ambiguous project is ErrUnknownProject;
 // a session with no persisted log is ErrUnknownSession.
 func (m *Manager) Reopen(project, id string) (*Session, error) {
+	// One preparation per session id at a time, so concurrent callers never open
+	// duplicate writers on the same log or attach duplicate watchers.
+	unlock := m.lockSessionID(id)
+	defer unlock()
 	if s, ok := m.Get(id); ok {
 		if s.logFailure() == nil {
 			return s, nil // already live — no-op
@@ -3528,6 +3613,9 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		// daemon restart. If the disk is still full the new instance simply
 		// fail-stops again on its first append.
 		m.reclaimIfCurrent(s)
+	}
+	if m.shuttingDown.Load() {
+		return nil, ErrShuttingDown
 	}
 	ws, err := m.resolveProjectWorkspace(project)
 	if err != nil {
@@ -3627,13 +3715,19 @@ func (m *Manager) Reopen(project, id string) (*Session, error) {
 		log.Close()
 		return existing, nil
 	}
+	if m.shuttingDown.Load() {
+		m.mu.Unlock()
+		s.cancel()
+		log.Close()
+		return nil, ErrShuttingDown
+	}
 	m.sessions[id] = s
 	m.mu.Unlock()
 
 	if linked, ok := m.workstreams.BySession(id); ok && linked.Status.InFlight() {
 		m.startWorkstreamWatcher(linked, log)
 	}
-	go s.run()
+	m.launch(s)
 	return s, nil
 }
 
@@ -3967,13 +4061,26 @@ func (m *Manager) Get(id string) (*Session, bool) {
 func (m *Manager) Stop(id string) error {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
-	if ok {
-		delete(m.sessions, id)
-	}
-	m.mu.Unlock()
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("%w %q", ErrUnknownSession, id)
 	}
+	// Decided under mu, where BeginShutdown flips the phase: once graceful
+	// shutdown began, a stop suspends for restart instead of hard-stopping, but
+	// still joins the session before returning, so a caller may then destroy its
+	// state (a discarded worktree). It stays registered until suspended.
+	if m.shuttingDown.Load() {
+		m.mu.Unlock()
+		m.suspendSession(s)
+		m.mu.Lock()
+		if m.sessions[id] == s {
+			delete(m.sessions, id)
+		}
+		m.mu.Unlock()
+		return nil
+	}
+	delete(m.sessions, id)
+	m.mu.Unlock()
 	s.Stop()
 	// Write claims deliberately outlive the session: its uncommitted edits stay
 	// attributed to it (other sessions' changesets exclude and list them) until
@@ -3999,10 +4106,22 @@ func (m *Manager) endClaims(s *Session) {
 // waiting: readiness emission briefly needs that mutex.
 func (m *Manager) waitWorkstreamWatcher(id string) {
 	m.mu.Lock()
-	watchDone := m.workstreamWatches[id]
+	watch, ok := m.workstreamWatches[id]
 	m.mu.Unlock()
-	if watchDone != nil {
-		<-watchDone
+	if ok {
+		<-watch.done
+	}
+}
+
+// stopWorkstreamWatcher ends a session's workstream watcher without closing
+// its log (the watcher finishes the event in hand, then stops) and joins it.
+func (m *Manager) stopWorkstreamWatcher(id string) {
+	m.mu.Lock()
+	watch, ok := m.workstreamWatches[id]
+	m.mu.Unlock()
+	if ok {
+		watch.stop()
+		<-watch.done
 	}
 }
 
@@ -4014,15 +4133,19 @@ func (m *Manager) waitWorkstreamWatcher(id string) {
 func (m *Manager) reclaimIfCurrent(s *Session) bool {
 	m.mu.Lock()
 	current, ok := m.sessions[s.ID]
-	if ok && current == s {
-		delete(m.sessions, s.ID)
-	} else {
-		ok = false
-	}
-	m.mu.Unlock()
-	if !ok {
+	if !ok || current != s {
+		m.mu.Unlock()
 		return false
 	}
+	// Decided under mu, where BeginShutdown flips the phase: once shutdown
+	// began, ShutdownForRestart owns teardown, so leave the session live for the
+	// drain and the final suspension.
+	if m.shuttingDown.Load() {
+		m.mu.Unlock()
+		return true
+	}
+	delete(m.sessions, s.ID)
+	m.mu.Unlock()
 	s.reap()
 	m.endClaims(s)
 	m.waitWorkstreamWatcher(s.ID)
@@ -4033,45 +4156,30 @@ func (m *Manager) reclaimIfCurrent(s *Session) bool {
 // It is used during daemon teardown: cancellation stops in-flight turns, while
 // leaving each durable log exactly as it was keeps the session reopenable. The
 // live map is drained atomically before cancellation, so repeated calls are safe.
+// After BeginShutdown it suspends sessions for restart instead (teardown), so a
+// late or deferred call can never fall back to the ordinary cancel path.
 func (m *Manager) ReclaimAll() {
-	// Stop and join all manager-owned git commands before tearing down sessions or
-	// their worktrees. This keeps daemon shutdown free of background git races.
-	m.gitSyncCancel()
-	m.gitSyncWG.Wait()
-
-	// Cancel and join daemon-owned work loops before draining the session map. The
-	// real runner uses this context to reclaim its current session, clear the
-	// persisted current-session id, and publish a terminal loop outcome.
-	m.loopMu.Lock()
-	if !m.loopStop {
-		m.loopStop = true
-		m.loopCancel()
+	if !m.shuttingDown.Load() {
+		m.gitSyncCancel()
+		m.gitSyncWG.Wait()
+		m.stopBackground()
 	}
-	m.loopMu.Unlock()
-	m.loopWG.Wait()
-
+	// Decide the teardown kind atomically with retiring the map: BeginShutdown
+	// sets shuttingDown under mu, so an ordinary reclaim that raced it either
+	// emptied the map first or hands over to restart suspension here.
 	m.mu.Lock()
-	if !m.integrationStop {
-		m.integrationStop = true
-		m.integrationCancel()
+	if m.shuttingDown.Load() {
+		m.mu.Unlock()
+		m.cancelBackground()
+		m.gitSyncCancel()
+		m.suspendAll()
+		// Workers were cancelled at BeginShutdown; join them only now, so a
+		// non-interruptible worker step (a rebase, a fetch) cannot hold sessions
+		// running past the drain deadline.
+		m.joinBackground()
+		m.gitSyncWG.Wait()
+		return
 	}
-	m.mu.Unlock()
-	m.integrationWG.Wait()
-
-	// Stop scheduling automatic memory grooms and join their watchers, which
-	// reclaim any groom still running.
-	m.groomMu.Lock()
-	if !m.groomStop {
-		m.groomStop = true
-		m.groomCancel()
-	}
-	m.groomMu.Unlock()
-	m.groomWG.Wait()
-
-	// Stop the watch scheduler and run followers; run sessions are reaped below.
-	m.stopWatches()
-
-	m.mu.Lock()
 	sessions := m.sessions
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
@@ -4083,6 +4191,84 @@ func (m *Manager) ReclaimAll() {
 	}
 	for id := range sessions {
 		m.waitWorkstreamWatcher(id)
+	}
+}
+
+// stopBackground stops and joins, in order, the manager-owned background
+// workers other than git sync: work loops, the integration queue, grooms, the
+// watch scheduler, and the GC reaper. (Ordinary ReclaimAll stops and joins git
+// sync first, so no background git races the session or worktree teardown.)
+func (m *Manager) stopBackground() {
+	// Cancel and join daemon-owned work loops before draining the session map. The
+	// real runner uses this context to reclaim its current session, clear the
+	// persisted current-session id, and publish a terminal loop outcome.
+	m.cancelLoops()
+	m.loopWG.Wait()
+	m.cancelIntegration()
+	m.integrationWG.Wait()
+	// Stop scheduling automatic memory grooms and join their watchers, which
+	// reclaim any groom still running.
+	m.cancelGrooms()
+	m.groomWG.Wait()
+	// Stop the watch scheduler and run followers; run sessions are torn down by
+	// the caller.
+	m.stopWatches()
+	m.reaperCancel()
+	m.reaperWG.Wait()
+}
+
+// cancelBackground cancels every worker stopBackground stops, without joining
+// and without taking the workers' own locks: a worker may hold its lock across
+// a slow, non-interruptible step (a watch or groom starting a session runs git),
+// and shutdown must not wait behind it. New work is refused meanwhile by
+// shuttingDown; joinBackground later sets the workers' stop flags.
+func (m *Manager) cancelBackground() {
+	m.loopCancel()
+	m.integrationCancel()
+	m.groomCancel()
+	m.watchRunning.Store(false)
+	m.watchCancel()
+	m.reaperCancel()
+}
+
+// joinBackground stops (now under their locks) and joins the workers
+// cancelBackground cancelled.
+func (m *Manager) joinBackground() {
+	m.cancelLoops()
+	m.cancelIntegration()
+	m.cancelGrooms()
+	m.cancelWatches()
+	m.loopWG.Wait()
+	m.integrationWG.Wait()
+	m.groomWG.Wait()
+	m.watchWG.Wait()
+	m.reaperWG.Wait()
+}
+
+func (m *Manager) cancelLoops() {
+	m.loopMu.Lock()
+	defer m.loopMu.Unlock()
+	if !m.loopStop {
+		m.loopStop = true
+		m.loopCancel()
+	}
+}
+
+func (m *Manager) cancelIntegration() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.integrationStop {
+		m.integrationStop = true
+		m.integrationCancel()
+	}
+}
+
+func (m *Manager) cancelGrooms() {
+	m.groomMu.Lock()
+	defer m.groomMu.Unlock()
+	if !m.groomStop {
+		m.groomStop = true
+		m.groomCancel()
 	}
 }
 

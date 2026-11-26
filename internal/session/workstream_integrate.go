@@ -280,15 +280,17 @@ func (m *Manager) integrateReadyWorkstream(id string) {
 		if !ok || ws.Status != workstream.StatusReady {
 			return
 		}
-		if attempts == 0 {
-			m.integrationNeedsAttention(ws, out.reason, out.eventData())
-			return
-		}
+		// A cancelled queue (daemon shutdown) is an interruption, not a failure:
+		// a verify cut short by it must not park the stream in needs-attention.
 		m.mu.Lock()
 		stopping := m.integrationStop
 		m.mu.Unlock()
 		if stopping || m.integrationCtx.Err() != nil {
 			m.restoreWorkstreamReadyProjection(ws, "integration agent recovery interrupted")
+			return
+		}
+		if attempts == 0 {
+			m.integrationNeedsAttention(ws, out.reason, out.eventData())
 			return
 		}
 
@@ -575,7 +577,14 @@ Work only in this linked worktree. Re-run the rebase onto the named base when ne
 		_ = m.Stop(s.ID)
 		return integrateAgentResult{err: fmt.Errorf("record integrate session: %w", err)}
 	}
-	defer func() { _ = m.Stop(s.ID) }()
+	defer func() {
+		if m.shuttingDown.Load() {
+			// Restart shutdown cancelled this worker: the session is left to the
+			// drain and the final suspension.
+			return
+		}
+		_ = m.Stop(s.ID)
+	}()
 
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()

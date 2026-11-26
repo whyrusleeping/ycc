@@ -1251,6 +1251,15 @@ func (l *Loop) Run(ctx context.Context) (*Result, error) {
 			toolStart := time.Now()
 			res := l.Tools.Dispatch(ctx, call)
 			toolMS := time.Since(toolStart).Milliseconds()
+			if tools.RestartSuspendedResult(res) {
+				// A graceful daemon restart suspended this call (a blocked wait or
+				// ask_user exits without claiming anything). Record no tool_result and
+				// leave history untouched: the trailing tool_call stays unresolved in
+				// the durable log, exactly where recovery resumes it. A tool that
+				// finished first records its result as usual, so every claim it made is
+				// matched by that result; the next durable-emit check then stops.
+				return nil, context.Cause(ctx)
+			}
 			resultData := map[string]any{
 				"name":        call.Function.Name,
 				"result":      res.Content,

@@ -26,7 +26,7 @@ func (b *unreadBody) Close() error { return nil }
 func TestPreAuthDoesNotReadBody(t *testing.T) {
 	o := baseOptions(t)
 	o.Token = "secret"
-	h, mgr, err := buildHandler(o)
+	h, mgr, err := testBuildHandler(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestPreAuthDoesNotReadBody(t *testing.T) {
 func TestAuthenticatedReadLimit(t *testing.T) {
 	o := baseOptions(t)
 	o.Token = "secret"
-	h, mgr, err := buildHandler(o)
+	h, mgr, err := testBuildHandler(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func assertConnectError(t *testing.T, w *httptest.ResponseRecorder, status int, 
 func TestH2CUpgradeRejectsBeforeReceivingBody(t *testing.T) {
 	o := baseOptions(t)
 	o.Token = "secret"
-	h, mgr, err := buildHandler(o)
+	h, mgr, err := testBuildHandler(o)
 	if err != nil {
 		t.Fatal(err)
 	}

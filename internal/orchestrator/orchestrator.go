@@ -5,6 +5,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -1775,6 +1776,11 @@ func askUser(d *Deps) *gollama.Tool {
 				}
 				ans, err := d.Asker.AskMany(ctx, qs)
 				if err != nil {
+					if errors.Is(err, jobs.ErrRestartSuspend) {
+						// Suspended by a graceful daemon restart: no result, so reopen
+						// restores the question.
+						return nil, err
+					}
 					return tools.ErrResult("ask_user: %v", err), nil
 				}
 				return tools.OkResult(FormatAskManyAnswers(qs, ans)), nil
@@ -1787,6 +1793,11 @@ func askUser(d *Deps) *gollama.Tool {
 			opts := tools.GetStringSlice(params, "options")
 			ans, err := d.Asker.Ask(ctx, q, opts)
 			if err != nil {
+				if errors.Is(err, jobs.ErrRestartSuspend) {
+					// Suspended by a graceful daemon restart: no result, so reopen
+					// restores the question.
+					return nil, err
+				}
 				return tools.ErrResult("ask_user: %v", err), nil
 			}
 			return tools.OkResult(ans), nil

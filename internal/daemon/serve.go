@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
@@ -60,17 +62,38 @@ type Options struct {
 	// in-process path (that daemon is a private loopback backing one CLI
 	// command, not a remote-access surface).
 	Web bool
+	// LocalToken makes a loopback Serve with no Token create (or reuse) the
+	// private local token file once it owns the state directory, so a daemon that
+	// fails to lock or bind writes nothing.
+	LocalToken bool
+	// ShutdownDrain bounds how long graceful shutdown (SIGINT/SIGTERM) waits for
+	// active model turns, foreground tools, and subagents to reach a clean
+	// boundary; 0 skips the drain.
+	ShutdownDrain time.Duration
+}
+
+// daemonParts is what buildHandler assembles: the HTTP handler and session
+// manager, plus the persistent daemon's background services, which Serve starts
+// only in its last startup phase.
+type daemonParts struct {
+	handler http.Handler
+	mgr     *session.Manager
+	reg     *config.Registry
+	health  *health.Monitor // nil unless persistent
 }
 
 // buildHandler constructs the session manager and Connect HTTP handler from
 // Options. It is shared by the foreground/persistent Serve path and the
-// one-shot in-process path so both expose an identical tool surface.
-func buildHandler(o Options) (http.Handler, *session.Manager, error) {
+// one-shot in-process path so both expose an identical tool surface. A non-nil
+// adm gates the RPC surface (persistent daemons). A persistent manager is built
+// with execution held, and starts no recovery side effects or background
+// workers here: Serve's later startup phases do (startPersistent).
+func buildHandler(o Options, adm *server.Admission) (*daemonParts, error) {
 	var cfg *config.Config
 	if o.ConfigPath != "" {
 		c, err := config.Load(o.ConfigPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("load config: %w", err)
+			return nil, fmt.Errorf("load config: %w", err)
 		}
 		cfg = c
 		log.Printf("loaded config %s: coordinator=%s implementer=%s reviewers=%v",
@@ -86,6 +109,9 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	}
 	reg.SetPath(persistPath(o))
 	mgr := session.NewManager(reg, o.Workspace)
+	if o.Persist {
+		mgr.HoldExecution()
+	}
 	// Daemon-side push notifier: best-effort webhook that reaches out
 	// when an agent needs the user. notify.New returns nil when unconfigured
 	// (empty url), so this is a no-op by default; applies to both the persistent
@@ -97,7 +123,7 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	if o.Persist {
 		preg, err := project.Open(project.StateFile())
 		if err != nil {
-			return nil, nil, fmt.Errorf("load project registry: %w", err)
+			return nil, fmt.Errorf("load project registry: %w", err)
 		}
 		mgr.SetProjects(preg)
 		mgr.SetIDStateFile(docs.DefaultIDStateFile())
@@ -112,34 +138,18 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 				dir, _ := filepath.Abs(o.Workspace)
 				log.Printf("not registering %s as a project: %s", dir, why)
 			} else if _, err := mgr.AddProject(o.Workspace, ""); err != nil {
-				return nil, nil, fmt.Errorf("register startup project: %w", err)
+				return nil, fmt.Errorf("register startup project: %w", err)
 			}
 		}
-		// The workstream registry (parallel worktrees) is likewise
-		// durable and reconciled on startup: prune stale worktrees left by a
-		// crashed daemon and mark orphaned workstreams stale. A reconcile error is
-		// non-fatal (log and continue).
+		// The workstream registry (parallel worktrees) is likewise durable; Serve
+		// reconciles it in its startup phases.
 		wreg, err := workstream.Open(workstream.StateFile())
 		if err != nil {
-			return nil, nil, fmt.Errorf("load workstream registry: %w", err)
+			return nil, fmt.Errorf("load workstream registry: %w", err)
 		}
 		mgr.SetWorkstreams(wreg, workstream.DefaultWorktreesRoot())
-		if err := mgr.ReconcileWorkstreams(); err != nil {
-			log.Printf("workstream reconcile: %v", err)
-		}
-		// Watches are recurring checks that outlive any session, so only a
-		// persistent daemon schedules them.
-		mgr.StartWatches()
-		// A persistent daemon outlives any single session, so it runs the
-		// background GC reaper when enabled in config: idle-session
-		// reaping and/or on-disk log retention. Both default to 0 (disabled), so
-		// this is a no-op unless explicitly opted in. The one-shot in-process path
-		// is short-lived and carries no GC config, so it leaves GC off.
-		iv, idle, ret := reg.GC()
-		if idle > 0 || ret > 0 {
-			mgr.StartReaper(context.Background(), session.GCConfig{Interval: iv, IdleTimeout: idle, LogRetention: ret})
-		}
 	}
+	parts := &daemonParts{mgr: mgr, reg: reg}
 	srv := server.New(mgr)
 	// Client usage analytics are durable only on a persistent daemon; the
 	// one-shot path writes nothing to the state dir. A store failure is
@@ -151,7 +161,7 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 			srv.SetAnalytics(store)
 		}
 		// Dependency health checks make (small) provider requests, so only the
-		// long-lived daemon runs them; it lives until process exit.
+		// long-lived daemon runs them, from its last startup phase.
 		mon := health.New(health.Targets(health.Sources{
 			Registry: reg,
 			DiskPaths: func() []string {
@@ -163,8 +173,8 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 			},
 		}))
 		health.Install(mon)
-		go mon.Run(context.Background())
 		srv.SetHealth(mon)
+		parts.health = mon
 	}
 
 	mux := http.NewServeMux()
@@ -174,6 +184,9 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 		connect.WithInterceptors(server.NewAuthInterceptor(o.Token), latency),
 		connect.WithReadMaxBytes(rpcReadMaxBytes),
 	)
+	if adm != nil {
+		handler = adm.Handler(path, handler)
+	}
 	mux.Handle(path, server.RequireBearer(o.Token, handler))
 	mux.Handle("GET /debug/latency", server.RequireBearer(o.Token, latency.LatencyHandler(o.Token)))
 	// Optionally serve the embedded web client at "/". http.ServeMux
@@ -184,10 +197,54 @@ func buildHandler(o Options) (http.Handler, *session.Manager, error) {
 	if o.Web {
 		mux.Handle("/", web.Handler())
 	}
+	parts.handler = mux
 	if o.Token == "" {
-		return server.RequireLoopbackHost(mux), mgr, nil
+		parts.handler = server.RequireLoopbackHost(mux)
 	}
-	return mux, mgr, nil
+	return parts, nil
+}
+
+// startPersistent runs a persistent daemon's startup phases 2-4 (docs/design/
+// daemon-restart.md §1) after Serve owns the state directory and its listener:
+// static worktree validation; prepared recovery with execution held (sessions
+// registered meanwhile do not run yet); then release of execution, workstream
+// readiness derivation, watches, the GC reaper, and the health monitor. It
+// returns a stop for the services the manager does not own. It skips phase 4
+// once stopping reports a requested shutdown.
+func startPersistent(p *daemonParts, stopping func() bool) (stop func()) {
+	// Phase 2: validate static state. Prune worktrees a crashed daemon left and
+	// mark orphaned workstreams stale, deriving no readiness yet. A reconcile
+	// error is non-fatal (log and continue).
+	if err := p.mgr.ValidateWorkstreamTrees(); err != nil {
+		log.Printf("workstream reconcile: %v", err)
+	}
+	// Phase 3: prepare recovered state. Execution has been held since the
+	// manager was built, so anything prepared here waits for the release below.
+	// A shutdown requested by now releases nothing.
+	if stopping() {
+		return func() {}
+	}
+	// Phase 4: release execution, then background scheduling.
+	p.mgr.ReleaseExecution()
+	p.mgr.DeriveWorkstreamReadiness()
+	// Watches are recurring checks that outlive any session, so only a
+	// persistent daemon schedules them.
+	p.mgr.StartWatches()
+	// A persistent daemon outlives any single session, so it runs the
+	// background GC reaper when enabled in config: idle-session
+	// reaping and/or on-disk log retention. Both default to 0 (disabled), so
+	// this is a no-op unless explicitly opted in. The one-shot in-process path
+	// is short-lived and carries no GC config, so it leaves GC off.
+	if iv, idle, ret := p.reg.GC(); idle > 0 || ret > 0 {
+		p.mgr.StartReaper(context.Background(), session.GCConfig{Interval: iv, IdleTimeout: idle, LogRetention: ret})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if p.health != nil {
+		// Dependency health checks make (small) provider requests, so only the
+		// long-lived daemon runs them.
+		go p.health.Run(ctx)
+	}
+	return cancel
 }
 
 // Allow four 5 MiB images base64-encoded in JSON (~27 MiB), plus message metadata.
@@ -213,18 +270,17 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 }
 
 // Serve builds the registry, session manager, and Connect handler and serves
-// until the process exits. It blocks. Used by the explicit, persistent
-// `ycc daemon`.
+// until SIGINT or SIGTERM, then shuts down gracefully. It blocks. Used by the
+// explicit, persistent `ycc daemon`.
+//
+// Startup (docs/design/daemon-restart.md §1) first takes exclusive ownership:
+// the state-directory lock and the bound listener, before any state mutation, so
+// a second daemon or a busy port exits having changed nothing. RPCs are refused
+// with Unavailable until the remaining startup phases (startPersistent) finish.
 func Serve(o Options) error {
-	if o.Web && o.Token == "" {
+	if o.Web && o.Token == "" && !(o.LocalToken && IsLoopback(o.Addr)) {
 		return fmt.Errorf("refusing to serve the web client without a token")
 	}
-	handler, mgr, err := buildHandler(o)
-	if err != nil {
-		return err
-	}
-	defer mgr.ReclaimAll()
-
 	usingTLS := o.TLSCert != "" && o.TLSKey != ""
 	if !IsLoopback(o.Addr) {
 		if o.Token == "" {
@@ -235,15 +291,143 @@ func Serve(o Options) error {
 		}
 	}
 
-	httpSrv := newHTTPServer(o.Addr, handler)
-	log.Printf("ycc daemon listening on %s (tls=%v)", o.Addr, usingTLS)
-	for _, line := range startupGuidance(o, mgr, usingTLS) {
-		log.Print(line)
+	// Phase 1: exclusive ownership and a bound listener.
+	if o.Persist {
+		release, err := acquireStateLock(StateLockFile())
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
-	if usingTLS {
-		return httpSrv.ListenAndServeTLS(o.TLSCert, o.TLSKey)
+	ln, err := net.Listen("tcp", o.Addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", o.Addr, err)
 	}
-	return httpSrv.ListenAndServe()
+	defer ln.Close()
+	// From here on a signal is a graceful shutdown request, even mid-startup.
+	// The first one lands in stopReq, which startup polls between phases; later
+	// ones stay on sigs for gracefulShutdown.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigs)
+	stopReq := make(chan os.Signal, 1)
+	go func() { stopReq <- <-sigs }()
+	stopping := func() bool { return len(stopReq) > 0 }
+	if o.Token == "" && o.LocalToken && IsLoopback(o.Addr) {
+		token, err := EnsureLocalToken()
+		if err != nil {
+			return err
+		}
+		o.Token, o.TokenFile = token, LocalTokenFile()
+	}
+
+	adm := server.NewAdmission()
+	parts, err := buildHandler(o, adm)
+	if err != nil {
+		return err
+	}
+	mgr := parts.mgr
+	httpSrv := newHTTPServer(o.Addr, parts.handler)
+	serveErr := make(chan error, 1)
+	go func() {
+		if usingTLS {
+			serveErr <- httpSrv.ServeTLS(ln, o.TLSCert, o.TLSKey)
+		} else {
+			serveErr <- httpSrv.Serve(ln)
+		}
+	}()
+
+	// A shutdown requested during startup releases nothing further and never
+	// opens admission.
+	stopServices := func() {}
+	if o.Persist && !stopping() {
+		stopServices = startPersistent(parts, stopping)
+	}
+	var sig os.Signal
+	if stopping() {
+		sig = <-stopReq
+	} else {
+		adm.Open()
+		log.Printf("ycc daemon listening on %s (tls=%v)", ln.Addr(), usingTLS)
+		for _, line := range startupGuidance(o, mgr, usingTLS) {
+			log.Print(line)
+		}
+		select {
+		case err := <-serveErr:
+			// The listener failed (e.g. an unreadable TLS key): nothing is
+			// reachable, so skip the drain but still suspend sessions cleanly.
+			fenceCtx, cancelFence := context.WithTimeout(context.Background(), listenerFailFenceWait)
+			adm.Fence(fenceCtx)
+			cancelFence()
+			stopServices()
+			mgr.ShutdownForRestart()
+			return err
+		case sig = <-stopReq:
+		}
+	}
+	log.Printf("received %s: shutting down (drain up to %s; signal again to skip it)", sig, o.ShutdownDrain)
+	gracefulShutdown(o.ShutdownDrain, sigs, adm, mgr, stopServices)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		// Long-lived streams (Subscribe) do not end by themselves.
+		_ = httpSrv.Close()
+	}
+	log.Print("ycc daemon stopped")
+	return nil
+}
+
+// listenerFailFenceWait bounds how long a daemon whose listener failed waits
+// for RPCs already admitted before it suspends sessions.
+const listenerFailFenceWait = 5 * time.Second
+
+// gracefulShutdown fences RPCs, stops background workers, drains active work,
+// and then suspends every session for restart. One deadline, drain after the
+// signal, bounds the fence and the drain together; a second signal on sigs ends
+// the wait. A signal arriving after the drain ended exits the process at once,
+// in case teardown hangs.
+func gracefulShutdown(drain time.Duration, sigs <-chan os.Signal, adm *server.Admission, mgr *session.Manager, stopServices func()) {
+	start := time.Now()
+	skip, skipNow := context.WithCancel(context.Background())
+	defer skipNow()
+	watching := make(chan struct{})
+	go func() {
+		defer close(watching)
+		select {
+		case sig := <-sigs:
+			log.Printf("received %s again: ending the shutdown drain", sig)
+			skipNow()
+		case <-skip.Done():
+		}
+	}()
+
+	fenceCtx, cancelFence := context.WithDeadline(skip, start.Add(drain))
+	if !adm.Fence(fenceCtx) {
+		log.Print("shutdown: proceeding with RPCs still in flight")
+	}
+	cancelFence()
+	stopServices()
+	mgr.BeginShutdown()
+	if drain > 0 {
+		drainCtx, cancelDrain := context.WithDeadline(skip, start.Add(drain))
+		if busy := mgr.Drain(drainCtx); len(busy) > 0 {
+			log.Printf("shutdown: drain ended with %d session(s) still active: %s", len(busy), strings.Join(busy, ", "))
+		}
+		cancelDrain()
+	}
+	skipNow()
+	<-watching
+	go func() {
+		sig := <-sigs
+		log.Printf("received %s during shutdown: exiting now", sig)
+		os.Exit(1)
+	}()
+	mgr.ShutdownForRestart()
+}
+
+// StateLockFile is the persistent daemon's exclusive state-directory lock.
+func StateLockFile() string {
+	return filepath.Join(filepath.Dir(project.StateFile()), "daemon.lock")
 }
 
 // startupProjectSkipReason says why a persistent daemon should not register its
@@ -346,10 +530,11 @@ func StartInProcess(o Options) (*InProcess, error) {
 			return nil, err
 		}
 	}
-	handler, mgr, err := buildHandler(o)
+	parts, err := buildHandler(o, nil)
 	if err != nil {
 		return nil, err
 	}
+	handler, mgr := parts.handler, parts.mgr
 	ln, err := net.Listen("tcp", o.Addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen ephemeral: %w", err)

@@ -32,7 +32,7 @@ func TestWebServesStaticAssetsUnauthenticated(t *testing.T) {
 	o := baseOptions(t)
 	o.Web = true
 	o.Token = "secret"
-	h, _, err := buildHandler(o)
+	h, _, err := testBuildHandler(o)
 	if err != nil {
 		t.Fatalf("buildHandler: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestWebDisabledReturns404(t *testing.T) {
 	o := baseOptions(t)
 	o.Web = false
 	o.Token = "secret"
-	h, _, err := buildHandler(o)
+	h, _, err := testBuildHandler(o)
 	if err != nil {
 		t.Fatalf("buildHandler: %v", err)
 	}

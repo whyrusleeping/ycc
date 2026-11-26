@@ -355,8 +355,12 @@ ycc token rm EXA_API_KEY
 
 ### `ycc daemon` — run the persistent daemon
 
-Runs the explicit, persistent, foreground service. It serves until killed and
-does not dial a client of its own.
+Runs the explicit, persistent, foreground service. It serves until `SIGINT` or
+`SIGTERM` and does not dial a client of its own. Only one daemon may use a state
+directory (`daemon.lock`). A signal shuts it down gracefully: new RPCs are
+refused, active turns get `--shutdown-drain` to reach a clean boundary, and
+sessions are suspended so they reopen where they stopped. A second signal ends
+the drain, and one more exits at once.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -370,6 +374,7 @@ does not dial a client of its own.
 | `--token T` | `$YCC_TOKEN` | bearer token clients must present; prefer `YCC_TOKEN` to keep secrets out of process listings. If unset on loopback, create/reuse the 0600 local token file described in [Connection & auth](remote-api.md#connection--auth); non-loopback requires an explicit token |
 | `--tls-cert FILE` | | TLS certificate file (enables HTTPS) |
 | `--tls-key FILE` | | TLS key file |
+| `--shutdown-drain D` | `30s` | on `SIGINT`/`SIGTERM`, how long active model turns, foreground tools, and subagents may run to a clean boundary; `0` skips the wait |
 | `--web` | off | serve the embedded desktop web client at `/` (client-side routes such as `/p/<project>/s/<session>` fall back to the app); requires a token (the auto-generated local token qualifies). Static assets are unauthenticated; RPCs require the token, which the page asks for |
 
 ```sh

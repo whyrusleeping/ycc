@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -354,6 +355,23 @@ func (l *Log) Last() (Event, bool) {
 		return Event{}, false
 	}
 	return l.events[len(l.events)-1], true
+}
+
+// LastByActor returns the most recent persisted event recorded by actor whose
+// type is one of types (any type when none are given).
+func (l *Log) LastByActor(actor string, types ...Type) (Event, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.events) - 1; i >= 0; i-- {
+		ev := l.events[i]
+		if ev.Actor != actor {
+			continue
+		}
+		if len(types) == 0 || slices.Contains(types, ev.Type) {
+			return ev, true
+		}
+	}
+	return Event{}, false
 }
 
 // SnapshotFrom returns the persisted events at or after cursor and the cursor to

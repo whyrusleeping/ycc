@@ -20,7 +20,7 @@ func TestHandlerHostPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			o := baseOptions(t)
 			o.Token = tc.token
-			h, mgr, err := buildHandler(o)
+			h, mgr, err := testBuildHandler(o)
 			if err != nil {
 				t.Fatal(err)
 			}
