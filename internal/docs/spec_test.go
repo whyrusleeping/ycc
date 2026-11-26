@@ -233,6 +233,7 @@ func TestRepositoryDocsConfig(t *testing.T) {
 		"spec.md",
 		"docs/cli.md",
 		"docs/design/async-jobs.md",
+		"docs/design/daemon-restart.md",
 		"docs/design/doc-style.md",
 		"docs/design/forge-integration.md",
 		"docs/design/ios-client.md",
