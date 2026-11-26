@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,9 +69,14 @@ func TestNoticeBoardIntentsNoticesAndDigests(t *testing.T) {
 	for _, def := range reg.APIDefs() {
 		names[def.Function.Name] = true
 	}
-	for _, name := range []string{"list_sessions", "set_intent", "post_notice", "clear_notice"} {
+	for _, name := range []string{"list_sessions", "notice"} {
 		if !names[name] {
 			t.Fatalf("work mode lacks %s", name)
+		}
+	}
+	for _, name := range []string{"set_intent", "post_notice", "clear_notice"} {
+		if names[name] {
+			t.Fatalf("work mode still offers %s", name)
 		}
 	}
 	if !strings.Contains(system, "PROJECT NOTICE BOARD") {
@@ -122,11 +128,11 @@ func TestNoticeBoardIntentsNoticesAndDigests(t *testing.T) {
 		"list_sessions": func() string { out, _ := m.listSessionsFor(ws, b.ID, "", time.Now()); return out }(),
 		"footer":        m.otherSessionsNote(ws, b.ID, time.Now()),
 	} {
-		if !strings.Contains(got, "intent: \"deploying normalize-v2 to cubey; avoid restarts\"") || !strings.Contains(got, "n1 [master tests]") {
+		if !strings.Contains(got, "notice: \"deploying normalize-v2 to cubey; avoid restarts\"") || !strings.Contains(got, "n1 [master tests]") {
 			t.Fatalf("%s lacks the intent or notice:\n%s", name, got)
 		}
 	}
-	if got := m.watchActivitySnapshot(ws); !strings.Contains(got, "intent: \"deploying normalize-v2") {
+	if got := m.watchActivitySnapshot(ws); !strings.Contains(got, "notice: \"deploying normalize-v2") {
 		t.Fatalf("watch-run context lacks the intent:\n%s", got)
 	}
 
@@ -245,7 +251,7 @@ func TestNoticeBoardIntentsNoticesAndDigests(t *testing.T) {
 		t.Fatalf("post with the setting off: %v", err)
 	}
 	if _, err := b.board.SetIntent("x"); !errors.Is(err, orchestrator.ErrCoordinationDisabled) {
-		t.Fatalf("set_intent with the setting off: %v", err)
+		t.Fatalf("session notice with the setting off: %v", err)
 	}
 	if _, err := m.PostProjectNotice("proj", "x", "", time.Hour); !errors.Is(err, orchestrator.ErrCoordinationDisabled) {
 		t.Fatalf("user post with the setting off: %v", err)
@@ -378,7 +384,7 @@ func TestNoticeBoardDigestOverflowAndLateClear(t *testing.T) {
 	}
 }
 
-// Agent set_intent and post_notice accept the raised bounds and soft-clip
+// Agent session and timed notices accept the raised bounds and soft-clip
 // over-long text/subject with a note instead of dropping the coordination
 // signal; the user RPC still rejects over-long text strictly.
 func TestNoticeBoardSoftClipping(t *testing.T) {
@@ -444,7 +450,7 @@ func TestNoticeBoardSoftClipping(t *testing.T) {
 		t.Fatalf("clipped notice subject runes=%d", utf8.RuneCountInString(last.Subject))
 	}
 
-	// Empty text and out-of-range expiry still fail on agent post_notice.
+	// Empty text and out-of-range expiry still fail on agent timed notices.
 	if _, err := s.board.Post("   ", "", time.Hour); err == nil {
 		t.Fatal("empty notice accepted")
 	}
@@ -491,7 +497,7 @@ func TestNoticeBoardIntentUpdatesInDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	texts, err := a.drainBoardDigest(now)
-	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `intent set by s_b: "redesigning discovery with owner"`) {
+	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `session notice set by s_b: "redesigning discovery with owner"`) {
 		t.Fatalf("intent set digest = %q %v", texts, err)
 	}
 	evs := boardDigests(a)
@@ -509,7 +515,7 @@ func TestNoticeBoardIntentUpdatesInDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	texts, err = a.drainBoardDigest(now)
-	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `intent updated by s_b: "coordinating overlap on 0515"`) {
+	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `session notice updated by s_b: "coordinating overlap on 0515"`) {
 		t.Fatalf("intent updated digest = %q %v", texts, err)
 	}
 
@@ -526,7 +532,7 @@ func TestNoticeBoardIntentUpdatesInDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	texts, err = a.drainBoardDigest(now)
-	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `intent set by s_b: "back on 0515"`) {
+	if err != nil || len(texts) != 1 || !strings.Contains(texts[0], `session notice set by s_b: "back on 0515"`) {
 		t.Fatalf("re-set intent digest = %q %v", texts, err)
 	}
 
@@ -536,5 +542,81 @@ func TestNoticeBoardIntentUpdatesInDigests(t *testing.T) {
 	m.mu.Unlock()
 	if texts, err := a.drainBoardDigest(now); err != nil || texts != nil {
 		t.Fatalf("ended session produced digest = %q %v", texts, err)
+	}
+}
+
+// A session whose history holds calls of the retired set_intent, post_notice
+// and clear_notice tools, with their notice_posted / notice_cleared and
+// coordination_notice events, reopens and replays them without restoring the
+// retired tools; it offers the unified notice tool instead.
+func TestReopenReplaysRetiredNoticeTools(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	ws := t.TempDir()
+	sessionGitAt(t, ws, "init", "-q")
+	m := NewManager(testRegistry(), ws)
+	m.SetProjects(project.NewMemory())
+	if _, err := m.AddProject(ws, "proj"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.ReclaimAll)
+	if err := m.SetSessionCoordination("proj", true); err != nil {
+		t.Fatal(err)
+	}
+	id := "s_retired_notice_tools"
+	call := func(seq int, name, callID, args, result string) []event.Event {
+		return []event.Event{
+			{Seq: seq, TS: ts(seq), Actor: "coordinator", Type: event.ToolCall, Data: map[string]any{"name": name, "args": args, "id": callID}},
+			{Seq: seq + 1, TS: ts(seq + 1), Actor: "coordinator", Type: event.ToolResult, Data: map[string]any{"name": name, "id": callID, "result": result}},
+		}
+	}
+	events := []event.Event{
+		{Seq: 1, TS: ts(1), Type: event.SessionStarted, Data: map[string]any{"mode": "work", "workspace": ws}},
+		{Seq: 2, TS: ts(2), Actor: "user", Type: event.UserInput, Data: map[string]any{"text": "deploy and tell the others"}},
+		{Seq: 3, TS: ts(3), Actor: "system", Type: event.CoordinationNotice, Data: map[string]any{
+			"text": "[project notice board] The current notice board and other sessions' intents in this project.\nIntents of other live sessions:\n- s_x: \"web work\" (set 10:00 UTC)\n" + boardFraming,
+		}},
+		{Seq: 4, TS: ts(4), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "announcing"}},
+	}
+	events = append(events, call(5, "set_intent", "call_i", `{"text":"deploying"}`, "Intent set.")...)
+	events = append(events, call(7, "post_notice", "call_p", `{"text":"deploy window","expires_in":"1h"}`, "Posted notice n1")...)
+	events = append(events, event.Event{Seq: 9, TS: ts(9), Actor: "coordinator", Type: event.NoticePosted, Data: map[string]any{"id": "n1", "text": "deploy window"}})
+	events = append(events, call(10, "clear_notice", "call_c", `{"id":"n1","reason":"done"}`, "Cleared notice n1 (posted by session s_retired_notice_tools).")...)
+	events = append(events,
+		event.Event{Seq: 12, TS: ts(12), Actor: "coordinator", Type: event.NoticeCleared, Data: map[string]any{"id": "n1", "reason": "done"}},
+		event.Event{Seq: 13, TS: ts(13), Actor: "coordinator", Type: event.ModelTurn, Data: map[string]any{"text": "deployed"}},
+		event.Event{Seq: 14, TS: ts(14), Type: event.SessionIdle, Data: map[string]any{"report": "deployed"}},
+	)
+	writeSession(t, ws, id, events)
+
+	sess, err := m.Reopen("", id)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer sess.Stop()
+	loop := sess.currentLoop()
+	got := loop.History()
+	if want := engine.ReplayHistory(events); !reflect.DeepEqual(got, want) {
+		t.Fatalf("history mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+	answered := map[string]bool{}
+	for _, msg := range got {
+		if msg.Role == "tool" {
+			answered[msg.ToolCallID] = true
+		}
+	}
+	for _, callID := range []string{"call_i", "call_p", "call_c"} {
+		if !answered[callID] {
+			t.Fatalf("replayed history lost %s: %+v", callID, got)
+		}
+	}
+	names := map[string]bool{}
+	for _, def := range loop.Tools.APIDefs() {
+		if def.Function != nil {
+			names[def.Function.Name] = true
+		}
+	}
+	if !names["notice"] || names["set_intent"] || names["post_notice"] || names["clear_notice"] {
+		t.Fatalf("reopened work session tools: notice %v, set_intent %v, post_notice %v, clear_notice %v",
+			names["notice"], names["set_intent"], names["post_notice"], names["clear_notice"])
 	}
 }

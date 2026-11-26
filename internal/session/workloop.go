@@ -2104,14 +2104,14 @@ const loopShellWaitCap = 10 * time.Minute
 // the loop does not assign one.
 const workLoopPrompt = `Work on the backlog as one session of an unattended work loop.
 Other work-loop and live sessions may be working in this project in parallel: the list_backlog
-footer lists them with their state, focused tasks and declared intents. Choose the best next ready
+footer lists them with their state, focused tasks and session notices. Choose the best next ready
 task (one whose dependencies are all done), considering backlog priority and order and what those
 sibling sessions are doing; leave tasks they hold to them and avoid colliding with the areas they
 are changing. Leave tasks or areas that a recent chat or pm session is visibly discussing or
 redesigning with the user to that session rather than racing it. A task's size is not a reason to skip it. If a task genuinely needs splitting, split
 it at most once in this session, then work the first piece in this same session. Claim your choice
 with update_task in_progress; a claim fails when another live session holds the task, so choose
-again then. Once claimed, state in set_intent the areas or files and any external resources
+again then. Once claimed, state in a session notice (notice tool) the areas or files and any external resources
 (hosts, services, GPUs, databases) the work will touch. Deploy or restart a shared service only
 while holding acquire_lease for that target, and release it when done; if another session holds
 it, do other work rather than wait. Then complete the task. If all that remains

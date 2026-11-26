@@ -1478,7 +1478,7 @@ func liveSessionText(sessions []LiveSession, now time.Time, detail bool) string 
 		}
 		b.WriteString("\n")
 		if s.Intent != "" {
-			fmt.Fprintf(&b, "    intent: %q\n", s.Intent)
+			fmt.Fprintf(&b, "    notice: %q\n", s.Intent)
 		}
 		for _, l := range s.Leases {
 			b.WriteString("    " + l.line(now) + "\n")

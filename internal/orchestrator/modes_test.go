@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -516,23 +517,152 @@ func TestUpdateTaskInProgressEmitsFocusWithDedupe(t *testing.T) {
 	}
 }
 
-// Without the notice board, a work coordinator with SetIntent gets set_intent
-// alone; without SetIntent it gets none of the board tools.
-func TestWorkModeSetIntentWithoutBoard(t *testing.T) {
+// Without the notice board, a work coordinator with SetIntent gets the notice
+// tool for its session notice alone; without SetIntent it gets no notice tool.
+func TestWorkModeSessionNoticeWithoutBoard(t *testing.T) {
 	d := depsFor(t)
 	reg, system := BuildMode("work", d, true)
-	if hasTool(reg, "set_intent") {
-		t.Fatal("set_intent offered without a board or SetIntent")
+	if hasTool(reg, "notice") {
+		t.Fatal("notice offered without a board or SetIntent")
 	}
 	var got string
-	d.SetIntent = func(text string) (string, error) { got = text; return "Intent set.", nil }
+	d.SetIntent = func(text string) (string, error) { got = text; return "Session notice set.", nil }
 	reg, system = BuildMode("work", d, true)
-	if !hasTool(reg, "set_intent") || hasTool(reg, "post_notice") || strings.Contains(system, "NOTICE BOARD") {
-		t.Fatalf("work tools with SetIntent: set_intent %v, post_notice %v", hasTool(reg, "set_intent"), hasTool(reg, "post_notice"))
+	if !hasTool(reg, "notice") || strings.Contains(system, "NOTICE BOARD") {
+		t.Fatalf("work tools with SetIntent: notice %v, board guidance %v", hasTool(reg, "notice"), strings.Contains(system, "NOTICE BOARD"))
 	}
-	res := reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "set_intent", Arguments: `{"text":"editing internal/session"}`}})
-	if res.IsError || got != "editing internal/session" {
-		t.Fatalf("set_intent = %+v, recorded %q", res, got)
+	for _, name := range []string{"set_intent", "post_notice", "clear_notice"} {
+		if hasTool(reg, name) {
+			t.Fatalf("work mode offers retired %s", name)
+		}
+	}
+	for _, def := range reg.APIDefs() {
+		if def.Function != nil && def.Function.Name == "notice" {
+			if params := fmt.Sprint(def.Function.Parameters); strings.Contains(params, "expires_in") || strings.Contains(params, "clear_id") {
+				t.Fatalf("board-off notice schema offers timed operations: %s", params)
+			}
+		}
+	}
+	call := func(args string) *gollama.ToolResult {
+		return reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "notice", Arguments: args}})
+	}
+	if res := call(`{"text":"editing internal/session"}`); res.IsError || got != "editing internal/session" {
+		t.Fatalf("notice = %+v, recorded %q", res, got)
+	}
+	if res := call(`{}`); !res.IsError || got != "editing internal/session" {
+		t.Fatalf("notice {} without board = %+v, recorded %q", res, got)
+	}
+	// Timed and clear operations report the board is off and change nothing.
+	for _, args := range []string{`{"text":"deploying","expires_in":"1h"}`, `{"clear_id":"n1","reason":"done"}`,
+		`{"text":"planned maintenance","expires_in":""}`, `{"clear_id":""}`,
+		`{"text":"planned maintenance","expires_in":null}`, `{"text":"","clear_id":null}`,
+		`{"text":"planned maintenance","expires_in":3600}`} {
+		res := call(args)
+		if res.IsError || !strings.Contains(res.Content, "notice board is off") || got != "editing internal/session" {
+			t.Fatalf("notice %s without board = %+v, recorded %q", args, res, got)
+		}
+	}
+}
+
+// fakeBoard records notice tool calls.
+type fakeBoard struct {
+	status        string
+	posts, clears []string
+	err           error
+}
+
+func (b *fakeBoard) SetIntent(text string) (string, error) {
+	if b.err != nil {
+		return "", b.err
+	}
+	b.status = text
+	return "Session notice set.", nil
+}
+
+func (b *fakeBoard) Post(text, subject string, expiresIn time.Duration) (string, error) {
+	if b.err != nil {
+		return "", b.err
+	}
+	b.posts = append(b.posts, fmt.Sprintf("%s|%s|%s", text, subject, expiresIn))
+	return "Posted timed notice n1.", nil
+}
+
+func (b *fakeBoard) Clear(id, reason string) (string, error) {
+	if b.err != nil {
+		return "", b.err
+	}
+	b.clears = append(b.clears, id+"|"+reason)
+	return "Cleared notice " + id + ".", nil
+}
+
+// The unified notice tool sets, replaces and clears the session notice
+// without expires_in, posts a timed notice with it, and clears a timed notice
+// by clear_id and reason; mixed or misplaced arguments fail without effect.
+func TestNoticeToolOperations(t *testing.T) {
+	d := depsFor(t)
+	board := &fakeBoard{}
+	d.Board = board
+	reg, system := BuildMode("work", d, true)
+	if !hasTool(reg, "notice") || !strings.Contains(system, "NOTICE BOARD") {
+		t.Fatal("work mode with a board lacks the notice tool or its guidance")
+	}
+	for _, name := range []string{"set_intent", "post_notice", "clear_notice"} {
+		if hasTool(reg, name) {
+			t.Fatalf("work mode offers retired %s", name)
+		}
+	}
+	call := func(args string) *gollama.ToolResult {
+		return reg.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "notice", Arguments: args}})
+	}
+	for _, text := range []string{"editing internal/session", "now on the web client", ""} {
+		if res := call(`{"text":"` + text + `"}`); res.IsError || board.status != text {
+			t.Fatalf("session notice %q = %+v, status %q", text, res, board.status)
+		}
+	}
+	if res := call(`{"text":"master tests red","expires_in":"2h","subject":"master tests"}`); res.IsError ||
+		len(board.posts) != 1 || board.posts[0] != "master tests red|master tests|2h0m0s" {
+		t.Fatalf("timed notice = %+v, posts %q", res, board.posts)
+	}
+	if res := call(`{"clear_id":"n1","reason":"green again"}`); res.IsError || len(board.clears) != 1 || board.clears[0] != "n1|green again" {
+		t.Fatalf("clear = %+v, clears %q", res, board.clears)
+	}
+	for _, args := range []string{
+		`{"clear_id":"n1","reason":"x","text":"also post"}`,
+		`{"clear_id":"n1","reason":"x","expires_in":"1h"}`,
+		`{"text":"x","reason":"why"}`,
+		`{"text":"x","subject":"svc"}`,
+		`{"text":"x","expires_in":"soon"}`,
+		`{"text":"planned maintenance","expires_in":""}`,
+		`{"text":"","expires_in":" "}`,
+		`{}`,
+		`{"clear_id":"n1","reason":"done","text":""}`,
+		`{"clear_id":" ","reason":"done"}`,
+		`{"text":"x","expires_in":3600}`,
+		`{"text":7}`,
+		`{"text":null}`,
+		`{"clear_id":null,"reason":"done"}`,
+	} {
+		if res := call(args); !res.IsError {
+			t.Fatalf("notice %s = %+v, want an error", args, res)
+		}
+	}
+	if res := call(`{"text":"still here"}`); res.IsError || board.status != "still here" {
+		t.Fatalf("session notice = %+v, status %q", res, board.status)
+	}
+	for _, args := range []string{
+		`{"text":"planned maintenance","expires_in":""}`, `{}`, `{"clear_id":"n1","reason":"done","text":""}`,
+	} {
+		if res := call(args); !res.IsError {
+			t.Fatalf("notice %s = %+v, want an error", args, res)
+		}
+	}
+	if board.status != "still here" || len(board.posts) != 1 || len(board.clears) != 1 {
+		t.Fatalf("rejected calls changed the board: %+v", board)
+	}
+	// Coordination turned off after the session was built: reported, not an error.
+	board.err = ErrCoordinationDisabled
+	if res := call(`{"text":"x","expires_in":"1h"}`); res.IsError || !strings.Contains(res.Content, "turned off") {
+		t.Fatalf("timed notice with coordination off = %+v", res)
 	}
 }
 

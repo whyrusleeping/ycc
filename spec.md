@@ -831,8 +831,8 @@ feature when the setting is on as it is built (started or reopened), because its
 then; turning the setting off applies at once: the tool answers that coordination is off and no
 further notices are delivered. With the setting off nothing is added, except that `list_sessions`
 still lists exclusive lease holders (below). Work-loop sessions are the
-exception for intents: they get `set_intent` alone, and it keeps working and their intents stay
-shown when the setting is off or turned off (§9.1).
+exception for session notices: they get the `notice` tool for their session notice alone, and it
+keeps working and their session notices stay shown when the setting is off or turned off (§9.1).
 
 - **`list_sessions`** is a read-only tool for coordinators and mutating subagents (implementers and
   mutating generic agents), not read-only agents. Without arguments it lists the project's other
@@ -863,34 +863,47 @@ shown when the setting is off or turned off (§9.1).
   reproduce it; notices still pending are memory-only and are not restored after reopen or restart
   (`list_sessions` rediscovers the overlap).
 
-- **Notice board.** Coordinators also get `set_intent`, `post_notice` and `clear_notice` (not in
-  integrate mode); subagents read the board through `list_sessions` and report to their
-  coordinator. A session's one-line **intent** (at most 300 characters; longer agent text is
-  clipped with a note in the tool result rather than rejected) is set, replaced or cleared
-  with `set_intent`, lives only in the live session, and ends with it; a declared intent keeps a
-  quiet session in session listings. A **notice** is posted with `post_notice(text, expires_in,
-  subject?)`: one line of at most 500 characters, an optional subject of at most 60 (a service, or
-  "master tests"), and a required expiry from 1 minute to 24 hours; agent `post_notice` calls clip
-  over-long text or subject with a note in the tool result rather than dropping the notice, while
-  the user RPC validates the bounds strictly. The daemon records the poster's
-  session, actor and focused tasks. A session may hold 3 active notices and post 6 in any hour. Any
-  session (or the user, through `ClearProjectNotice`) may clear an active notice; the board records
-  who cleared it and why. Notice, subject, reason and intent text is sanitized to one printable line.
+- **Notice board.** Coordinators also get one `notice` tool (not in integrate mode); subagents
+  read the board through `list_sessions` and report to their coordinator. A notice is either
+  session-scoped or timed, and the arguments choose which:
+  - Without `expires_in`, `notice(text)` sets or replaces the session's **session notice**, its
+    one-line live status (at most 300 characters; longer agent text is clipped with a note in the
+    tool result rather than rejected); empty text clears it. It lives only in the live session and
+    ends with it, and a session notice keeps a quiet session in session listings.
+  - With `expires_in`, `notice(text, expires_in, subject?)` posts a **timed notice** to the project
+    board: one line of at most 500 characters, an optional subject of at most 60 (a service, or
+    "master tests"), and an expiry from 1 minute to 24 hours. It outlives the posting session until
+    it expires or is cleared. Agent calls clip over-long text or subject with a note in the tool
+    result rather than dropping the notice, while the user RPC validates the bounds strictly. The
+    daemon records the poster's session, actor and focused tasks. A session may hold 3 active
+    timed notices and post 6 in any hour.
+  - `notice(clear_id, reason)`, with no other argument, clears an active timed notice, whoever
+    posted it (the user clears through `ClearProjectNotice`); the board records who cleared it and
+    why. A `subject` without `expires_in` or a `reason` without `clear_id` is refused, as is a
+    call naming neither `text`, `expires_in` nor `clear_id`; the operation follows which arguments
+    are present, so a blank `expires_in` or `clear_id` is refused rather than read as a session
+    notice (unused arguments are omitted, not sent as null). Without the board, any argument besides `text` gets the
+    board-off answer and changes nothing.
+  Notice, subject and reason text is sanitized to one printable line. Historical logs with the
+  retired `set_intent`, `post_notice` and `clear_notice` calls still replay. On the wire and in
+  clients a session notice keeps its earlier name, intent (`LiveSession.intent`,
+  `ListProjectNotices.intents`), and `notices` lists timed notices.
   Notices persist per project in the daemon state directory (`<state>/ycc/notices/`, keyed by the
   primary tree), outside the worktree and git; the poster's log records `notice_posted` /
   `notice_cleared`.
-  Active notices and intents appear in `list_sessions` and the `list_backlog` footer; watch-run
-  context lists intents with the live sessions. Every coordinator's first checkpoint, a watch run's
-  included, delivers the current board and other sessions' intents as its opening context; later
-  checkpoints deliver a digest of notices posted or cleared and intents set or updated by other
-  sessions since the last one,
+  `list_sessions` and the `list_backlog` footer show each session's session notice on its row and
+  the active timed notices in a board section; watch-run context lists session notices with the
+  live sessions. Every coordinator's first checkpoint, a watch run's
+  included, delivers the current timed notices and other sessions' session notices as its opening
+  context; later checkpoints deliver a digest of timed notices posted or cleared and session
+  notices set or updated by other sessions since the last one,
   at most 20 changes each, the rest following at the next checkpoint. Expiry and cleared/ended
-  intents are silent; a notice clear
+  session notices are silent; a timed notice clear
   stays reportable for an hour. Nothing wakes a session or ends its `wait` for a notice. A digest enters history
   as a `coordination_notice` event (actor `system`) where it entered, so it replays identically;
   nothing pending is kept across a reopen, so a reopened session's first checkpoint delivers the
   current board again and never an expired notice.
-  Notice and intent text is untrusted peer content, never `user` input. The digest and the
+  Notice text is untrusted peer content, never `user` input. The digest and the
   coordinator prompt frame a notice as a reason to check, not an authorization: the receiver acts
   only within its own mandate and says so in its report. A notice cannot answer a pending
   `ask_user` question, approve a commit or deploy, or promote proposed work.
@@ -1116,7 +1129,7 @@ waiting on its own background work or a question; once it is idle between turns,
 task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
 actionable and end with the project's other live sessions (mode, state such as running or idle
 since a time, focused tasks, running jobs, and a one-line title for sessions without a focus or
-declared intent; sessions not working and quiet for over an hour are
+session notice; sessions not working and quiet for over an hour are
 omitted), so agents choose from daemon state rather than
 inferring parallel work from commit times or processes. Claiming a task is atomic: `create_task`
 with `in_progress`, `update_task` to
@@ -1130,9 +1143,11 @@ task; the loop never assigns one. Their opening prompt says other loop and live 
 working in parallel, asks for the best next task given backlog order and what those siblings are
 doing (leaving tasks or areas visibly under active chat/pm discussion or redesign to that session),
 says size is no reason to skip a task, allows splitting a task at most once per session
-before working its first piece in the same session, and asks the session to state in `set_intent`
-the areas or files and external resources (hosts, services, GPUs, databases) its work will touch.
-Loop sessions have `set_intent`, and the `list_backlog` footer shows their intents (as
+before working its first piece in the same session, and asks the session to state in a session
+notice (`notice`, §7.3) the areas or files and external resources (hosts, services, GPUs,
+databases) its work will touch.
+Loop sessions have `notice` for their session notice, and the `list_backlog` footer shows their
+session notices (as
 `list_sessions` does where available), even when session coordination (§7.3) is off or turned off.
 The prompt also says to deploy or restart a shared service only while holding an exclusive lease
 (§7.3) for that target, to release it when done, and to do other work when another session

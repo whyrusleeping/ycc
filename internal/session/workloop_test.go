@@ -1098,7 +1098,7 @@ func TestClaimTaskRaceHasOneWinner(t *testing.T) {
 	}
 }
 
-// Work-loop sessions get set_intent and show their intents to siblings even
+// Work-loop sessions get the session-scoped notice tool and show their intents to siblings even
 // with session coordination off; other sessions get neither.
 func TestWorkLoopSessionsDeclareIntentsWithoutCoordination(t *testing.T) {
 	m := NewManager(testRegistry(), t.TempDir())
@@ -1118,12 +1118,12 @@ func TestWorkLoopSessionsDeclareIntentsWithoutCoordination(t *testing.T) {
 		t.Fatal("test needs session coordination off")
 	}
 	if loop.deps.SetIntent == nil || other.deps.SetIntent != nil {
-		t.Fatalf("set_intent wiring: loop %v, other %v", loop.deps.SetIntent != nil, other.deps.SetIntent != nil)
+		t.Fatalf("session notice wiring: loop %v, other %v", loop.deps.SetIntent != nil, other.deps.SetIntent != nil)
 	}
 	if _, err := loop.deps.SetIntent("editing internal/session; using the gpu box"); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.otherSessionsNote(ws, other.ID, time.Now()); !strings.Contains(got, `intent: "editing internal/session; using the gpu box"`) {
+	if got := m.otherSessionsNote(ws, other.ID, time.Now()); !strings.Contains(got, `notice: "editing internal/session; using the gpu box"`) {
 		t.Fatalf("sibling's backlog footer lacks the loop session's intent:\n%s", got)
 	}
 }
@@ -1144,9 +1144,9 @@ func TestWorkLoopIntentUpdatesAfterCoordinationTurnsOff(t *testing.T) {
 	defer s.Stop()
 	setIntent := func(text string) {
 		t.Helper()
-		res := s.currentLoop().Tools.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "set_intent", Arguments: `{"text":"` + text + `"}`}})
+		res := s.currentLoop().Tools.Dispatch(context.Background(), gollama.ToolCall{Function: gollama.ToolCallFunction{Name: "notice", Arguments: `{"text":"` + text + `"}`}})
 		if res.IsError {
-			t.Fatalf("set_intent: %s", res.Content)
+			t.Fatalf("notice: %s", res.Content)
 		}
 	}
 	setIntent("GPU A")
@@ -1154,7 +1154,7 @@ func TestWorkLoopIntentUpdatesAfterCoordinationTurnsOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	setIntent("GPU B")
-	if got := m.otherSessionsNote(ws, "s_sibling", time.Now()); !strings.Contains(got, `intent: "GPU B"`) {
+	if got := m.otherSessionsNote(ws, "s_sibling", time.Now()); !strings.Contains(got, `notice: "GPU B"`) {
 		t.Fatalf("loop intent not updated after coordination turned off:\n%s", got)
 	}
 }
@@ -1213,7 +1213,7 @@ func TestOtherSessionsNoteSeparatesWorkingFromIdle(t *testing.T) {
 	if _, err := topic.declareIntent("redesigning discovery"); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.otherSessionsNote(ws, "s_self", now); !strings.Contains(got, `intent: "redesigning discovery"`) || strings.Contains(got, "    title: ") {
+	if got := m.otherSessionsNote(ws, "s_self", now); !strings.Contains(got, `notice: "redesigning discovery"`) || strings.Contains(got, "    title: ") {
 		t.Fatalf("chat with intent should show intent without redundant title:\n%s", got)
 	}
 }
@@ -1449,7 +1449,7 @@ func TestWorkLoopNoProgressBackoffResetsOnProgress(t *testing.T) {
 func TestWorkLoopPromptSiblingAwareChoice(t *testing.T) {
 	for _, want := range []string{"in parallel", "list_backlog", "what those\nsibling sessions are doing",
 		"recent chat or pm session", "size is not a reason to skip", "at most once in this session",
-		"update_task in_progress", "set_intent the areas or files", "GPUs, databases"} {
+		"update_task in_progress", "session notice (notice tool) the areas or files", "GPUs, databases"} {
 		if !strings.Contains(workLoopPrompt, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, workLoopPrompt)
 		}

@@ -67,8 +67,9 @@ func Presets() []Preset {
 // BuildMode returns a mode's tools and system prompt. Direct work mode omits
 // worker-agent tools; edits to configured design docs emit doc_updated events.
 // A session built with experimental session coordination also gets
-// list_sessions and, outside integrate mode, the notice board tools. Outside
-// integrate mode coordinators also get the lease tools.
+// list_sessions and, outside integrate mode, the notice tool (a work session
+// without it gets the session-scoped notice alone when SetIntent is set).
+// Outside integrate mode coordinators also get the lease tools.
 func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) {
 	reg, system := buildMode(mode, d, unattended)
 	reg.Add(coordinationTools(d)...)
@@ -76,7 +77,7 @@ func BuildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 		reg.Add(boardTools(d)...)
 		system += boardGuidance
 	} else if mode == "work" && d.SetIntent != nil {
-		reg.Add(setIntentTool(d.SetIntent))
+		reg.Add(noticeTool(d.SetIntent, nil))
 	}
 	if mode != "integrate" {
 		reg.Add(leaseTools(d)...)

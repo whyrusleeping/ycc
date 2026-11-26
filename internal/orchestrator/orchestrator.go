@@ -119,8 +119,8 @@ type Deps struct {
 	// Nil-safe: when unset every claim succeeds.
 	ClaimTask func(taskID string, record func()) (holder string)
 	// SetIntent, when set on a session without the notice board (Board nil),
-	// gives a work coordinator set_intent alone: work-loop sessions declare
-	// intents even with session coordination off.
+	// gives a work coordinator the session-scoped notice tool alone: work-loop
+	// sessions declare session notices even with session coordination off.
 	SetIntent func(text string) (string, error)
 	// OtherSessions describes the project's other live sessions for
 	// list_backlog. Nil-safe: when unset nothing is appended.
@@ -130,8 +130,8 @@ type Deps struct {
 	// session coordination is off it lists only exclusive lease holders, and
 	// returns ErrCoordinationDisabled when there are none or for a path.
 	ListSessions func(path string) (string, error)
-	// Board backs the experimental notice board tools (set_intent,
-	// post_notice, clear_notice) for coordinators. Set under the same
+	// Board backs the experimental notice board's notice tool (session
+	// notices, timed notices and their clearing) for coordinators. Set under the same
 	// condition as ListSessions.
 	Board NoticeBoard
 	// Leases backs the exclusive lease tools (acquire_lease, release_lease)
