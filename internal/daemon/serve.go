@@ -23,6 +23,7 @@ import (
 	"github.com/whyrusleeping/ycc/internal/config"
 	"github.com/whyrusleeping/ycc/internal/docs"
 	"github.com/whyrusleeping/ycc/internal/health"
+	"github.com/whyrusleeping/ycc/internal/jobshim"
 	"github.com/whyrusleeping/ycc/internal/notify"
 	"github.com/whyrusleeping/ycc/internal/project"
 	"github.com/whyrusleeping/ycc/internal/server"
@@ -132,6 +133,19 @@ func buildHandler(o Options, adm *server.Admission) (*daemonParts, error) {
 		// Job-bound exclusive leases survive a restart or crash while their
 		// job runs (startPersistent restores them).
 		mgr.SetLeasesFile(filepath.Join(filepath.Dir(project.StateFile()), "leases.json"))
+		// Graceful shutdown names the sessions the next daemon reopens, and the
+		// leases it holds again, in the restart manifest (startPersistent
+		// consumes it).
+		mgr.SetRestartStateFile(filepath.Join(filepath.Dir(project.StateFile()), "restart-state.json"))
+		// Background shells run under detached supervisors, so they outlive a
+		// daemon restart (docs/design/daemon-restart.md §2). The launcher also
+		// follows the jobs a previous daemon left running, so a daemon that
+		// cannot set it up does not start.
+		launcher, err := jobshim.NewLauncher("")
+		if err != nil {
+			return nil, fmt.Errorf("set up background job supervision: %w", err)
+		}
+		mgr.SetJobLauncher(launcher)
 		// The startup workspace is not a privileged "default"; register it as a
 		// normal named project so every RPC/UI uses the same project model. A
 		// daemon is often started from wherever the shell happens to be, so only
@@ -233,8 +247,16 @@ func startPersistent(p *daemonParts, stopping func() bool) (stop func()) {
 	p.mgr.SupervisePassiveJobs()
 	// Job-bound leases (leases.json) are held again: passively while their
 	// session stays closed and its job runs, and released when it no longer
-	// does. Other leases ended with the previous daemon.
+	// does.
 	p.mgr.RestoreLeases()
+	// Sessions reopened below get watch tools, as they would once the
+	// scheduler runs.
+	p.mgr.ExpectWatches()
+	// A graceful shutdown's restart manifest reopens the sessions it named
+	// (waiting on background jobs, or cut short mid-turn) and holds its other
+	// leases again; their runs start at the release below. After a crash there
+	// is none, so no model turn starts by itself.
+	p.mgr.RecoverRestart()
 	if stopping() {
 		return func() {}
 	}

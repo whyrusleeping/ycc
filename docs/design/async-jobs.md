@@ -95,8 +95,9 @@ notification state from those events, and newly started jobs continue after the 
 A direct child process does not survive a daemon restart: its unmatched start is restored terminal as
 `lost`, and replay reports the restart loss to the conversation exactly once.
 
-A background shell started through an out-of-process supervisor (`internal/jobshim`,
-`docs/design/daemon-restart.md` §2) keeps its output on disk under its session directory and can
+A persistent daemon starts every background shell through an out-of-process supervisor
+(`internal/jobshim`, `docs/design/daemon-restart.md` §2); the one-shot in-process daemon keeps
+direct child processes. A supervised shell keeps its output on disk under its session directory and can
 outlive the daemon. A graceful restart leaves the coordinator's supervised shells running, recording
 nothing for them; a subagent's shells are killed, since subagents do not survive. Reopen reconciles
 each supervised job before history is rebuilt, from its log events and its job directory:
@@ -138,6 +139,13 @@ later reopen still finds them if the log is cut before their delivery); like inp
 restored wait, they end it early and are delivered after its result in order. A reopen into
 wake-eligible idle is armed before the session is published, and a session whose last turn finished
 reopens idle even when its history ends on a control tool's result.
+
+A planned restart reopens these sessions by itself. Graceful shutdown lists in the restart manifest
+(`<state-dir>/restart-state.json`, spec §3.1) every session blocked in `wait` or idle awaiting its
+jobs, and the next startup reopens each one, before execution is released, into its restored wait
+or awaiting idle state. Work-loop sessions are not listed (their loop restores as interrupted), and
+neither are workstream integration sessions or sessions parked on `ask_user`. After a crash there is no manifest: such a session stays
+closed, its jobs held passively, until it is reopened.
 
 A session can also stay closed after a restart or crash while its supervised jobs keep running.
 Persistent startup therefore scans every registered project's session directories, and every session
@@ -191,7 +199,9 @@ Startup saves the reconciled set before it records any release or starts any wat
 during startup replays the same records. A release while the holder is closed is written to the
 closed session's log under its session id's lock, so it never races a reopen. Because the file is
 rewritten before a release is recorded, a crash can lose a `lease_released` but never record one
-twice. Leases without a job are not persisted, and an unplanned crash does not restore them.
+twice. Leases without a job are not in this file. A graceful shutdown carries them, with their
+original expiry, in the restart manifest instead, and the next startup holds them for their
+holders the same way; an unplanned crash does not restore them.
 
 Before any irreversible step, workstream merge, automatic integration and discard confirm that no
 background job can still run in the worktree. The steps are advancing the base branch and recording

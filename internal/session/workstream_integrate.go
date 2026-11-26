@@ -21,6 +21,9 @@ const (
 	integrationVerifyTimeout = 30 * time.Minute
 	integrationAgentTimeout  = time.Hour
 	integrationOutputLimit   = 2 * 1024
+	// integrateMode is the mode of the session the integration worker starts
+	// to resolve a conflict or failed verification.
+	integrateMode = "integrate"
 )
 
 type integrationOutcomeKind int
@@ -818,7 +821,7 @@ func (m *Manager) prepareIntegrateSession(id string, seed func(workstream.Workst
 	}
 	// The replacement is started under mergeMu, but no longer fenced out.
 	unfence()
-	s, err := m.start(Config{Workspace: ws.WorktreePath, Mode: "integrate", Prompt: prompt, Unattended: true}, false)
+	s, err := m.start(Config{Workspace: ws.WorktreePath, Mode: integrateMode, Prompt: prompt, Unattended: true}, false)
 	if err != nil {
 		return nil, fmt.Errorf("start integrate session: %w", err)
 	}

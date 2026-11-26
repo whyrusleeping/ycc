@@ -95,7 +95,7 @@ func findResumableQuestion(events []event.Event) *resumableQuestion {
 					turnCalls = 0
 				}
 			}
-		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.SessionForked:
+		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.RestartContext, event.SessionForked:
 			q = nil
 		}
 	}

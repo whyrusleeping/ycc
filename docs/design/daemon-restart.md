@@ -126,8 +126,8 @@ Persistent daemon startup therefore runs in four ordered phases:
 Persistent daemons launch background shell jobs through a detached supervisor process (`ycc`
 re-executed with an internal helper sentinel before CLI parsing, alongside `sandbox.MaybeHelper()`).
 One-shot `InProcess` daemons keep direct child processes so teardown leaves no survivors. Detached
-launches stay gated off in production `Serve()` until Slice 4 lands reconciliation, passive
-supervision, and crash-safe job-bound leases together.
+launches stayed gated off in production `Serve()` until Slice 4 landed reconciliation, passive
+supervision, and crash-safe job-bound leases together (0622 turned them on).
 
 #### Launch handshake, process identity, and execution-unknown state
 
@@ -421,7 +421,7 @@ Idempotency across repeated crashes during recovery:
   logs the error and still finishes clean detach so supervisors survive.
 - **Interrupted sessions** reopen automatically: if replayed history already owes a model response
   (e.g., repaired dangling non-wait tool call), `s.run()` continues; otherwise Phase 3 records one
-  durable synthetic restart-context event (rendered as synthetic context, like `job_notified`,
+  durable synthetic restart-context event (model context only, like `job_notified`,
   never as an apparent human `user_input`). Sessions parked in `ask_user` stay closed on disk until
   answered via `ReopenForAnswer` (with any leases held passively meanwhile).
 
@@ -543,8 +543,38 @@ and client projections as its behavior lands:
    (following its in-process job, or the passive table's held job through `PassiveJobs.Watch`), and
    transfers it in `Reopen`. Persistent startup restores `leases.json` right after
    `SupervisePassiveJobs`. A restored lease whose job nothing can follow is held until expiry or the
-   reopened holder's release. A lease restored without a job is held until expiry; only 0622's
-   `unbound_leases` will create one.
+   reopened holder's release. A lease restored without a job is held until expiry or a reopen
+   takes it over; only `unbound_leases` creates one.
+   0622 adds `restart-state.json` (`internal/session/restart_state.go`). `ShutdownForRestart` picks
+   its candidates before suspension (running sessions and those awaiting job continuations, except
+   work-loop, watch and groom sessions), and classifies each from its closed log afterwards:
+   an unresolved `wait_started` or an awaiting idle boundary makes it waiting, a pending
+   `ask_user` or a finished turn leaves it out, and the rest are interrupted. Restart suspension
+   keeps unexpired unbound leases instead of releasing them, so the manifest can carry them.
+   Persistent startup runs `RecoverRestart` right after `RestoreLeases`. A count of attempts is
+   saved in the file before each entry is prepared, and an entry that reached two is quarantined.
+   `session_reopened(restart_id)` is written by recovery ahead of the run (the run writes no
+   second one). An interrupted session that owes no response gets `restart_context` just before
+   it, so a startup cut off between the two reopens the session again and it goes on from the note
+   (this restart's note does not invalidate the entry). A session whose history is empty (cut off
+   before its opening input was recorded) gets no note. Records of job outcomes and lease releases
+   after `last_seq` do not invalidate an entry either; an entry whose `last_seq` the log lacks does
+   not authorize anything. Entries decode one by one, so a malformed one is quarantined alone. An
+   entry is checked against its log before its attempt is counted, so a prepared one is never
+   quarantined. One whose append failed stays alone in the rewritten file, without the leases (the
+   opened daemon may release them), for a startup after a crash. An unbound lease is held again
+   only while its holder's log still shows that acquisition held: the record names the
+   `lease_acquired` event (`acquired_seq`, the acquire or latest renewal), which must be the log's
+   last lease event for the name. A manifest a startup failed to remove therefore cannot resurrect a
+   lease released, renewed or acquired anew since. A turn that ended in a coordinator error or a confirmed
+   pause is not interrupted; a subagent's `session_error` (its own actor) neither holds the
+   coordinator, nor disarms its awaiting idle, nor ends its restorable `wait`. Integration sessions are excluded with the
+   other worker-run sessions, since their worker does not come back. Clients do not render
+   `restart_context`. Restart suspension keeps a lease live while its holder's context is
+   cancelled with the restart cause, so a concurrent listing cannot release it; if the manifest is
+   not written, the kept leases are recorded as ended. Recovery runs after `ExpectWatches`, so
+   reopened chats get their watch tools. `ycc daemon` now sets a job launcher, so supervised
+   launches are on by default, and fails to start if it cannot.
 5. **Work-loop continuity across graceful restart** *(depends on 1, 4)*.
    Revise `spec.md` §9.1 for planned graceful restarts, add working- and waiting-slot restart
    release, persist and restore the generation-bound full scheduler checkpoint

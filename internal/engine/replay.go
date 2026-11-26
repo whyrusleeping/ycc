@@ -358,9 +358,10 @@ func ReplayHistoryReconciled(events []event.Event, reconciled map[string]bool) [
 			repairDangling()
 			history = append(history, gollama.Message{Role: "user", Content: str(ev.Data, "text")})
 			assistantIdx = -1
-		case event.PlanOnlyDelivered, event.CoordinationNotice:
+		case event.PlanOnlyDelivered, event.CoordinationNotice, event.RestartContext:
 			// The plan-only note and coordination notices enter at a Steer
-			// checkpoint like job_notified, with the same mid-batch deferral.
+			// checkpoint like job_notified, with the same mid-batch deferral. A
+			// restart's context note is only recorded where no batch is open.
 			text := str(ev.Data, "text")
 			if text == "" {
 				continue

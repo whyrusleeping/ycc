@@ -448,7 +448,7 @@ func buildCoordinatorRolloverSummary(ctx context.Context, events []event.Event, 
 			// instruction); keep the latest one outside the evictable sections.
 			budget = fmt.Sprintf("- #%d %s: %s\n", ev.Seq, ev.Type, compactJSON(ev.Data, 1200))
 		case event.ToolResult, event.SubagentFinished, event.SessionNotice, event.SessionError, event.ModelTurn, event.JobNotified,
-			event.CoordinationNotice:
+			event.CoordinationNotice, event.RestartContext:
 			evidence = append(evidence, rolloverEvidence{ev.Seq,
 				fmt.Sprintf("- #%d %s: %s\n", ev.Seq, ev.Type, compactJSON(ev.Data, 1400))})
 		}

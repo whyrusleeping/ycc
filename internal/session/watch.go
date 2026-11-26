@@ -1427,14 +1427,18 @@ func (m *Manager) liveSessions(primary, exclude string, now time.Time, detail bo
 		out = append(out, ls)
 	}
 	// A stopping or closed session has left the live map while its job, and
-	// so its lease, is still running: list it until the lease ends.
+	// so its lease, is still running (or a planned restart carried its lease):
+	// list it until the lease ends.
 	for id, held := range leases {
 		if listed[id] {
 			continue
 		}
 		h := held[0]
 		state := "stopping; its job still holds a lease"
-		if h.restored {
+		switch {
+		case h.restored && h.JobID == "":
+			state = "closed; it still holds a lease from before a daemon restart"
+		case h.restored:
 			state = "closed; its job still holds a lease"
 		}
 		out = append(out, LiveSession{ID: id, Mode: h.mode, State: state, Activity: string(event.StatusStopped),
@@ -1579,6 +1583,18 @@ func (m *Manager) scheduleWatchFromChat(absWS string, spec orchestrator.WatchSpe
 	}
 	return fmt.Sprintf("Watch %q created in project %s; its first run starts now and then every %s. "+
 		"Runs are separate sessions: do not also poll or sleep in this session.", info.Definition.Name, label, time.Duration(info.Definition.Interval)), nil
+}
+
+// ExpectWatches offers watch tools to sessions prepared before StartWatches:
+// persistent startup reopens sessions while execution is held, and starts the
+// scheduler only as it releases them. Nothing changes once shutdown stopped
+// the scheduler.
+func (m *Manager) ExpectWatches() {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	if !m.watchStop {
+		m.watchRunning.Store(true)
+	}
 }
 
 // watchSchedulerRunning is lock-free: session construction calls it while the

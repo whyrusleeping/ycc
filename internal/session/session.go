@@ -163,7 +163,11 @@ type Session struct {
 	// recovery is the reopen's supervised-job reconciliation; its survivors'
 	// outcomes wait until session_reopened is recorded or teardown begins.
 	recovery *tools.SupervisedReopen
-
+	// reopenMarked records that session_reopened was written: by planned
+	// restart recovery during startup, ahead of the run, or else by the run.
+	reopenMarked sync.Once
+	// reopenIdle marks a reopen whose log's last boundary is a finished turn.
+	reopenIdle bool
 	// messageCh is the single ordered queue of idle user input (text and any
 	// native attachments). One queue is what keeps serially accepted inputs in
 	// their accepted order when the run owner drains them.
@@ -1850,40 +1854,9 @@ func (s *Session) run() {
 		// Reopened session ("resume = replay"): the loop already
 		// carries a history reconstructed from the existing log, so do NOT emit a
 		// fresh SessionStarted / initial UserInput nor seed. Mark the reopen in the
-		// continuous log.
-		reopened := map[string]any{"work_implementation": workImplementation}
-		if s.resumeQuestion != nil {
-			// Tell clients the question replayed just before this marker is still
-			// live (restored), not a stale gate to drop.
-			reopened["question_restored"] = true
-		}
-		if s.resumeWait != nil {
-			reopened["wait_restored"] = true
-		}
-		// Recovery metadata (docs/design/daemon-restart.md §3); omitted fields
-		// keep the legacy meaning (nothing survived the reopen).
-		if len(s.reopenSurviving) > 0 {
-			reopened["surviving_jobs"] = s.reopenSurviving
-		}
+		// continuous log, unless restart recovery already did.
+		s.recordReopened("")
 		awaiting := s.reopenAwaitingJobs
-		if awaiting {
-			reopened["awaiting_jobs"] = true
-		}
-		// Every message on the correction queue precedes the marker, whether the
-		// reopen put it back or it arrived since publication: list them all so
-		// a later reopen keeps them if the log is cut before their delivery.
-		// steerMu orders the marker against a correction being accepted.
-		s.steerMu.Lock()
-		var requeued []int
-		for _, c := range s.corrections {
-			requeued = append(requeued, c.seq)
-		}
-		if len(requeued) > 0 {
-			reopened["requeued_inputs"] = requeued
-		}
-		s.emitter.Emit(event.SessionReopened, reopened)
-		s.steerMu.Unlock()
-		s.recovery.ReleaseMarker()
 		for _, notice := range s.startupNotices {
 			s.emitter.Emit(event.SessionNotice, map[string]any{"msg": notice, "level": "warning"})
 		}
@@ -2382,8 +2355,8 @@ type Manager struct {
 	// the user. Nil when unconfigured; all uses are nil-safe.
 	notifier *notify.Notifier
 	// jobLauncher, when set, runs sessions' background Bash through detached
-	// supervisors (internal/jobshim). Nil (the default, and every production
-	// daemon until restart reconciliation lands) keeps direct child processes.
+	// supervisors (internal/jobshim), as a persistent daemon does. Nil (the
+	// default, and the one-shot in-process daemon) keeps direct child processes.
 	jobLauncher *jobshim.Launcher
 	// passiveJobs holds the supervised jobs of sessions that stayed closed
 	// after a daemon restart (SupervisePassiveJobs) until each exits or its
@@ -2458,6 +2431,17 @@ type Manager struct {
 	leasesSaved  []byte
 	leasesClosed bool
 	leaseWG      sync.WaitGroup
+	// restartLeases are the unexpired leases without a job held when restart
+	// suspension finished, taken (under leaseMu) for the restart manifest.
+	restartLeases []leaseRecord
+
+	// Planned-restart manifest (restart_state.go): restartStateFile is
+	// restart-state.json, empty when this daemon writes none; restartRead
+	// marks that startup consumed (or found no) manifest, so shutdown may
+	// replace it; restartWrite writes it at most once.
+	restartStateFile string
+	restartRead      atomic.Bool
+	restartWrite     sync.Once
 
 	// Automatic memory grooming (memorygroom.go). grooms maps a primary tree to
 	// its live automatic groom session id. groomMu is independent of mu so the
@@ -2593,9 +2577,9 @@ func (m *Manager) SetProjects(p *project.Registry) {
 func (m *Manager) SetNotifier(n *notify.Notifier) { m.notifier = n }
 
 // SetJobLauncher opts sessions created afterwards into supervised background
-// Bash jobs (docs/design/daemon-restart.md §2). Production Serve() does not
-// call it yet: detached jobs need reopen reconciliation and crash-safe
-// job-bound leases first. Nil restores direct child processes.
+// Bash jobs (docs/design/daemon-restart.md §2). A persistent daemon (Serve)
+// sets it; the one-shot in-process daemon does not. Nil restores direct child
+// processes.
 func (m *Manager) SetJobLauncher(l *jobshim.Launcher) { m.jobLauncher = l }
 
 // Notify pushes a best-effort notification for the given kind via the configured
@@ -3972,7 +3956,13 @@ func reopenBoundary(events []event.Event) (idle, awaiting bool) {
 				continue
 			}
 			disarmed = true
-		case event.SessionStopped, event.SessionError, event.Interrupted, event.Resumed:
+		case event.SessionError:
+			// A subagent's failure (its own actor) does not disarm the
+			// coordinator.
+			if ev.Actor == "" || ev.Actor == "coordinator" {
+				disarmed = true
+			}
+		case event.SessionStopped, event.Interrupted, event.Resumed:
 			disarmed = true
 		case event.UserInput:
 			if boolVal(ev.Data, "queued") {
@@ -3984,7 +3974,7 @@ func reopenBoundary(events []event.Event) (idle, awaiting bool) {
 				continue
 			}
 			return false, false
-		case event.UserInputDelivered, event.JobNotified, event.SessionForked, event.QuestionAsked,
+		case event.UserInputDelivered, event.JobNotified, event.RestartContext, event.SessionForked, event.QuestionAsked,
 			event.ContextViewChanged, event.SessionStarted:
 			return false, false
 		}
@@ -4490,6 +4480,7 @@ func (m *Manager) ReclaimAll() {
 		// running past the drain deadline.
 		m.joinBackground()
 		m.gitSyncWG.Wait()
+		m.takeRestartLeases(time.Now())
 		m.closeLeases()
 		return
 	}

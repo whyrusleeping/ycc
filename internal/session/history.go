@@ -189,7 +189,7 @@ func sessionWaitingInput(evs []event.Event) bool {
 	waiting := false
 	for _, ev := range evs {
 		switch ev.Type {
-		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.SessionForked:
+		case event.UserInput, event.UserInputDelivered, event.JobNotified, event.BudgetExceeded, event.CoordinationNotice, event.RestartContext, event.SessionForked:
 			waiting = false
 		default:
 			// Subagents may keep working while the coordinator waits for a human.

@@ -232,7 +232,7 @@ func forkPrefix(logPath string, atSeq int) ([]forkLine, string, error) {
 // checkpoint, and so defers to the end of an open tool-call batch.
 func deferredInjection(ev event.Event) bool {
 	switch ev.Type {
-	case event.UserInputDelivered, event.JobNotified, event.PlanOnlyDelivered, event.CoordinationNotice:
+	case event.UserInputDelivered, event.JobNotified, event.PlanOnlyDelivered, event.CoordinationNotice, event.RestartContext:
 		return true
 	case event.BudgetExceeded:
 		return ev.Actor == "user"

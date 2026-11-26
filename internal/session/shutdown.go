@@ -147,12 +147,15 @@ func (m *Manager) Drain(ctx context.Context) []string {
 }
 
 // ShutdownForRestart finishes graceful shutdown: after BeginShutdown it
-// suspends every live session for restart (suspendAll). It is the single
-// teardown owner for the persistent daemon; a later ReclaimAll finds nothing
-// left to undo.
+// suspends every live session for restart (suspendAll), and then writes the
+// restart manifest (restart_state.go) naming the sessions the next daemon
+// reopens and the leases it holds again. It is the single teardown owner for
+// the persistent daemon; a later ReclaimAll finds nothing left to undo.
 func (m *Manager) ShutdownForRestart() {
 	m.BeginShutdown()
+	candidates := m.restartCandidates()
 	m.ReclaimAll()
+	m.writeRestartManifest(candidates)
 }
 
 // suspendAll suspends every live session for restart. Each one is cancelled
@@ -186,7 +189,8 @@ func (m *Manager) suspendAll() {
 // reap, and fail-stop. It cancels with the restart cause and joins the run
 // owner, whose exit closes job registration, kills and joins subagents and
 // background jobs (with the restart cause, so a subagent's wait claims
-// nothing), and stops its writes. It then releases leases, stops and joins the
+// nothing), and stops its writes. It then releases leases (keeping those the
+// restart manifest carries), stops and joins the
 // workstream watcher while the log is still open, and only then closes the
 // log. It records no session_stopped, and an interrupted wait or ask_user keeps
 // its trailing tool_call unresolved for recovery. It shares stopOnce with Stop
@@ -202,7 +206,7 @@ func (m *Manager) suspendSession(s *Session) {
 			<-s.runDone
 		}
 		s.killJobs()
-		s.releaseLeases()
+		s.releaseLeasesForRestart()
 		m.stopWorkstreamWatcher(s.ID)
 		if s.log != nil {
 			s.log.Close()

@@ -142,6 +142,11 @@ const (
 	// the log, and new activity appends to the same continuous stream. It does not
 	// change status (see Reduce).
 	SessionReopened Type = "session_reopened"
+	// RestartContext is the synthetic note a planned daemon restart gives a
+	// session whose turn it cut short when that session's history owes the
+	// model no response (data: { text, restart_id }). Replay places it as
+	// user-role context, like job_notified; it is not user input.
+	RestartContext Type = "restart_context"
 	// SessionForked ends the copied prefix of a forked session's log
 	// (data: { parent, at_seq }): every earlier event was copied from session
 	// parent, up to the user turn at_seq, which was not. The fork is idle,

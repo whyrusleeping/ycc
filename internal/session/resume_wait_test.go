@@ -340,7 +340,11 @@ func TestReopenAwaitingJobsBoundaries(t *testing.T) {
 		return event.Event{Type: event.SessionIdle, Actor: "coordinator", Data: data}
 	}
 	ev := func(t event.Type, data map[string]any) event.Event {
-		return event.Event{Type: t, Actor: "user", Data: data}
+		actor := "user"
+		if t == event.SessionError {
+			actor = "coordinator" // the run records its errors as the coordinator
+		}
+		return event.Event{Type: t, Actor: actor, Data: data}
 	}
 	for _, tc := range []struct {
 		name string
@@ -359,6 +363,7 @@ func TestReopenAwaitingJobsBoundaries(t *testing.T) {
 		{"pending pause", []event.Event{idle(true, false), ev(event.PauseRequested, nil)}, false},
 		{"paused", []event.Event{idle(true, false), ev(event.PauseRequested, nil), ev(event.PauseCancelled, nil), ev(event.PauseRequested, nil)}, false},
 		{"error or refusal", []event.Event{idle(true, false), ev(event.SessionError, map[string]any{"kind": "refusal"})}, false},
+		{"subagent error", []event.Event{idle(true, false), {Type: event.SessionError, Actor: "agent_1", Data: map[string]any{"msg": "x"}}}, true},
 		{"model switch gate", []event.Event{idle(true, false), ev(event.SessionError, map[string]any{"action": "switch_model"})}, false},
 		{"forked", []event.Event{idle(true, false), ev(event.SessionForked, nil)}, false},
 		{"question", []event.Event{idle(true, false), ev(event.QuestionAsked, nil)}, false},

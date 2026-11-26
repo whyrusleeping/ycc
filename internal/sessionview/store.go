@@ -636,7 +636,7 @@ func classifyRow(st *State, ev event.Event) (string, int64, bool, bool) {
 		}
 		return id, 0, true, true
 	case event.SessionIdle:
-	case event.JobNotified, event.PlanOnlyDelivered, event.WaitStarted:
+	case event.JobNotified, event.PlanOnlyDelivered, event.WaitStarted, event.RestartContext:
 		return "", 0, false, false
 	}
 	st.LastRowID = seqID

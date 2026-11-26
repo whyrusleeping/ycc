@@ -103,10 +103,36 @@ clean boundary. A coordinator that is idle, paused, parked on `ask_user`, or blo
 not delay the drain, and neither does a subagent blocked in `wait`. A second signal ends the drain,
 and a later one exits at once. Every session is then suspended for restart. A blocked `wait` (the
 coordinator's or a subagent's) or `ask_user` exits with no result and claims no job report, so the
-coordinator's `tool_call` stays unresolved in the log, and reopen resumes it (§5.1). Background
-jobs and subagents are killed and
-joined without `session_stopped`, workstream watchers are joined, and the log closes last. Stop,
-idle reaping, fail-stop, and the one-shot in-process daemon keep ordinary cancel-and-kill teardown.
+coordinator's `tool_call` stays unresolved in the log, and reopen resumes it (§5.1). Subagents,
+and background jobs other than the coordinator's supervised shells (which keep running), are
+killed and joined without `session_stopped`, workstream watchers are joined, and the log closes
+last. Stop, idle reaping, fail-stop, and the one-shot in-process daemon keep ordinary
+cancel-and-kill teardown.
+
+A persistent daemon runs background shells under detached supervisors, so they outlive it; the
+one-shot in-process daemon keeps them as child processes. Once every session is suspended,
+graceful shutdown writes the restart manifest `<state-dir>/restart-state.json` (`0600`, atomic
+rename, stamped with a unique `restart_id`): the sessions blocked in `wait` or idle awaiting
+background jobs (`waiting_sessions`), those whose turn it cut short (`interrupted_sessions`), each
+with its log's `last_seq`, and the unexpired leases without a job (`unbound_leases`, §7.3).
+Sessions parked on `ask_user`, or held after an error or a pause, stay closed until a human acts,
+and work-loop, watch, groom and workstream integration sessions are left to their workers (§9.1).
+If the manifest cannot be written, the daemon logs it, records the kept leases as ended, and exits
+anyway.
+The next daemon's startup consumes it while execution is still held: it holds the leases again
+and reopens each listed session, recording its `session_reopened` with `restart_id` before any
+run starts, then removes the file. A waiting session resumes its `wait` or its awaiting idle state
+(§5.1). An interrupted one goes on with the turn its history still owes; if it owes none, one
+synthetic `restart_context` note, recorded just before the reopen marker (model context only,
+never user input; clients do not show it), lets it continue. An entry whose log already records a
+reopen for that `restart_id`, has no event at `last_seq`, or moved on past it, is skipped, so a
+startup that crashes and runs again neither reopens nor nudges a session twice. A malformed entry,
+or one two startups failed to prepare, is set aside in `restart-state.json.quarantined` without
+affecting the others; an entry whose preparation could not be logged stays listed alone (without
+the leases, which the opened daemon may release) for a startup after a crash; an unreadable manifest is moved to `restart-state.json.unreadable`. After a crash there is
+no manifest: startup still holds surviving jobs and job-bound leases, but starts no model turn by
+itself. A persistent daemon that cannot set up job supervision (its private runtime directory for
+supervisor control sockets) does not start.
 
 Project status is computed from local workspace state without blocking on the network. Project
 metadata reports whether onboarding is still needed (no substantive configured spec entry point and
@@ -186,7 +212,7 @@ carries many images, and since images accumulate in history, one oversize screen
 otherwise poison every later request in the session.
 
 A persisted session reported as running without a matching in-memory session is treated as
-stopped after daemon restart. Optional GC settings can reclaim idle in-memory sessions and old
+stopped after daemon restart, unless a planned restart's manifest reopens it (§3.1). Optional GC settings can reclaim idle in-memory sessions and old
 on-disk logs; retention is disabled unless configured.
 
 A supervised background job keeps its evidence in `<session-dir>/jobs/<job-id>/`, which is
@@ -216,6 +242,11 @@ goes on with a cut-off run (a restored `wait`, or history that still owes a mode
 that run's undelivered queued messages back first and lists them in
 `session_reopened.requeued_inputs`; a session whose last turn finished reopens idle even when its
 history ends on a tool result, such as `report_blocked`.
+
+A reopen by planned restart recovery (§3.1) records `restart_id` on `session_reopened`, before the
+session runs. An interrupted session whose history owes no model response then gets one
+`restart_context` event (data: `text`, `restart_id`), which replay places as user-role context like
+`job_notified`; it is not user input.
 
 Persistent startup holds the supervised jobs of sessions that stay closed in a passive table, and
 writes nothing to their logs. Those jobs guard their workstream's worktree and count as running
@@ -887,8 +918,10 @@ except for exclusive leases.
   acquire, renewal or release is acknowledged only once that file records it. A job whose
   execution is unknown, or that the restarted daemon cannot follow, holds its lease until a
   confirmed exit, expiry or the holder's release (or an operator's `cleared` marker on a closed
-  session's job). A daemon restart releases every lease without a job. The holder's log records
-  `lease_acquired` (name, reason, expires_at, job, renewed) and `lease_released` (name, why:
+  session's job). A lease without a job survives only a graceful restart: suspension keeps it and
+  the restart manifest carries it with its original expiry (§3.1), so the next daemon holds it for
+  the closed holder until a reopen takes it over or it expires; a crash ends it. The holder's log
+  records `lease_acquired` (name, reason, expires_at, job, renewed) and `lease_released` (name, why:
   released, expired, job_exited or session_ended), including a release while the holder is closed.
   A refusal points to the `list_backlog` footer, which shows held leases under their holder, as
   `list_sessions` and `ListProjectNotices` sessions (as `leases`) do; a held lease keeps a quiet
@@ -1293,7 +1326,9 @@ reversible assumption or block the task, so background work cannot wait forever.
 When work cannot continue without the user's yes/no or pick-one decision, chat, pm, and work
 agents ask it through `ask_user` with concrete options rather than ending a reply on a prose
 question or an open-ended offer. Only `ask_user` marks the session as waiting, sends a question
-notification, and lets clients answer by choosing an option.
+notification, and lets clients answer by choosing an option. A question survives a daemon restart:
+the session stays closed (a planned restart does not reopen it, and its leases stay held for it)
+until an answer reopens it into the restored question (§3.1, §18.6).
 
 High-impact operations use dedicated confirmation gates rather than ordinary questions. Starting
 a pm-to-work handoff requires explicit acceptance. Gate/manual workstream integration requires

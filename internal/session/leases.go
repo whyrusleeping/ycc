@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,7 +31,8 @@ import (
 // and its release is recorded in the closed session's log. A reopen of the
 // session takes it over. Job-bound leases are also persisted in leases.json
 // (SetLeasesFile), so they survive a daemon restart or crash while their job
-// runs; other leases live in memory only.
+// runs; other leases live in memory only, and a planned restart's manifest
+// carries them to the next daemon (restart_state.go).
 
 // Lease bounds.
 const (
@@ -64,6 +66,9 @@ type Lease struct {
 	// restored marks a lease held for a session closed since before this
 	// daemon started (a closed holder is otherwise still stopping).
 	restored bool
+	// acquiredSeq is the holder log's lease_acquired event of this
+	// acquisition or renewal, which a restart manifest's record names.
+	acquiredSeq int
 }
 
 // leaseEntry is a held lease with its release machinery. Entries are replaced,
@@ -106,6 +111,9 @@ type leaseRecord struct {
 	JobID      string    `json:"job_id"`
 	AcquiredAt time.Time `json:"acquired_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	// AcquiredSeq is the holder log's lease_acquired event (acquire or
+	// renewal) the record was taken from.
+	AcquiredSeq int `json:"acquired_seq,omitempty"`
 }
 
 type leaseFile struct {
@@ -135,9 +143,11 @@ func (e *leaseEntry) executing() bool {
 
 // live reports whether the entry still holds its lease: unexpired, and its
 // job still executing or its holder instance running. A restored lease
-// without a job (a planned restart's) is held until it expires. A timer or
-// hook that has not run yet never keeps a dead lease held, and a stopping
-// session's lease stays held while its job is still running.
+// without a job (a planned restart's) is held until it expires, and so is
+// one whose holder a planned restart is suspending, which the restart
+// manifest may carry (releaseSessionLeases decides). A timer or hook that has
+// not run yet never keeps a dead lease held, and a stopping session's lease
+// stays held while its job is still running.
 func (e *leaseEntry) live(now time.Time) bool {
 	if !now.Before(e.ExpiresAt) {
 		return false
@@ -146,7 +156,10 @@ func (e *leaseEntry) live(now time.Time) bool {
 		return true
 	}
 	if e.owner != nil {
-		return e.owner.ctx.Err() == nil
+		if e.owner.ctx.Err() == nil {
+			return true
+		}
+		return e.JobID == "" && errors.Is(context.Cause(e.owner.ctx), jobs.ErrRestartSuspend)
 	}
 	return e.JobID == ""
 }
@@ -271,7 +284,7 @@ func (m *Manager) acquireLease(s *Session, primary, name, reason string, ttl tim
 	if renewed {
 		data["renewed"] = true
 	}
-	s.emitter.Emit(event.LeaseAcquired, data)
+	e.acquiredSeq = s.emitter.Emit(event.LeaseAcquired, data).Seq
 	return e.Lease, renewed, nil
 }
 
@@ -547,17 +560,145 @@ func (m *Manager) releaseLease(s *Session, primary, name string, now time.Time) 
 // them through s, whose log is still open. Its jobs have been killed and
 // joined, or detached for a daemon restart, by then: a lease whose job may
 // still execute stays held, passively, until its job's execution stops (or
-// past the restart, from leases.json) or it expires.
-func (m *Manager) releaseSessionLeases(s *Session) {
+// past the restart, from leases.json) or it expires. A restart suspension
+// (restart) of a daemon that writes a restart manifest also keeps each
+// unexpired lease without a job: the manifest carries it to the next daemon
+// (takeRestartLeases).
+func (m *Manager) releaseSessionLeases(s *Session, restart bool) {
+	now := time.Now()
+	keepUnbound := restart && m.restartStateFile != ""
 	m.leaseMu.Lock()
 	defer m.leaseMu.Unlock()
 	for _, held := range m.leases {
 		for _, e := range held {
-			if e.owner == s && !e.executing() {
-				m.dropLocked(e, leaseSessionEnded, s, false)
+			if e.owner != s || e.executing() {
+				continue
+			}
+			if keepUnbound && e.JobID == "" && now.Before(e.ExpiresAt) {
+				continue
+			}
+			m.dropLocked(e, leaseSessionEnded, s, false)
+		}
+	}
+}
+
+// takeRestartLeases sets aside, for the restart manifest, every unexpired
+// lease without a job still held once restart suspension has finished: those
+// of the suspended sessions and those held for closed ones.
+func (m *Manager) takeRestartLeases(now time.Time) {
+	if m.restartStateFile == "" {
+		return
+	}
+	m.leaseMu.Lock()
+	defer m.leaseMu.Unlock()
+	if m.leasesClosed {
+		return
+	}
+	for _, held := range m.leases {
+		for _, e := range held {
+			if e.JobID == "" && now.Before(e.ExpiresAt) {
+				m.restartLeases = append(m.restartLeases, e.record())
 			}
 		}
 	}
+	sortLeaseRecords(m.restartLeases)
+}
+
+// restoreUnboundLeases holds again, for their original expiry, the leases
+// without a job that a planned restart's manifest carried (RecoverRestart,
+// after RestoreLeases and before any session reopens). Each is held for its
+// holder's session id like a closed session's lease: a reopen takes it over,
+// and it is released at expiry otherwise. One whose acquisition its holder's
+// log no longer shows held (released, renewed or acquired anew since) is not
+// held again, so a manifest replayed by a later startup cannot resurrect it,
+// and one that expired while the daemon was down is
+// released, recorded in that log (so a repeated startup records it once). An
+// unplanned crash writes no manifest, so it restores none of them.
+func (m *Manager) restoreUnboundLeases(records []leaseRecord, now time.Time) {
+	var entries []*leaseEntry
+	var notes []*leaseNote
+	for _, r := range records {
+		name := normalizeLeaseName(r.Name)
+		id := r.SessionID
+		if name == "" || r.JobID != "" || id == "" || id == "." || filepath.Base(id) != id ||
+			!filepath.IsAbs(r.Workspace) || !m.knownSessionWorkspace(r.Workspace) {
+			log.Printf("restart recovery: dropping lease %q of session %q: not a lease of a known session", r.Name, id)
+			continue
+		}
+		dir := sessionDir(r.Workspace, id)
+		// The holder's log is the authority on whether this acquisition is
+		// still held: a manifest a startup failed to remove is never replayed
+		// over a release, renewal or new acquisition recorded since.
+		if !leaseHeldInLog(dir, name, r.AcquiredSeq) {
+			log.Printf("restart recovery: lease %q: session %s's log no longer shows this acquisition held; not holding it again", name, id)
+			continue
+		}
+		if !now.Before(r.ExpiresAt) {
+			notes = append(notes, &leaseNote{id: id, dir: dir, data: map[string]any{"name": name, "why": leaseExpired}})
+			continue
+		}
+		entries = append(entries, &leaseEntry{
+			Lease: Lease{Name: name, Reason: r.Reason, SessionID: id, Tasks: r.Tasks,
+				AcquiredAt: r.AcquiredAt, ExpiresAt: r.ExpiresAt, mode: r.Mode, workspace: r.Workspace, restored: true,
+				acquiredSeq: r.AcquiredSeq},
+			key: canonicalPath(r.Primary), dir: dir,
+		})
+	}
+	m.leaseMu.Lock()
+	var placed []*leaseEntry
+	for _, e := range entries {
+		if cur := m.leases[e.key][e.Name]; cur != nil {
+			log.Printf("restart recovery: lease %q is already held by session %s; dropping session %s's", e.Name, cur.SessionID, e.SessionID)
+			continue
+		}
+		m.placeLocked(e)
+		m.armLocked(e)
+		placed = append(placed, e)
+	}
+	m.leaseMu.Unlock()
+	for _, n := range notes {
+		unlock := m.lockSessionID(n.id)
+		m.recordLeaseNote(n)
+		unlock()
+	}
+	m.adoptRestoredLeases(placed)
+}
+
+// adoptRestoredLeases hands leases restored at startup to their holders that
+// are already live, as a reopen would.
+func (m *Manager) adoptRestoredLeases(placed []*leaseEntry) {
+	seen := map[string]bool{}
+	for _, e := range placed {
+		if seen[e.SessionID] {
+			continue
+		}
+		seen[e.SessionID] = true
+		unlock := m.lockSessionID(e.SessionID)
+		if s, ok := m.Get(e.SessionID); ok {
+			m.adoptLeases(s)
+		}
+		unlock()
+	}
+}
+
+// leaseHeldInLog reports whether the session log in dir still holds the
+// acquisition of lease name its event at seq recorded: that lease_acquired
+// (an acquire or renewal) is the log's last lease event for the name.
+func leaseHeldInLog(dir, name string, seq int) bool {
+	if seq <= 0 {
+		return false
+	}
+	events, err := event.ReadLog(filepath.Join(dir, "events.jsonl"))
+	if err != nil {
+		return false
+	}
+	held := false
+	for _, ev := range events {
+		if (ev.Type == event.LeaseAcquired || ev.Type == event.LeaseReleased) && normalizeLeaseName(str(ev.Data, "name")) == name {
+			held = ev.Type == event.LeaseAcquired && ev.Seq == seq
+		}
+	}
+	return held
 }
 
 // adoptLeases transfers the leases a closed instance of s's session holds to
@@ -630,8 +771,8 @@ func (m *Manager) adoptLeases(s *Session) {
 // still run) stays held until it expires or its holder, reopened, releases
 // it. The reconciled set is saved before any release is recorded or any
 // watcher starts, so a crash during restore replays the same records and
-// never records a release twice. Other leases are not restored: a daemon
-// restart released them.
+// never records a release twice. Leases without a job are restored only from
+// a planned restart's manifest (restoreUnboundLeases).
 func (m *Manager) RestoreLeases() {
 	m.leaseMu.Lock()
 	path := m.leasesFile
@@ -696,18 +837,7 @@ func (m *Manager) RestoreLeases() {
 	}
 	m.leaseMu.Unlock()
 	// A holder already live takes its leases over, as a reopen would.
-	seen := map[string]bool{}
-	for _, e := range placed {
-		if seen[e.SessionID] {
-			continue
-		}
-		seen[e.SessionID] = true
-		unlock := m.lockSessionID(e.SessionID)
-		if s, ok := m.Get(e.SessionID); ok {
-			m.adoptLeases(s)
-		}
-		unlock()
-	}
+	m.adoptRestoredLeases(placed)
 }
 
 // restoredLease turns one persisted record into the entry to hold, or into
@@ -782,20 +912,12 @@ func (m *Manager) saveLeasesLocked() error {
 	f := leaseFile{Version: 1, Leases: []leaseRecord{}}
 	for _, held := range m.leases {
 		for _, e := range held {
-			if e.JobID == "" {
-				continue
+			if e.JobID != "" {
+				f.Leases = append(f.Leases, e.record())
 			}
-			f.Leases = append(f.Leases, leaseRecord{Primary: e.key, Name: e.Name, Reason: e.Reason, SessionID: e.SessionID,
-				Workspace: e.workspace, Mode: e.mode, Tasks: e.Tasks, JobID: e.JobID, AcquiredAt: e.AcquiredAt, ExpiresAt: e.ExpiresAt})
 		}
 	}
-	sort.Slice(f.Leases, func(i, j int) bool {
-		a, b := f.Leases[i], f.Leases[j]
-		if a.Primary != b.Primary {
-			return a.Primary < b.Primary
-		}
-		return a.Name < b.Name
-	})
+	sortLeaseRecords(f.Leases)
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
@@ -811,13 +933,30 @@ func (m *Manager) saveLeasesLocked() error {
 	return nil
 }
 
+// record is the entry as leases.json (or the restart manifest) stores it.
+func (e *leaseEntry) record() leaseRecord {
+	return leaseRecord{Primary: e.key, Name: e.Name, Reason: e.Reason, SessionID: e.SessionID,
+		Workspace: e.workspace, Mode: e.mode, Tasks: e.Tasks, JobID: e.JobID, AcquiredAt: e.AcquiredAt, ExpiresAt: e.ExpiresAt,
+		AcquiredSeq: e.acquiredSeq}
+}
+
+func sortLeaseRecords(rs []leaseRecord) {
+	sort.Slice(rs, func(i, j int) bool {
+		a, b := rs[i], rs[j]
+		if a.Primary != b.Primary {
+			return a.Primary < b.Primary
+		}
+		return a.Name < b.Name
+	})
+}
+
 // writePrivateFile replaces path with data (0600) by an atomic rename.
 func writePrivateFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".leases-*")
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}
@@ -935,6 +1074,14 @@ func (t *sessionLeaseTools) Release(name string) (string, error) {
 // minimally-constructed sessions.
 func (s *Session) releaseLeases() {
 	if s.leases != nil {
-		s.leases.m.releaseSessionLeases(s)
+		s.leases.m.releaseSessionLeases(s, false)
+	}
+}
+
+// releaseLeasesForRestart releases the session's leases as restart
+// suspension ends it (releaseSessionLeases).
+func (s *Session) releaseLeasesForRestart() {
+	if s.leases != nil {
+		s.leases.m.releaseSessionLeases(s, true)
 	}
 }

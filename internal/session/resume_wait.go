@@ -87,11 +87,17 @@ func findResumableWait(events []event.Event) *resumableWait {
 			if !boolVal(ev.Data, "queued") {
 				w = nil
 			}
+		case event.SessionError:
+			// A subagent's failure (its own actor) does not end the
+			// coordinator's wait.
+			if ev.Actor == "" || ev.Actor == "coordinator" {
+				w = nil
+			}
 		case event.UserInputDelivered, event.ContextViewChanged, event.SessionForked, event.SessionStarted,
-			event.SessionIdle, event.SessionError:
+			event.SessionIdle:
 			w = nil
 		case event.JobNotified, event.QuestionAsked, event.QuestionAnswered, event.BudgetExceeded,
-			event.CoordinationNotice, event.PlanOnlyDelivered:
+			event.CoordinationNotice, event.PlanOnlyDelivered, event.RestartContext:
 			w = nil
 		}
 	}
@@ -174,6 +180,7 @@ func intList(v any) []int {
 // checkpoint delivers them after the results they followed.
 func (s *Session) prepareReopenDisposition(events []event.Event) {
 	idle, awaiting := reopenBoundary(events)
+	s.reopenIdle = idle
 	held := s.resumeQuestion != nil || s.forkAwaitsInput || s.contextModelSwitchRequired()
 	continues := s.resumeWait != nil
 	if !held && !continues {
