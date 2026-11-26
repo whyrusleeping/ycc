@@ -315,3 +315,53 @@ func listModels(ctx context.Context, t *Transport) ([]string, error) {
 	}
 	return ids, err
 }
+
+// QuotaBucket is one rolling allowance window from retrieveUserQuotaSummary
+// (observed 2026-11-26: bucketId "gemini-5h", window "5h" or "weekly",
+// remainingFraction 0..1, and resetTime only once the bucket has been used).
+type QuotaBucket struct {
+	BucketID          string   `json:"bucketId"`
+	DisplayName       string   `json:"displayName"`
+	Window            string   `json:"window"`
+	ResetTime         string   `json:"resetTime"`
+	RemainingFraction *float64 `json:"remainingFraction"`
+	Disabled          bool     `json:"disabled"`
+}
+
+// QuotaGroup is a set of models sharing the same buckets ("Gemini Models").
+type QuotaGroup struct {
+	DisplayName string        `json:"displayName"`
+	Buckets     []QuotaBucket `json:"buckets"`
+}
+
+// QuotaSummary is the account's subscription allowance, as agy shows it.
+type QuotaSummary struct {
+	Groups []QuotaGroup `json:"groups"`
+}
+
+// RetrieveQuotaSummary calls retrieveUserQuotaSummary for the logged-in
+// account, resolving (and persisting) its project first. Errors never carry
+// credentials.
+func RetrieveQuotaSummary(ctx context.Context, baseURL string, httpClient *http.Client, tokens TokenSource) (QuotaSummary, error) {
+	t := newTransport(baseURL, httpClient, tokens, googleStore{})
+	tok, err := tokens(ctx)
+	if err != nil {
+		return QuotaSummary{}, err
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, clientBase, nil)
+	project, failure, err := t.projectFor(ctx, req, tok)
+	if err != nil {
+		return QuotaSummary{}, err
+	}
+	if failure != nil {
+		failure.Body.Close()
+		return QuotaSummary{}, fmt.Errorf("resolving the Antigravity project: %s", failure.Status)
+	}
+	var out QuotaSummary
+	failure, err = t.postJSON(ctx, tok, "/v1internal:retrieveUserQuotaSummary", map[string]any{"project": project}, &out)
+	if failure != nil {
+		failure.Body.Close()
+		return QuotaSummary{}, fmt.Errorf("retrieving Antigravity quota: %s", failure.Status)
+	}
+	return out, err
+}

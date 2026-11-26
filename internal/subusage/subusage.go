@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/antigravity"
+	"github.com/whyrusleeping/ycc/internal/googleauth"
 	"github.com/whyrusleeping/ycc/internal/llmhttp"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 )
@@ -60,6 +62,7 @@ type HTTPFetcher struct {
 	OpenAIURL         string
 	AnthropicToken    func(context.Context) (string, error)
 	OpenAICredentials func(context.Context) (string, string, error)
+	GoogleQuota       func(context.Context) (antigravity.QuotaSummary, error)
 }
 
 // NewHTTPFetcher returns the production fetcher.
@@ -70,6 +73,9 @@ func NewHTTPFetcher() *HTTPFetcher {
 		OpenAIURL:         openAIUsageURL,
 		AnthropicToken:    anthropicauth.AccessToken,
 		OpenAICredentials: openaiauth.AccessToken,
+		GoogleQuota: func(ctx context.Context) (antigravity.QuotaSummary, error) {
+			return antigravity.RetrieveQuotaSummary(ctx, "", &http.Client{CheckRedirect: llmhttp.CheckRedirect}, googleauth.AccessToken)
+		},
 	}
 }
 
@@ -80,6 +86,8 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, provider string) (Account, erro
 		return f.fetchAnthropic(ctx)
 	case "openai":
 		return f.fetchOpenAI(ctx)
+	case "gemini":
+		return f.fetchGoogle(ctx)
 	default:
 		return Account{}, fmt.Errorf("subscription usage is unsupported for %s", provider)
 	}
@@ -244,6 +252,62 @@ func windowLabel(seconds int64) string {
 		return fmt.Sprintf("%d day", seconds/(24*60*60))
 	}
 	return fmt.Sprintf("%d hour", max(int64(1), seconds/(60*60)))
+}
+
+// fetchGoogle maps Antigravity's quota groups (models sharing a 5-hour and a
+// weekly allowance) to windows labelled "<group> · <window>".
+func (f *HTTPFetcher) fetchGoogle(ctx context.Context) (Account, error) {
+	summary, err := f.GoogleQuota(ctx)
+	if err != nil {
+		if errors.Is(err, googleauth.ErrNoLogin) {
+			return Account{}, errors.New("subscription credentials unavailable")
+		}
+		return Account{}, errors.New("subscription usage request failed")
+	}
+	out := Account{Provider: "gemini"}
+	for _, group := range summary.Groups {
+		buckets := append([]antigravity.QuotaBucket(nil), group.Buckets...)
+		sort.SliceStable(buckets, func(i, j int) bool {
+			return googleWindowSeconds(buckets[i].Window) < googleWindowSeconds(buckets[j].Window)
+		})
+		for _, bucket := range buckets {
+			if bucket.Disabled || bucket.RemainingFraction == nil {
+				continue
+			}
+			seconds := googleWindowSeconds(bucket.Window)
+			label := windowLabel(seconds)
+			if seconds == 0 && bucket.DisplayName != "" {
+				label = bucket.DisplayName
+			}
+			if group.DisplayName != "" {
+				label = group.DisplayName + " · " + label
+			}
+			reset, _ := time.Parse(time.RFC3339, bucket.ResetTime)
+			out.Windows = append(out.Windows, Window{
+				ID: bucket.BucketID, Label: label, UsedPercent: clamp((1 - *bucket.RemainingFraction) * 100),
+				ResetsAt: reset, WindowSeconds: seconds,
+			})
+		}
+	}
+	if len(out.Windows) == 0 {
+		return Account{}, errors.New("provider returned no subscription usage windows")
+	}
+	return out, nil
+}
+
+// googleWindowSeconds maps a quota bucket's window ("5h", "weekly") to its
+// length, 0 when unknown.
+func googleWindowSeconds(window string) int64 {
+	switch window {
+	case "daily":
+		return 24 * 60 * 60
+	case "weekly":
+		return 7 * 24 * 60 * 60
+	}
+	if d, err := time.ParseDuration(window); err == nil && d > 0 {
+		return int64(d / time.Second)
+	}
+	return 0
 }
 
 func (f *HTTPFetcher) getJSON(ctx context.Context, url, token, accountID string, out any, anthropic bool) error {

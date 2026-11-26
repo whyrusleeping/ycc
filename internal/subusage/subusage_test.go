@@ -2,11 +2,15 @@ package subusage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/whyrusleeping/ycc/internal/antigravity"
+	"github.com/whyrusleeping/ycc/internal/googleauth"
 )
 
 func TestHTTPFetcherAnthropic(t *testing.T) {
@@ -56,6 +60,43 @@ func TestHTTPFetcherOpenAI(t *testing.T) {
 	}
 	if got.Plan != "pro" || len(got.Windows) != 2 || got.Windows[0].Label != "5 hour" {
 		t.Fatalf("account = %+v", got)
+	}
+}
+
+func TestHTTPFetcherGoogle(t *testing.T) {
+	// Shape of a live retrieveUserQuotaSummary reply (2026-11-26).
+	const body = `{"groups":[
+	 {"displayName":"Gemini Models","buckets":[
+	  {"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","window":"weekly","resetTime":"2026-12-01T06:32:27Z","remainingFraction":0.88},
+	  {"bucketId":"gemini-5h","displayName":"Five Hour Limit Remaining","window":"5h","resetTime":"2026-11-26T08:52:46Z","remainingFraction":0.75}]},
+	 {"displayName":"Claude and GPT models","buckets":[
+	  {"bucketId":"3p-weekly","window":"weekly","remainingFraction":1},
+	  {"bucketId":"3p-off","window":"5h","disabled":true,"remainingFraction":1}]}]}`
+	f := NewHTTPFetcher()
+	f.GoogleQuota = func(context.Context) (antigravity.QuotaSummary, error) {
+		var s antigravity.QuotaSummary
+		return s, json.Unmarshal([]byte(body), &s)
+	}
+	got, err := f.Fetch(context.Background(), "gemini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Windows) != 3 {
+		t.Fatalf("windows = %+v", got.Windows)
+	}
+	w := got.Windows[0]
+	if w.ID != "gemini-5h" || w.Label != "Gemini Models · 5 hour" || w.UsedPercent != 25 || w.WindowSeconds != 5*60*60 || w.ResetsAt.IsZero() {
+		t.Fatalf("first window = %+v", w)
+	}
+	if got.Windows[1].Label != "Gemini Models · 7 day" || got.Windows[2].Label != "Claude and GPT models · 7 day" || got.Windows[2].UsedPercent != 0 {
+		t.Fatalf("windows = %+v", got.Windows)
+	}
+
+	f.GoogleQuota = func(context.Context) (antigravity.QuotaSummary, error) {
+		return antigravity.QuotaSummary{}, googleauth.ErrNoLogin
+	}
+	if _, err := f.Fetch(context.Background(), "gemini"); err == nil || err.Error() != "subscription credentials unavailable" {
+		t.Fatalf("no-login error = %v", err)
 	}
 }
 

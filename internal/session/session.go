@@ -4313,7 +4313,7 @@ func (m *Manager) Models() []config.ModelInfo { return m.reg.Models() }
 func (m *Manager) OAuthModels() map[string][]string {
 	out := map[string][]string{}
 	for _, model := range m.reg.Models() {
-		if model.Auth == "oauth" && (model.Backend == "anthropic" || model.Backend == "openai") {
+		if model.Auth == "oauth" && (model.Backend == "anthropic" || model.Backend == "openai" || model.Backend == "gemini") {
 			out[model.Backend] = append(out[model.Backend], model.Name)
 		}
 	}
