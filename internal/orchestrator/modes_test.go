@@ -111,25 +111,6 @@ func TestExplicitNoGenericModelsOmitsSpawnTools(t *testing.T) {
 	}
 }
 
-func TestScheduleWatchNotOffered(t *testing.T) {
-	for _, mode := range []string{"chat", "work", "watch", "pm", "integrate"} {
-		for _, impl := range []string{"direct", "delegate"} {
-			for _, unattended := range []bool{false, true} {
-				d := depsFor(t)
-				d.WorkImplementation = impl
-				d.ScheduleWatch = func(context.Context, WatchSpec) (string, error) {
-					t.Fatal("agent invoked watch creation")
-					return "", nil
-				}
-				reg, _ := BuildMode(mode, d, unattended)
-				if hasTool(reg, "schedule_watch") {
-					t.Fatalf("%s/%s unattended=%t: watch creation exposed", mode, impl, unattended)
-				}
-			}
-		}
-	}
-}
-
 // In the "direct" implementation strategy (spec §10) the work coordinator
 // implements changes itself: the implementer spawn/revise tools are dropped, but
 // it keeps the editing tools and the review pipeline, and gets the direct prompt.

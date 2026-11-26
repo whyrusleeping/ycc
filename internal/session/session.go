@@ -2483,7 +2483,6 @@ type Manager struct {
 	watchWake     chan struct{}
 	watchStop     bool
 	watchStarted  bool
-	watchRunning  atomic.Bool
 	// Test seams: run launcher, clock, and follower poll interval.
 	startWatchSession func(primary string, def WatchDefinition, runCtx string) (*Session, error)
 	watchNow          func() time.Time
@@ -3507,8 +3506,6 @@ func (m *Manager) newSession(absWS, id, mode string, unattended bool, prompt str
 	deps.ListSessions = func(path string) (string, error) { return m.listSessionsFor(absWS, id, path, time.Now()) }
 	if mode == watchMode {
 		deps.WatchReport = func(r orchestrator.WatchReport) (string, error) { return m.recordWatchReport(absWS, id, r) }
-	} else if !unattended && m.watchSchedulerRunning() {
-		m.configureChatWatches(absWS, deps)
 	}
 
 	ctx, cancelCause := context.WithCancelCause(context.Background())
@@ -4565,7 +4562,6 @@ func (m *Manager) cancelBackground() {
 	}
 	m.integrationCancel()
 	m.groomCancel()
-	m.watchRunning.Store(false)
 	m.watchCancel()
 	m.reaperCancel()
 }

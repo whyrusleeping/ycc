@@ -91,10 +91,10 @@ rule it would still have been a question, as it was.
 
 ### Creation and surfaces
 
-Users create watches through the web and iOS clients or RPC. Agent modes do not expose watch
-creation. Chat exposes inspection, confirmed full-definition editing, and pause/resume controls.
-Updates are checked before confirmation: correcting an existing watch does not require a second
-watch or an approval for an operation that cannot succeed. Clients list each project's watches
+Users create, edit, pause, and delete watches through the web and iOS clients or RPC. No agent
+mode offers watch-management tools. Chat's inspection, confirmed editing, and pause/resume tools
+were removed on 2026-11-26: the owner judged agent-managed watches not useful enough to keep for
+now, while manual setup through the clients and daemon stays. Clients list each project's watches
 with latest status and next due time, link an active run to its live session, show the report
 timeline, and keep watch run sessions out of the main recent-session list (a running run still
 counts as live work and appears, marked as a watch run, in the clients' live/Active views).

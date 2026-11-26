@@ -133,18 +133,6 @@ func buildMode(mode string, d *Deps, unattended bool) (*tools.Registry, string) 
 			askUser(d), remember(d), forget(d), chatCommitTool(d, policy), releaseClaim(d))
 		reg.Add(genericAgentTools(d, false)...)
 		base := chatModeSystem + "\n\n" + chatFinishGuidance(policy)
-		if d.ListWatches != nil {
-			reg.Add(listWatches(d))
-		}
-		if d.GetWatch != nil {
-			reg.Add(getWatch(d))
-		}
-		if d.UpdateWatch != nil {
-			reg.Add(updateWatch(d))
-		}
-		if d.SetWatchPaused != nil && d.GetWatch != nil {
-			reg.Add(setWatchPaused(d))
-		}
 		return reg, sys(base, unattended, d.Workspace)
 	case "watch":
 		// One scheduled watch run. Questions are real (the run parks while the

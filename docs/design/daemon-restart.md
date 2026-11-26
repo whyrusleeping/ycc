@@ -573,8 +573,7 @@ and client projections as its behavior lands:
    other worker-run sessions, since their worker does not come back. Clients do not render
    `restart_context`. Restart suspension keeps a lease live while its holder's context is
    cancelled with the restart cause, so a concurrent listing cannot release it; if the manifest is
-   not written, the kept leases are recorded as ended. Recovery runs after `ExpectWatches`, so
-   reopened chats get their watch tools. `ycc daemon` now sets a job launcher, so supervised
+   not written, the kept leases are recorded as ended. `ycc daemon` now sets a job launcher, so supervised
    launches are on by default, and fails to start if it cannot.
 5. **Work-loop continuity across graceful restart** *(depends on 1, 4)*.
    Revise `spec.md` §9.1 for planned graceful restarts, add working- and waiting-slot restart

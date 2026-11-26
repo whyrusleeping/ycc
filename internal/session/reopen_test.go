@@ -222,9 +222,6 @@ func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 		t.Fatalf("Reopen: %v", err)
 	}
 	defer sess.Stop()
-	if sess.deps.GetWatch == nil {
-		t.Fatal("reopened chat lacks watch management hooks")
-	}
 
 	loop := sess.currentLoop()
 	got := loop.History()
@@ -242,8 +239,8 @@ func TestReopenReplaysToolTheModeNoLongerOffers(t *testing.T) {
 		t.Fatalf("replayed history lost the schedule_watch call (%v) or its result (%v): %+v", called, answered, got)
 	}
 	for _, def := range loop.Tools.APIDefs() {
-		if def.Function != nil && def.Function.Name == "schedule_watch" {
-			t.Fatal("reopened chat session offers schedule_watch")
+		if def.Function != nil && strings.Contains(def.Function.Name, "watch") {
+			t.Fatalf("reopened chat session offers %s", def.Function.Name)
 		}
 	}
 }

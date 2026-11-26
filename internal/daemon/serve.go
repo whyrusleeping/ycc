@@ -249,9 +249,6 @@ func startPersistent(p *daemonParts, stopping func() bool) (stop func()) {
 	// session stays closed and its job runs, and released when it no longer
 	// does.
 	p.mgr.RestoreLeases()
-	// Sessions reopened below get watch tools, as they would once the
-	// scheduler runs.
-	p.mgr.ExpectWatches()
 	// A graceful shutdown's restart manifest reopens the sessions it named
 	// (waiting on background jobs, or cut short mid-turn) and holds its other
 	// leases again; their runs start at the release below. After a crash there

@@ -345,12 +345,6 @@ func (m *Manager) createWatchAt(primary, label string, def WatchDefinition) (Wat
 // UpdateWatch replaces a watch's definition, keeping its notes, decisions, and
 // history. A shorter interval brings the next run forward.
 func (m *Manager) UpdateWatch(project string, def WatchDefinition) (WatchInfo, error) {
-	return m.updateWatch(project, def, false)
-}
-
-// updateWatch implements UpdateWatch. keepThinking retains the stored thinking
-// level for callers that cannot set it (the chat update_watch tool).
-func (m *Manager) updateWatch(project string, def WatchDefinition, keepThinking bool) (WatchInfo, error) {
 	primary, label, err := m.watchPrimary(project)
 	if err != nil {
 		return WatchInfo{}, err
@@ -366,9 +360,6 @@ func (m *Manager) updateWatch(project string, def WatchDefinition, keepThinking 
 	}
 	if next := m.watchClock().Add(time.Duration(def.Interval)); next.Before(rec.NextDue) {
 		rec.NextDue = next
-	}
-	if keepThinking {
-		def.Thinking = rec.Definition.Thinking
 	}
 	rec.Definition = def
 	if rec.Paused && rec.PausedReason == "expired" && (def.Expires.IsZero() || def.Expires.After(m.watchClock())) {
@@ -532,7 +523,6 @@ func (m *Manager) StartWatches() {
 		return
 	}
 	m.watchStarted = true
-	m.watchRunning.Store(true)
 	m.watchWG.Add(1)
 	m.watchMu.Unlock()
 	go func() {
@@ -571,7 +561,6 @@ func (m *Manager) cancelWatches() {
 	defer m.watchMu.Unlock()
 	if !m.watchStop {
 		m.watchStop = true
-		m.watchRunning.Store(false)
 		m.watchCancel()
 	}
 }
@@ -1571,32 +1560,3 @@ func (m *Manager) otherSessionsNote(absWS, exclude string, now time.Time) string
 	}
 	return "Other live sessions in this project (daemon state; those idle for over an hour are omitted):\n" + lines + board
 }
-
-// scheduleWatchFromChat is the schedule_watch hook; the tool has already
-// obtained the user's confirmation.
-func (m *Manager) scheduleWatchFromChat(absWS string, spec orchestrator.WatchSpec) (string, error) {
-	primary := m.primaryTreeFor(filepath.Clean(absWS))
-	label := m.projectLabel(primary)
-	info, err := m.createWatchAt(primary, label, watchDefinitionFromSpec(spec))
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Watch %q created in project %s; its first run starts now and then every %s. "+
-		"Runs are separate sessions: do not also poll or sleep in this session.", info.Definition.Name, label, time.Duration(info.Definition.Interval)), nil
-}
-
-// ExpectWatches offers watch tools to sessions prepared before StartWatches:
-// persistent startup reopens sessions while execution is held, and starts the
-// scheduler only as it releases them. Nothing changes once shutdown stopped
-// the scheduler.
-func (m *Manager) ExpectWatches() {
-	m.watchMu.Lock()
-	defer m.watchMu.Unlock()
-	if !m.watchStop {
-		m.watchRunning.Store(true)
-	}
-}
-
-// watchSchedulerRunning is lock-free: session construction calls it while the
-// scheduler may hold watchMu to launch a run.
-func (m *Manager) watchSchedulerRunning() bool { return m.watchRunning.Load() }

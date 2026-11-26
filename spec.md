@@ -1306,13 +1306,10 @@ does not append or notify twice. Reports without `completed` end only the curren
 report does not resume the chat that created the watch or finish that chat's pending work.
 
 Runs act only on low-risk or pre-authorized actions and ask rather than act on anything
-attributable to another live session or an `in_progress` task. Attended chat sessions on a
-persistent daemon offer `list_watches`, `get_watch`, `update_watch`, and `set_watch_paused`
-(work mode does not). Full-definition updates validate the proposal and target before asking for
-confirmation, then recheck when applying it. Updates preserve notes, decisions, report history,
-and pause state except when extending an expired watch's expiry. Pause/resume also requires
-confirmation. Users create watches through the clients or RPC; agent modes do not expose watch
-creation. The first run of a new watch is due immediately. Work needing follow-up in the creating
+attributable to another live session or an `in_progress` task. Users create, edit, pause, and
+delete watches through the clients or RPC; no agent mode offers watch-management tools (owner
+decision, 2026-11-26), so only watch runs see watch tools (`watch_report`). The first run of a new
+watch is due immediately. Work needing follow-up in the creating
 session uses a tracked background job and `wait`, including a background completion monitor for
 remote work, rather than a watch. `docs/design/watches.md` records the rationale.
 
