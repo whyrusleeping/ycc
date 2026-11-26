@@ -20,6 +20,10 @@ struct NewSessionView: View {
     /// `@FocusState` because the field is the UIKit-backed `ComposerTextField`,
     /// which exists so an image on the clipboard can be pasted in-field).
     @State private var composerFocused = false
+    /// The composer's caret while focused (drives `#123` task mentions).
+    @State private var composerCaret: Int?
+    /// The backlog `#123` mentions suggest from, loaded on the first one.
+    @State private var mentions: TaskMentionModel
     /// Keyboard overlap for manual avoidance of the bottom chrome — see
     /// KeyboardObserver for why the automatic keyboard safe area is not used.
     @StateObject private var keyboard = KeyboardObserver()
@@ -53,6 +57,7 @@ struct NewSessionView: View {
         // spinner; load() still revalidates in the background.
         _model = State(initialValue: NewSessionModel(
             source: client, initialProject: initialProject, cache: cache))
+        _mentions = State(initialValue: TaskMentionModel(client: client))
         self.onStarted = onStarted
     }
 
@@ -510,6 +515,7 @@ struct NewSessionView: View {
                     text: $model.prompt,
                     focused: $composerFocused,
                     maxLines: 6,
+                    caret: $composerCaret,
                     onPasteImages: { images in
                         pictures = PictureComposer.load(
                             pasted: images, current: pictures
@@ -533,6 +539,7 @@ struct NewSessionView: View {
                 }
             }
         }
+        .taskMentions(text: $model.prompt, caret: $composerCaret, project: model.selectedProject, model: mentions)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         // Mirror the draft into the model so `canStart` sees a picture-only

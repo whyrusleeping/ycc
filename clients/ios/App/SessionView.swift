@@ -22,6 +22,10 @@ struct SessionView: View {
     /// `@FocusState` because the field is the UIKit-backed `ComposerTextField`,
     /// which exists so an image on the clipboard can be pasted in-field).
     @State private var composerFocused = false
+    /// The composer's caret while focused (drives `#123` task mentions).
+    @State private var composerCaret: Int?
+    /// The backlog `#123` mentions suggest from, loaded on the first one.
+    @State private var mentions: TaskMentionModel
     /// Keyboard overlap for manual avoidance of the bottom chrome — see
     /// KeyboardObserver for why the automatic keyboard safe area is not used.
     @StateObject private var keyboard = KeyboardObserver()
@@ -261,6 +265,7 @@ struct SessionView: View {
         self.listedLive = live
         let cached = models?.lookup(project: project, sessionID: sessionID, owner: client)
         _model = State(initialValue: cached ?? make())
+        _mentions = State(initialValue: TaskMentionModel(client: client))
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         self.title = trimmed.isEmpty
             ? (live ? "Live session" : "Session")
@@ -810,6 +815,7 @@ struct SessionView: View {
                     focused: $composerFocused,
                     maxLines: 5,
                     autocorrectionDisabled: suppressAutocorrect,
+                    caret: $composerCaret,
                     onPasteImages: { images in
                         pictures = PictureComposer.load(
                             pasted: images, current: pictures
@@ -833,6 +839,7 @@ struct SessionView: View {
                 )
             }
         }
+        .taskMentions(text: $draft, caret: $composerCaret, project: project, model: mentions)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         // Covers the picker and pasted images alike.

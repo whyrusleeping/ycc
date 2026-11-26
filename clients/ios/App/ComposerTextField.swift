@@ -16,6 +16,9 @@ import UIKit
 /// - Return inserts a newline; sending is only via the explicit send control,
 /// - the autocorrect-suppression pulse (see SessionView.send()),
 /// - `.disabled(...)` support via the SwiftUI environment.
+///
+/// It also reports the caret (for `#123` task mentions) and can place it after
+/// a programmatic text change.
 struct ComposerTextField: View {
     let placeholder: String
     @Binding var text: String
@@ -28,6 +31,10 @@ struct ComposerTextField: View {
     /// Pulsed true for a runloop turn after sending — makes the keyboard drop a
     /// pending autocorrection instead of committing it into the cleared draft.
     var autocorrectionDisabled: Bool = false
+    /// The caret as a UTF-16 offset while the field is focused with an empty
+    /// selection, else nil. Setting it alongside `text` places the caret
+    /// after that programmatic edit.
+    var caret: Binding<Int?>? = nil
     /// Receives pictures pasted into the field (long-press → Paste, or ⌘V).
     let onPasteImages: @MainActor ([UIImage]) -> Void
 
@@ -36,6 +43,7 @@ struct ComposerTextField: View {
             placeholder: placeholder,
             text: $text,
             focused: focused,
+            caret: caret,
             maxLines: maxLines,
             autocorrectionDisabled: autocorrectionDisabled,
             onPasteImages: onPasteImages
@@ -92,6 +100,7 @@ private struct Representable: UIViewRepresentable {
     let placeholder: String
     @Binding var text: String
     let focused: Binding<Bool>?
+    let caret: Binding<Int?>?
     let maxLines: Int
     let autocorrectionDisabled: Bool
     let onPasteImages: @MainActor ([UIImage]) -> Void
@@ -151,7 +160,14 @@ private struct Representable: UIViewRepresentable {
         // replacing the text mid-composition breaks the IME. The binding and
         // the view reconverge on the next non-marked change.
         if view.markedTextRange == nil, view.text != text {
+            // Programmatic edits move the selection; the caret binding is not
+            // written back from inside this update pass.
+            coordinator.applyingUpdate = true
             view.text = text
+            if let at = caret?.wrappedValue, at <= (text as NSString).length {
+                view.selectedRange = NSRange(location: at, length: 0)
+            }
+            coordinator.applyingUpdate = false
         }
         view.placeholderLabel.text = placeholder
         view.placeholderLabel.isHidden = !view.text.isEmpty
@@ -199,8 +215,22 @@ private struct Representable: UIViewRepresentable {
         /// The focus the binding last asked for; consulted when the view
         /// finally lands in a window (see `onDidMoveToWindow`).
         var wantsFocus: Bool?
+        /// Set while `updateUIView` writes the text, so the selection change
+        /// it causes does not write the caret binding mid-update.
+        var applyingUpdate = false
 
         init(_ parent: Representable) { self.parent = parent }
+
+        private func reportCaret(_ textView: UITextView) {
+            guard let caret = parent.caret, !applyingUpdate else { return }
+            let range = textView.selectedRange
+            let value: Int? = textView.isFirstResponder && range.length == 0 ? range.location : nil
+            if caret.wrappedValue != value { caret.wrappedValue = value }
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            reportCaret(textView)
+        }
 
         func textViewDidChange(_ textView: UITextView) {
             if let view = textView as? ComposerPasteTextView {
@@ -211,18 +241,21 @@ private struct Representable: UIViewRepresentable {
             if parent.text != textView.text {
                 parent.text = textView.text
             }
+            reportCaret(textView)
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             if let focused = parent.focused, focused.wrappedValue != true {
                 focused.wrappedValue = true
             }
+            reportCaret(textView)
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
             if let focused = parent.focused, focused.wrappedValue != false {
                 focused.wrappedValue = false
             }
+            if let caret = parent.caret, caret.wrappedValue != nil { caret.wrappedValue = nil }
         }
     }
 }
