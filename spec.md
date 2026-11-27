@@ -307,6 +307,11 @@ Session event logs are the source of detailed execution and usage history; git
 retains the prior task body and is the reversible migration/rollback path. Backlog summaries and
 dependency checks read frontmatter only, while lookup by id loads the selected body in full.
 
+An optional `not_before` frontmatter field defers a `todo` or `in_progress` task until that
+instant. `create_task` and `update_task` take RFC 3339 timestamps, stored in UTC; `update_task`
+with an empty `not_before` clears it. The field is omitted when unset. Once the time is reached,
+eligibility depends on the usual status and dependency gates without a task file change.
+
 Task-sizing guidance favors coherent, independently verifiable outcomes over per-step tasks.
 Ordinary implementation steps stay within the current task; separate deliverable, dependency,
 risk-isolation, or evidenced context/resource boundaries justify splitting. Further splits are
@@ -1125,7 +1130,7 @@ the context and tells the model it may now implement. Only chat sessions take th
 ### 9.1 Unattended work loop
 
 The daemon repeatedly starts fresh work sessions while ready tasks remain. It skips proposed,
-blocked, in-review, dependency-blocked, and done tasks, and ready tasks held by another live session
+blocked, in-review, dependency-blocked, deferred, and done tasks, and ready tasks held by another live session
 in the same workspace. A session holds every task it has focused while it is mid-turn, paused, or
 waiting on its own background work or a question; once it is idle between turns, an in_progress
 task it left is ordinary continuation work. Work sessions' backlog views mark held tasks not
@@ -1160,13 +1165,14 @@ whose own backlog file, or a file claimed by a session that focused them, is unc
 confirm "start anyway"; the loop digest and completion notification keep that list.
 A loop whose only ready work is held
 finishes saying which sessions hold it rather
-than starting sessions that would decline to collide. Unchanged task metadata after a session
+than starting sessions that would decline to collide. When no work is immediately available and
+no loop sessions remain, the loop finishes; its outcome lists any deferred tasks and the earliest
+`not_before` rather than keeping a session alive until then. Unchanged task metadata after a session
 is not a stop condition, and there is no fixed retry count for unfinished ready work. A completed
 session made progress only through its own commits or its own changes to the backlog files of
-tasks it focused that existed when it started (status, body or work log, or removal): the file's
+tasks it focused that existed when it started (status, deferral, body or work log, or removal): the file's
 content changed and the session's tools recorded a `doc_updated` event for the task.
-`update_task` to the status a task already has (such as claiming a task already in progress)
-records its event as unchanged, and a byte-identical Write records none. Creating tasks alone, or
+`update_task` that changes neither status nor deferral records its event as unchanged, and a byte-identical Write records none. Creating tasks alone, or
 other sessions' edits, is not progress. A session without progress typically found
 every ready task waiting on time or an outside result. The loop then waits before re-deciding,
 escalating 2, 5, 15 and 30 minutes, then hourly, shown as waiting with wait kind `no_progress`;
@@ -1207,8 +1213,11 @@ finished sessions apart from live ones.
 A loop session that has ended its turn and for 30 seconds can be resumed only by its own
 background shell jobs, with no subagent run outstanding, counts as waiting rather than working.
 The loop then starts its next session if ready, unheld work exists. Loop sessions are told to
-end their turn with a progress report, rather than block in a long `wait`, when all that remains
-is a long-running shell job. A loop session's `wait` on its shell jobs alone returns after at
+end their turn with a progress report for active compute or a short background wait (minutes to
+about 1–2 hours). For a scheduled check-in hours or days away they set `not_before` and finish,
+or commit the finished work and create a deferred check-in task. For another task they use
+`depends_on`; for an unscheduled external or human event they mark the task `blocked` with the
+unblock condition rather than sleeping or holding an indefinite stream. A loop session's `wait` on its shell jobs alone returns after at
 most 10 minutes, and its "still running" result repeats that advice. A waiting session stays
 live with its task hold, file claims and
 jobs. Waiting sessions do not count against the working slots, but a waiting session's job
@@ -1216,7 +1225,9 @@ continuation must take a free slot, so a completion that arrives while other loo
 the slots stays queued and wakes the session once one frees; a woken waiting session counts as
 working. `[work_loop] max_waiting` in `.ycc/config.toml` caps waiting sessions (default 2; 0
 makes the loop wait for every session to end); a session is let wait only while a place under
-the cap is free. At the cap, while woken waiting sessions fill the slots, or when the only
+the cap is free. A shell-idle session past the grace period with no place under the cap keeps
+its foreground slot but shows `waiting`, not `working`; it is still collected and accounted for
+as a foreground session. At the cap, while woken waiting sessions fill the slots, or when the only
 ready work is held by the loop's own sessions, the loop starts nothing; with no session working
 it waits with wait kind `sessions_waiting` until one ends. A reached budget still stops it. When a
 waiting session ends, its commits, usage, verdicts and report count toward the digest and loop

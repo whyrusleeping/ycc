@@ -100,7 +100,7 @@ func (f *parallelFake) runner(wl *workLoop) func(context.Context) (loopSessRec, 
 		if err != nil {
 			return loopSessRec{id: s.ID}, false, err
 		}
-		task, _ := pickReadyTask(tasks, f.m.heldTasks(f.ws, s.ID))
+		task, _, _ := pickReadyTask(tasks, f.m.heldTasks(f.ws, s.ID))
 		if task != "" {
 			s.emitter.Emit(event.TaskFocus, map[string]any{"task": task})
 			wl.claimRun(run, task)

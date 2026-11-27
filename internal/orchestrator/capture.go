@@ -104,6 +104,7 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 			"title":       tools.StrProp("short, imperative task title"),
 			"description": tools.StrProp("description and acceptance criteria (markdown)"),
 			"priority":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "description": "1 (highest) .. 5; default 3"},
+			"not_before":  tools.StrProp("defer work until this RFC 3339 timestamp (stored in UTC)"),
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "task ids this depends on"},
 			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "spec refs: entry-point section title or path#Section"},
 		}, "title"),
@@ -111,7 +112,7 @@ func captureCreateTask(d *Deps) *gollama.Tool {
 			title, _ := tools.GetString(params, "title")
 			desc, _ := tools.GetString(params, "description")
 			body := docs.TaskBody(desc)
-			t, err := d.Docs.Create(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"))
+			t, err := createScheduledTask(d, params, title, body, docs.StatusTodo)
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil
 			}

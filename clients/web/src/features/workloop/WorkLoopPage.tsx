@@ -145,11 +145,11 @@ export function WorkLoopPage({ project }: { project: string }) {
       install(resp.loop ?? null);
       const next = resp.loop;
       // Sessions the loop let wait keep running and do not delay the stop.
-      const draining = !next || next.parallel <= 0 || next.slots.some((s) => !s.detached && s.state === "working");
+      const draining = !next || next.parallel <= 0 || next.slots.some((s) => !s.detached);
       const pending = !draining
         ? "Stopping…"
         : next && isParallel(next)
-          ? "Stopping once the loop’s working sessions finish…"
+          ? "Stopping once the loop’s foreground sessions finish…"
           : "Stopping after the current session…";
       toast(next && loopState(next) === "finished" ? "Work loop stopped." : pending, "info");
     } catch (err) {

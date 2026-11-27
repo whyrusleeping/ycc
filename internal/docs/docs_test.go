@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCreateGetRoundTrip(t *testing.T) {
@@ -36,6 +37,34 @@ func TestCreateGetRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(got.Body, "Do the thing.") {
 		t.Fatalf("body lost: %q", got.Body)
+	}
+}
+
+func TestScheduledEligibility(t *testing.T) {
+	due := time.Date(2026, 11, 28, 0, 5, 0, 123, time.UTC)
+	s := NewStore(t.TempDir())
+	task, err := s.CreateScheduled("check deployment", "", 2, nil, nil, StatusInProgress, due)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := s.Get(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := EligibilityAt(loaded, nil, due.Add(-1)); e.Actionable || e.Gate != EligibilityDeferred || !e.DeferredUntil.Equal(due) {
+		t.Fatalf("before due: %+v", e)
+	}
+	for _, now := range []time.Time{due, due.Add(1)} {
+		if e := EligibilityAt(loaded, nil, now); !e.Actionable || e.Gate != EligibilityReadyToContinue {
+			t.Fatalf("at/past due: %+v", e)
+		}
+	}
+	if _, err := s.Update(task.ID, func(t *Task) { t.NotBefore = time.Time{} }); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(task.Path)
+	if err != nil || strings.Contains(string(data), "not_before:") {
+		t.Fatalf("cleared field: %s, %v", data, err)
 	}
 }
 

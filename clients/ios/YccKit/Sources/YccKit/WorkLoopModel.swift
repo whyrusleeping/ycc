@@ -554,15 +554,15 @@ public final class WorkLoopModel {
                 ? "The loop is waiting for the provider; stopping ends the wait at once. \(noMore)"
                 : "The current session finishes its work; the daemon will not pick another backlog task."
         }
-        let detached = loop.slots.filter { $0.detached || $0.state == "waiting" }
-        let working = loop.slots.filter { !$0.detached && $0.state == "working" }.count
+        let detached = loop.slots.filter { $0.detached }
+        let foreground = loop.slots.count - detached.count
         let woken = detached.filter { $0.state == "working" }.count
         var parts: [String] = []
         if providerWait {
             parts.append("The loop is waiting for the provider; stopping ends the wait at once.")
         }
-        if working > 0 {
-            parts.append(working == 1 ? "1 working session finishes its work." : "\(working) working sessions finish their work.")
+        if foreground > 0 {
+            parts.append(foreground == 1 ? "1 foreground session finishes its work." : "\(foreground) foreground sessions finish their work.")
         }
         let n = detached.count
         if n > 0 && woken == 0 {

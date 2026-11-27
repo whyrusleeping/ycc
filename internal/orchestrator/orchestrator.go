@@ -463,7 +463,7 @@ func (d *Deps) attribution() *git.Attribution {
 	return &git.Attribution{
 		Mine: mine, Foreign: foreign, Unattributed: unattributed,
 		Bookkeeping: BookkeepingPaths(d.Workspace, d.Docs),
-		Lines: BookkeepingLines(d.Workspace, d.Docs, d.Ownership, scope),
+		Lines:       BookkeepingLines(d.Workspace, d.Docs, d.Ownership, scope),
 	}
 }
 
@@ -637,7 +637,7 @@ func listBacklog(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name: "list_backlog",
 		Description: "List backlog tasks with id, status, priority, title, dependencies, and work-loop eligibility. " +
-			"Only todo and in_progress tasks whose dependencies all exist and are done are actionable. Blocked, proposed, " +
+			"Only todo and in_progress tasks whose dependencies are done and whose not_before has passed are actionable. Blocked, proposed, " +
 			"and in_review tasks retain their explicit gates even when dependencies are satisfied. Completed (done) tasks " +
 			"are hidden unless include_done is true.",
 		Params: tools.Obj(map[string]any{"include_done": tools.BoolProp("include completed (done) tasks in the output (default false)")}),
@@ -668,6 +668,10 @@ func listBacklog(d *Deps) *gollama.Tool {
 				}
 				eligibility := docs.EligibilityFor(t, byID)
 				mark, requirement := taskEligibilityText(&eligibility, held[t.ID])
+				if !t.NotBefore.IsZero() && eligibility.Gate != docs.EligibilityDeferred {
+					schedule := "; " + strings.TrimSpace(notBeforeLine(t))
+					mark, requirement = mark+schedule, requirement+schedule
+				}
 				if eligibility.Actionable {
 					actionable = append(actionable, fmt.Sprintf("%s (%s)", t.ID, requirement))
 				}
@@ -752,6 +756,8 @@ func backlogEligibilityText(e docs.TaskEligibility) (mark, requirement string) {
 		if e.Actionable {
 			return "READY TO CONTINUE", "ready to continue"
 		}
+	case docs.EligibilityDeferred:
+		blockers = append(blockers, "deferred until not_before: "+e.DeferredUntil.UTC().Format(time.RFC3339Nano))
 	case docs.EligibilityExplicitBlocker:
 		blockers = append(blockers, "explicit blocked status remains; resolve the recorded blocker, then explicitly change status to todo or in_progress")
 	case docs.EligibilityUserAcceptance:
@@ -1853,14 +1859,22 @@ func commitTool(d *Deps) *gollama.Tool {
 func updateTask(d *Deps) *gollama.Tool {
 	return &gollama.Tool{
 		Name:        "update_task",
-		Description: "Update a task's status (proposed, todo, in_progress, in_review, done, blocked). Promoting a 'proposed' task to 'todo' marks it accepted by the user.",
+		Description: "Update a task's status or scheduled check-in (not_before). Promoting a 'proposed' task to 'todo' marks it accepted by the user.",
 		Params: tools.Obj(map[string]any{
-			"task_id": tools.StrProp("task id"),
-			"status":  map[string]any{"type": "string", "enum": []string{"proposed", "todo", "in_progress", "in_review", "done", "blocked"}, "description": "new status"},
-		}, "task_id", "status"),
+			"task_id":    tools.StrProp("task id"),
+			"status":     map[string]any{"type": "string", "enum": []string{"proposed", "todo", "in_progress", "in_review", "done", "blocked"}, "description": "new status"},
+			"not_before": tools.StrProp("RFC 3339 timestamp to defer work; empty string clears the deferral"),
+		}, "task_id"),
 		Call: func(ctx context.Context, params any) (*gollama.ToolResult, error) {
 			id, _ := tools.GetString(params, "task_id")
 			status, _ := tools.GetString(params, "status")
+			notBefore, setTime, err := notBeforeParam(params, true)
+			if err != nil {
+				return tools.ErrResult("update_task: %v", err), nil
+			}
+			if status == "" && !setTime {
+				return tools.ErrResult("update_task: supply status or not_before"), nil
+			}
 			// Starting a task claims it as the session's focus; the claim comes
 			// first so a task another live session holds is left unchanged.
 			if status == "in_progress" {
@@ -1871,18 +1885,26 @@ func updateTask(d *Deps) *gollama.Tool {
 					return heldError("update_task", id, holder), nil
 				}
 			}
-			var was docs.Status // read under the store lock, so a sibling's change is not ours
-			if _, err := d.Docs.Update(id, func(t *docs.Task) { was, t.Status = t.Status, docs.Status(status) }); err != nil {
+			var changed bool // compare under the store lock, so a sibling's change is not ours
+			t, err := d.Docs.Update(id, func(t *docs.Task) {
+				if status != "" && t.Status != docs.Status(status) {
+					t.Status, changed = docs.Status(status), true
+				}
+				if setTime && !t.NotBefore.Equal(notBefore) {
+					t.NotBefore, changed = notBefore, true
+				}
+			})
+			if err != nil {
 				return tools.ErrResult("update_task: %v", err), nil
 			}
-			data := map[string]any{"task": id, "status": status}
-			if was == docs.Status(status) {
+			data := map[string]any{"task": id, "status": string(t.Status)}
+			if !changed {
 				// Re-setting the current status (e.g. claiming a task already
 				// in progress) changes nothing; loop progress ignores it.
 				data["unchanged"] = true
 			}
 			d.Emitter.Emit(event.DocUpdated, data)
-			return tools.OkResult(fmt.Sprintf("task %s -> %s", id, status)), nil
+			return tools.OkResult(fmt.Sprintf("task %s -> %s%s", id, t.Status, notBeforeLine(t))), nil
 		},
 	}
 }
@@ -2322,9 +2344,16 @@ func aggregateReviewsView(results []reviewResult) *tools.ResultView {
 	return v
 }
 
+func notBeforeLine(t *docs.Task) string {
+	if t.NotBefore.IsZero() {
+		return ""
+	}
+	return "\nnot_before: " + t.NotBefore.UTC().Format(time.RFC3339Nano)
+}
+
 func renderTask(t *docs.Task) string {
-	return fmt.Sprintf("id: %s\ntitle: %s\nstatus: %s\npriority: %d\ndepends_on: %s\nspec_refs: %s\n\n%s",
-		t.ID, t.Title, t.Status, t.Priority, strings.Join(t.DependsOn, ","), strings.Join(t.SpecRefs, ","), t.Body)
+	return fmt.Sprintf("id: %s\ntitle: %s\nstatus: %s\npriority: %d%s\ndepends_on: %s\nspec_refs: %s\n\n%s",
+		t.ID, t.Title, t.Status, t.Priority, notBeforeLine(t), strings.Join(t.DependsOn, ","), strings.Join(t.SpecRefs, ","), t.Body)
 }
 
 // singleLine collapses whitespace runs (including newlines) to single spaces.

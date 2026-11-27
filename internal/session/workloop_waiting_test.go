@@ -361,6 +361,67 @@ func newFakeWaiterLoop(t *testing.T, tasks int, config string) (*Manager, string
 	return m, ws, f
 }
 
+// Two foreground sessions can go shell-idle after both have been admitted.
+// Only one fits under the detached cap. The other still drains as foreground.
+func TestWorkLoopCappedForegroundWait(t *testing.T) {
+	starts := make(chan *Session, 2)
+	m, _, ws := loopTestManager(t, func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
+		wl.waitGrace, wl.maxWaiting = 0, 1
+		wl.startSession = func(Config) (*Session, error) {
+			select {
+			case s := <-starts:
+				wl.m.mu.Lock()
+				wl.m.sessions[s.ID] = s
+				wl.m.mu.Unlock()
+				return s, nil
+			default:
+				return nil, fmt.Errorf("unexpected third session")
+			}
+		}
+		return wl.realRunSession
+	})
+	defer m.ReclaimAll()
+	store := docs.NewStore(ws)
+	for _, title := range []string{"first", "second"} {
+		if _, err := store.Create(title, "", 1, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, jr, job := jobSession(t, "first", ws, "0001", "bash")
+	first.setStatus(event.StatusRunning)
+	second, _, _ := jobSession(t, "second", ws, "0002", "bash")
+	starts <- first
+	starts <- second
+	if _, err := m.StartWorkLoopWith("demo", WorkLoopOptions{Parallel: 2}); err != nil {
+		t.Fatal(err)
+	}
+	awaitCond(t, "the second session to detach", func() bool {
+		s, _ := m.GetWorkLoop("demo")
+		return len(s.Waiting) == 1 && s.Waiting[0].SessionID == second.ID
+	})
+	first.setIdle(true)
+	awaitCond(t, "both the capped foreground slot and the loop to show waiting", func() bool {
+		s, _ := m.GetWorkLoop("demo")
+		return s.State == "waiting" && s.WaitKind == waitKindSessionsWaiting && len(s.Waiting) == 1 && len(s.Slots) == 2 &&
+			s.Slots[0].SessionID == first.ID && !s.Slots[0].Detached && s.Slots[0].State == "waiting" && s.Slots[1].State == "waiting"
+	})
+	first.setStatus(event.StatusRunning)
+	awaitCond(t, "the foreground slot and loop to report work again", func() bool {
+		s, _ := m.GetWorkLoop("demo")
+		return s.State == "running" && len(s.Slots) == 2 && s.Slots[0].State == "working"
+	})
+	if _, err := m.StopWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	job.Finish(jobs.Done, "checked")
+	jr.DrainFinished("coordinator")
+	first.setIdle(false)
+	final := waitLoopFinished(t, m, "demo")
+	if final.SessionsRun != 1 || final.Sessions[0].SessionID != first.ID || len(final.Waiting) != 1 || final.Waiting[0].SessionID != second.ID {
+		t.Fatalf("capped foreground record lost or spuriously detached: %+v", final)
+	}
+}
+
 func TestWorkLoopWaitingCap(t *testing.T) {
 	m, _, f := newFakeWaiterLoop(t, 3, "[work_loop]\nmax_waiting = 2\n")
 	defer m.ReclaimAll()
@@ -716,7 +777,7 @@ func TestStopNamesWokenWaiterAsWorking(t *testing.T) {
 	m, _, ws := loopTestManager(t, func(wl *workLoop) func(context.Context) (loopSessRec, bool, error) {
 		wl.waitingRecheck = 10 * time.Millisecond
 		return func(context.Context) (loopSessRec, bool, error) {
-			return loopSessRec{waiter: &loopWaiter{id: "woken", working: func() bool { return true },
+			return loopSessRec{waiter: &loopWaiter{id: "woken", awake: true, working: func() bool { return true },
 				resume: func(release <-chan struct{}) loopWaitResult { <-release; return loopWaitResult{released: true} }}}, false, nil
 		}
 	})
@@ -727,9 +788,9 @@ func TestStopNamesWokenWaiterAsWorking(t *testing.T) {
 	if _, err := m.StartWorkLoop("demo"); err != nil {
 		t.Fatal(err)
 	}
-	awaitCond(t, "the loop to wait on its working session", func() bool {
+	awaitCond(t, "the loop to show its working session", func() bool {
 		s, _ := m.GetWorkLoop("demo")
-		return s.WaitKind == waitKindSessionsWaiting
+		return s.State == "running" && len(s.Slots) == 1 && s.Slots[0].Detached && s.Slots[0].State == "working"
 	})
 	if _, err := m.StopWorkLoop("demo"); err != nil {
 		t.Fatal(err)
@@ -887,9 +948,9 @@ func TestSlotFreesWithTheEndedSessionsRecord(t *testing.T) {
 	if _, err := m.StartWorkLoop("demo"); err != nil {
 		t.Fatal(err)
 	}
-	awaitCond(t, "the loop to wait on its woken session", func() bool {
+	awaitCond(t, "the woken waiter to hold the working slot", func() bool {
 		s, _ := m.GetWorkLoop("demo")
-		return s.WaitKind == waitKindSessionsWaiting
+		return s.State == "running" && len(s.Slots) == 1 && s.Slots[0].Detached && s.Slots[0].State == "working"
 	})
 	close(end)
 	final := waitLoopFinished(t, m, "demo")

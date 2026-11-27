@@ -703,6 +703,7 @@ final class WorkLoopModelTests: XCTestCase {
             states.map { state in
                 var s = Ycc_V1_WorkLoopSlot()
                 s.state = state
+                s.detached = state == "waiting"
                 s.sessionID = "s"
                 return s
             }
@@ -713,18 +714,19 @@ final class WorkLoopModelTests: XCTestCase {
         l.parallel = 4
         l.slots = slots(["working", "working", "working", "waiting"])
         XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: l),
-                       "3 working sessions finish their work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.")
+                       "3 foreground sessions finish their work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.")
         var waiting = loop(state: "waiting", waitKind: "sessions_waiting")
         waiting.parallel = 2
         waiting.slots = slots(["waiting", "waiting"])
+        waiting.slots[0].detached = false
         XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: waiting),
-                       "2 sessions waiting on their background jobs keep running. The daemon will not pick another backlog task.")
+                       "1 foreground session finishes its work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.")
         var mixed = loop(state: "running")
         mixed.parallel = 2
         mixed.slots = slots(["working", "working", "waiting"])
         mixed.slots[1].detached = true
         XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: mixed),
-                       "1 working session finishes its work. 2 sessions let wait on background jobs keep running (1 working again). The daemon will not pick another backlog task.")
+                       "1 foreground session finishes its work. 2 sessions let wait on background jobs keep running (1 working again). The daemon will not pick another backlog task.")
         var provider = loop(state: "waiting", waitKind: "rate_limit")
         provider.parallel = 2
         XCTAssertEqual(WorkLoopModel.stopConfirmMessage(for: provider),

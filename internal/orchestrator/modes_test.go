@@ -202,6 +202,45 @@ func TestWorkCoordinatorDirectImplementation(t *testing.T) {
 	}
 }
 
+func TestTaskDeferralTools(t *testing.T) {
+	d := depsFor(t)
+	ctx := context.Background()
+	create := createTask(d)
+	params := map[string]any{"title": "check deployment", "not_before": "tomorrow"}
+	if r, _ := create.Call(ctx, params); !r.IsError {
+		t.Fatal("created task with invalid timestamp")
+	}
+	params["not_before"] = "9999-12-31T23:30:00-01:00"
+	if r, _ := create.Call(ctx, params); !r.IsError {
+		t.Fatal("created task with unrepresentable UTC year")
+	}
+	params["not_before"] = "2099-01-01T02:00:00+02:00"
+	if r, _ := create.Call(ctx, params); r.IsError {
+		t.Fatal(r.Content)
+	}
+	id := map[string]any{"task_id": "0001"}
+	update := updateTask(d)
+	id["not_before"] = "2099-01-12"
+	if r, _ := update.Call(ctx, id); !r.IsError {
+		t.Fatal("accepted date without time")
+	}
+	delete(id, "not_before")
+	for _, tool := range []*gollama.Tool{listBacklog(d), getTask(d)} {
+		r, _ := tool.Call(ctx, id)
+		if !strings.Contains(r.Content, "NOT ACTIONABLE") || !strings.Contains(r.Content, "not_before: 2099-01-01T00:00:00Z") {
+			t.Fatal(r.Content)
+		}
+	}
+	id["not_before"] = ""
+	if r, _ := update.Call(ctx, id); r.IsError {
+		t.Fatal(r.Content)
+	}
+	r, _ := getTask(d).Call(ctx, id)
+	if !strings.Contains(r.Content, "[READY TO START]") || strings.Contains(r.Content, "not_before:") {
+		t.Fatal(r.Content)
+	}
+}
+
 func TestListBacklogUsesWorkLoopEligibility(t *testing.T) {
 	d := depsFor(t)
 	done, _ := d.Docs.Create("done dependency", "", 1, nil, nil)

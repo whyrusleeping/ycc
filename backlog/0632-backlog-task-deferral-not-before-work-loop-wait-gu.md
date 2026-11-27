@@ -1,7 +1,7 @@
 ---
 id: "0632"
 title: Backlog task deferral (not_before), work-loop wait guidance, and capped-waiter state fix
-status: todo
+status: done
 priority: 2
 created: "2026-11-27"
 updated: "2026-11-27"
@@ -49,4 +49,8 @@ Related: 0597 (work loop moves on while a session waits on its own shell jobs, d
 - A foreground loop session idle on shell jobs at the `max_waiting` cap is reported as `"waiting"` in `WorkLoop.Slots`, and a loop whose foreground and waiting sessions are all idle on shell jobs reports `"waiting"` (`sessions_waiting`) rather than `"running"`, covered by unit tests in `internal/session/workloop_waiting_test.go`.
 - `spec.md` (§6.2 and §9.1) documents `not_before` and the capped-waiter reporting behavior.
 
-## Work log
+## Outcome
+
+Added RFC 3339 not_before to task tools, eligibility and work-loop outcomes. Deferring a focused task counts as progress; a loop with only deferred work finishes and names the earliest check-in. Shell-idle foreground slots at the cap report waiting without detaching, including in restored digests and client stop confirmations. Verified with go test ./..., repeated race tests, web build/tests, macOS Swift tests and an iOS simulator build and dialog check.
+
+Commit: Defer scheduled backlog work and report capped foreground waits accurately

@@ -218,7 +218,10 @@ func TestInterruptedWorkLoopReportsWaitingSessions(t *testing.T) {
 		loopID: "loop_with_waiters", project: filepath.Base(ws), workspace: ws,
 		state: "running", startedAt: time.Now().Add(-2 * time.Hour).UTC(),
 		waiters: []*loopWaiter{{id: "s_wait", focus: "0042", since: since}, {id: "s_other", since: since}},
-		lanes:   []*loopLane{{run: &loopRun{id: "s_work", focus: "0043", started: since}}},
+		lanes: []*loopLane{
+			{run: &loopRun{id: "s_work", focus: "0043", started: since}},
+			{index: 1, run: &loopRun{id: "s_capped", started: since, cappedWait: true}},
+		},
 	}
 	old.persist()
 
@@ -227,7 +230,7 @@ func TestInterruptedWorkLoopReportsWaitingSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "loop interrupted: daemon restarted; sessions were working: s_work (0043); sessions were waiting on background jobs: s_wait (0042), s_other"
+	want := "loop interrupted: daemon restarted; sessions were working: s_work (0043); sessions were waiting on background jobs: s_capped, s_wait (0042), s_other"
 	if got == nil || got.State != "finished" || got.Outcome != want {
 		t.Fatalf("restored loop = %+v", got)
 	}

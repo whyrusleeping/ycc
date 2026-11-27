@@ -766,6 +766,29 @@ func TestWorkLoopEmptyBacklogDoesNotNotifyError(t *testing.T) {
 	}
 }
 
+func TestWorkLoopOnlyDeferredTasks(t *testing.T) {
+	m, _, ws := loopTestManager(t, func(*workLoop) func(context.Context) (loopSessRec, bool, error) {
+		return func(context.Context) (loopSessRec, bool, error) {
+			return loopSessRec{}, false, fmt.Errorf("unexpected start")
+		}
+	})
+	defer m.ReclaimAll()
+	store := docs.NewStore(ws)
+	due := time.Now().UTC().Add(48 * time.Hour)
+	for _, when := range []time.Time{due.Add(time.Hour), due} {
+		if _, err := store.CreateScheduled("observe", "", 3, nil, nil, docs.StatusTodo, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.StartWorkLoop("demo"); err != nil {
+		t.Fatal(err)
+	}
+	s := waitLoopFinished(t, m, "demo")
+	if s.SessionsRun != 0 || !strings.Contains(s.Outcome, "deferred tasks: 0001, 0002; earliest not_before: "+due.Format(time.RFC3339Nano)) {
+		t.Fatalf("deferred-only loop: %+v", s)
+	}
+}
+
 func TestWorkLoopDrainsBacklogAndPushesDigest(t *testing.T) {
 	// The fake session runner marks the top-ready task done on each call and
 	// returns a canned per-session record, so the loop drains the backlog and then
@@ -1486,9 +1509,18 @@ func TestLoopProgressFromSessionToolEvents(t *testing.T) {
 		t.Fatalf("no-op claim plus a sibling edit counted as progress (focus %q, updated %v)", rec.focus, rec.updated)
 	}
 	start = backlogTaskHashes(store)
+	cursor := len(sess.Log().Snapshot())
+	dispatch("update_task", map[string]string{"task_id": task.ID, "not_before": "2099-01-01T00:00:00Z"})
+	deferral := loopSessRec{focus: task.ID}
+	deferral.addEvents(sess.Log().Snapshot()[cursor:])
+	if !focusedTasksChanged(start, backlogTaskHashes(store), deferral) {
+		t.Fatal("deferring the focused task without changing status did not count as progress")
+	}
+	start = backlogTaskHashes(store)
+	cursor = len(sess.Log().Snapshot())
 	dispatch("Edit", map[string]string{"file_path": task.Path, "old_string": "## Work log\n", "new_string": "## Work log\n- ruled out the cache\n"})
-	rec = loopSessRec{}
-	rec.addEvents(sess.Log().Snapshot())
+	rec = loopSessRec{focus: task.ID}
+	rec.addEvents(sess.Log().Snapshot()[cursor:])
 	if !focusedTasksChanged(start, backlogTaskHashes(store), rec) {
 		t.Fatalf("the session's own edit of %s was not progress (updated %v)", task.ID, rec.updated)
 	}

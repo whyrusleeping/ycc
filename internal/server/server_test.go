@@ -352,6 +352,9 @@ func TestBacklogRPCs(t *testing.T) {
 	if _, err := store.Complete(a.ID, "Finished first task.", "feat: first task"); err != nil {
 		t.Fatalf("Complete first: %v", err)
 	}
+	if _, err := store.CreateScheduled("observe", "", 1, nil, nil, docs.StatusTodo, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 
 	srv := New(session.NewManager(reg, ws))
 	ctx := context.Background()
@@ -360,8 +363,8 @@ func TestBacklogRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListBacklog: %v", err)
 	}
-	if len(list.Msg.Tasks) != 2 {
-		t.Fatalf("ListBacklog = %d tasks, want 2", len(list.Msg.Tasks))
+	if len(list.Msg.Tasks) != 3 || list.Msg.Tasks[2].Ready {
+		t.Fatalf("ListBacklog = %v, want 3 tasks with the last deferred", list.Msg.Tasks)
 	}
 	first := list.Msg.Tasks[0]
 	if first.GetId() != a.ID || !first.GetReady() || len(first.GetBlockedBy()) != 0 {

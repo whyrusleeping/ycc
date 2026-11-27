@@ -284,12 +284,12 @@ export function stopConfirmBody(loop: WorkLoopInfo | null | undefined): string {
       ? `The loop is waiting for the provider; stopping ends the wait at once. ${noMore}`
       : "The current session finishes its work; the daemon will not pick another backlog task.";
   }
-  const detached = loop.slots.filter((s) => s.detached || s.state === "waiting");
-  const working = loop.slots.filter((s) => !s.detached && s.state === "working").length;
+  const detached = loop.slots.filter((s) => s.detached);
+  const foreground = loop.slots.length - detached.length;
   const woken = detached.filter((s) => s.state === "working").length;
   const parts: string[] = [];
   if (providerWait) parts.push("The loop is waiting for the provider; stopping ends the wait at once.");
-  if (working > 0) parts.push(`${working === 1 ? "1 working session finishes its" : `${working} working sessions finish their`} work.`);
+  if (foreground > 0) parts.push(`${foreground === 1 ? "1 foreground session finishes its" : `${foreground} foreground sessions finish their`} work.`);
   const n = detached.length;
   if (n > 0 && woken === 0) {
     parts.push(n === 1 ? "1 session waiting on its background jobs keeps running." : `${n} sessions waiting on their background jobs keep running.`);

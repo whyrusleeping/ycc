@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/whyrusleeping/gollama"
 	"github.com/whyrusleeping/ycc/internal/docs"
@@ -265,6 +267,7 @@ func createTask(d *Deps) *gollama.Tool {
 			"description": tools.StrProp("markdown description and acceptance criteria"),
 			"priority":    map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "description": "1 (highest) .. 5; default 3"},
 			"status":      map[string]any{"type": "string", "enum": []string{"todo", "in_progress", "proposed"}, "description": "todo (default, eligible for the work loop) or in_progress (starting now; claims focus for this session) for accepted work; proposed for unaccepted ideas"},
+			"not_before":  tools.StrProp("defer work until this RFC 3339 timestamp (stored in UTC)"),
 			"depends_on":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "prerequisite task ids"},
 			"spec_refs":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "entry-point spec section title or path#Section"},
 		}, "title"),
@@ -276,7 +279,7 @@ func createTask(d *Deps) *gollama.Tool {
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil
 			}
-			t, err := d.Docs.CreateWithStatus(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"), status)
+			t, err := createScheduledTask(d, params, title, body, status)
 			if err != nil {
 				return tools.ErrResult("create_task: %v", err), nil
 			}
@@ -290,6 +293,38 @@ func createTask(d *Deps) *gollama.Tool {
 			return tools.OkResult(msg), nil
 		},
 	}
+}
+
+func createScheduledTask(d *Deps, params any, title, body string, status docs.Status) (*docs.Task, error) {
+	notBefore, _, err := notBeforeParam(params, false)
+	if err != nil {
+		return nil, err
+	}
+	return d.Docs.CreateScheduled(title, body, getInt(params, "priority", 3), getStrings(params, "depends_on"), getStrings(params, "spec_refs"), status, notBefore)
+}
+
+// time.Parse also accepts a one-digit hour, a comma fraction, and out-of-range zone offsets.
+var timestampSyntax = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$`)
+
+func notBeforeParam(params any, allowClear bool) (time.Time, bool, error) {
+	m, _ := params.(map[string]any)
+	raw, present := m["not_before"]
+	if !present {
+		return time.Time{}, false, nil
+	}
+	s, ok := raw.(string)
+	if ok && s == "" && allowClear {
+		return time.Time{}, true, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil || !timestampSyntax.MatchString(s) {
+		return time.Time{}, false, fmt.Errorf("not_before must be an RFC 3339 timestamp, e.g. 2026-11-28T00:05:00Z")
+	}
+	t = t.UTC()
+	if _, err := t.MarshalText(); err != nil || t.IsZero() {
+		return time.Time{}, false, fmt.Errorf("not_before cannot be stored as a UTC timestamp: %q", s)
+	}
+	return t, true, nil
 }
 
 // initialStatus reads create_task's optional "status" param: todo (default),

@@ -1698,12 +1698,13 @@ func (s *Server) ListBacklog(_ context.Context, req *connect.Request[v1.ListBack
 	}
 	byID := docs.StatusByID(tasks)
 	held := s.taskHolders(req.Msg.Project)
+	now := time.Now()
 	var out []*v1.BacklogTaskSummary
 	for _, t := range tasks {
 		blocking := docs.BlockingDeps(t, byID)
 		out = append(out, &v1.BacklogTaskSummary{
 			Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
-			DependsOn: t.DependsOn, Ready: len(blocking) == 0, BlockedBy: blocking, HeldBy: held[t.ID],
+			DependsOn: t.DependsOn, Ready: len(blocking) == 0 && !t.DeferredAt(now), BlockedBy: blocking, HeldBy: held[t.ID],
 		})
 	}
 	return connect.NewResponse(&v1.ListBacklogResponse{Tasks: out}), nil
@@ -1742,7 +1743,7 @@ func (s *Server) GetTask(_ context.Context, req *connect.Request[v1.GetTaskReque
 	return connect.NewResponse(&v1.GetTaskResponse{Task: &v1.TaskDetail{
 		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
-		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+		Body: t.Body, Ready: len(blocking) == 0 && !t.DeferredAt(time.Now()), BlockedBy: blocking, Path: t.Path,
 		HeldBy: s.taskHolders(req.Msg.Project)[t.ID],
 	}}), nil
 }
@@ -1864,7 +1865,7 @@ func (s *Server) UpdateTask(_ context.Context, req *connect.Request[v1.UpdateTas
 	return connect.NewResponse(&v1.UpdateTaskResponse{Task: &v1.TaskDetail{
 		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
-		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+		Body: t.Body, Ready: len(blocking) == 0 && !t.DeferredAt(time.Now()), BlockedBy: blocking, Path: t.Path,
 		HeldBy: s.taskHolders(req.Msg.Project)[t.ID],
 	}}), nil
 }
@@ -1920,7 +1921,7 @@ func (s *Server) CreateTask(_ context.Context, req *connect.Request[v1.CreateTas
 	return connect.NewResponse(&v1.CreateTaskResponse{Task: &v1.TaskDetail{
 		Id: t.ID, Title: t.Title, Status: string(t.Status), Priority: int32(t.Priority),
 		DependsOn: t.DependsOn, SpecRefs: t.SpecRefs, Created: t.Created, Updated: t.Updated,
-		Body: t.Body, Ready: len(blocking) == 0, BlockedBy: blocking, Path: t.Path,
+		Body: t.Body, Ready: len(blocking) == 0 && !t.DeferredAt(time.Now()), BlockedBy: blocking, Path: t.Path,
 	}}), nil
 }
 

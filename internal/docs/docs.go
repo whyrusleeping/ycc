@@ -60,14 +60,15 @@ const (
 // Task is one backlog item. The frontmatter fields round-trip through YAML; Body
 // is the markdown after the frontmatter; Path/Slug are filesystem metadata.
 type Task struct {
-	ID        string   `yaml:"id"`
-	Title     string   `yaml:"title"`
-	Status    Status   `yaml:"status"`
-	Priority  int      `yaml:"priority"`
-	Created   string   `yaml:"created"`
-	Updated   string   `yaml:"updated"`
-	DependsOn []string `yaml:"depends_on"`
-	SpecRefs  []string `yaml:"spec_refs"`
+	ID        string    `yaml:"id"`
+	Title     string    `yaml:"title"`
+	Status    Status    `yaml:"status"`
+	Priority  int       `yaml:"priority"`
+	Created   string    `yaml:"created"`
+	Updated   string    `yaml:"updated"`
+	NotBefore time.Time `yaml:"not_before,omitempty"`
+	DependsOn []string  `yaml:"depends_on"`
+	SpecRefs  []string  `yaml:"spec_refs"`
 
 	Body string `yaml:"-"`
 	Path string `yaml:"-"`
@@ -297,6 +298,7 @@ const (
 	EligibilityReadyToContinue EligibilityGate = "ready_to_continue"
 	EligibilityExplicitBlocker EligibilityGate = "explicit_blocker"
 	EligibilityUserAcceptance  EligibilityGate = "user_acceptance"
+	EligibilityDeferred        EligibilityGate = "deferred"
 	EligibilityReview          EligibilityGate = "review"
 	EligibilityComplete        EligibilityGate = "complete"
 	EligibilityUnknownStatus   EligibilityGate = "unknown_status"
@@ -311,12 +313,22 @@ type TaskEligibility struct {
 	BlockingDependencies  []string
 	MissingDependencies   []string
 	Gate                  EligibilityGate
+	DeferredUntil         time.Time
 }
 
 // EligibilityFor reports whether t may be selected for work. Only todo and
-// in-progress tasks whose declared dependencies all exist and are done are
-// actionable; no status is changed as a side effect.
+// in-progress tasks with satisfied dependencies and no future deferral are actionable.
 func EligibilityFor(t *Task, byID map[string]Status) TaskEligibility {
+	return EligibilityAt(t, byID, time.Now())
+}
+
+// DeferredAt reports whether the time gate currently applies to this task.
+func (t *Task) DeferredAt(now time.Time) bool {
+	return (t.Status == StatusTodo || t.Status == StatusInProgress) && now.Before(t.NotBefore)
+}
+
+// EligibilityAt evaluates the same gates at the supplied instant without modifying t.
+func EligibilityAt(t *Task, byID map[string]Status, now time.Time) TaskEligibility {
 	e := TaskEligibility{DependenciesSatisfied: true}
 	for _, dep := range t.DependsOn {
 		status, exists := byID[NormalizeID(dep)]
@@ -345,6 +357,9 @@ func EligibilityFor(t *Task, byID map[string]Status) TaskEligibility {
 		e.Gate = EligibilityComplete
 	default:
 		e.Gate = EligibilityUnknownStatus
+	}
+	if t.DeferredAt(now) {
+		e.Gate, e.DeferredUntil = EligibilityDeferred, t.NotBefore
 	}
 	e.Actionable = e.DependenciesSatisfied &&
 		(e.Gate == EligibilityReadyToStart || e.Gate == EligibilityReadyToContinue)
@@ -382,12 +397,13 @@ func (s *Store) Create(title, body string, priority int, dependsOn, specRefs []s
 // StatusProposed for ideas captured during ideation that the user has not yet
 // accepted. An empty status defaults to todo.
 func (s *Store) CreateWithStatus(title, body string, priority int, dependsOn, specRefs []string, status Status) (*Task, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.createLocked(title, body, priority, dependsOn, specRefs, status)
+	return s.CreateScheduled(title, body, priority, dependsOn, specRefs, status, time.Time{})
 }
 
-func (s *Store) createLocked(title, body string, priority int, dependsOn, specRefs []string, status Status) (*Task, error) {
+// CreateScheduled sets an optional time gate in the initial task write.
+func (s *Store) CreateScheduled(title, body string, priority int, dependsOn, specRefs []string, status Status, notBefore time.Time) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if strings.TrimSpace(title) == "" {
 		return nil, fmt.Errorf("title is required")
 	}
@@ -404,7 +420,7 @@ func (s *Store) createLocked(title, body string, priority int, dependsOn, specRe
 	}
 	t := &Task{
 		ID: id, Title: title, Status: status, Priority: priority,
-		Created: today, Updated: today,
+		Created: today, Updated: today, NotBefore: notBefore.UTC(),
 		DependsOn: dependsOn, SpecRefs: specRefs,
 		Body: ensureWorkLog(body), Slug: slugify(title),
 	}

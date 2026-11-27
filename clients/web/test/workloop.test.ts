@@ -263,23 +263,23 @@ describe("slots", () => {
   });
 
   it("states in the stop confirmation which sessions finish and which keep running", () => {
-    const slot = (state: string) => create(WorkLoopSlotSchema, { sessionId: "s", state });
+    const slot = (state: string, detached = state === "waiting") => create(WorkLoopSlotSchema, { sessionId: "s", state, detached });
     expect(stopConfirmBody(loop({ parallel: 4, slots: [slot("working"), slot("working"), slot("working"), slot("waiting")] }))).toBe(
-      "3 working sessions finish their work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.",
+      "3 foreground sessions finish their work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.",
     );
     expect(stopConfirmBody(loop({ parallel: 1, slots: [slot("working")] }))).toBe(
-      "1 working session finishes its work. The daemon will not pick another backlog task.",
+      "1 foreground session finishes its work. The daemon will not pick another backlog task.",
     );
     expect(
-      stopConfirmBody(loop({ state: "waiting", waitKind: "sessions_waiting", parallel: 2, slots: [slot("waiting"), slot("waiting")] })),
-    ).toBe("2 sessions waiting on their background jobs keep running. The daemon will not pick another backlog task.");
+      stopConfirmBody(loop({ state: "waiting", waitKind: "sessions_waiting", parallel: 2, slots: [slot("waiting", false), slot("waiting")] })),
+    ).toBe("1 foreground session finishes its work. 1 session waiting on its background jobs keeps running. The daemon will not pick another backlog task.");
     expect(stopConfirmBody(loop({ state: "waiting", waitKind: "rate_limit", parallel: 2 }))).toBe(
       "The loop is waiting for the provider; stopping ends the wait at once. The daemon will not pick another backlog task.",
     );
     // A session the loop let wait that a job woke works, but a stop leaves it running.
     const woken = create(WorkLoopSlotSchema, { sessionId: "w", state: "working", detached: true });
     expect(stopConfirmBody(loop({ parallel: 2, slots: [slot("working"), woken, slot("waiting")] }))).toBe(
-      "1 working session finishes its work. 2 sessions let wait on background jobs keep running (1 working again). The daemon will not pick another backlog task.",
+      "1 foreground session finishes its work. 2 sessions let wait on background jobs keep running (1 working again). The daemon will not pick another backlog task.",
     );
     // Snapshots without slots (older daemons) keep the one-session wording.
     expect(stopConfirmBody(loop())).toBe("The current session finishes its work; the daemon will not pick another backlog task.");

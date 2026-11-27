@@ -82,6 +82,7 @@ type persistedCommit struct {
 }
 
 type persistedWorkLoopSlot struct {
+	Detached  *bool     `json:"detached,omitempty"` // absent in older snapshots, where waiting implied detached
 	Slot      int       `json:"slot"`
 	SessionID string    `json:"session_id,omitempty"`
 	Task      string    `json:"task,omitempty"`
@@ -184,7 +185,7 @@ func persistedWorkLoopFromSnapshot(snapshot *WorkLoop) persistedWorkLoop {
 	p.Created = persistedTasks(snapshot.Created)
 	p.Unfinished = persistedTasks(snapshot.Unfinished)
 	for _, slot := range snapshot.Slots {
-		p.Slots = append(p.Slots, persistedWorkLoopSlot{Slot: slot.Slot, SessionID: slot.SessionID, Task: slot.Task, State: slot.State, Since: slot.Since})
+		p.Slots = append(p.Slots, persistedWorkLoopSlot{Slot: slot.Slot, SessionID: slot.SessionID, Task: slot.Task, State: slot.State, Since: slot.Since, Detached: &slot.Detached})
 	}
 	for _, l := range snapshot.ManualLandings {
 		p.ManualLandings = append(p.ManualLandings, persistedLanding{SHA: l.SHA, Subject: l.Subject})
@@ -314,14 +315,23 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 	for _, l := range p.ManualLandings {
 		wl.manual = append(wl.manual, WorkLoopLanding{SHA: l.SHA, Subject: l.Subject})
 	}
+	var working, shellIdle []WorkLoopWaitingSession
 	for _, w := range p.WaitingSessions {
 		wl.waiters = append(wl.waiters, &loopWaiter{id: w.SessionID, focus: w.Focus, since: w.Since})
+		shellIdle = append(shellIdle, WorkLoopWaitingSession{SessionID: w.SessionID, Focus: w.Focus})
 	}
-	// Slot sessions never outlive the daemon; waiting ones are named.
-	var working []WorkLoopWaitingSession
+	// Keep detached sessions in the digest. For an interrupted loop, name
+	// every session by its last observed activity, independent of detachment.
 	for _, slot := range p.Slots {
+		detached := slot.State == "waiting"
+		if slot.Detached != nil {
+			detached = *slot.Detached
+		}
+		if detached {
+			wl.waiters = append(wl.waiters, &loopWaiter{id: slot.SessionID, focus: slot.Task, since: slot.Since, lane: slot.Slot, awake: slot.State == "working"})
+		}
 		if slot.State == "waiting" {
-			wl.waiters = append(wl.waiters, &loopWaiter{id: slot.SessionID, focus: slot.Task, since: slot.Since, lane: slot.Slot})
+			shellIdle = append(shellIdle, WorkLoopWaitingSession{SessionID: slot.SessionID, Focus: slot.Task})
 		} else if slot.SessionID != "" {
 			working = append(working, WorkLoopWaitingSession{SessionID: slot.SessionID, Focus: slot.Task})
 		}
@@ -337,7 +347,7 @@ func (m *Manager) restoreWorkLoopLocked(workspace string) {
 		if names := waiterNames(working); names != "" {
 			wl.outcome += "; sessions were working: " + names
 		}
-		if names := waiterNames(wl.snapshotLocked().Waiting); names != "" {
+		if names := waiterNames(shellIdle); names != "" {
 			wl.outcome += "; sessions were waiting on background jobs: " + names
 		}
 		wl.finishedAt = time.Now()
