@@ -13,7 +13,7 @@ spec_refs:
 
 ## Description
 
-Status: in review. It was implemented in `9d3b011`, and what remains is a check on a device. 0558 (ListCommits RPC + web History page) is done. Requested by the user on 2026-11-17 in session s_86ed638051f9e53b, the same session as 0558 (event 2; scope answers at event 35). iOS is a separate task because it must be built and checked on the configured Mac and then waits `in_review` for on-device use.
+Bring project git history to iOS using the ListCommits RPC from 0558 (daemon and web history). Requested on 2026-11-17 in session s_86ed638051f9e53b; implemented in 9d3b011.
 
 ## Acceptance criteria
 

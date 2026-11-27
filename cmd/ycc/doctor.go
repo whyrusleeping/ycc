@@ -385,7 +385,7 @@ func keyCheck(label, keyEnv string) check {
 		status: statusFail,
 		label:  label,
 		detail: keyEnv + " MISSING (not in env or secrets store)",
-		remedy: fmt.Sprintf("run `ycc token set %s` (or export %s), or use a subscription with `ycc login`", keyEnv, keyEnv),
+		remedy: fmt.Sprintf("run `ycc token set %s` (or export %s), or set up a subscription with `ycc login` or in the web app's Settings", keyEnv, keyEnv),
 	}
 }
 

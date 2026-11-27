@@ -12,7 +12,7 @@ spec_refs:
 ---
 
 ## Description
-Current state: blocked, not started. It needs an authorized notification destination for the digest push. On 2026-11-21 the `[notify]` section of `~/.config/ycc/ycc.toml` was still empty, and `plans/work-loop-smoke.md` did not exist.
+Current state: blocked, not started. It needs an authorized notification destination for the digest push. On 2026-11-27 neither the user nor project config had a notification destination; the owner chose to leave the smoke blocked (s_4c87f95b0a1299e2). No real-model loop was started.
 
 The daemon-side work loop (task 0179, done) has unit coverage, including tests that exercise `realRunSession` through a narrower `startSession` seam. The remaining verification gap is a documented client-driven, real-model end-to-end run covering session lifecycle, event-log accounting, budgets, reclaim, graceful stop and digest delivery; do not duplicate runner tests already present. Use a scratch workspace, explicit bounded spend/runtime, and an authorized notification destination. If credentials, budget or notification setup are unavailable, report the missing gate rather than substituting fake evidence.
 

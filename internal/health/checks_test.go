@@ -27,3 +27,22 @@ func TestModelWithoutCredentialIsNotSetUp(t *testing.T) {
 		t.Fatalf("got %+v", c)
 	}
 }
+
+func TestGeminiOAuthWithoutLoginIsNotSetUp(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("APPDATA", dir)
+	reg := config.NewRegistry(&config.Config{
+		Models: map[string]config.Model{
+			"gemini": {Backend: "gemini", BaseURL: "http://127.0.0.1:1", Model: "gemini-4-neon", Auth: "oauth"},
+		},
+	})
+	c := modelTarget(reg, "gemini").Run(context.Background())
+	if c.Status != StatusFail || c.Detail != "Not set up: no Google subscription login." {
+		t.Fatalf("got %+v", c)
+	}
+	if !strings.Contains(c.Remedy, "`ycc login google`") {
+		t.Errorf("remedy should recommend `ycc login google`, got %q", c.Remedy)
+	}
+}

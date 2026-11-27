@@ -1176,8 +1176,9 @@ type Registry struct {
 	path string // discovered config file path for persist=true (empty => cannot persist)
 	// fallback: cfg is the built-in no-config fallback (see AdoptAnthropicLogin),
 	// whose model was fallbackModel when the daemon started.
-	fallback      bool
-	fallbackModel Model
+	fallback                bool
+	fallbackModel           Model
+	fallbackWorkspaceConfig string // higher-priority config path to recheck before adoption
 	// edited: settings have been changed (and persisted) through this registry.
 	edited bool
 }

@@ -12,9 +12,7 @@ spec_refs:
 
 ## Description
 
-Owner feedback on 0526 (editable daemon-wide quick-reply list in Settings, in_review), given in session s_3bba4fcce9515f8e, event 2, 2026-11-11.
-
-Status: in_review, awaiting on-device feel. Implemented in c04daca. 22f94bf lightened the swipe-menu backdrop to 85% at the owner's request (same session, event 405). A report that iOS resets chosen icons to the lightning bolt is tracked in 0549 (fix iOS quick-reply icon persistence, in_progress).
+Owner feedback on 0526 (editable daemon-wide quick replies), given in session s_3bba4fcce9515f8e, event 2, 2026-11-11. The related icon persistence investigation is recorded in 0549.
 
 **Acceptance:**
 - A quick reply has an optional icon from a fixed set. The daemon stores it in both lists, and iOS Settings offers an icon picker. The swipe menu shows the icon, and web keeps it when it saves.

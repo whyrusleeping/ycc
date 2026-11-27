@@ -18,7 +18,8 @@ func TestAdoptSubscriptionLogin(t *testing.T) {
 		name     string
 		fallback bool
 		key      bool
-		external bool // a ycc.toml written by another process after startup
+		external bool // a user config written by another process after startup
+		local    bool // a startup workspace config written after startup
 		edited   bool // settings edited through this daemon
 		changed  bool // fallback no longer matches its startup snapshot
 		want     bool
@@ -27,6 +28,7 @@ func TestAdoptSubscriptionLogin(t *testing.T) {
 		{name: "fallback with an API key is kept", fallback: true, key: true},
 		{name: "loaded config is kept"},
 		{name: "config written elsewhere is kept", fallback: true, external: true},
+		{name: "workspace config written since startup is kept", fallback: true, local: true},
 		{name: "edited fallback is kept", fallback: true, edited: true},
 		{name: "changed fallback is kept", fallback: true, changed: true},
 	}
@@ -44,11 +46,16 @@ func TestAdoptSubscriptionLogin(t *testing.T) {
 					path := filepath.Join(t.TempDir(), "ycc.toml")
 					reg := NewRegistry(DefaultAnthropic(DefaultAnthropicBaseURL, "claude-opus-5-5", "ANTHROPIC_API_KEY", DefaultMaxTokens))
 					reg.SetPath(path)
+					workspace := t.TempDir()
 					if c.fallback {
-						reg.MarkBuiltinFallback()
+						reg.MarkBuiltinFallback(workspace)
 					}
-					if c.external {
-						if err := os.WriteFile(path, []byte("# written by ycc login\n"), 0o600); err != nil {
+					if c.external || c.local {
+						chosen := path
+						if c.local {
+							chosen = filepath.Join(workspace, "ycc.toml")
+						}
+						if err := os.WriteFile(chosen, []byte("# written by ycc login\n"), 0o600); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -107,20 +114,41 @@ func TestAdoptSubscriptionLogin(t *testing.T) {
 	}
 }
 
+// Even a dangling link reserves the config path. Checking Stat and then using
+// Save would follow the link and publish a config at a path chosen for other use.
+func TestAdoptSubscriptionLoginPreservesReservedPath(t *testing.T) {
+	isolateSecrets(t)
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+	path, target := filepath.Join(dir, "ycc.toml"), filepath.Join(dir, "external.toml")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry(DefaultAnthropic(DefaultAnthropicBaseURL, "claude-opus-5-5", "ANTHROPIC_API_KEY", DefaultMaxTokens))
+	reg.SetPath(path)
+	reg.MarkBuiltinFallback("")
+	if adopted, err := reg.AdoptOpenAILogin(); err != nil || adopted {
+		t.Fatalf("reserved config path: adopted=%v err=%v", adopted, err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("expected link target to remain absent: %v", err)
+	}
+}
+
 func TestAdoptSubscriptionLoginRollsBackOnPersistFailure(t *testing.T) {
 	for _, backend := range []string{"anthropic", "openai"} {
 		t.Run(backend, func(t *testing.T) {
 			isolateSecrets(t)
 			t.Setenv("ANTHROPIC_API_KEY", "")
-			path := filepath.Join(t.TempDir(), "ycc.toml")
-			// Stat sees no config, but writing through this dangling symlink fails
-			// even as root: its target directory does not exist.
-			if err := os.Symlink(filepath.Join(t.TempDir(), "missing", "ycc.toml"), path); err != nil {
+			dir := filepath.Join(t.TempDir(), "config")
+			path := filepath.Join(dir, "ycc.toml")
+			// A file in place of the config directory prevents publication, even as root.
+			if err := os.WriteFile(dir, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			reg := NewRegistry(DefaultAnthropic(DefaultAnthropicBaseURL, "claude-opus-5-5", "ANTHROPIC_API_KEY", DefaultMaxTokens))
 			reg.SetPath(path)
-			reg.MarkBuiltinFallback()
+			reg.MarkBuiltinFallback("")
 			before, _ := json.Marshal(reg.cfg)
 			adopt := reg.AdoptAnthropicLogin
 			if backend == "openai" {
@@ -133,7 +161,7 @@ func TestAdoptSubscriptionLoginRollsBackOnPersistFailure(t *testing.T) {
 			if string(before) != string(after) {
 				t.Fatal("failed persistence changed models or roles")
 			}
-			if err := os.Remove(path); err != nil {
+			if err := os.Remove(dir); err != nil {
 				t.Fatal(err)
 			}
 			if got, err := adopt(); !got || err != nil {

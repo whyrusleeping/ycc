@@ -12,7 +12,7 @@ spec_refs:
 ---
 
 ## Description
-ChatGPT (Plus/Pro) subscription login is CLI-only (`ycc login openai`). Newcomers setting up from the web app need it in the browser, like the Anthropic connect.
+Browser login shipped in c8a36b90. In review pending a real browser ChatGPT sign-in against a fresh scratch daemon, followed by a successful use of the adopted model. The owner confirmed on 2026-11-27 (s_4c87f95b0a1299e2) that the live sign-in has not been verified.
 
 Acceptance:
 - Daemon-owned OpenAI login RPCs (begin / complete / cancel) mirroring the Anthropic ones: one pending attempt per daemon, ten-minute expiry, consumed on submit, state verified, provider errors sanitized, URLs/codes never logged or put in events. Completion takes the URL the browser was redirected to (`http://localhost:1455/auth/callback?code=…&state=…`), since the browser usually can't reach the daemon's localhost.
@@ -24,4 +24,5 @@ Acceptance:
 
 ## Work log
 
-- 2026-11-09: Implemented. Daemon: BeginOpenAILogin/CompleteOpenAILogin/CancelOpenAILogin (internal/server/openai_login.go; fixed localhost:1455 redirect, never bound; pasted callback must carry the attempt's state), openaiauth refresh/login compare-and-swap so an old refresh can't overwrite a new login, ChatGPT adoption of the untouched fallback (replaces `claude` with `chatgpt`, all roles). Go/Swift/TS bindings regenerated; spec §13/§19.1 and docs/remote-api.md updated. Web: the login dialog now serves both providers (Settings → Models, Get started, palette) and refreshes models + health after a login. Daemon side implemented by a delegated agent (sol); reviewed by opus: no blocking defects, the stale-Settings-after-login issue fixed. Verified in the browser against a scratch daemon up to the provider redirect (no real ChatGPT login). Uncommitted.
+- 2026-11-09: Implemented. Daemon: BeginOpenAILogin/CompleteOpenAILogin/CancelOpenAILogin (internal/server/openai_login.go; fixed localhost:1455 redirect, never bound; pasted callback must carry the attempt's state), openaiauth refresh/login compare-and-swap so an old refresh can't overwrite a new login, ChatGPT adoption of the untouched fallback (replaces `claude` with `chatgpt`, all roles). Go/Swift/TS bindings regenerated; spec §13/§19.1 and docs/remote-api.md updated. Web: the login dialog now serves both providers (Settings → Models, Get started, palette) and refreshes models + health after a login. Daemon side implemented by a delegated agent (sol); reviewed by opus: no blocking defects, the stale-Settings-after-login issue fixed. Verified in the browser against a scratch daemon up to the provider redirect (no real ChatGPT login). Committed in c8a36b90.
+- 2026-11-27 review: The shared first-run adoption fix preserves explicit daemon model options and refuses to overwrite a config published by another process. Go startup, adoption and mocked login RPC tests pass; these do not exercise a real provider sign-in.

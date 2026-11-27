@@ -13,8 +13,6 @@ spec_refs:
 
 ## Description
 
-Status: implemented and checked in the simulator; awaiting on-device use before it is done.
-
 This is the iOS half of the user's file-publishing request (2026-11-18, session s_b4282a8472af82af, event 2). It has its own task because iOS changes are verified separately: a Mac build plus on-device use. 0560 (share server, daemon RPCs, web) supplies the RPCs; the iOS code landed in the same commit, `adc40d0`.
 
 ## Acceptance criteria

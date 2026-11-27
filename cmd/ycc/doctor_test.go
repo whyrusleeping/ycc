@@ -197,24 +197,25 @@ func TestCredentialHygieneWarnsForBroadKnownFiles(t *testing.T) {
 }
 
 // A valid config with the model key absent everywhere is a HARD failure that
-// names the KEY_ENV and the `ycc token set` remedy.
+// names the KEY_ENV and offers both key and subscription setup remedies.
 func TestRunDoctorMissingKeyHardFails(t *testing.T) {
 	isolateEnv(t)
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("PATH", t.TempDir()) // Do not run local forge CLIs or check their credentials.
 	ws := t.TempDir()
 	if err := os.WriteFile(filepath.Join(ws, "ycc.toml"), []byte(validConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var out bytes.Buffer
-	if hard := runDoctor(ws, "", "", "", &out); !hard {
+	if hard := runDoctor(ws, "", "http://127.0.0.1:1", "", &out); !hard {
 		t.Fatalf("expected a hard failure for a missing model key:\n%s", out.String())
 	}
 	s := out.String()
-	if !bytes.Contains(out.Bytes(), []byte("ANTHROPIC_API_KEY")) {
-		t.Fatalf("output should name the missing KEY_ENV:\n%s", s)
-	}
-	if !bytes.Contains(out.Bytes(), []byte("ycc token set ANTHROPIC_API_KEY")) {
-		t.Fatalf("output should include the token-set remedy:\n%s", s)
+	for _, want := range []string{"ANTHROPIC_API_KEY MISSING", "ycc token set ANTHROPIC_API_KEY", "ycc login", "web app"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("output missing %q:\n%s", want, s)
+		}
 	}
 }
 

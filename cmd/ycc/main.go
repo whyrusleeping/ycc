@@ -142,7 +142,7 @@ func newRootCommand(a *app) *cli.Command {
 			a.exportCommand(),
 			tokenCommand(),
 			a.loginCommand(),
-			daemonCommand(),
+			daemonCommand(daemon.Serve),
 		},
 	}
 }
@@ -638,7 +638,7 @@ func readSecretToken(in *os.File, key string) (string, error) {
 
 // daemonCommand runs the explicit, persistent, foreground service. It serves
 // until killed and does not dial a client of its own.
-func daemonCommand() *cli.Command {
+func daemonCommand(serve func(daemon.Options) error) *cli.Command {
 	return &cli.Command{
 		Name:  "daemon",
 		Usage: "run the explicit, persistent, foreground daemon",
@@ -688,7 +688,7 @@ func daemonCommand() *cli.Command {
 			if configPath == "" {
 				configPath = daemon.DiscoverConfig(workspace)
 			}
-			err := daemon.Serve(daemon.Options{
+			err := serve(daemon.Options{
 				Addr:              cmd.String("addr"),
 				Workspace:         workspace,
 				WorkspaceExplicit: cmd.IsSet("workspace"),
@@ -704,6 +704,8 @@ func daemonCommand() *cli.Command {
 				Web:               cmd.Bool("web"),
 				Persist:           true,
 				ShutdownDrain:     cmd.Duration("shutdown-drain"),
+				BuiltinFallback: !cmd.IsSet("model") && !cmd.IsSet("base-url") &&
+					!cmd.IsSet("key-env") && !cmd.IsSet("max-tokens"),
 			})
 			if err != nil {
 				return fmt.Errorf("daemon: %w", err)
@@ -742,6 +744,7 @@ func resolveDaemon(addr, token, ws, configPath string) (target, tok string, shut
 		Addr: "127.0.0.1:0", Workspace: ws, ConfigPath: configPath,
 		Model: "claude-opus-5-5", BaseURL: "https://api.anthropic.com",
 		KeyEnv: "ANTHROPIC_API_KEY", MaxTokens: config.DefaultMaxTokens,
+		BuiltinFallback: true,
 	})
 	if err != nil {
 		return "", "", noop, fmt.Errorf("start in-process daemon: %w", err)

@@ -84,10 +84,18 @@ func modelTarget(reg *config.Registry, name string) Target {
 	}
 }
 
+// oauthLoginProvider maps a model backend to the name accepted by ycc login.
+func oauthLoginProvider(backend string) string {
+	if backend == "gemini" {
+		return "google"
+	}
+	return backend
+}
+
 // notSetUp reports a model whose credential is absent: a probe would only
 // fail authentication, and "not set up" tells the user what is actually wrong.
 func notSetUp(m config.Model, missing string) Check {
-	remedy := "Connect the subscription in Settings, or run `ycc login " + m.Backend + "` on the daemon host."
+	remedy := "Connect the subscription in Settings, or run `ycc login " + oauthLoginProvider(m.Backend) + "` on the daemon host."
 	if m.Auth != "oauth" {
 		remedy = fmt.Sprintf("Run `ycc token set %s` on the daemon host, or connect a subscription in Settings.", m.KeyEnv)
 	}
@@ -110,7 +118,7 @@ func modelFailure(m config.Model, err error) Check {
 	login := "check the login or API key"
 	switch {
 	case m.Auth == "oauth":
-		login = fmt.Sprintf("run `ycc login %s` on the daemon host", m.Backend)
+		login = fmt.Sprintf("run `ycc login %s` on the daemon host", oauthLoginProvider(m.Backend))
 	case m.KeyEnv != "":
 		login = fmt.Sprintf("check %s (`ycc token set %s` on the daemon host)", m.KeyEnv, m.KeyEnv)
 	}

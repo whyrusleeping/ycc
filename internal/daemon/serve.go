@@ -71,6 +71,14 @@ type Options struct {
 	// active model turns, foreground tools, and subagents to reach a clean
 	// boundary; 0 skips the drain.
 	ShutdownDrain time.Duration
+	// BuiltinFallback means the model options are implicit built-in defaults,
+	// not user-supplied values (even ones equal to the defaults). With no
+	// config file, this allows first-run browser login to set up the model.
+	BuiltinFallback bool
+}
+
+func (o Options) usesBuiltinFallback() bool {
+	return o.ConfigPath == "" && o.BuiltinFallback
 }
 
 // daemonParts is what buildHandler assembles: the HTTP handler and session
@@ -105,8 +113,8 @@ func buildHandler(o Options, adm *server.Admission) (*daemonParts, error) {
 	}
 
 	reg := config.NewRegistry(cfg)
-	if o.ConfigPath == "" {
-		reg.MarkBuiltinFallback()
+	if o.usesBuiltinFallback() {
+		reg.MarkBuiltinFallback(o.Workspace)
 	}
 	reg.SetPath(persistPath(o))
 	mgr := session.NewManager(reg, o.Workspace)
@@ -522,7 +530,7 @@ func startupGuidance(o Options, mgr *session.Manager, usingTLS bool) []string {
 	coord, _, _ := mgr.Roles()
 	if m, ok := mgr.GetModel(coord); ok {
 		if missing := config.MissingCredential(m); missing != "" {
-			if o.ConfigPath == "" {
+			if o.usesBuiltinFallback() {
 				lines = append(lines, "no model is set up yet: connect a Claude or ChatGPT subscription from the app's Get started screen, "+
 					"or run `ycc login anthropic` (or `ycc login openai`) and restart the daemon")
 			} else {

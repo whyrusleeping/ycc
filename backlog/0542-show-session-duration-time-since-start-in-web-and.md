@@ -16,7 +16,7 @@ User: "There's no easy way to see how long a session has been running for." Chos
 ## Acceptance criteria
 
 - Web: helper unit-tested; `npm run typecheck` and tests pass.
-- iOS: YccKit helper unit-tested (`swift test` on the Mac); app builds. Ends in_review pending on-device use.
+- iOS: YccKit helper unit-tested (`swift test` on the Mac); app builds and durations are checked on device.
 
 ## Outcome
 

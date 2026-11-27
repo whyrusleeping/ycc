@@ -11,9 +11,7 @@ spec_refs: []
 
 ## Description
 
-Current state: in review. The deployment blocker is cleared: the daemon on :8787 has run since 2026-11-19 03:38 UTC from a binary built after `c04daca` (quick-reply icons, 0545), and that binary has the icon code. What remains is a check on the device. Pick icons in iOS Settings → Quick replies, then confirm that they persist and appear in the swipe menu. The stored `~/.local/state/ycc/quick-replies.json` was last written on 2026-11-14 and holds no icons yet.
-
-No source change is needed for the reported persistence failure. An older daemon silently discards icons from newer clients, which then display the lightning-bolt fallback. The owner declined updating/restarting the running daemon on 2026-11-14 in the reporting session.
+Investigate reports that icons chosen in iOS Settings → Quick replies revert to the lightning-bolt fallback after saving.
 
 ## Acceptance criteria
 

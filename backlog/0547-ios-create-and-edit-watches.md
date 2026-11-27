@@ -14,8 +14,6 @@ spec_refs:
 
 User request (session s_cffea2c64076045f, event 28, 2026-11-13): add iOS UI for creating and managing watches.
 
-Status: in_review, awaiting on-device use. Implemented in fe081c7. That session reported 610 YccKit tests passing, including new tests for the form's checks, its conversion to and from a watch definition, and saving, and said create and edit were tried on the Mac simulator against a test daemon. Its report does not mention a screenshot.
-
 The iOS Watches screens list and control watches but send users to the web client or an agent to create or edit one. Add a native editor matching the web WatchEditor (docs/design/watches.md).
 
 Acceptance criteria:

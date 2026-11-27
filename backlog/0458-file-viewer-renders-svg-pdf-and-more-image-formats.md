@@ -12,7 +12,7 @@ spec_refs: []
 ## Description
 ReadFile now returns bytes for PDFs and for AVIF/HEIC/HEIF/TIFF (by extension). The web viewer renders SVG as a `data:` `<img>` with a Rendered/Source toggle, adds BMP/ICO/AVIF/HEIC/TIFF raster previews (with a fallback when the browser can't decode them), and frames PDFs (CSP `frame-src blob:`). On iOS, SVG renders in a script-disabled WKWebView with a "Show source" toggle, PDFs use PDFKit, and other images use UIImage.
 
-Status is in_review until the iOS app is built and checked on a device: open an .svg (rendered by default, Show source works), a .pdf, and a .heic. Also check a PDF in desktop Chrome, Firefox, and Safari.
+The owner confirmed the iOS viewer on device on 2026-11-27 (s_4c87f95b0a1299e2). Still in review: open a multipage PDF in the file viewer in desktop Chrome, Firefox and Safari and confirm the pages render; a frame loading without a CSP error is not sufficient.
 
 ## Acceptance criteria
 

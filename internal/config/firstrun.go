@@ -5,9 +5,11 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"reflect"
 
 	"github.com/whyrusleeping/ycc/internal/anthropicauth"
+	"github.com/whyrusleeping/ycc/internal/googleauth"
 	"github.com/whyrusleeping/ycc/internal/openaiauth"
 )
 
@@ -29,6 +31,10 @@ func MissingCredential(m Model) string {
 		if _, ok := openaiauth.Load(); !ok {
 			return "no ChatGPT subscription login"
 		}
+	case m.Auth == "oauth" && m.Backend == "gemini":
+		if _, ok := googleauth.Load(); !ok {
+			return "no Google subscription login"
+		}
 	case m.Auth != "oauth" && m.KeyEnv != "" && resolveKey(m) == "":
 		return "no API key in " + m.KeyEnv
 	}
@@ -37,9 +43,12 @@ func MissingCredential(m Model) string {
 
 // MarkBuiltinFallback records that the registry holds the built-in fallback
 // rather than a loaded ycc.toml: nobody has chosen a model yet.
-func (r *Registry) MarkBuiltinFallback() {
+func (r *Registry) MarkBuiltinFallback(workspace string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if workspace != "" {
+		r.fallbackWorkspaceConfig = filepath.Join(workspace, "ycc.toml")
+	}
 	r.fallback = true
 	r.fallbackModel = r.cfg.Models[FallbackModelName]
 }
@@ -72,10 +81,7 @@ func (r *Registry) AdoptGoogleLogin() (bool, error) {
 func (r *Registry) adoptSubscriptionLogin(backend string) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.fallback || r.edited {
-		return false, nil
-	}
-	if _, err := os.Stat(r.path); r.path == "" || !errors.Is(err, fs.ErrNotExist) {
+	if !r.fallback || r.edited || r.path == "" {
 		return false, nil
 	}
 	prev, ok := r.cfg.Models[FallbackModelName]
@@ -98,11 +104,35 @@ func (r *Registry) adoptSubscriptionLogin(backend string) (bool, error) {
 		next.Roles.Coordinator, next.Roles.Implementer = name, name
 		next.Roles.Reviewers = []string{name}
 	}
-	r.cfg = &next
-	if err := r.persistLocked(); err != nil {
-		r.cfg = previous
+	// Publish a complete config only if nobody has created one, including a
+	// CLI login racing this browser login. Stat followed by Save would clobber it.
+	dir := filepath.Dir(r.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return false, err
 	}
-	r.fallback = false
+	stage, err := os.MkdirTemp(dir, ".ycc-firstrun-*")
+	if err != nil {
+		return false, err
+	}
+	defer os.RemoveAll(stage)
+	candidate := filepath.Join(stage, "ycc.toml")
+	if err := Save(candidate, &next); err != nil {
+		return false, err
+	}
+	// The startup workspace takes precedence over the user config on restart.
+	if path := r.fallbackWorkspaceConfig; path != "" {
+		if _, err := os.Lstat(path); err == nil {
+			return false, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+	}
+	if err := os.Link(candidate, r.path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	r.cfg, r.edited, r.fallback = &next, true, false
 	return true, nil
 }
