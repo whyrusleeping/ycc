@@ -7,6 +7,8 @@ import type { ProjectNotice, TaskHolder } from "../../gen/ycc/v1/ycc_pb";
 import { paths } from "../../app/paths";
 import { relativeTime } from "../sessions/feed";
 import { useProjectNotices } from "../../api/queries";
+import { TaskPreviewLink } from "../backlog/parts";
+import { taskReferences } from "../backlog/taskReferences";
 import { expiresIn, holderLabel, posterLabel, shortSessionId, splitSessionIds } from "./model";
 
 /** Plain text whose session ids link to that session. */
@@ -15,7 +17,7 @@ export function SessionLinkedText({ project, text }: { project: string; text: st
     <>
       {splitSessionIds(text).map((p, i) =>
         p.kind === "text" ? (
-          <span key={i}>{p.text}</span>
+          <span key={i}>{taskReferences(p.text, project)}</span>
         ) : (
           <Link key={i} to={paths.session(project, p.id)} className="session-id-link mono" title={`Open session ${p.id}`}>
             {p.id}
@@ -53,7 +55,7 @@ export function NoticeItem({
       <div className="notice-line">
         <span className="chip notice-id">{n.id}</span>
         {n.subject && <span className="notice-subject">{n.subject}</span>}
-        <span className="notice-text">{n.text}</span>
+        <span className="notice-text">{taskReferences(n.text, project)}</span>
       </div>
       <div className="notice-meta">
         {n.sessionId ? (
@@ -70,9 +72,7 @@ export function NoticeItem({
             {n.taskIds.map((t, i) => (
               <span key={t}>
                 {i > 0 && ", "}
-                <Link to={paths.task(project, t)} className="task-link">
-                  {t}
-                </Link>
+                <TaskPreviewLink project={project} id={t} className="task-link" />
               </span>
             ))}
           </span>

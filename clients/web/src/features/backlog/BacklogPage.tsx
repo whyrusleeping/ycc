@@ -7,7 +7,7 @@
 import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
 import { errorMessage } from "../../api/client";
 import { queryKeys, useBacklog } from "../../api/queries";
@@ -18,7 +18,7 @@ import { CAPTURE_SHORTCUT_LABEL, openCapture } from "./CaptureDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
 import { track } from "../../app/analytics";
-import { PriorityBadge, StatusPill, TaskLink } from "./parts";
+import { PriorityBadge, StatusPill, TaskLink, TaskPreviewLink } from "./parts";
 import { BacklogBoard } from "./Board";
 import { HeldBadge } from "../coordination/parts";
 import { GroomBanner } from "./GroomBanner";
@@ -582,14 +582,13 @@ function BacklogRow({
       }}
     >
       <td className="col-id mono">
-        <Link
-          to={paths.task(project, t.id)}
+        <TaskPreviewLink
+          project={project}
+          id={t.id}
           className="task-id-link"
           aria-current={selected ? "page" : undefined}
           data-track="backlog.open_task"
-        >
-          {t.id}
-        </Link>
+        />
       </td>
       <td className="col-title">
         <span className="task-row-title">{t.title}</span>

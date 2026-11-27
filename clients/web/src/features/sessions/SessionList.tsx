@@ -8,6 +8,7 @@ import { paths } from "../../app/paths";
 import { lastViewedProject } from "../../app/memory";
 import { hitKindLabel, hitPath, indexingNote, searchableQuery, searchProject } from "./messageHits";
 import { Snippet, useMessageSearch } from "./messageSearch";
+import { TaskPreviewLink } from "../backlog/parts";
 import { useLoopSessionIds } from "../workloop/hooks";
 import { useReadMarks } from "./unread";
 import { filterSessions, isInboxSession, SESSION_FILTERS, type SessionFilter } from "./attention";
@@ -131,9 +132,7 @@ export function SessionRowView({
         {showProject && project && <span className="project">{project}</span>}
         {chips.map((c) =>
           ids.includes(c) ? (
-            <Link key={c} to={paths.task(row.project, c)} className="chip task-chip" title={`Open task ${c}`} data-track="sessions.task_chip">
-              {c}
-            </Link>
+            <TaskPreviewLink key={c} project={row.project} id={c} className="chip task-chip" title={`Open task ${c}`} data-track="sessions.task_chip" />
           ) : (
             <span key={c} className="chip" title={ids.slice(2).join(", ")}>
               {c}
@@ -283,9 +282,7 @@ function SidebarRow({
               {project && <span className="project">{project}</span>}
               {chips.map((c) =>
                 ids.includes(c) ? (
-                  <Link key={c} to={paths.task(row.project, c)} className="row-task" title={`Open task ${c}`} data-track="sessions.task_chip">
-                    {c}
-                  </Link>
+                  <TaskPreviewLink key={c} project={row.project} id={c} className="row-task" title={`Open task ${c}`} data-track="sessions.task_chip" />
                 ) : (
                   <span key={c} className="row-task more" title={ids.slice(2).join(", ")}>
                     {c}

@@ -106,7 +106,7 @@ export function GroomBanner({ project }: { project: string }) {
           </button>
         )}
       </div>
-      {showReport && run?.report && <Markdown text={run.report} className="groom-report" />}
+      {showReport && run?.report && <Markdown project={project} text={run.report} className="groom-report" />}
     </section>
   );
 }

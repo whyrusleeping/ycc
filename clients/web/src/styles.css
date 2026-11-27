@@ -3859,6 +3859,24 @@ pre.error-output {
   outline-offset: -2px;
 }
 
+.task-preview {
+  position: fixed;
+  z-index: 100;
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 12px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  color: var(--fg);
+  font: normal var(--fs-sm)/1.4 var(--font);
+  overflow-wrap: anywhere;
+}
+
 .task-chip {
   position: relative;
   z-index: 1;

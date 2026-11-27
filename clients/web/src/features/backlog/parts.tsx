@@ -1,9 +1,10 @@
 // Small shared backlog UI pieces: status pill, priority badge, and task links.
-import { Link } from "react-router";
+import { Link, type LinkProps } from "react-router";
 import type { MouseEvent, ReactNode } from "react";
 import { paths } from "../../app/paths";
 import { useInspector } from "../inspector/inspector";
 import { statusLabel } from "./model";
+import { useTaskPreview } from "./TaskPreview";
 
 export function StatusPill({ status }: { status: string }) {
   const s = status.toLowerCase();
@@ -16,6 +17,24 @@ export function PriorityBadge({ priority }: { priority: number }) {
     <span className={`prio prio-${priority}`} title={`Priority ${priority} (1 is highest)`}>
       P{priority}
     </span>
+  );
+}
+
+/** A task-number link with a preview and ordinary router navigation. */
+export function TaskPreviewLink({
+  project,
+  id,
+  children,
+  ...props
+}: Omit<LinkProps, "to" | "id"> & { project: string; id: string }) {
+  const { trigger, preview } = useTaskPreview(project, id);
+  return (
+    <>
+      <Link {...props} to={paths.task(project, id)} {...trigger}>
+        {children ?? id}
+      </Link>
+      {preview}
+    </>
   );
 }
 
@@ -45,8 +64,9 @@ export function TaskLink({
 }) {
   const inspector = useInspector();
   return (
-    <Link
-      to={paths.task(project, id)}
+    <TaskPreviewLink
+      project={project}
+      id={id}
       className={className}
       title={title ?? `Open task ${id}`}
       onClick={(e) => {
@@ -57,7 +77,7 @@ export function TaskLink({
         }
       }}
     >
-      {children ?? id}
-    </Link>
+      {children}
+    </TaskPreviewLink>
   );
 }

@@ -14,8 +14,10 @@ import { fromCodeSpan, type FileLinkContext } from "../files/fileReference";
 import { HtmlBuilder } from "./html";
 import { classifyLink, decodeEntities } from "./links";
 import { MarkdownImage } from "./MarkdownImage";
+import { taskReferences } from "../backlog/taskReferences";
 
 interface Ctx {
+  project?: string;
   links: FileLinkContext | undefined;
   /** Inside a link's label: no nested interactive file refs or expandable images. */
   inLink?: boolean;
@@ -33,17 +35,19 @@ export function lexMarkdown(text: string): Token[] {
  * `html` renders raw HTML like GitHub does (features/markdown/html.tsx); it's
  * for markdown files, while model and user text keeps HTML as literal text.
  */
-export const Markdown = memo(function Markdown({ text, className = "", html = false }: { text: string; className?: string; html?: boolean }) {
+export const Markdown = memo(function Markdown({ text, className = "", html = false, project }: {
+  text: string; className?: string; html?: boolean; project?: string;
+}) {
   const fileLinks = useFileLinks();
   const linkContext = fileLinks?.context;
   const rendered = useMemo(() => {
     try {
-      return renderMarkdown(text, { links: linkContext, html });
+      return renderMarkdown(text, { links: linkContext, html, project: project ?? linkContext?.project });
     } catch {
       // The lexer should never throw; if it does, show the source verbatim.
       return <div className="text">{text}</div>;
     }
-  }, [text, linkContext, html]);
+  }, [text, linkContext, html, project]);
   return <div className={`md ${className}`.trim()}>{rendered}</div>;
 });
 
@@ -202,7 +206,8 @@ function inline(token: Token, ctx: Ctx, key: number): ReactNode {
     case "text": {
       const t = token as Tokens.Text;
       if (t.tokens?.length) return <Fragment key={key}>{inlines(t.tokens, ctx)}</Fragment>;
-      return <Fragment key={key}>{decodeEntities(t.text)}</Fragment>;
+      const text = decodeEntities(t.text);
+      return <Fragment key={key}>{ctx.inLink ? text : taskReferences(text, ctx.project)}</Fragment>;
     }
     case "escape":
       return <Fragment key={key}>{(token as Tokens.Escape).text}</Fragment>;
@@ -224,7 +229,7 @@ function inline(token: Token, ctx: Ctx, key: number): ReactNode {
           </FileRef>
         );
       }
-      return <code key={key}>{text}</code>;
+      return <code key={key}>{!ctx.inLink && /^#\d{1,6}$/.test(text) ? taskReferences(text, ctx.project) : text}</code>;
     }
     case "link": {
       const t = token as Tokens.Link;

@@ -7,6 +7,7 @@ import type { Picture, TranscriptRow } from "./projection";
 import type { SessionController } from "./controller";
 import { useInspector } from "../inspector/inspector";
 import { PictureThumb, type SessionRef } from "../attachments/SessionPicture";
+import { taskReferences } from "../backlog/taskReferences";
 import { Markdown } from "../markdown/Markdown";
 import { MetaTags, ToolBody } from "./ToolBody";
 import { oneLine, toolPreview } from "./toolPreview";
@@ -63,7 +64,7 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
     case "user":
       return (
         <div>
-          {k.text && <div className="text">{k.text}</div>}
+          {k.text && <div className="text">{taskReferences(k.text, session.project)}</div>}
           {k.pictures.length > 0 && <UserPictures session={session} pictures={k.pictures} />}
         </div>
       );
@@ -73,7 +74,7 @@ export function RowBody({ row, full = false, session }: { row: TranscriptRow; fu
     case "liveTail":
       return <LiveTail text={k.text} />;
     case "thinking":
-      return <div className="text thinking-text">{k.text}</div>;
+      return <div className="text thinking-text">{taskReferences(k.text, session.project)}</div>;
     case "tool":
       return <ToolBody name={k.name} args={k.args} output={k.output} status={k.status} full={full} />;
     case "question":

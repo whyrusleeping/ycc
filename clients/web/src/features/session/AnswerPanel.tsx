@@ -139,7 +139,7 @@ export function AnswerPanel({
           <div key={qi} className="answer-q" data-q={qi} hidden={qi !== current}>
             <div className="answer-scroll">
               <div className="answer-prompt">
-                <Markdown text={q.prompt} />
+                <Markdown text={q.prompt} project={controller.project} />
               </div>
               {q.options.length > 0 && (
                 <div className="answer-options" role="group" aria-label={`Options for question ${qi + 1}`}>

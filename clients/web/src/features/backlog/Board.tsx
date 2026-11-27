@@ -2,10 +2,8 @@
 // Cards drag between columns to change status (UpdateTask); the page owns the
 // keyboard (h/j/k/l or arrows move, Shift+←/→ moves the card, Enter opens).
 import { useState, type DragEvent } from "react";
-import { Link } from "react-router";
 import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
-import { paths } from "../../app/paths";
-import { PriorityBadge, TaskLink } from "./parts";
+import { PriorityBadge, TaskLink, TaskPreviewLink } from "./parts";
 import { blockedLabel, normalizeTaskId, readiness, statusLabel, type BoardColumn } from "./model";
 import { HeldBadge } from "../coordination/parts";
 
@@ -169,9 +167,7 @@ function BoardCard({
       }}
     >
       <div className="board-card-top">
-        <Link to={paths.task(project, t.id)} className="task-id-link" draggable={false} aria-current={selected ? "page" : undefined}>
-          {t.id}
-        </Link>
+        <TaskPreviewLink project={project} id={t.id} className="task-id-link" draggable={false} aria-current={selected ? "page" : undefined} />
         <HeldBadge project={project} holder={t.heldBy} />
         <PriorityBadge priority={t.priority} />
       </div>

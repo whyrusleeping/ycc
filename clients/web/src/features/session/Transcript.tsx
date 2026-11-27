@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { SessionController, SessionSnapshot } from "./controller";
 import { isSubagentActor } from "./projection";
 import { clickVia, track } from "../../app/analytics";
+import { taskReferences } from "../backlog/taskReferences";
 import { RowView } from "./RowView";
 import type { DraftPicture } from "../attachments/attachments";
 import { reportPresentation } from "./report";
@@ -281,7 +282,7 @@ export function Transcript({
                   {m.status === "sending" ? "sending…" : m.status === "sent" ? "sent" : "not sent"}
                 </span>
               </div>
-              {m.text && <div className="text">{m.text}</div>}
+              {m.text && <div className="text">{taskReferences(m.text, controller.project)}</div>}
               {m.pictures.length > 0 && (
                 <div className="pictures">
                   {m.pictures.map((p) =>

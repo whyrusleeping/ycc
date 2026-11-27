@@ -708,7 +708,7 @@ function LoopSessionRow({ project, session: s, index }: { project: string; sessi
           ))}
         </div>
       )}
-      {s.evidence && <ClampedText text={s.evidence} />}
+      {s.evidence && <ClampedText project={project} text={s.evidence} />}
     </li>
   );
 }
@@ -759,7 +759,7 @@ function DigestRow({
           {details.map((d) => (
             <div key={d.label} className="digest-detail">
               <div className="label">{d.label}</div>
-              <Markdown text={d.text} className="loop-md" />
+              <Markdown project={project} text={d.text} className="loop-md" />
             </div>
           ))}
         </details>
@@ -772,13 +772,13 @@ function DigestRow({
  * Untrusted report text, rendered as the transcript renders reports (safe
  * markdown: no raw HTML, inert unsafe links), clamped until expanded.
  */
-function ClampedText({ text }: { text: string }) {
+function ClampedText({ project, text }: { project: string; text: string }) {
   const [open, setOpen] = useState(false);
   const long = text.length > 280 || text.split("\n").length > 4;
   return (
     <div className="loop-evidence">
       <div className={`loop-md${long && !open ? " clamped" : ""}`}>
-        <Markdown text={text} />
+        <Markdown project={project} text={text} />
       </div>
       {long && (
         <button type="button" className="link small" onClick={() => setOpen((o) => !o)}>

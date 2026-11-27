@@ -33,6 +33,7 @@ import { CopyButton } from "../../ui/CopyButton";
 import { MenuButton } from "../../ui/Menu";
 import { CAPTURE_SHORTCUT_LABEL, openCapture } from "../backlog/CaptureDialog";
 import { NewTaskDialog } from "../backlog/NewTaskDialog";
+import { useTaskPreview } from "../backlog/TaskPreview";
 
 /**
  * Quick replies answer a finished turn: none while the agent is running (it is
@@ -186,6 +187,28 @@ function RunningFor({ timing }: { timing: Pick<SessionSummary, "startedAt" | "la
     <span className="meta-minor" title={`Started ${new Date(timing.startedAt).toLocaleString()}`}>
       {timing.live ? "up" : "ran"} {text}
     </span>
+  );
+}
+
+function FocusTaskChip({ project, id }: { project: string; id: string }) {
+  const inspector = useInspector();
+  const { trigger, preview } = useTaskPreview(project, id);
+  const open = inspector.item?.kind === "task" && inspector.item.taskId === id && inspector.item.project === project;
+  return (
+    <>
+      <button
+        type="button"
+        className={`chip task-chip${open ? " active" : ""}`}
+        title={`Task ${id} — open beside the transcript`}
+        aria-pressed={open}
+        data-track="session.task_chip"
+        onClick={() => (open ? inspector.close() : inspector.open({ kind: "task", project, taskId: id }))}
+        {...trigger}
+      >
+        task {id}
+      </button>
+      {preview}
+    </>
   );
 }
 
@@ -344,22 +367,9 @@ export function SessionView({
               </span>
             )}
             {project && <span>{project}</span>}
-            {focusTasks.map((id) => {
-              const open = inspector.item?.kind === "task" && inspector.item.taskId === id && inspector.item.project === project;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  className={`chip task-chip${open ? " active" : ""}`}
-                  title={`Task ${id} — open beside the transcript`}
-                  aria-pressed={open}
-                  data-track="session.task_chip"
-                  onClick={() => (open ? inspector.close() : inspector.open({ kind: "task", project, taskId: id }))}
-                >
-                  task {id}
-                </button>
-              );
-            })}
+            {focusTasks.map((id) => (
+              <FocusTaskChip key={id} project={project} id={id} />
+            ))}
             {timing && <RunningFor timing={timing} />}
             {snap.coordinatorModel && <span className="meta-minor">{snap.coordinatorModel}</span>}
             {ctx && (
