@@ -437,6 +437,7 @@ export class SessionProjection {
    */
   forgetLoadedDetails() {
     this.indexedLoadedDetails.clear();
+    this.pendingQuestion = null;
   }
 
   /** Install a snapshot: daemon-reduced state plus the newest bounded page. */
@@ -618,6 +619,9 @@ export class SessionProjection {
         this.phase = { kind: "running" };
     }
     this.awaitingJobs = this.phase.kind === "idle" && state.awaitingJobs;
+    // The question is immutable while its row is pending. An abbreviated
+    // update must not unmount an already populated answer panel.
+    if (state.pendingQuestionsTruncated && this.pendingQuestion?.rowId === state.pendingRowId) return;
     this.openQuestions = [];
     if (state.pendingQuestionsTruncated && state.pendingRowId) {
       // Never expose an incomplete batch to AnswerQuestions: the controller

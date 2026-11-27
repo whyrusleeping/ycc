@@ -339,8 +339,7 @@ export class SessionController {
     // "not live" answer.
     if (!(this.mode === "live" && modeAtStart !== "live")) this.mode = live ? "live" : "persisted";
     this.reconcile();
-    const state = snap.state;
-    if (state?.pendingQuestionsTruncated && state.pendingRowId) void this.loadDetail(state.pendingRowId);
+    this.loadPendingDetail(snap.state!.pendingRowId);
   }
 
   private runLoop(snapshotFirst: boolean) {
@@ -407,9 +406,7 @@ export class SessionController {
               );
               this.reconcile();
               this.publish(false);
-              if (update.state.pendingQuestionsTruncated && update.state.pendingRowId) {
-                void this.loadDetail(update.state.pendingRowId);
-              }
+              this.loadPendingDetail(update.state.pendingRowId);
             }
             // Neither: an idle-stream keepalive; nothing to fold.
           }
@@ -543,6 +540,10 @@ export class SessionController {
       this.loadingEarlier = false;
       this.publish();
     }
+  }
+
+  private loadPendingDetail(rowId: string) {
+    if (this.projection.needsPendingDetail(rowId)) void this.loadDetail(rowId);
   }
 
   /** Fetch a complete abbreviated row (explicit expand / inspector). */

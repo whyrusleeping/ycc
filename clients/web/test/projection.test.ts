@@ -206,15 +206,27 @@ describe("pending questions", () => {
     expect(k.type === "question" && k.answer).toBe("x; z");
   });
 
-  it("withholds a truncated batch until the row detail restores it", () => {
+  it("keeps a restored batch available while subagent updates repeat its truncated summary", () => {
     const p = new SessionProjection();
-    p.installIndexed(state(9, { pendingRowId: "seq-7", pendingQuestionsTruncated: true, pendingQuestions: [{ prompt: "A?", options: [] }] }), []);
+    const summary = { pendingRowId: "seq-7", pendingQuestionsTruncated: true, pendingQuestions: [{ prompt: "A?", options: [] }] };
+    p.installIndexed(state(9, summary), []);
     expect(p.pendingQuestion).toBeNull();
     expect(p.awaitsAnswer).toBe(true);
     expect(p.needsPendingDetail("seq-7")).toBe(true);
     p.installIndexedDetail(ask);
     expect(p.pendingQuestion?.questions).toHaveLength(2);
     expect(p.rows).toHaveLength(0); // the out-of-page row is not inserted
+
+    const activity = row("seq-10", 10, 10, [ev(10, "model_turn", { text: "Update" }, "agent:1")]);
+    p.applyIndexed(state(10, summary), [activity], []);
+    expect(p.pendingQuestion?.questions.map((q) => q.prompt)).toEqual(["A?", "B?"]);
+    expect(p.needsPendingDetail("seq-7")).toBe(false);
+
+    // A rebuilt index can reuse the row id for a different question.
+    p.forgetLoadedDetails();
+    p.installIndexed(state(10, summary), []);
+    expect(p.pendingQuestion).toBeNull();
+    expect(p.needsPendingDetail("seq-7")).toBe(true);
   });
 });
 
