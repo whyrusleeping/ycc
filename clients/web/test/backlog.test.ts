@@ -200,6 +200,21 @@ describe("backlog model", () => {
     expect(ids(newest[1].tasks)).toEqual(["0014", "0011", "0004", "0002"]);
   });
 
+  it("puts ready todo cards ahead of dependency-blocked ones and pins the decisions task in proposed", () => {
+    const sample = [
+      t("0001", { status: "todo", priority: 1, ready: false, blockedBy: ["0099"] }),
+      t("0002", { status: "todo", priority: 4, ready: true }),
+      t("0003", { status: "proposed", priority: 1 }),
+      t("0004", { status: "proposed", priority: 4, title: "Backlog groom: decisions needed" }),
+    ];
+    const cols = boardColumns(sample, DEFAULT_FILTER, "priority", { decisionsTaskId: "0004" });
+    expect(ids(cols[0].tasks)).toEqual(["0004", "0003"]);
+    expect(ids(cols[1].tasks)).toEqual(["0002", "0001"]);
+    // In newest mode, todo stays newest-first regardless of blockers.
+    const newest = boardColumns(sample, DEFAULT_FILTER, "newest", { decisionsTaskId: "0004" });
+    expect(ids(newest[1].tasks)).toEqual(["0002", "0001"]);
+  });
+
   it("narrows board columns and cards by the filter", () => {
     const byStatus = boardColumns(tasks, { ...DEFAULT_FILTER, statuses: ["done", "todo"] });
     expect(byStatus.map((c) => [c.status, c.collapsed])).toEqual([

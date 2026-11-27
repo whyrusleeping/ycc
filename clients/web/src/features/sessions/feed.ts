@@ -3,6 +3,7 @@
 // then follow-up sessions pinned first, and derive row labels. Mirrors YccKit's
 // SessionListModel so the web and iOS clients order and label rows alike.
 import type { ProjectInfo, SessionSummary } from "../../gen/ycc/v1/ycc_pb";
+import { shortSessionId } from "../coordination/model";
 
 /** One project's loaded history pages. */
 export interface HistoryLoad {
@@ -227,7 +228,7 @@ export function displayTitle(s: SessionSummary): string {
   }
   if (title) return title;
   const mode = s.mode.trim() || "session";
-  const short = s.sessionId.slice(0, 8);
+  const short = shortSessionId(s.sessionId);
   return short ? `${mode} · ${short}` : mode;
 }
 

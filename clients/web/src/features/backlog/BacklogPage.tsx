@@ -4,13 +4,12 @@
 // card — Enter to open, / to filter, Esc to close the task), and the selected
 // task's detail beside it. The URL carries the open task
 // (`/p/<project>/backlog/<id>`); the table/board choice persists per browser.
-import { Icon } from "../../ui/icons";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
 import { errorMessage } from "../../api/client";
-import { queryKeys, useBacklog } from "../../api/queries";
+import { queryKeys, useBacklog, useBacklogGroom, useSessionFeed } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { isEditableTarget } from "../../app/actions";
 import { useIntent } from "../../app/intents";
@@ -20,9 +19,9 @@ import { changeTaskStatus, TaskDetailView } from "./TaskDetail";
 import { track } from "../../app/analytics";
 import { PriorityBadge, StatusPill, TaskLink, TaskPreviewLink } from "./parts";
 import { BacklogBoard } from "./Board";
-import { HeldBadge } from "../coordination/parts";
-import { GroomBanner } from "./GroomBanner";
-import { LoopBanner } from "../workloop/WorkLoopPage";
+import { HeldBadge, type HolderLiveness } from "../coordination/parts";
+import { GroomBanner, GroomHeaderPill } from "./GroomBanner";
+import { LoopBanner, LoopHeaderPill } from "../workloop/WorkLoopPage";
 import { PLACEMENT } from "../newSession/model";
 import { PresetMenu } from "../newSession/PresetActions";
 import {
@@ -123,6 +122,8 @@ export function backlogIntentKey(project: string) {
 
 export function BacklogPage({ project, taskId }: { project: string; taskId: string | null }) {
   const backlog = useBacklog(project);
+  const groom = useBacklogGroom(project);
+  const { feed } = useSessionFeed(null);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const remembered = viewMemory.get(project);
@@ -154,15 +155,36 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
   }, [openId]);
 
   const all = backlog.data;
+  const decisionsTaskId = groom.data?.decisionsTaskId || null;
+  const sessionLiveness = useMemo(() => {
+    const map = new Map<string, HolderLiveness>();
+    for (const r of feed?.rows ?? []) {
+      const s = r.session;
+      if (s.waitingInput) map.set(s.sessionId, "question");
+      else if (s.live && s.awaitingJobs) map.set(s.sessionId, "jobs");
+      else if (s.status.toLowerCase() === "running") map.set(s.sessionId, "working");
+      else map.set(s.sessionId, "idle");
+    }
+    return map;
+  }, [feed]);
   const rows = useMemo(() => (all ? sortTasks(filterTasks(all, filter), sort) : []), [all, filter, sort]);
   const counts = useMemo(() => statusCounts(all ?? []), [all]);
   const columns = useMemo(
-    () => (all && view === "board" ? boardColumns(all, filter, boardSort) : []),
-    [all, filter, view, boardSort],
+    () => (all && view === "board" ? boardColumns(all, filter, boardSort, { decisionsTaskId }) : []),
+    [all, filter, view, boardSort, decisionsTaskId],
   );
   // Card ids per expanded column (keyboard movement skips the collapsed Done strip).
   const boardIds = useMemo(() => columns.map((c) => (c.collapsed ? [] : c.tasks.map((t) => t.id))), [columns]);
   const ids = useMemo(() => (view === "board" ? boardIds.flat() : rows.map((r) => r.id)), [view, boardIds, rows]);
+  const openCount = all ? all.length - (counts.done ?? 0) : 0;
+  const showingDone = filter.showDone || filter.statuses.includes("done");
+  const countLabel = useMemo(() => {
+    if (!all) return "";
+    if (showingDone) {
+      return isFiltered(filter) ? `${ids.length} of ${all.length} tasks` : `${all.length} tasks`;
+    }
+    return isFiltered(filter) ? `${ids.length} of ${openCount} open` : `${openCount} open`;
+  }, [all, showingDone, filter, ids.length, openCount]);
   const setView = (v: BacklogView) => {
     setViewState(v);
     saveView(v);
@@ -287,9 +309,23 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
     <div className={`backlog-page${openId ? " with-detail" : ""}`}>
       <div className="backlog-main">
         <header className="page-head">
-          <h1>
-            Backlog {project && <span className="muted">· {project}</span>}
-          </h1>
+          <div className="page-head-title">
+            <h1>
+              Backlog {project && <span className="muted">· {project}</span>}
+            </h1>
+            <LoopHeaderPill project={project} />
+            <GroomHeaderPill project={project} />
+            {view === "table" && decisionsTaskId && (
+              <TaskLink
+                project={project}
+                id={decisionsTaskId}
+                className="header-status-pill tone-decisions"
+                title="Open the backlog groom’s standing list of decisions"
+              >
+                Decisions ({decisionsTaskId})
+              </TaskLink>
+            )}
+          </div>
           <div className="page-actions">
             <span className="segmented inline backlog-view" role="group" aria-label="Backlog layout">
               {(["table", "board"] as const).map((v) => (
@@ -308,33 +344,32 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                 </button>
               ))}
             </span>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => {
-                void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) });
-                void qc.invalidateQueries({ queryKey: queryKeys.backlogGroom(project) });
-              }}
-              disabled={backlog.isFetching}
-              data-track="backlog.refresh"
-              title="Refresh"
-              aria-label="Refresh backlog"
-            >
-              <Icon name="refresh" size={15} />
-            </button>
-            <button
-              type="button"
-              className="btn"
-              data-track="backlog.capture"
-              onClick={() => openCapture(project)}
-              title={`Describe a task and let the capture agent write it up (${CAPTURE_SHORTCUT_LABEL})`}
-            >
-              Quick capture <kbd>{CAPTURE_SHORTCUT_LABEL}</kbd>
-            </button>
             <button type="button" className="btn primary" data-track="backlog.newTask" onClick={() => setCreating(true)}>
               + New task
             </button>
-            <PresetMenu project={project} placements={[PLACEMENT.backlog, PLACEMENT.onboarding]} ariaLabel="More backlog actions" />
+            <PresetMenu
+              project={project}
+              placements={[PLACEMENT.backlog, PLACEMENT.onboarding]}
+              ariaLabel="More backlog actions"
+              extraItems={[
+                {
+                  id: "backlog.capture",
+                  label: "Quick capture",
+                  shortcut: CAPTURE_SHORTCUT_LABEL,
+                  title: `Describe a task and let the capture agent write it up (${CAPTURE_SHORTCUT_LABEL})`,
+                  onSelect: () => openCapture(project),
+                },
+                {
+                  id: "backlog.refresh",
+                  label: "Refresh backlog",
+                  disabled: backlog.isFetching,
+                  onSelect: () => {
+                    void qc.invalidateQueries({ queryKey: queryKeys.backlog(project) });
+                    void qc.invalidateQueries({ queryKey: queryKeys.backlogGroom(project) });
+                  },
+                },
+              ]}
+            />
           </div>
         </header>
         <LoopBanner project={project} />
@@ -366,44 +401,48 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               }
             }}
           />
-          <div className="status-filters" role="group" aria-label="Status">
-            {TASK_STATUSES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`filter-chip st-${s}${filter.statuses.includes(s) ? " on" : ""}`}
-                aria-pressed={filter.statuses.includes(s)}
-                onClick={() => {
-                  track.action("backlog.filter", "click", { status: s, on: !filter.statuses.includes(s) });
-                  toggleStatus(s);
-                }}
-              >
-                {statusLabel(s)} <span className="count">{counts[s] ?? 0}</span>
-              </button>
-            ))}
-          </div>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={filter.actionableOnly}
-              onChange={(e) => {
-                track.action("backlog.filter", "click", { status: "actionable", on: e.target.checked });
-                setFilter((f) => ({ ...f, actionableOnly: e.target.checked }));
-              }}
-            />
-            Actionable only
-          </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={filter.showDone}
-              onChange={(e) => {
-                track.action("backlog.filter", "click", { status: "show_done", on: e.target.checked });
-                setFilter((f) => ({ ...f, showDone: e.target.checked }));
-              }}
-            />
-            Show done
-          </label>
+          {view === "table" && (
+            <div className="status-filters" role="group" aria-label="Status">
+              {TASK_STATUSES.filter((s) => s !== "done").map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`filter-chip st-${s}${filter.statuses.includes(s) ? " on" : ""}`}
+                  aria-pressed={filter.statuses.includes(s)}
+                  onClick={() => {
+                    track.action("backlog.filter", "click", { status: s, on: !filter.statuses.includes(s) });
+                    toggleStatus(s);
+                  }}
+                >
+                  {statusLabel(s)} <span className="count">{counts[s] ?? 0}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            className={`filter-chip${filter.actionableOnly ? " on" : ""}`}
+            aria-pressed={filter.actionableOnly}
+            title="Accepted work whose dependencies are done and that no live session holds"
+            onClick={() => {
+              track.action("backlog.filter", "click", { status: "actionable", on: !filter.actionableOnly });
+              setFilter((f) => ({ ...f, actionableOnly: !f.actionableOnly }));
+            }}
+          >
+            Actionable
+          </button>
+          <button
+            type="button"
+            className={`filter-chip st-done${filter.showDone ? " on" : ""}`}
+            aria-pressed={filter.showDone}
+            title="Show completed tasks"
+            onClick={() => {
+              track.action("backlog.filter", "click", { status: "show_done", on: !filter.showDone });
+              setFilter((f) => ({ ...f, showDone: !f.showDone }));
+            }}
+          >
+            Done <span className="count">{counts.done ?? 0}</span>
+          </button>
           {view === "board" && (
             <span className="segmented inline backlog-board-sort" role="group" aria-label="Sort cards">
               {(["priority", "newest"] as const).map((s) => (
@@ -416,7 +455,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
                     track.action("backlog.board_sort", "click", { by: s });
                     setBoardSort(s);
                   }}
-                  title={s === "priority" ? "Highest priority first, then newest" : "Most recently created first"}
+                  title={s === "priority" ? "Ready tasks first, then priority and newest" : "Most recently created first"}
                 >
                   {s === "priority" ? "Priority" : "Newest"}
                 </button>
@@ -428,9 +467,7 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
               Reset
             </button>
           )}
-          <span className="muted small backlog-count">
-            {all ? `${ids.length} of ${all.length} tasks` : ""}
-          </span>
+          <span className="muted small backlog-count">{countLabel}</span>
         </div>
         {backlog.isPending ? (
           <p className="muted pad">Loading backlog…</p>
@@ -448,6 +485,9 @@ export function BacklogPage({ project, taskId }: { project: string; taskId: stri
             <BacklogBoard
               project={project}
               columns={columns}
+              boardSort={boardSort}
+              decisionsTaskId={decisionsTaskId}
+              sessionLiveness={sessionLiveness}
               openId={openId}
               cursor={cursor}
               moving={moving}

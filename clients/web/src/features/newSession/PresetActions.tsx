@@ -12,7 +12,7 @@ import { queryKeys, useModes, useProjects } from "../../api/queries";
 import { paths } from "../../app/paths";
 import { track } from "../../app/analytics";
 import type { Preset } from "../../gen/ycc/v1/ycc_pb";
-import { MenuButton } from "../../ui/Menu";
+import { MenuButton, type MenuItem } from "../../ui/Menu";
 import { toast } from "../../ui/toast";
 import { placedPresets, presetActionLabel, PLACEMENT } from "./model";
 
@@ -66,20 +66,25 @@ export function PresetButtons({ project, placements }: { project: string; placem
 }
 
 /** The same actions folded into a "⋯" menu, for a page head that is already full (the backlog). */
-export function PresetMenu({ project, placements, ariaLabel }: { project: string; placements: readonly string[]; ariaLabel: string }) {
+export function PresetMenu({
+  project,
+  placements,
+  ariaLabel,
+  extraItems = [],
+}: {
+  project: string;
+  placements: readonly string[];
+  ariaLabel: string;
+  extraItems?: readonly (MenuItem | null | false)[];
+}) {
   const { presets, needsOnboarding, starting, start } = usePresetActions(project, placements);
-  if (!presets.length) return null;
-  return (
-    <MenuButton
-      label="⋯"
-      ariaLabel={ariaLabel}
-      className="btn ghost"
-      items={presets.map((p) => ({
-        label: presetActionLabel(p, needsOnboarding),
-        title: p.description,
-        disabled: starting,
-        onSelect: () => void start(p),
-      }))}
-    />
-  );
+  const presetItems: MenuItem[] = presets.map((p) => ({
+    label: presetActionLabel(p, needsOnboarding),
+    title: p.description,
+    disabled: starting,
+    onSelect: () => void start(p),
+  }));
+  const items = [...extraItems, ...presetItems].filter((i): i is MenuItem => !!i);
+  if (!items.length) return null;
+  return <MenuButton label="⋯" ariaLabel={ariaLabel} className="btn ghost" items={items} />;
 }

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ProjectNoticeSchema, TaskHolderSchema } from "../src/gen/ycc/v1/ycc_pb";
 import {
   activityBadge,
+  compactHolderLabel,
   coordinationHeadline,
   coordinationVariant,
   expiresIn,
@@ -17,21 +18,29 @@ import { rowSearchText } from "../src/features/session/search";
 
 const A = "s_0123456789abcdef";
 const B = "s_fedcba9876543210";
+const NAMED = "s_amber-cedar-4f2a";
 
 describe("holderLabel", () => {
   it("names a holder: loop sessions by short id, others by title", () => {
     expect(holderLabel(create(TaskHolderSchema, { sessionId: A, loop: true, title: "Work on the backlog" }))).toBe("loop s_01234567…");
+    expect(holderLabel(create(TaskHolderSchema, { sessionId: NAMED, loop: true, title: "Work on the backlog" }))).toBe("loop amber-cedar");
     expect(holderLabel(create(TaskHolderSchema, { sessionId: A, title: "Fix the login flow" }))).toBe("Fix the login flow");
     expect(holderLabel(create(TaskHolderSchema, { sessionId: A }))).toBe("s_01234567…");
+    expect(holderLabel(create(TaskHolderSchema, { sessionId: NAMED }))).toBe("amber-cedar");
+    expect(compactHolderLabel(create(TaskHolderSchema, { sessionId: NAMED, loop: true }))).toBe("amber-cedar");
+    expect(compactHolderLabel(create(TaskHolderSchema, { sessionId: A, loop: true }))).toBe("loop");
+    expect(compactHolderLabel(create(TaskHolderSchema, { sessionId: A, title: "Fix the login flow" }))).toBe("Fix the login flow");
   });
 });
 
 describe("splitSessionIds", () => {
-  it("splits session ids out of text", () => {
-    expect(splitSessionIds(`[coordination notice] Session ${A} just wrote a.go; ${B} too.`)).toEqual([
+  it("splits named and legacy session ids out of text", () => {
+    expect(splitSessionIds(`[coordination notice] Session ${A} just wrote a.go; ${NAMED} and ${B} too.`)).toEqual([
       { kind: "text", text: "[coordination notice] Session " },
       { kind: "session", id: A },
       { kind: "text", text: " just wrote a.go; " },
+      { kind: "session", id: NAMED },
+      { kind: "text", text: " and " },
       { kind: "session", id: B },
       { kind: "text", text: " too." },
     ]);

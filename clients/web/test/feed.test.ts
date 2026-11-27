@@ -160,7 +160,8 @@ describe("labels", () => {
   it("strips task boilerplate from titles and falls back to mode + id", () => {
     expect(displayTitle(s("x", 1, { title: "Work on task 0198: fix it", focusTasks: ["0198"] }))).toBe("fix it");
     expect(displayTitle(s("x", 1, { title: "[0198] fix it", focusTasks: ["0198"] }))).toBe("fix it");
-    expect(displayTitle(s("abcdef123456", 1, { title: "", mode: "work" }))).toBe("work · abcdef12");
+    expect(displayTitle(s("abcdef123456", 1, { title: "", mode: "work" }))).toBe("work · abcdef1234…");
+    expect(displayTitle(s("s_amber-cedar-4f2a", 1, { title: "", mode: "work" }))).toBe("work · amber-cedar");
   });
 
   it("labels attention-worthy lifecycle states", () => {

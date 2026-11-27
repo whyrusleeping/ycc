@@ -10,11 +10,13 @@ import { TaskLink } from "../backlog/parts";
 import { displayTitle, taskIds } from "../sessions/feed";
 import {
   ambientLoops,
+  compactOutcome,
   currentSessionId,
   isActive,
   isFailureOutcome,
   isParallel,
   loopState,
+  outcomeWaitingCount,
   recentCompleted,
   slotsLine,
   stateTitle,
@@ -64,8 +66,10 @@ export function LoopStatus({ scope }: { scope: string | null }) {
           loop.inReview.length ? `${loop.inReview.length} in review` : "",
         ].filter(Boolean).join(" · ");
         const outcome = loop.outcome.trim();
+        const shortOutcome = compactOutcome(outcome);
         const failed = state === "finished" && !!outcome && isFailureOutcome(outcome);
-        const name = scope === null ? `${project} loop` : "Work loop";
+        const detachedWaiting = state === "finished" && !failed ? outcomeWaitingCount(outcome) : 0;
+        const name = scope === null ? `${project} loop` : "Loop";
         // A parallel loop is described by its slots, not one session.
         const slots = isActive(state) && isParallel(loop) ? slotsLine(loop) : "";
         return (
@@ -76,7 +80,7 @@ export function LoopStatus({ scope }: { scope: string | null }) {
               <Link
                 to={paths.loop(project)}
                 className="loop-status-title"
-                title={state === "finished" && outcome && !failed ? outcome : `${name}: ${stateTitle(state).toLowerCase()}`}
+                title={state === "finished" && shortOutcome && !failed ? shortOutcome : `${name}: ${stateTitle(state).toLowerCase()}`}
                 data-track="sidebar.loop_status.open"
               >
                 {name}
@@ -113,7 +117,18 @@ export function LoopStatus({ scope }: { scope: string | null }) {
               </span>
             </div>
             {state === "waiting" && <div className="loop-status-line muted">{waitingLine(loop)}</div>}
-            {failed && <div className="loop-status-line error">{outcome}</div>}
+            {failed && (
+              <div className="loop-status-line error" title={outcome}>
+                {shortOutcome}
+              </div>
+            )}
+            {detachedWaiting > 0 && (
+              <div className="loop-status-line muted" title={outcome}>
+                <Link to={paths.loop(project)} className="loop-status-session">
+                  {detachedWaiting} still waiting on background jobs
+                </Link>
+              </div>
+            )}
             {slots && (
               <div className="loop-status-line">
                 <Link to={paths.loop(project)} className="loop-status-session" data-track="sidebar.loop_status.slots">

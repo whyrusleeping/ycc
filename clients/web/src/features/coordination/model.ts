@@ -4,8 +4,12 @@
 // untrusted peer content: it renders as plain text, never markup.
 import type { ProjectNotice, TaskHolder } from "../../gen/ycc/v1/ycc_pb";
 
-/** Daemon session ids ("s_" and 16 hex digits) as they appear in notice text. */
-const SESSION_ID = /\bs_[0-9a-f]{16}\b/g;
+/**
+ * Daemon session ids as they appear in notice text: named Docker-style ids
+ * ("s_amber-cedar-4f2a") and legacy hex ids ("s_" and 16 hex digits).
+ */
+const SESSION_ID = /\bs_(?:[a-z]+-[a-z]+-[0-9a-f]{4}|[0-9a-f]{16})\b/g;
+const NAMED_SESSION_ID = /^s_([a-z]+-[a-z]+)-[0-9a-f]{4}$/;
 
 export type TextPart = { kind: "text"; text: string } | { kind: "session"; id: string };
 
@@ -85,9 +89,28 @@ export function activityBadge(activity: string): { label: string; tone: string }
   return ACTIVITY[activity] ?? { label: activity || "unknown", tone: "idle" };
 }
 
-/** A short form of a session id for compact links ("s_1a2b3c4d…"). */
+/**
+ * A compact human-readable handle for a session id: the word pair
+ * ("amber-cedar") for named ids, or a truncated prefix ("s_1a2b3c4d…") for
+ * legacy hex ids.
+ */
 export function shortSessionId(id: string): string {
+  const m = NAMED_SESSION_ID.exec(id);
+  if (m) return m[1];
   return id.length > 10 ? `${id.slice(0, 10)}…` : id;
+}
+
+/**
+ * Compact holder label for tight surfaces (board cards): a named loop session
+ * shows its handle ("amber-cedar"), a legacy hex loop session shows "loop"
+ * (avoiding truncated hex soup), and other sessions show their title or short id.
+ */
+export function compactHolderLabel(s: TaskHolder): string {
+  if (s.loop) {
+    const m = NAMED_SESSION_ID.exec(s.sessionId);
+    return m ? m[1] : "loop";
+  }
+  return s.title.trim() || shortSessionId(s.sessionId);
 }
 
 /**

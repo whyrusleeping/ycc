@@ -9,7 +9,7 @@ import { relativeTime } from "../sessions/feed";
 import { useProjectNotices } from "../../api/queries";
 import { TaskPreviewLink } from "../backlog/parts";
 import { taskReferences } from "../backlog/taskReferences";
-import { expiresIn, holderLabel, posterLabel, shortSessionId, splitSessionIds } from "./model";
+import { compactHolderLabel, expiresIn, holderLabel, posterLabel, shortSessionId, splitSessionIds } from "./model";
 
 /** Plain text whose session ids link to that session. */
 export function SessionLinkedText({ project, text }: { project: string; text: string }) {
@@ -20,7 +20,7 @@ export function SessionLinkedText({ project, text }: { project: string; text: st
           <span key={i}>{taskReferences(p.text, project)}</span>
         ) : (
           <Link key={i} to={paths.session(project, p.id)} className="session-id-link mono" title={`Open session ${p.id}`}>
-            {p.id}
+            {shortSessionId(p.id)}
           </Link>
         ),
       )}
@@ -129,22 +129,48 @@ export function QuestionNotices({ project }: { project: string }) {
   );
 }
 
+export type HolderLiveness = "working" | "jobs" | "question" | "idle";
+
+const LIVENESS_TEXT: Record<HolderLiveness, string> = {
+  working: "working",
+  jobs: "waiting on background jobs",
+  question: "needs your answer",
+  idle: "idle",
+};
+
 /** "held by <holder>" badge linking to the live session working on the task. */
-export function HeldBadge({ project, holder }: { project: string; holder: TaskHolder | undefined }) {
+export function HeldBadge({
+  project,
+  holder,
+  compact = false,
+  liveness,
+}: {
+  project: string;
+  holder: TaskHolder | undefined;
+  /** Compact form for Kanban cards: omits "held by" and uses the tight handle. */
+  compact?: boolean;
+  /** Live session state from the session feed (colors the dot and clarifies the tooltip). */
+  liveness?: HolderLiveness;
+}) {
   if (!holder) return null;
+  const liveSuffix = liveness ? ` · ${LIVENESS_TEXT[liveness]}` : "";
   const title =
-    `Held by ${holder.loop ? "work-loop session" : "live session"} ${holder.sessionId}` + (holder.title ? ` (${holder.title})` : "");
+    `Held by ${holder.loop ? "work-loop session" : "live session"} ${holder.sessionId}` +
+    (holder.title ? ` (${holder.title})` : "") +
+    liveSuffix;
+  const tone = liveness ? ` held-${liveness}` : "";
   return (
     <Link
       to={paths.session(project, holder.sessionId)}
-      className="held-badge"
+      className={`held-badge${compact ? " compact" : ""}${tone}`}
       title={title}
       aria-label={title}
       draggable={false}
       data-track="backlog.open_holder"
       onClick={(e) => e.stopPropagation()}
     >
-      held by <span className="held-by">{holderLabel(holder)}</span>
+      {!compact && "held by "}
+      <span className="held-by">{compact ? compactHolderLabel(holder) : holderLabel(holder)}</span>
     </Link>
   );
 }

@@ -299,28 +299,54 @@ public enum CoordinationFormat {
         case session(String)
     }
 
-    /// Split text into plain runs and daemon session ids ("s_" and 16 hex
-    /// digits), so the ids can link to their session.
+    /// Split text into plain runs and daemon session ids — either Docker-style
+    /// named ids ("s_amber-cedar-4f2a") or legacy hex ids ("s_" and 16 hex
+    /// digits) — so the ids can link to their session.
     public static func splitSessionIDs(_ text: String) -> [TextPart] {
         let chars = Array(text)
         func isWord(_ c: Character) -> Bool { c == "_" || c.isLetter || c.isNumber }
+        func isLower(_ c: Character) -> Bool { ("a"..."z").contains(c) }
         func isHex(_ c: Character) -> Bool { ("0"..."9").contains(c) || ("a"..."f").contains(c) }
-        let idLength = 18 // "s_" + 16 hex digits
+
+        /// Match a session id starting at `start`, returning its end index.
+        func matchID(at start: Int) -> Int? {
+            guard start + 2 < chars.count, chars[start] == "s", chars[start + 1] == "_" else { return nil }
+            if start > 0 && isWord(chars[start - 1]) { return nil }
+            // Legacy: "s_" + 16 lowercase hex digits.
+            let legacyEnd = start + 18
+            if legacyEnd <= chars.count,
+               chars[(start + 2)..<legacyEnd].allSatisfy(isHex),
+               legacyEnd == chars.count || !isWord(chars[legacyEnd]) {
+                return legacyEnd
+            }
+            // Named: "s_" + [a-z]+ + "-" + [a-z]+ + "-" + [0-9a-f]{4}.
+            var j = start + 2
+            let adjStart = j
+            while j < chars.count && isLower(chars[j]) { j += 1 }
+            guard j > adjStart, j < chars.count, chars[j] == "-" else { return nil }
+            j += 1
+            let nounStart = j
+            while j < chars.count && isLower(chars[j]) { j += 1 }
+            guard j > nounStart, j < chars.count, chars[j] == "-" else { return nil }
+            j += 1
+            let hexEnd = j + 4
+            guard hexEnd <= chars.count,
+                  chars[j..<hexEnd].allSatisfy(isHex),
+                  hexEnd == chars.count || !isWord(chars[hexEnd]) else { return nil }
+            return hexEnd
+        }
+
         var parts: [TextPart] = []
         var plainStart = 0
         var i = 0
-        while i + idLength <= chars.count {
-            let isID = chars[i] == "s" && chars[i + 1] == "_"
-                && (i == 0 || !isWord(chars[i - 1]))
-                && chars[(i + 2)..<(i + idLength)].allSatisfy(isHex)
-                && (i + idLength == chars.count || !isWord(chars[i + idLength]))
-            guard isID else {
+        while i < chars.count {
+            guard let end = matchID(at: i) else {
                 i += 1
                 continue
             }
             if i > plainStart { parts.append(.text(String(chars[plainStart..<i]))) }
-            parts.append(.session(String(chars[i..<(i + idLength)])))
-            i += idLength
+            parts.append(.session(String(chars[i..<end])))
+            i = end
             plainStart = i
         }
         if plainStart < chars.count { parts.append(.text(String(chars[plainStart...]))) }
@@ -394,9 +420,20 @@ public enum CoordinationFormat {
         }
     }
 
-    /// "s_1a2b3c4d…" for compact links.
+    /// Compact human-readable handle for a session id: the word pair
+    /// ("amber-cedar") for named ids, or "s_1a2b3c4d…" for legacy hex ids.
     public static func shortSessionID(_ id: String) -> String {
-        id.count > 10 ? String(id.prefix(10)) + "…" : id
+        if id.hasPrefix("s_") {
+            let rest = id.dropFirst(2)
+            let parts = rest.split(separator: "-", omittingEmptySubsequences: false)
+            if parts.count == 3,
+               !parts[0].isEmpty, parts[0].allSatisfy({ ("a"..."z").contains($0) }),
+               !parts[1].isEmpty, parts[1].allSatisfy({ ("a"..."z").contains($0) }),
+               parts[2].count == 4, parts[2].allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }) {
+                return "\(parts[0])-\(parts[1])"
+            }
+        }
+        return id.count > 10 ? String(id.prefix(10)) + "…" : id
     }
 
     /// The display name of a live session: its title, else its id.

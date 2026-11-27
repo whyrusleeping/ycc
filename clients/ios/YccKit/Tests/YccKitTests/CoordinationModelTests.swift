@@ -121,9 +121,13 @@ final class CoordinationFormatTests: XCTestCase {
         loop.title = "Work on the backlog as one session"
         loop.loop = true
         XCTAssertEqual(CoordinationFormat.holderLabel(loop), "loop s_01234567…")
+        loop.sessionID = "s_amber-cedar-4f2a"
+        XCTAssertEqual(CoordinationFormat.holderLabel(loop), "loop amber-cedar")
         var chat = Ycc_V1_TaskHolder()
         chat.sessionID = "s_0123456789abcdef"
         XCTAssertEqual(CoordinationFormat.holderLabel(chat), "s_01234567…")
+        chat.sessionID = "s_amber-cedar-4f2a"
+        XCTAssertEqual(CoordinationFormat.holderLabel(chat), "amber-cedar")
         chat.title = "Fix login"
         XCTAssertEqual(CoordinationFormat.holderLabel(chat), "Fix login")
         chat.title = "Add per-session subagent model choices"
@@ -132,9 +136,10 @@ final class CoordinationFormatTests: XCTestCase {
 
     func testSplitSessionIDs() {
         let id = "s_0123456789abcdef"
+        let named = "s_amber-cedar-4f2a"
         XCTAssertEqual(
-            CoordinationFormat.splitSessionIDs("\(id) also edits a.md (see \(id))."),
-            [.session(id), .text(" also edits a.md (see "), .session(id), .text(").")])
+            CoordinationFormat.splitSessionIDs("\(id) also edits a.md (see \(named))."),
+            [.session(id), .text(" also edits a.md (see "), .session(named), .text(").")])
         // Not an id: too short, uppercase hex, or glued to a word.
         XCTAssertEqual(
             CoordinationFormat.splitSessionIDs("s_0123 xs_0123456789abcdef s_0123456789ABCDEF"),

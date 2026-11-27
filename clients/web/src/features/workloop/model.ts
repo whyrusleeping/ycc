@@ -3,6 +3,7 @@
 // sessions a loop owns. Mirrors YccKit's WorkLoopModel so the web and iOS
 // clients label a loop alike.
 import type { GetBudgetResponse, WorkLoopDigestTask, WorkLoopInfo, WorkLoopSlot } from "../../gen/ycc/v1/ycc_pb";
+import { shortSessionId } from "../coordination/model";
 import { compactTokenCount } from "../sessions/feed";
 
 export type LoopState = "running" | "waiting" | "stopping" | "finished" | "none" | "unknown";
@@ -300,6 +301,64 @@ export function stopConfirmBody(loop: WorkLoopInfo | null | undefined): string {
   return parts.join(" ");
 }
 
+const WAITER_CLAUSE_RE =
+  /;\s*(still waiting on background jobs|still working after their jobs woke them|sessions were waiting on background jobs):\s*([^;]+)/gi;
+const SESSION_ID_RE = /\bs_(?:[a-z]+-[a-z]+-[0-9a-f]{4}|[0-9a-f]{16})\b/g;
+
+function countWaiterEntries(list: string): number {
+  return list
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean).length;
+}
+
+/**
+ * Count of live detached sessions noted in a finished outcome (still waiting
+ * on background jobs or woken and still working).
+ */
+export function outcomeWaitingCount(outcome: string): number {
+  let total = 0;
+  for (const m of outcome.matchAll(WAITER_CLAUSE_RE)) {
+    const kind = m[1].toLowerCase();
+    if (kind === "sessions were waiting on background jobs") continue;
+    total += countWaiterEntries(m[2]);
+  }
+  return total;
+}
+
+/**
+ * A readable one-line outcome for banners and the sidebar: replaces raw
+ * semicolon lists of full session IDs ("still waiting on background jobs:
+ * s_4228... (0394), ...") with concise counts, and shortens any remaining
+ * session IDs.
+ */
+export function compactOutcome(outcome: string): string {
+  const trimmed = outcome.trim();
+  if (!trimmed) return "";
+  const clauses: string[] = [];
+  let hadClauses = false;
+  const base = trimmed
+    .replace(WAITER_CLAUSE_RE, (_, kind: string, list: string) => {
+      hadClauses = true;
+      const n = countWaiterEntries(list);
+      const k = kind.toLowerCase();
+      if (k === "still waiting on background jobs") {
+        clauses.push(`${n} waiting on background jobs`);
+      } else if (k === "still working after their jobs woke them") {
+        clauses.push(`${n} still working`);
+      } else {
+        clauses.push(`${n} were waiting on background jobs`);
+      }
+      return "";
+    })
+    .trim();
+  const cleanBase =
+    hadClauses && base.toLowerCase() === "loop stopped: requested"
+      ? "Stopped by request"
+      : base.replace(SESSION_ID_RE, (id) => shortSessionId(id));
+  return [cleanBase, ...clauses].filter(Boolean).join(" · ");
+}
+
 /** A compact status line for banners and the sidebar tooltip. */
 export function bannerLine(loop: WorkLoopInfo | null | undefined): string {
   const state = loopState(loop);
@@ -312,7 +371,7 @@ export function bannerLine(loop: WorkLoopInfo | null | undefined): string {
     case "stopping":
       return "Stopping…";
     case "finished":
-      return loop.outcome.trim() || `Finished · ${summaryLine(loop)}`;
+      return compactOutcome(loop.outcome) || `Finished · ${summaryLine(loop)}`;
     default:
       return stateTitle(state);
   }
@@ -326,7 +385,7 @@ export function isFailureOutcome(outcome: string): boolean {
   const o = outcome.trim().toLowerCase();
   if (!o) return false;
   if (o.startsWith("loop complete")) return false;
-  if (o === "loop stopped: requested") return false;
+  if (o.startsWith("loop stopped: requested")) return false;
   if (o.includes("budget reached")) return false;
   return true;
 }

@@ -2905,7 +2905,7 @@ func (m *Manager) start(cfg Config, autoRegisterProject bool) (*Session, error) 
 		return nil, err
 	}
 
-	id, err := newID()
+	id, err := m.mintSessionID(absWS)
 	if err != nil {
 		return nil, err
 	}
@@ -5017,14 +5017,6 @@ func memorySourceFromEvents(sessionID string, events []event.Event, kind docs.Me
 		}
 	}
 	return provenance
-}
-
-func newID() (string, error) {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return "s_" + hex.EncodeToString(b), nil
 }
 
 func newAttachmentID() (string, error) {

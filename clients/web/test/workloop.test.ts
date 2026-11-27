@@ -18,6 +18,7 @@ import {
   canResize,
   canStart,
   canStop,
+  compactOutcome,
   currentSessionId,
   digestSections,
   digestTotalsLine,
@@ -30,6 +31,7 @@ import {
   loopIndicator,
   loopSessionIds,
   loopState,
+  outcomeWaitingCount,
   parallelToSend,
   pollInterval,
   recentCompleted,
@@ -175,10 +177,25 @@ describe("outcomes and announcements", () => {
   it("separates failures from normal ends", () => {
     expect(isFailureOutcome("loop complete: no ready tasks remain")).toBe(false);
     expect(isFailureOutcome("loop stopped: requested")).toBe(false);
+    expect(
+      isFailureOutcome("loop stopped: requested; still waiting on background jobs: s_4228e681bc5281c4 (0394), s_9232b76d1b47abbd (0229)"),
+    ).toBe(false);
     expect(isFailureOutcome("loop stopped: budget reached (1.2M tokens, cap 1M)")).toBe(false);
     expect(isFailureOutcome("loop stopped: session failed (invalid_request)")).toBe(true);
     expect(isFailureOutcome("loop stopped: refresh token expired")).toBe(true);
     expect(isFailureOutcome("")).toBe(false);
+  });
+
+  it("compacts verbose waiter lists in finished outcomes and counts detached waiters", () => {
+    const raw =
+      "loop stopped: requested; still waiting on background jobs: s_4228e681bc5281c4 (0394), s_9232b76d1b47abbd (0229), s_amber-cedar-4f2a (0519)";
+    expect(outcomeWaitingCount(raw)).toBe(3);
+    expect(compactOutcome(raw)).toBe("Stopped by request · 3 waiting on background jobs");
+    expect(bannerLine(loop({ state: "finished", outcome: raw }))).toBe("Stopped by request · 3 waiting on background jobs");
+    expect(
+      compactOutcome("loop stopped: session failed (rate_limit); still working after their jobs woke them: s_amber-cedar-4f2a (0394)"),
+    ).toBe("loop stopped: session failed (rate_limit) · 1 still working");
+    expect(compactOutcome("loop complete: no ready tasks remain")).toBe("loop complete: no ready tasks remain");
   });
 
   it("announces an observed active → finished transition only", () => {

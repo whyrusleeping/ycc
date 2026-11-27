@@ -1478,7 +1478,7 @@ public final class SessionListModel {
             }
         }
         if !title.isEmpty { return title }
-        let shortID = String(session.sessionID.prefix(8))
+        let shortID = CoordinationFormat.shortSessionID(session.sessionID)
         let mode = session.mode.trimmingCharacters(in: .whitespacesAndNewlines)
         let base = mode.isEmpty ? "session" : mode
         return shortID.isEmpty ? base : "\(base) · \(shortID)"

@@ -404,7 +404,7 @@ struct WorkLoopView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             HStack(spacing: 6) {
-                                Text("\(Image(systemName: "dot.radiowaves.left.and.right")) \(String(slot.sessionID.prefix(8)))")
+                                Text("\(Image(systemName: "dot.radiowaves.left.and.right")) \(CoordinationFormat.shortSessionID(slot.sessionID))")
                                     .font(.caption.monospaced())
                                 if let last = WorkLoopModel.lastActivityDate(for: slot) {
                                     Text("· active \(last.formatted(.relative(presentation: .named, unitsStyle: .abbreviated)))")
@@ -552,7 +552,7 @@ struct WorkLoopView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            Text("\(Image(systemName: "dot.radiowaves.left.and.right")) \(String(session.sessionID.prefix(8))) · \(usage)")
+            Text("\(Image(systemName: "dot.radiowaves.left.and.right")) \(CoordinationFormat.shortSessionID(session.sessionID)) · \(usage)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
             if !session.errorKind.isEmpty {

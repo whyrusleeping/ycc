@@ -64,7 +64,7 @@ func (m *Manager) ForkSession(project, id string, atSeq int) (ForkResult, error)
 		return ForkResult{}, fmt.Errorf("prepare git workspace: %w", err)
 	}
 
-	newID, err := newID()
+	newID, err := m.mintSessionID(absWS)
 	if err != nil {
 		return ForkResult{}, err
 	}

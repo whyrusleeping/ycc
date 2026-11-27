@@ -582,7 +582,7 @@ struct SessionLinkedText: View {
             case .text(let plain):
                 out += AttributedString(plain)
             case .session(let id):
-                var link = AttributedString(id)
+                var link = AttributedString(CoordinationFormat.shortSessionID(id))
                 link.link = URL(string: "ycc://session/\(id)")
                 out += link
             }

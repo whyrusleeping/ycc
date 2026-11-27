@@ -1,17 +1,20 @@
 // The backlog as a kanban board: one column per status in workflow order.
 // Cards drag between columns to change status (UpdateTask); the page owns the
 // keyboard (h/j/k/l or arrows move, Shift+←/→ moves the card, Enter opens).
-import { useState, type DragEvent } from "react";
+import { Fragment, useState, type DragEvent } from "react";
 import type { BacklogTaskSummary } from "../../gen/ycc/v1/ycc_pb";
 import { PriorityBadge, TaskLink, TaskPreviewLink } from "./parts";
-import { blockedLabel, normalizeTaskId, readiness, statusLabel, type BoardColumn } from "./model";
-import { HeldBadge } from "../coordination/parts";
+import { normalizeTaskId, statusLabel, type BoardColumn, type BoardSort } from "./model";
+import { HeldBadge, type HolderLiveness } from "../coordination/parts";
 
 const DRAG_TYPE = "application/x-ycc-task";
 
 export function BacklogBoard({
   project,
   columns,
+  boardSort,
+  decisionsTaskId,
+  sessionLiveness,
   openId,
   cursor,
   moving,
@@ -23,6 +26,9 @@ export function BacklogBoard({
 }: {
   project: string;
   columns: BoardColumn[];
+  boardSort: BoardSort;
+  decisionsTaskId?: string | null;
+  sessionLiveness?: ReadonlyMap<string, HolderLiveness>;
   openId: string | null;
   cursor: string | null;
   moving: ReadonlySet<string>;
@@ -34,6 +40,7 @@ export function BacklogBoard({
 }) {
   const [dragging, setDragging] = useState<BacklogTaskSummary | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const decisionsId = decisionsTaskId ? normalizeTaskId(decisionsTaskId) : null;
 
   const accepts = (e: DragEvent, status: string) =>
     dragging !== null && e.dataTransfer.types.includes(DRAG_TYPE) && dragging.status.toLowerCase() !== status;
@@ -84,6 +91,9 @@ export function BacklogBoard({
             </section>
           );
         }
+        const splitTodo = col.status === "todo" && boardSort === "priority";
+        const firstBlockedIdx = splitTodo ? col.tasks.findIndex((t) => !t.ready) : -1;
+        const showTodoDivider = firstBlockedIdx > 0;
         return (
           <section key={col.status} className={`board-col st-col-${col.status}${target}`} aria-label={label} {...dropProps(col.status)}>
             <header className="board-col-head">
@@ -91,28 +101,36 @@ export function BacklogBoard({
               <span className="count">{col.tasks.length}</span>
             </header>
             <ul className="board-cards">
-              {col.tasks.map((t) => (
-                <BoardCard
-                  key={t.id}
-                  project={project}
-                  task={t}
-                  selected={t.id === openId}
-                  cursor={t.id === cursor}
-                  moving={moving.has(t.id)}
-                  promoting={promoting === t.id}
-                  onOpen={() => onOpen(t.id)}
-                  onPromote={() => onPromote(t)}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(DRAG_TYPE, t.id);
-                    e.dataTransfer.setData("text/plain", t.id);
-                    e.dataTransfer.effectAllowed = "move";
-                    setDragging(t);
-                  }}
-                  onDragEnd={() => {
-                    setDragging(null);
-                    setOver(null);
-                  }}
-                />
+              {col.tasks.map((t, idx) => (
+                <Fragment key={t.id}>
+                  {showTodoDivider && idx === firstBlockedIdx && (
+                    <li className="board-divider" aria-hidden="true">
+                      Waiting on dependencies
+                    </li>
+                  )}
+                  <BoardCard
+                    project={project}
+                    task={t}
+                    isDecisions={decisionsId !== null && col.status === "proposed" && t.id === decisionsId}
+                    liveness={t.heldBy ? sessionLiveness?.get(t.heldBy.sessionId) : undefined}
+                    selected={t.id === openId}
+                    cursor={t.id === cursor}
+                    moving={moving.has(t.id)}
+                    promoting={promoting === t.id}
+                    onOpen={() => onOpen(t.id)}
+                    onPromote={() => onPromote(t)}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData(DRAG_TYPE, t.id);
+                      e.dataTransfer.setData("text/plain", t.id);
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragging(t);
+                    }}
+                    onDragEnd={() => {
+                      setDragging(null);
+                      setOver(null);
+                    }}
+                  />
+                </Fragment>
               ))}
               {col.tasks.length === 0 && <li className="board-empty muted small">No tasks</li>}
             </ul>
@@ -126,6 +144,8 @@ export function BacklogBoard({
 function BoardCard({
   project,
   task: t,
+  isDecisions,
+  liveness,
   selected,
   cursor,
   moving,
@@ -137,6 +157,8 @@ function BoardCard({
 }: {
   project: string;
   task: BacklogTaskSummary;
+  isDecisions: boolean;
+  liveness?: HolderLiveness;
   selected: boolean;
   cursor: boolean;
   moving: boolean;
@@ -147,16 +169,13 @@ function BoardCard({
   onDragEnd: () => void;
 }) {
   const status = t.status.toLowerCase();
-  const blocked = blockedLabel(t);
-  const blocking = new Set(t.blockedBy.map(normalizeTaskId));
-  // The column already says the status; only "actionable" adds information
-  // (a held task's badge already says it is held).
-  const ready = readiness(t);
-  const actionable = ready.kind === "actionable";
+  const blockers = status === "done" || t.ready ? [] : t.blockedBy.map(normalizeTaskId);
+  const depBlocked = status === "todo" && blockers.length > 0;
+  const showPromote = status === "proposed" && !isDecisions;
   return (
     <li
       data-id={t.id}
-      className={`board-card${selected ? " selected" : ""}${cursor ? " cursor" : ""}${moving ? " moving" : ""} st-card-${status}`}
+      className={`board-card${selected ? " selected" : ""}${cursor ? " cursor" : ""}${moving ? " moving" : ""}${depBlocked ? " is-dep-blocked" : ""}${isDecisions ? " is-decisions" : ""} st-card-${status}`}
       aria-current={selected ? "true" : undefined}
       draggable={!moving}
       onDragStart={onDragStart}
@@ -168,43 +187,32 @@ function BoardCard({
     >
       <div className="board-card-top">
         <TaskPreviewLink project={project} id={t.id} className="task-id-link" draggable={false} aria-current={selected ? "page" : undefined} />
-        <HeldBadge project={project} holder={t.heldBy} />
+        {isDecisions && <span className="decisions-tag">Decisions</span>}
+        <HeldBadge project={project} holder={t.heldBy} compact liveness={liveness} />
+        {showPromote && (
+          <button
+            type="button"
+            className="btn ghost small board-promote"
+            disabled={promoting || moving}
+            onClick={onPromote}
+            title={`Accept task ${t.id} into the active backlog (todo)`}
+          >
+            {promoting ? "Promoting…" : "Promote →"}
+          </button>
+        )}
         <PriorityBadge priority={t.priority} />
       </div>
-      <div className="board-card-title">{t.title}</div>
-      {blocked && <span className="blocked-note">{blocked}</span>}
-      {(t.dependsOn.length > 0 || actionable || status === "proposed") && (
+      <div className="board-card-title" title={t.title}>
+        {t.title}
+      </div>
+      {blockers.length > 0 && (
         <div className="board-card-foot">
-          {t.dependsOn.map((d) => {
-            const id = normalizeTaskId(d);
-            return (
-              <TaskLink
-                key={d}
-                project={project}
-                id={id}
-                className={`dep-chip${blocking.has(id) ? " blocking" : ""}`}
-                title={blocking.has(id) ? `Open task ${id} (not done yet)` : `Open task ${id} (done)`}
-              />
-            );
-          })}
-          <span className="spacer" />
-          {status === "proposed" ? (
-            <button
-              type="button"
-              className="btn small"
-              disabled={promoting || moving}
-              onClick={onPromote}
-              title={`Accept task ${t.id} into the active backlog (todo)`}
-            >
-              {promoting ? "Promoting…" : "Promote"}
-            </button>
-          ) : (
-            actionable && (
-              <span className={`flag ${ready.kind}`} title={ready.title}>
-                {ready.label}
-              </span>
-            )
-          )}
+          <span className="card-blocked">
+            <span className="card-blocked-label">Blocked by</span>
+            {blockers.map((id) => (
+              <TaskLink key={id} project={project} id={id} className="dep-chip blocking" title={`Open task ${id} (not done yet)`} />
+            ))}
+          </span>
         </div>
       )}
     </li>

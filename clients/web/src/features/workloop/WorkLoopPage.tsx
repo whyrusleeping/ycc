@@ -32,6 +32,7 @@ import {
   canResize,
   canStart,
   canStop,
+  compactOutcome,
   currentSessionId,
   digestSections,
   digestTotalsLine,
@@ -43,6 +44,7 @@ import {
   isResizeTarget,
   loopState,
   MAX_LOOP_PARALLEL,
+  outcomeWaitingCount,
   parallelExplanation,
   parallelToSend,
   loopTotalsLine,
@@ -64,21 +66,87 @@ export function LoopStateBadge({ state }: { state: LoopState }) {
   return <span className={`loop-badge loop-${state}`}>{stateTitle(state)}</span>;
 }
 
+const DISMISSED_BANNER_KEY = "ycc.loopBannerDismissed";
+
+function readDismissedBanners(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DISMISSED_BANNER_KEY) ?? "[]");
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 /**
- * A one-line loop status for the backlog (iOS's backlog banner): shown while
- * a loop is live and after one finished, keeping its stop reason in view.
+ * Compact work-loop pill for the backlog header: shown while a loop is live,
+ * or after a clean stop that still has detached sessions waiting on background
+ * jobs. Resting finished loops take no space.
  */
-export function LoopBanner({ project }: { project: string }) {
+export function LoopHeaderPill({ project }: { project: string }) {
   const q = useWorkLoop(project);
   const loop = q.data;
   if (!loop) return null;
   const state = loopState(loop);
-  const failed = state === "finished" && isFailureOutcome(loop.outcome);
+  if (isActive(state)) {
+    const detail = state === "stopping" ? "stopping…" : slotsLine(loop) || stateTitle(state).toLowerCase();
+    return (
+      <Link
+        to={paths.loop(project || null)}
+        className={`header-status-pill tone-${state}`}
+        title={`Work loop · ${bannerLine(loop)}`}
+      >
+        <span className="status-dot" aria-hidden="true" />
+        Loop · {detail}
+      </Link>
+    );
+  }
+  if (state === "finished" && !isFailureOutcome(loop.outcome)) {
+    const waiting = outcomeWaitingCount(loop.outcome);
+    if (waiting > 0) {
+      return (
+        <Link
+          to={paths.loop(project || null)}
+          className="header-status-pill tone-muted"
+          title={`Work loop · ${compactOutcome(loop.outcome)}`}
+        >
+          Loop · {waiting} waiting
+        </Link>
+      );
+    }
+  }
+  return null;
+}
+
+/**
+ * Dismissible failure strip for the backlog: shown only when the latest loop
+ * ended in a genuine failure (not a normal drain or requested stop).
+ */
+export function LoopBanner({ project }: { project: string }) {
+  const q = useWorkLoop(project);
+  const [dismissed, setDismissed] = useState(readDismissedBanners);
+  const loop = q.data;
+  if (!loop) return null;
+  const state = loopState(loop);
+  if (state !== "finished" || !isFailureOutcome(loop.outcome) || dismissed.has(loop.loopId)) return null;
+  const dismiss = () => {
+    const next = new Set(dismissed).add(loop.loopId);
+    setDismissed(next);
+    try {
+      localStorage.setItem(DISMISSED_BANNER_KEY, JSON.stringify([...next].slice(-50)));
+    } catch {
+      // ignore
+    }
+  };
   return (
-    <Link to={paths.loop(project || null)} className={`loop-banner${failed ? " failed" : ""}`} title="Open the work loop">
-      <LoopStateBadge state={state} />
-      <span className="loop-banner-text">Work loop · {bannerLine(loop)}</span>
-    </Link>
+    <div className="loop-banner failed">
+      <Link to={paths.loop(project || null)} className="loop-banner-link" title={loop.outcome.trim() || "Open the work loop"}>
+        <LoopStateBadge state={state} />
+        <span className="loop-banner-text">Work loop · {compactOutcome(loop.outcome)}</span>
+      </Link>
+      <button type="button" className="btn ghost small icon-btn" aria-label="Dismiss work loop failure" title="Dismiss" onClick={dismiss}>
+        ×
+      </button>
+    </div>
   );
 }
 

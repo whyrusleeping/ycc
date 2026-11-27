@@ -364,7 +364,7 @@ struct TaskDetailView: View {
                 Label(
                     model.activeSessions.count == 1
                         ? "Open active session"
-                        : "Open active session · \(String(session.sessionID.prefix(8)))",
+                        : "Open active session · \(CoordinationFormat.shortSessionID(session.sessionID))",
                     systemImage: session.status == "paused" ? "pause.circle.fill" : "bolt.circle.fill")
             }
         }

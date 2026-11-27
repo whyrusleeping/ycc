@@ -280,9 +280,21 @@ export interface BoardColumn {
   collapsed: boolean;
 }
 
-function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary, order: BoardSort): number {
+function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary, order: BoardSort, decisionsTaskId?: string | null): number {
+  const status = a.status.toLowerCase();
+  // Pin the standing "Backlog groom: decisions needed" task to the top of Proposed.
+  if (status === "proposed" && decisionsTaskId) {
+    const aDec = a.id === decisionsTaskId;
+    const bDec = b.id === decisionsTaskId;
+    if (aDec !== bDec) return aDec ? -1 : 1;
+  }
+  // In Todo under priority order, ready (unblocked) work leads so actionable
+  // tasks are not buried behind dependency-blocked ones.
+  if (order === "priority" && status === "todo" && a.ready !== b.ready) {
+    return a.ready ? -1 : 1;
+  }
   // Done is history: newest first. Otherwise priority first unless sorting by newest.
-  if (order === "priority" && a.status.toLowerCase() !== "done") {
+  if (order === "priority" && status !== "done") {
     const p = priorityOf(a) - priorityOf(b);
     if (p !== 0) return p;
   }
@@ -297,7 +309,12 @@ function compareCards(a: BacklogTaskSummary, b: BacklogTaskSummary, order: Board
  * "Show done" is off, so dragging a card to done always works. Tasks with a
  * status outside TASK_STATUSES get trailing columns rather than vanishing.
  */
-export function boardColumns(tasks: readonly BacklogTaskSummary[], f: BacklogFilter, order: BoardSort = "priority"): BoardColumn[] {
+export function boardColumns(
+  tasks: readonly BacklogTaskSummary[],
+  f: BacklogFilter,
+  order: BoardSort = "priority",
+  options?: { decisionsTaskId?: string | null },
+): BoardColumn[] {
   const cards = filterTasks(tasks, { ...f, showDone: true });
   const groups = new Map<string, BacklogTaskSummary[]>();
   for (const t of cards) {
@@ -308,9 +325,10 @@ export function boardColumns(tasks: readonly BacklogTaskSummary[], f: BacklogFil
   }
   const statuses: string[] = f.statuses.length ? TASK_STATUSES.filter((s) => f.statuses.includes(s)) : [...TASK_STATUSES];
   for (const s of [...groups.keys()].sort()) if (!isTaskStatus(s) && !f.statuses.length) statuses.push(s);
+  const decisionsId = options?.decisionsTaskId ? normalizeTaskId(options.decisionsTaskId) : null;
   return statuses.map((status) => ({
     status,
-    tasks: (groups.get(status) ?? []).sort((a, b) => compareCards(a, b, order)),
+    tasks: (groups.get(status) ?? []).sort((a, b) => compareCards(a, b, order, decisionsId)),
     collapsed: status === "done" && !f.showDone && !f.statuses.includes("done"),
   }));
 }
