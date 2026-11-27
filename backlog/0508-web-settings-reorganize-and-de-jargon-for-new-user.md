@@ -1,16 +1,17 @@
 ---
 id: "0508"
 title: 'Web Settings: reorganize and de-jargon for new users'
-status: in_review
+status: done
 priority: 2
 created: "2026-11-09"
-updated: "2026-11-09"
+updated: "2026-11-27"
 depends_on: []
 spec_refs:
     - spec.md#18.2 Settings
 ---
 
 ## Description
+
 The web Settings page is a long list of ten sections (Health, Accounts, Notifications, Default roles, Reasoning, Work, Review tiers, Models, Modes, Spend guard) with jargon and dense prose; a new user can't tell what matters or where to connect a model.
 
 Acceptance:
@@ -19,8 +20,8 @@ Acceptance:
 - No setting is lost; existing behavior and RPCs unchanged.
 - Verified visually in light and dark mode against a scratch daemon.
 
-## Acceptance criteria
+## Outcome
 
-## Work log
+e0602905 reorganized Settings around models, roles, reviews, notifications, spending and health while preserving the old section links. The light/dark scratch-daemon checks, current web suite and owner's acceptance of the current layout (including Status without an intro sentence) complete review.
 
-- 2026-11-09: Implemented. Sections now: Models (subscriptions + model list with per-model health status, pricing inline), Who does what (main agent / reviewers / implementer, each with model, reasoning select, and the work-implementation choice), Code review (plain intro, inline default-tier Apply, user-facing built-in tier descriptions), Notifications (details collapsed), Spending limits, Status (health, moved last). Removed the read-only Session modes reference (shown on New session). Old #accounts/#work/#thinking/#modes links still land. Health banner says "not set up" instead of "failing" for absent credentials. Verified light/dark screenshots against a scratch daemon; reviewed by opus with no regressions found. Uncommitted.
+Commit: Close the web Settings organization review
