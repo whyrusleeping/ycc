@@ -1,16 +1,17 @@
 ---
 id: "0547"
 title: 'iOS: create and edit watches'
-status: in_review
+status: done
 priority: 3
 created: "2026-11-13"
-updated: "2026-11-13"
+updated: "2026-11-27"
 depends_on: []
 spec_refs:
     - docs/design/watches.md#Creation and surfaces
 ---
 
 ## Description
+
 User request (session s_cffea2c64076045f, event 28, 2026-11-13): add iOS UI for creating and managing watches.
 
 Status: in_review, awaiting on-device use. Implemented in fe081c7. That session reported 610 YccKit tests passing, including new tests for the form's checks, its conversion to and from a watch definition, and saving, and said create and edit were tried on the Mac simulator against a test daemon. Its report does not mention a screenshot.
@@ -25,5 +26,8 @@ Acceptance criteria:
 - The expired-watch footer and empty-state copy no longer send users to the web client; the design doc status line reflects iOS creation/editing.
 - YccKit draft/editor logic has unit tests; app builds on the Mac and the sheet is screenshotted against a scratch daemon.
 
-## Work log
-- 2026-11-14 groom: added the source request and a current-state line from that session's report (fe081c7; f294066 set in_review), and removed the empty Acceptance criteria heading.
+## Outcome
+
+fe081c7 implemented the create/edit sheets with validation and draft preservation. Prior Mac tests and simulator checks, including saved editor screenshots, and the owner's on-device check cover review.
+
+Commit: Close the iOS watch editor review
