@@ -4796,8 +4796,7 @@ th[aria-sort="descending"] .sort-btn {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .live-dot,
-  .spinner {
+  .live-dot {
     animation: none;
   }
 }
@@ -5356,7 +5355,12 @@ th[aria-sort="descending"] .sort-btn {
   border-radius: 50%;
   border: 2px solid currentColor;
   border-right-color: transparent;
-  animation: spin 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .spinner {
+    animation: spin 0.9s linear infinite;
+  }
 }
 
 @keyframes spin {
@@ -6749,6 +6753,15 @@ th[aria-sort="descending"] .sort-btn {
 .cap-row dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.sub-loading {
+  /* Reserve the body of a typical account with two allowance windows. */
+  min-height: 9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .sub-account + .sub-account {

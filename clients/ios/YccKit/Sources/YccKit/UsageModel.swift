@@ -110,6 +110,10 @@ public final class UsageModel {
     public private(set) var budget: Ycc_V1_GetBudgetResponse?
     /// Provider-side shared subscription allowance (separate from local usage).
     public private(set) var subscriptionAccounts: [Ycc_V1_SubscriptionUsageAccount] = []
+    /// Whether this connection has an answer for the provider allowance: a
+    /// cached snapshot, or a completed (successful or failed) fetch. Until then
+    /// the view reserves the allowance section's space with a placeholder.
+    private var subscriptionAnswered = false
     /// Registered projects; drives the project filter menu.
     public private(set) var projects: [Ycc_V1_ProjectInfo] = []
 
@@ -164,6 +168,7 @@ public final class UsageModel {
         if let cachedProjects = cache?.projects { projects = cachedProjects }
         if let accounts = cache?.value(.subscriptionUsage, as: [Ycc_V1_SubscriptionUsageAccount].self) {
             subscriptionAccounts = accounts
+            subscriptionAnswered = true
         }
         if let snapshot = cache?.value(.usage(selectedProject), as: Snapshot.self) {
             rows = snapshot.rows
@@ -183,6 +188,13 @@ public final class UsageModel {
     /// The project picker is useful only when there is a real choice.
     public var showsProjectFilter: Bool { projects.count > 1 }
 
+    /// Whether the allowance section shows a loading placeholder: only before
+    /// the first answer on this connection. Refreshes keep the last readings,
+    /// and a completed empty or failed fetch hides the section instead.
+    public var showsSubscriptionPlaceholder: Bool {
+        !subscriptionAnswered && subscriptionAccounts.isEmpty
+    }
+
     /// Whether the last successful load produced any usage rows.
     public var hasUsage: Bool { !rows.isEmpty }
 
@@ -191,9 +203,13 @@ public final class UsageModel {
     /// is force-refreshed only on the first load of this connection; later
     /// visits reuse the cached accounts until the user pulls to refresh.
     public func load() async {
-        let hasSubscriptionSnapshot =
-            cache?.value(.subscriptionUsage, as: [Ycc_V1_SubscriptionUsageAccount].self) != nil
-        await loadAll(refreshSubscription: !hasSubscriptionSnapshot)
+        let snapshot = cache?.value(.subscriptionUsage, as: [Ycc_V1_SubscriptionUsageAccount].self)
+        if let snapshot, !subscriptionAnswered {
+            // Another screen answered since this model was created.
+            subscriptionAccounts = snapshot
+            subscriptionAnswered = true
+        }
+        await loadAll(refreshSubscription: snapshot == nil)
     }
 
     /// Explicit (pull-to-)refresh: reload usage, budget, and — force-refreshed
@@ -287,11 +303,15 @@ public final class UsageModel {
         switch await accounts {
         case .success(let loaded?):
             subscriptionAccounts = loaded
+            subscriptionAnswered = true
             cache?.store(loaded, for: .subscriptionUsage, ifGeneration: cacheGeneration)
         case .success(nil):
             break
         case .failure(let error):
             if unauthorizedError(error) { unauthorized = true }
+            // A cancelled load (screen left mid-fetch) is not an answer: the
+            // next appearance fetches again behind the placeholder.
+            if !Task.isCancelled && !(error is CancellationError) { subscriptionAnswered = true }
             // Otherwise preserve the last known account snapshot, if any.
         }
     }

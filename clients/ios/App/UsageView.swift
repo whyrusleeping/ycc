@@ -96,46 +96,93 @@ struct UsageView: View {
         if !model.subscriptionAccounts.isEmpty {
             Section {
                 ForEach(model.subscriptionAccounts, id: \.provider) { account in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(account.provider.capitalized)
-                                .font(.subheadline.weight(.semibold))
-                            if !account.plan.isEmpty {
-                                Text(account.plan.capitalized)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if account.state != "fresh" {
-                                Text(account.state)
-                                    .font(.caption2.monospaced().weight(.medium))
-                                    .foregroundStyle(account.state == "stale" ? Theme.attention : Color.secondary)
-                            }
-                        }
-                        if !account.models.isEmpty {
-                            Text(account.models.joined(separator: ", "))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if account.windows.isEmpty {
-                            Text(account.message.isEmpty ? "Allowance unavailable" : account.message)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(account.windows, id: \.id) { window in
-                                subscriptionWindow(window)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
+                    subscriptionAccount(account)
                 }
             } header: {
                 Text("Subscription allowance")
             } footer: {
-                Text("Shared provider allowance; separate from ycc token usage below.")
+                subscriptionFooter
+            }
+        } else if model.showsSubscriptionPlaceholder {
+            // First fetch on this connection (a provider round trip, often
+            // seconds): reserve a typical account's space so the allowance
+            // does not push the rest of the screen down when it lands.
+            Section {
+                subscriptionAccount(Self.placeholderAccount, loading: true)
+                    .redacted(reason: .placeholder)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading subscription allowance")
+            } header: {
+                Text("Subscription allowance")
+            } footer: {
+                subscriptionFooter
             }
         }
     }
+
+    private var subscriptionFooter: some View {
+        Text("Shared provider allowance; separate from ycc token usage below.")
+    }
+
+    private func subscriptionAccount(
+        _ account: Ycc_V1_SubscriptionUsageAccount, loading: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(account.provider.capitalized)
+                    .font(.subheadline.weight(.semibold))
+                if !account.plan.isEmpty {
+                    Text(account.plan.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if loading {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .unredacted()
+                } else if account.state != "fresh" {
+                    Text(account.state)
+                        .font(.caption2.monospaced().weight(.medium))
+                        .foregroundStyle(account.state == "stale" ? Theme.attention : Color.secondary)
+                }
+            }
+            if !account.models.isEmpty {
+                Text(account.models.joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if account.windows.isEmpty {
+                Text(account.message.isEmpty ? "Allowance unavailable" : account.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(account.windows, id: \.id) { window in
+                    subscriptionWindow(window)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// Stand-in content for the loading placeholder: one account with the two
+    /// windows (session + weekly) a subscription typically reports. Rendered
+    /// redacted, so only its shape shows.
+    private static let placeholderAccount: Ycc_V1_SubscriptionUsageAccount = {
+        var account = Ycc_V1_SubscriptionUsageAccount()
+        account.provider = "provider"
+        account.plan = "plan"
+        account.state = "fresh"
+        account.models = ["model-family-name"]
+        account.windows = [("session", "5-hour window"), ("weekly", "7-day window")].map { id, label in
+            var window = Ycc_V1_SubscriptionUsageWindow()
+            window.id = id
+            window.label = label
+            window.resetsAtUnix = Int64(Date().timeIntervalSince1970) + 3 * 3600
+            return window
+        }
+        return account
+    }()
 
     private func subscriptionWindow(_ window: Ycc_V1_SubscriptionUsageWindow) -> some View {
         VStack(alignment: .leading, spacing: 3) {

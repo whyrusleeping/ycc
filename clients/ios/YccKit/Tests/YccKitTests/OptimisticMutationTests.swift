@@ -1169,6 +1169,8 @@ private final class CountingUsageSource: UsageSource, @unchecked Sendable {
     /// Gates consumed by successive GetUsage calls (nil entries pass through).
     var usageGates: [AsyncGate?] = []
     var accounts: [Ycc_V1_SubscriptionUsageAccount] = []
+    var subscriptionGate: AsyncGate?
+    var subscriptionError: Error?
 
     func getUsage(project: String, groupBy: [String], since: String, until: String)
         async throws -> (rows: [Ycc_V1_UsageRow], total: Ycc_V1_UsageRow, workspace: String)
@@ -1187,6 +1189,8 @@ private final class CountingUsageSource: UsageSource, @unchecked Sendable {
     }
     func getSubscriptionUsage(refresh: Bool) async throws -> [Ycc_V1_SubscriptionUsageAccount] {
         locked { _subscriptionRefreshes.append(refresh) }
+        if let subscriptionGate { await subscriptionGate.wait() }
+        if let subscriptionError { throw subscriptionError }
         return accounts
     }
     var budgetGate: AsyncGate?
@@ -1228,6 +1232,40 @@ final class UsageLoadingTests: XCTestCase {
 
         await revisit.refresh()
         XCTAssertEqual(source.subscriptionRefreshes, [true, true], "pull-to-refresh forces it")
+    }
+
+    func testSubscriptionPlaceholderShowsOnlyUntilTheFirstAnswer() async {
+        let cache = AppDataCache()
+        let source = CountingUsageSource()
+        let gate = AsyncGate()
+        source.subscriptionGate = gate
+        let model = UsageModel(source: source, cache: cache)
+        XCTAssertTrue(model.showsSubscriptionPlaceholder, "cold open reserves the section")
+
+        let first = Task { await model.load() }
+        await eventually { gate.waiters == 1 }
+        XCTAssertTrue(model.showsSubscriptionPlaceholder)
+        gate.open()
+        await first.value
+        XCTAssertFalse(model.showsSubscriptionPlaceholder, "an empty answer hides it")
+
+        let again = AsyncGate()
+        source.subscriptionGate = again
+        let refresh = Task { await model.refresh() }
+        await eventually { again.waiters == 1 }
+        XCTAssertFalse(model.showsSubscriptionPlaceholder, "a refresh does not bring it back")
+        again.open()
+        await refresh.value
+
+        XCTAssertFalse(
+            UsageModel(source: source, cache: cache).showsSubscriptionPlaceholder,
+            "a cached answer needs no placeholder")
+
+        let failingSource = CountingUsageSource()
+        failingSource.subscriptionError = YccError.rpc(message: "provider down")
+        let failed = UsageModel(source: failingSource, cache: AppDataCache())
+        await failed.load()
+        XCTAssertFalse(failed.showsSubscriptionPlaceholder, "a failed fetch hides it")
     }
 
     func testFilterChangesReloadOnlyUsage() async {

@@ -148,7 +148,7 @@ export function UsagePage({ project }: { project: string }) {
       </header>
 
       <div className="usage-top">
-        <SubscriptionAllowance accounts={subscription.data} />
+        <SubscriptionAllowance accounts={subscription.data} loading={subscription.isLoading} />
         <section className="usage-card budget-caps" aria-labelledby="usage-budget">
           <h2 id="usage-budget">Spend guard</h2>
           {budget.isPending ? (
@@ -623,12 +623,17 @@ function DimCell({ row, dim, linkProject }: { row: UsageRow; dim: UsageDim; link
   return <>{label}</>;
 }
 
-function SubscriptionAllowance({ accounts }: { accounts: SubscriptionUsageAccount[] | undefined }) {
-  if (!accounts?.length) return null;
+function SubscriptionAllowance({ accounts, loading }: { accounts?: SubscriptionUsageAccount[]; loading: boolean }) {
+  if (!loading && !accounts?.length) return null;
   return (
     <section className="usage-card subscription" aria-labelledby="usage-subscription">
       <h2 id="usage-subscription">Subscription allowance</h2>
-      {accounts.map((a) => {
+      {loading && (
+        <div className="sub-loading muted small" role="status">
+          <span className="spinner" aria-hidden="true" /> Loading allowance…
+        </div>
+      )}
+      {accounts?.map((a) => {
         const badge = accountBadge(a);
         return (
           <div key={a.provider} className="sub-account">
